@@ -1,0 +1,47 @@
+[package]
+name = "backtick"
+version = "0.1.0"
+description = "Backtick — agentic development environment"
+authors = ["Wesley Guirra"]
+edition = "2021"
+
+[lib]
+name = "backtick_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-opener = "2"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "sync", "time", "fs"] }
+async-trait = "0.1"
+parking_lot = "0.12"
+
+rusqlite = { version = "0.32", features = ["bundled", "chrono", "serde_json"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.9"   # must match the version rrule links against
+rrule = "0.13"
+
+dirs = "5"
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+sha2 = "0.10"
+shell-escape = "0.1"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true
