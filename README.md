@@ -1,104 +1,75 @@
 # Backtick
 
-An agentic development environment: run several CLI coding agents in parallel,
-each isolated in its own git worktree, then review and merge what they changed.
+A native macOS app for running several CLI coding agents in parallel, each in
+its own git worktree, then reviewing and merging what they changed.
 
-Backtick drives agents you already pay for as **subscription CLIs** (`claude`,
-`codex`), not metered API calls. It never sees your API keys and never talks to
-a model itself.
+Backtick drives agents you already pay for as **subscription CLIs**
+(`claude`, `codex`), never metered API calls. It never sees your keys and never
+talks to a model itself.
 
-## Status
+## Build and run
 
-First slice. Local execution works end to end: projects, chats, live agent
-output, diff review with hunk-level accept/reject, worktree management,
-settings, and scheduled automations. SSH execution and LAN device pairing are
-scaffolded at the interface level but not implemented yet.
-
-## Running it
-
-Requires [bun](https://bun.sh), Rust (via rustup), and `git`.
+Requires macOS 15+, Xcode 26, and [XcodeGen](https://github.com/yonaskolb/XcodeGen)
+(`brew install xcodegen`).
 
 ```bash
-bun install
-bun tauri dev
+xcodegen generate
+open Backtick.xcodeproj
 ```
 
-> On this machine Homebrew's `rustc` (1.86) shadows the rustup toolchain, which
-> is too old for Tauri's dependencies. The `tauri` and `rust:test` package
-> scripts prepend `~/.cargo/bin` to `PATH` so builds pick up rustup's toolchain.
-> Putting `~/.cargo/bin` before `/opt/homebrew/bin` in your shell profile makes
-> that workaround unnecessary.
-
-Checks:
+Or from the command line:
 
 ```bash
-bun run check      # tsc, vitest, cargo test
+xcodebuild -project Backtick.xcodeproj -scheme Backtick -configuration Debug -derivedDataPath build/dd build
+open build/dd/Build/Products/Debug/Backtick.app
 ```
 
-## Architecture
+Core tests (fast, no Xcode project needed):
 
-```
-src-tauri/          Rust core — "dumb plumbing", knows nothing about any agent
-  executor/         trait Executor: spawn a process, stream its lines, run a command
-  git/              worktree add/list/remove, unified diff parsing, patch building
-  sessions/         process lifecycle, line streaming, JSONL replay
-  automations/      RRULE scheduler, run bookkeeping
-  commands.rs       the Tauri command surface (also the future remote RPC surface)
-src/                React frontend
-  providers/        everything agent-specific lives here
-  features/         projects, sessions, output, diff, worktrees, automations, settings
+```bash
+cd Packages/BacktickCore && swift test
 ```
 
-**The split that matters:** the Rust side receives a `LaunchSpec` (command,
-args, cwd, stdin) and hands back raw output lines. All knowledge of what
-`claude` or `codex` print lives in a `ProviderDefinition` on the TypeScript
-side. Adding a provider is one file in `src/providers/` plus one line in
-`registry.ts` — no core changes.
+Opt-in test against the real `claude` CLI (needs a signed-in subscription):
 
-### Agents run headless, not in a terminal
+```bash
+cd Packages/BacktickCore && BACKTICK_E2E=1 swift test --filter RealAgent
+```
 
-Agents are launched in their JSON streaming modes
-(`claude -p --output-format stream-json`, `codex exec --json`) and the output is
-parsed into typed events. That is what lets the UI render agent work as a
-readable document — prose as markdown, tool calls as one collapsible line,
-edits as inline mini-diffs — instead of a scrolling wall of terminal output.
+### Demo mode
 
-The parsers are tested against JSONL recorded from real runs of both CLIs, in
-`src/providers/__fixtures__/`.
+`Backtick.app/Contents/MacOS/Backtick --demo` seeds throwaway repositories
+and runs a scripted stand-in agent that speaks Claude's real stream format and
+edits real files, so every screen can be exercised without spending tokens.
+Add `--snapshot <dir>` to capture every screen in both themes and quit.
 
-### Worktrees
+## Layout
 
-Each chat gets `git worktree add -b <prefix><slug> <path> <base-ref>`, with the
-path and branch prefix set by templates in Settings. Worktrees live outside the
-repository by default (`~/.backtick/worktrees/<repo>-<hash>/<slug>`).
+```
+project.yml                 XcodeGen spec (the .xcodeproj is generated)
+Backtick/                   SwiftUI app
+  App/                      AppModel (state + actions), scheduler, notifications, menus
+  Theme/                    Graphite (dark gray) and Paper (white) palettes, type scale
+  Components/               buttons, status, provider logos, surfaces
+  Features/                 sidebar, home, chat, diff, worktrees, automations, settings, palette
+  Demo/                     demo mode and screenshot capture
+Packages/BacktickCore/      everything that isn't UI, with its own tests
+  Providers/                claude + codex definitions and stream parsers
+  Process/                  Executor protocol + LocalExecutor (posix_spawn, login-shell PATH)
+  Git/                      worktrees, unified diff parsing, partial patches
+  Sessions/                 SessionEngine (spawn, stream, log, replay), Timeline, Workspace
+  Store/                    SQLite via GRDB
+  Automations/              RRULE evaluation
+legacy/tauri/               the earlier Tauri build, kept for reference
+```
 
-Nested repositories are detected when a project is added, excluded from diffs,
-and — because one nested repo makes a whole-tree `git add -N` fail and would
-otherwise hide every new file from review — untracked files are marked
-individually when that happens.
+**Adding an agent** is one type conforming to `ProviderDefinition` plus one
+line in `ProviderRegistry`. Nothing else names a provider.
 
-### Accepting changes
+**Accepting changes** applies the selected hunks to the project's main working
+tree with `git apply --3way`, unstaged. Rejecting reverse-applies them inside
+the agent's worktree.
 
-Review is per file and per hunk. Accepting builds a patch from the selected
-hunks and applies it to the project's main working tree with
-`git apply --3way`, unstaged, so you commit it however you like. Rejecting
-reverse-applies the same patch inside the worktree. Patches, rather than branch
-merges, because hunk-level granularity is the point and the same code path will
-work over SSH.
-
-### Automations
-
-Scheduled agent runs, modelled on superset.sh's automations: a title, a prompt,
-a project (or none), an RRULE schedule with a timezone, an agent, and a
-workspace mode. A run is `created` once its workspace exists; whether the
-agent's work succeeded is the session's own status.
-
-Two differences from a cloud orchestrator, by necessity: the scheduler runs
-inside the app, so closing the window hides Backtick to the tray instead of
-quitting, and a fire missed while the app was closed is skipped unless "catch up
-on launch" is on. In exchange, firing is exactly-once rather than at-least-once.
-
-## Non-goals
-
-No built-in editor, no cloud sync, no model training. Backtick orchestrates
-agents that already exist.
+**Automations** follow superset.sh's model. The scheduler runs inside the app,
+so closing the window keeps Backtick running; a fire missed while it was quit
+is skipped unless "catch up on launch" is on.

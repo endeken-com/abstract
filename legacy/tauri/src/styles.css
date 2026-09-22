@@ -1,0 +1,382 @@
+@import "tailwindcss";
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/jetbrains-mono";
+
+/*
+ * Backtick design tokens.
+ * Near-black layered surfaces, hairline borders with a faint top highlight,
+ * a soft radius scale, one accent reserved for "active" and "needs you",
+ * and short ease-out motion. Colour tokens keep their --bt-* names so every
+ * feature can style with them directly.
+ */
+@theme {
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+:root {
+  /* surfaces, darkest to lightest */
+  --bt-bg: #0b0b0d;
+  --bt-surface: #0f0f12;
+  --bt-surface-2: #16161a;
+  --bt-surface-3: #1d1d22;
+  --bt-surface-4: #25252b;
+  --bt-elevated: #18181c;
+
+  /* hairlines */
+  --bt-border: rgb(255 255 255 / 0.07);
+  --bt-border-strong: rgb(255 255 255 / 0.12);
+  --bt-highlight: rgb(255 255 255 / 0.05);
+
+  /* text */
+  --bt-text: #ececef;
+  --bt-text-dim: #a0a0ab;
+  --bt-text-faint: #6b6b76;
+  --bt-text-ghost: #4a4a53;
+
+  /* interaction */
+  --bt-hover: rgb(255 255 255 / 0.045);
+  --bt-active: rgb(255 255 255 / 0.075);
+
+  /* the single accent, plus derived tints */
+  --bt-accent: #ff7a45;
+  --bt-accent-fg: #1a0b04;
+  --bt-accent-soft: color-mix(in srgb, var(--bt-accent) 14%, transparent);
+  --bt-accent-line: color-mix(in srgb, var(--bt-accent) 45%, transparent);
+  --bt-ring: color-mix(in srgb, var(--bt-accent) 55%, transparent);
+
+  /* semantic */
+  --bt-added: #4ec27a;
+  --bt-removed: #f0645a;
+  --bt-warn: #e0a83a;
+  --bt-added-soft: color-mix(in srgb, var(--bt-added) 12%, transparent);
+  --bt-removed-soft: color-mix(in srgb, var(--bt-removed) 12%, transparent);
+
+  /* shape */
+  --bt-radius-xs: 5px;
+  --bt-radius-sm: 7px;
+  --bt-radius: 9px;
+  --bt-radius-lg: 12px;
+  --bt-radius-xl: 16px;
+
+  /* elevation */
+  --bt-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.35);
+  --bt-shadow: 0 1px 0 var(--bt-highlight) inset, 0 4px 16px rgb(0 0 0 / 0.35);
+  --bt-shadow-lg: 0 1px 0 var(--bt-highlight) inset, 0 24px 64px -12px rgb(0 0 0 / 0.7),
+    0 0 0 1px var(--bt-border-strong);
+
+  /* type & density */
+  --bt-ui-size: 13.5px;
+  --bt-code-size: 12.5px;
+  --bt-row-py: 0.4rem;
+  --bt-gap: 0.75rem;
+
+  color-scheme: dark;
+}
+
+:root[data-theme="black"] {
+  --bt-bg: #000000;
+  --bt-surface: #060607;
+  --bt-surface-2: #0e0e10;
+  --bt-surface-3: #151518;
+  --bt-surface-4: #1c1c20;
+  --bt-elevated: #101013;
+}
+
+:root[data-theme="gray"] {
+  --bt-bg: #141417;
+  --bt-surface: #19191d;
+  --bt-surface-2: #202025;
+  --bt-surface-3: #27272d;
+  --bt-surface-4: #303037;
+  --bt-elevated: #222227;
+}
+
+:root[data-density="compact"] {
+  --bt-row-py: 0.25rem;
+  --bt-gap: 0.5rem;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bt-bg);
+  color: var(--bt-text);
+  font-family: var(--font-sans);
+  font-size: var(--bt-ui-size);
+  line-height: 1.5;
+  font-feature-settings: "cv11", "ss01", "ss03";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Text the developer reads or copies stays selectable. */
+.bt-selectable,
+.bt-prose,
+pre,
+code,
+input,
+textarea {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--bt-accent) 35%, transparent);
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: default;
+  padding: 0;
+}
+
+:focus-visible {
+  outline: 2px solid var(--bt-ring);
+  outline-offset: 2px;
+}
+
+/* ---------- form controls ---------- */
+
+.bt-input,
+.bt-select,
+.bt-textarea {
+  font: inherit;
+  color: var(--bt-text);
+  background: var(--bt-surface-2);
+  border: 1px solid var(--bt-border);
+  border-radius: var(--bt-radius-sm);
+  padding: 0.45rem 0.65rem;
+  outline: none;
+  box-shadow: 0 1px 0 rgb(0 0 0 / 0.25) inset;
+  transition:
+    border-color 140ms var(--ease-out-soft),
+    box-shadow 140ms var(--ease-out-soft),
+    background 140ms var(--ease-out-soft);
+}
+
+.bt-input::placeholder,
+.bt-textarea::placeholder {
+  color: var(--bt-text-faint);
+}
+
+.bt-input:hover,
+.bt-select:hover,
+.bt-textarea:hover {
+  border-color: var(--bt-border-strong);
+}
+
+.bt-input:focus,
+.bt-select:focus,
+.bt-textarea:focus {
+  border-color: var(--bt-accent-line);
+  box-shadow: 0 0 0 3px var(--bt-accent-soft);
+  background: var(--bt-surface-3);
+}
+
+.bt-select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 2rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23a0a0ab' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 15 5 5 5-5'/%3E%3Cpath d='m7 9 5-5 5 5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.6rem center;
+}
+
+.bt-textarea {
+  resize: none;
+  line-height: 1.55;
+}
+
+/* Legacy unclassed inputs used by older feature code still look right. */
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([class*="bt-"]),
+select:not([class*="bt-"]),
+textarea:not([class*="bt-"]) {
+  font: inherit;
+  color: var(--bt-text);
+  background: var(--bt-surface-2);
+  border: 1px solid var(--bt-border);
+  border-radius: var(--bt-radius-sm);
+  padding: 0.4rem 0.6rem;
+  outline: none;
+}
+
+input[type="range"] {
+  accent-color: var(--bt-accent);
+}
+
+/* ---------- scrollbars ---------- */
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgb(255 255 255 / 0.08);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(255 255 255 / 0.16);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ---------- motion ---------- */
+
+@keyframes bt-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.82); }
+}
+
+@keyframes bt-ping {
+  0% { transform: scale(1); opacity: 0.55; }
+  80%, 100% { transform: scale(2.4); opacity: 0; }
+}
+
+@keyframes bt-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes bt-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes bt-caret {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.bt-shimmer-text {
+  background: linear-gradient(
+    90deg,
+    var(--bt-text-faint) 0%,
+    var(--bt-text-faint) 40%,
+    var(--bt-text) 50%,
+    var(--bt-text-faint) 60%,
+    var(--bt-text-faint) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: bt-shimmer 2.2s linear infinite;
+}
+
+.bt-skeleton {
+  background: linear-gradient(90deg, var(--bt-surface-2) 25%, var(--bt-surface-3) 50%, var(--bt-surface-2) 75%);
+  background-size: 200% 100%;
+  animation: bt-shimmer 1.6s ease-in-out infinite;
+  border-radius: var(--bt-radius-xs);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ---------- rendered agent prose ---------- */
+
+.bt-prose {
+  max-width: 72ch;
+  font-size: calc(var(--bt-ui-size) + 0.5px);
+  line-height: 1.7;
+  color: var(--bt-text);
+  letter-spacing: -0.003em;
+}
+.bt-prose > :first-child { margin-top: 0; }
+.bt-prose p { margin: 0 0 0.8em; }
+.bt-prose p:last-child { margin-bottom: 0; }
+.bt-prose strong { font-weight: 600; color: #fff; }
+.bt-prose ul, .bt-prose ol { margin: 0 0 0.8em; padding-left: 1.3em; }
+.bt-prose li { margin: 0.25em 0; }
+.bt-prose li::marker { color: var(--bt-text-faint); }
+.bt-prose h1, .bt-prose h2, .bt-prose h3 {
+  margin: 1.2em 0 0.45em;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.012em;
+}
+.bt-prose h1 { font-size: 1.3em; }
+.bt-prose h2 { font-size: 1.15em; }
+.bt-prose h3 { font-size: 1.03em; }
+.bt-prose a { color: var(--bt-accent); text-decoration: none; border-bottom: 1px solid var(--bt-accent-line); }
+.bt-prose code {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  background: var(--bt-surface-3);
+  border: 1px solid var(--bt-border);
+  border-radius: var(--bt-radius-xs);
+  padding: 0.08em 0.36em;
+}
+.bt-prose pre {
+  font-family: var(--font-mono);
+  font-size: var(--bt-code-size);
+  background: var(--bt-surface);
+  border: 1px solid var(--bt-border);
+  border-radius: var(--bt-radius);
+  padding: 0.8rem 0.95rem;
+  overflow-x: auto;
+  margin: 0 0 0.9em;
+  line-height: 1.6;
+}
+.bt-prose pre code { background: none; border: none; padding: 0; font-size: inherit; }
+.bt-prose blockquote {
+  border-left: 2px solid var(--bt-accent-line);
+  padding: 0.1em 0 0.1em 0.9em;
+  color: var(--bt-text-dim);
+  margin: 0 0 0.8em;
+}
+.bt-prose table {
+  border-collapse: separate;
+  border-spacing: 0;
+  margin: 0 0 0.9em;
+  border: 1px solid var(--bt-border);
+  border-radius: var(--bt-radius);
+  overflow: hidden;
+  font-size: 0.95em;
+}
+.bt-prose th, .bt-prose td { border-bottom: 1px solid var(--bt-border); padding: 0.4em 0.75em; text-align: left; }
+.bt-prose tr:last-child td { border-bottom: none; }
+.bt-prose th { background: var(--bt-surface-2); font-weight: 500; color: var(--bt-text-dim); }
+.bt-prose hr { border: none; border-top: 1px solid var(--bt-border); margin: 1.2em 0; }
+
+/* ---------- sonner toasts ---------- */
+
+[data-sonner-toaster] [data-sonner-toast] {
+  background: var(--bt-elevated) !important;
+  border: 1px solid var(--bt-border-strong) !important;
+  color: var(--bt-text) !important;
+  border-radius: var(--bt-radius-lg) !important;
+  box-shadow: var(--bt-shadow-lg) !important;
+  font-family: var(--font-sans) !important;
+  font-size: 13px !important;
+}
+[data-sonner-toaster] [data-sonner-toast] [data-description] {
+  color: var(--bt-text-dim) !important;
+}
