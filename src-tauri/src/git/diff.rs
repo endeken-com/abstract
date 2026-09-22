@@ -202,7 +202,24 @@ pub fn build_patch(file: &FileDiff, hunk_indexes: &[usize]) -> String {
 /// Everything the agent changed in its worktree, including untracked files.
 pub async fn collect(exec: &dyn Executor, worktree: &str, exclude: &[String]) -> Result<Vec<FileDiff>> {
     // `add -N` makes untracked files visible to `git diff` as additions.
-    let _ = git(exec, Some(worktree), &["add", "-N", "--", "."]).await;
+    // A nested repository makes a whole-tree `add` fail outright ("does not
+    // have a commit checked out"), which would silently drop every new file
+    // from the review, so excluded paths are skipped here too and anything
+    // still unhappy falls back to adding files one at a time.
+    let excludes: Vec<String> = exclude
+        .iter()
+        .filter(|e| !e.trim().is_empty())
+        .map(|e| format!(":(exclude){}", e.trim_end_matches('/')))
+        .collect();
+    let mut add_args: Vec<&str> = vec!["add", "-N", "--", "."];
+    for e in &excludes {
+        add_args.push(e);
+    }
+    let added = git(exec, Some(worktree), &add_args).await?;
+    if !added.ok() {
+        intent_to_add_individually(exec, worktree).await;
+    }
+
     let mut args: Vec<&str> = vec![
         "--no-pager",
         "diff",
@@ -213,16 +230,28 @@ pub async fn collect(exec: &dyn Executor, worktree: &str, exclude: &[String]) ->
         "--",
         ".",
     ];
-    let excludes: Vec<String> = exclude
-        .iter()
-        .filter(|e| !e.trim().is_empty())
-        .map(|e| format!(":(exclude){}", e.trim_end_matches('/')))
-        .collect();
     for e in &excludes {
         args.push(e);
     }
     let out = git_ok(exec, Some(worktree), &args).await?;
     Ok(parse_unified(&out))
+}
+
+/// Mark untracked files individually, skipping the ones git refuses (an
+/// unregistered nested repository is the usual culprit). One bad directory
+/// must not cost the user the rest of the review.
+async fn intent_to_add_individually(exec: &dyn Executor, worktree: &str) {
+    let Ok(status) = git(exec, Some(worktree), &["status", "--porcelain", "-uall"]).await else {
+        return;
+    };
+    for line in status.stdout.lines() {
+        let Some(path) = line.strip_prefix("?? ") else { continue };
+        let path = path.trim().trim_matches('"');
+        if path.is_empty() || path.ends_with('/') {
+            continue;
+        }
+        let _ = git(exec, Some(worktree), &["add", "-N", "--", path]).await;
+    }
 }
 
 pub async fn file_original(exec: &dyn Executor, worktree: &str, path: &str) -> Result<String> {

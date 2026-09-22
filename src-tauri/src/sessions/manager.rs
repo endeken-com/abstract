@@ -1,7 +1,6 @@
 use crate::db::Db;
 use crate::error::{Error, Result};
 use crate::executor::{Executor, LaunchSpec, ProcHandle, ProcLine};
-use crate::models::timestamp;
 use crate::paths;
 use crate::store;
 use parking_lot::Mutex;
@@ -33,6 +32,9 @@ pub enum SessionEvent {
 
 struct Running {
     handle: ProcHandle,
+    /// Shared with the reader task so replay and live streaming agree on
+    /// sequence numbers.
+    #[allow(dead_code)]
     seq: Arc<Mutex<u64>>,
 }
 
