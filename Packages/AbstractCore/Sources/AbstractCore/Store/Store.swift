@@ -459,6 +459,10 @@ public final class Store: Sendable {
                 try db.execute(sql: "ALTER TABLE projects ADD COLUMN \(column)")
             }
         }
+        migrator.registerMigration("v6-handoff") { db in
+            try db.execute(sql: "ALTER TABLE sessions ADD COLUMN handoff_from TEXT")
+            try db.execute(sql: "ALTER TABLE sessions ADD COLUMN provider_sessions TEXT NOT NULL DEFAULT '{}'")
+        }
         return migrator
     }
 }
@@ -546,7 +550,7 @@ private struct SessionRow: FetchableRecord, PersistableRecord {
     init(_ value: Session) { self.value = value }
 
     init(row: Row) throws {
-        value = Session(
+        var value = Session(
             id: try row.decode(forColumn: "id"),
             projectId: try row.decode(forColumn: "project_id"),
             name: try row.decode(forColumn: "name"),
@@ -565,6 +569,10 @@ private struct SessionRow: FetchableRecord, PersistableRecord {
             archivedAt: try row.decode(forColumn: "archived_at"),
             model: try row.decode(forColumn: "model"),
             effort: try row.decode(forColumn: "effort"))
+        value.handoffFrom = try row.decode(forColumn: "handoff_from")
+        let seats: String = try row.decode(forColumn: "provider_sessions")
+        value.providerSessions = (try? JSONDecoder().decode([String: ProviderSeat].self, from: Data(seats.utf8))) ?? [:]
+        self.value = value
     }
 
     func encode(to container: inout PersistenceContainer) throws {
@@ -572,6 +580,8 @@ private struct SessionRow: FetchableRecord, PersistableRecord {
         container["project_id"] = value.projectId
         container["name"] = value.name
         container["provider_id"] = value.providerId
+        container["handoff_from"] = value.handoffFrom
+        container["provider_sessions"] = String(decoding: try JSONEncoder().encode(value.providerSessions), as: UTF8.self)
         container["provider_session_id"] = value.providerSessionId
         container["worktree_path"] = value.worktreePath
         container["branch"] = value.branch

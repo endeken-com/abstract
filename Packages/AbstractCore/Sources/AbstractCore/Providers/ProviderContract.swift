@@ -122,6 +122,9 @@ public enum OutputStreamKind: String, Sendable, Codable {
     /// don't echo it, and a transcript rebuilt from the log (after a relaunch,
     /// or on another device) needs it.
     case user
+    /// A chat passing from one agent to another (`HandoffMarker`): the
+    /// replay switches parsers here.
+    case handoff
 }
 
 public struct UsageTotals: Sendable, Hashable, Codable {
@@ -185,6 +188,8 @@ public enum AgentEvent: Sendable, Hashable {
     case raw(line: String, stream: OutputStreamKind)
     /// What the agent predicts you'll say next, offered in the reply box.
     case promptSuggestion(String)
+    /// The chat passed from one agent to another, with what it was told.
+    case handoff(from: String, to: String, summary: String?, source: HandoffSource?)
 }
 
 public protocol OutputParser: AnyObject {

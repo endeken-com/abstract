@@ -32,6 +32,18 @@ struct SessionEngineTests {
         #expect(replay[1].line.line == "done")
     }
 
+    @Test func aHandoffIsLoggedBetweenMessagesAndCounted() throws {
+        let (engine, dir) = makeEngine()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        engine.recordInput(sessionId: "s1", text: "first")
+        let marker = HandoffMarker(phase: .handoff, from: "claude", to: "codex").line
+        #expect(engine.record(sessionId: "s1", marker) == 2)
+        engine.recordInput(sessionId: "s1", text: "second")
+        #expect(engine.replay(sessionId: "s1").map(\.line) == [OutputLine(stream: .user, line: "first"), marker,
+                                                                OutputLine(stream: .user, line: "second")])
+        #expect(engine.logLength(sessionId: "s1") == 3)
+    }
+
     @Test func streamsLogsAndReplaysInOrder() async throws {
         let (engine, dir) = makeEngine()
         defer { try? FileManager.default.removeItem(at: dir) }

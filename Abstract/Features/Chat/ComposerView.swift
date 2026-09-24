@@ -201,7 +201,7 @@ private struct AgentControls: View {
                 }
                 .pickerStyle(.inline)
                 Divider()
-                Text("Another agent starts fresh in this worktree.")
+                Text("Another agent gets a summary of this chat with your next message.")
             }
             let device = RemoteService.split(session.id)?.device
             ModelMenu(providerId: session.providerId, modelId: Binding(get: { session.model }, set: { new in
