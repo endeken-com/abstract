@@ -171,6 +171,35 @@ import AbstractCore
         #expect(try store.reconcileInterruptedSessions() == 0)
     }
 
+    @Test func reconcileLeavesSessionsWhoseAgentStillRunsElsewhere() throws {
+        try store.save(Self.session("cli", projectId: nil, status: .running))
+        try store.save(Self.session("app", projectId: nil, status: .running))
+        #expect(try store.reconcileInterruptedSessions(excluding: ["cli"]) == 1)
+        #expect(try store.session("cli")?.status == .running)
+        #expect(try store.session("app")?.status == .errored)
+    }
+
+    @Test func aNameIsFreeUnlessAnUnarchivedChatInTheSameProjectHasIt() throws {
+        try store.save(Self.project("p1"))
+        try store.save(Self.project("p2"))
+        var first = Self.session("s1", projectId: "p1")
+        first.name = "Nightly triage"
+        #expect(try store.insertUniquelyNamed(first))
+
+        var clash = Self.session("s2", projectId: "p1")
+        clash.name = "Nightly triage"
+        #expect(try store.insertUniquelyNamed(clash) == false)
+        #expect(try store.session("s2") == nil)
+
+        var elsewhere = Self.session("s3", projectId: "p2")
+        elsewhere.name = "Nightly triage"
+        #expect(try store.insertUniquelyNamed(elsewhere))
+
+        first.archivedAt = Self.at(10)
+        try store.save(first)
+        #expect(try store.insertUniquelyNamed(clash))
+    }
+
     // MARK: - Automations and runs
 
     @Test func automationRoundTripsEveryField() throws {

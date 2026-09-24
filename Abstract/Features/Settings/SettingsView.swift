@@ -262,6 +262,7 @@ private struct GeneralSettingsPane: View {
                 SettingsCaption("Closing the window keeps Abstract running in the background so automations fire on time. Quitting Abstract (⌘Q) stops them until you open it again.")
             }
 
+            CommandLineSection()
             UpdatesSection()
         }
         .settingsPane()
@@ -310,6 +311,70 @@ private struct UpdatesSection: View {
     private var lastChecked: String {
         guard let date = updater.lastUpdateCheckDate else { return "Not checked yet" }
         return "Last checked \(date.formatted(.relative(presentation: .named)))"
+    }
+}
+
+/// `abstract` on the PATH, for scripts and automations: a link to the copy
+/// inside the app, made as you or, when the folder is root's, as an administrator.
+private struct CommandLineSection: View {
+    @Environment(AppModel.self) private var model
+    @State private var status: CommandLineInstall.Status = .notInstalled
+    private let tool = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/abstract").path
+    private let link = CommandLineInstall.defaultLink
+
+    var body: some View {
+        Section {
+            LabeledContent {
+                switch status {
+                case .notInstalled: Button("Install") { change(install: true) }
+                case .installed: Button("Uninstall") { change(install: false) }
+                case .linkedElsewhere: Button("Relink") { change(install: true) }
+                case .blocked: EmptyView()
+                }
+            } label: {
+                Text("abstract command")
+                Text(detail)
+            }
+            .disabled(!available)
+        } header: {
+            Text("Command line")
+        } footer: {
+            SettingsCaption("Scripts and automations create and drive chats with abstract. Installing links \(link) to the copy inside Abstract, so it updates with the app. It may ask for your password.")
+        }
+        .onAppear(perform: refresh)
+    }
+
+    private var available: Bool { FileManager.default.isExecutableFile(atPath: tool) }
+
+    private var detail: String {
+        guard available else { return "Not part of this build." }
+        return switch status {
+        case .notInstalled: "Not installed."
+        case .installed: "Installed at \(link)."
+        case .linkedElsewhere(let other): "\(link) points to another copy, \(other)."
+        case .blocked: "Something else is at \(link), so Abstract leaves it alone."
+        }
+    }
+
+    private func refresh() { status = CommandLineInstall.status(link: link, tool: tool) }
+
+    private func change(install: Bool) {
+        defer { refresh() }
+        let done = install ? "The abstract command is installed" : "The abstract command is removed"
+        if install ? CommandLineInstall.install(link: link, tool: tool) : CommandLineInstall.uninstall(link: link) {
+            model.flash(done)
+            return
+        }
+        // The folder is root's: the system asks for an administrator's password.
+        let command = install ? CommandLineInstall.installCommand(link: link, tool: tool) : CommandLineInstall.uninstallCommand(link: link)
+        let quoted = command.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+        var error: NSDictionary?
+        NSAppleScript(source: "do shell script \"\(quoted)\" with administrator privileges")?.executeAndReturnError(&error)
+        guard let error else { model.flash(done); return }
+        // -128: cancelled at the password prompt.
+        if error[NSAppleScript.errorNumber] as? Int != -128 {
+            model.flash(error[NSAppleScript.errorMessage] as? String ?? "Couldn't change \(link).", isError: true)
+        }
     }
 }
 

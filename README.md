@@ -47,6 +47,24 @@ Releases are cut on purpose rather than on every merge; [AGENTS.md](AGENTS.md) e
 cutting and patching them. `scripts/package-dmg.sh` builds a DMG locally (a dev build,
 version 0.0.0, signed ad hoc).
 
+### Command line
+
+`abstract` creates and drives chats from scripts and automations, with the app open
+or closed; they show in Abstract like any other chat. It ships inside the app:
+Settings → General → Command line → Install links `/usr/local/bin/abstract` to it.
+
+```bash
+abstract session list --project <id|path|name> [--include-archived]
+abstract session create --project <p> --name <n> --branch <b> --agent claude --prompt-file <path|->
+abstract agent find --session <id>
+abstract agent send --session <id> --agent <agent id> --text-file <path|->
+abstract agent respawn --session <id> --agent claude --prompt-file <path|->
+```
+
+Every command prints one JSON value on stdout; a failure prints `{"code","message"}` and
+exits non-zero. A chat open in the app is locked to `abstract`, and a chat `abstract`
+drives is read-only in the app until its agent stops. See `CommandLineTool.swift`.
+
 ### Demo mode
 
 `Abstract.app/Contents/MacOS/Abstract --demo` seeds throwaway repositories

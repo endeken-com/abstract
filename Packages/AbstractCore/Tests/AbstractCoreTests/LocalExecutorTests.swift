@@ -151,6 +151,17 @@ private final class Recorder: Sendable {
         #expect(recorder.stdout == ["\u{FFFD}ok"])
     }
 
+    @Test(.timeLimit(.minutes(1)))
+    func anExitIsReportedWhileAGrandchildHoldsTheOutputOpen() async throws {
+        // The shell exits at once; the sleep it leaves behind keeps stdout open, so no EOF comes.
+        let (process, recorder) = try spawn("sh", ["-c", "echo before; sleep 30 &"])
+        defer { kill(-process.pid, SIGKILL) }
+        let start = ContinuousClock.now
+        #expect(try #require(await recorder.waitForExit(timeout: .seconds(15))) == 0)
+        #expect(ContinuousClock.now - start < .seconds(10), "only the grace, not the grandchild, holds the exit")
+        #expect(recorder.stdout == ["before"])
+    }
+
     @Test func spawnPassesEnvironment() async throws {
         let (_, recorder) = try spawn("sh", ["-c", "echo \"$ABSTRACT_TEST\""], env: ["ABSTRACT_TEST": "hello"])
         #expect(try #require(await recorder.waitForExit()) == 0)

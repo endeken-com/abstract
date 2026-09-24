@@ -108,11 +108,12 @@ public enum Git {
     }
 
     /// Create a worktree at `path` on a new `branch` from `baseRef`. When the
-    /// branch already exists (a restarted automation), attach to it instead.
+    /// branch already exists (a restarted automation), attach to it instead,
+    /// unless `attachExisting` is false.
     /// With `sparse` folders, only those (plus files at the root) are checked
     /// out, in cone mode; the setting is the worktree's own.
     public static func addWorktree(_ exec: any Executor, root: String, path: String, branch: String,
-                                   baseRef: String = "HEAD", sparse: [String] = []) async throws {
+                                   baseRef: String = "HEAD", sparse: [String] = [], attachExisting: Bool = true) async throws {
         let parent = (path as NSString).deletingLastPathComponent
         if !parent.isEmpty { try exec.createDirectory(parent) }
         let base = GitText.trimmed(baseRef).isEmpty ? "HEAD" : baseRef
@@ -121,6 +122,9 @@ public enum Git {
         var createdBranch = true
         let out = try await git(exec, cwd: root, ["worktree", "add"] + noCheckout + ["-b", branch, path, base])
         if !out.ok {
+            guard attachExisting else {
+                throw AbstractError.command(code: out.code, stderr: "git worktree add: \(GitText.trimmed(out.stderr))")
+            }
             createdBranch = false
             let retry = try await git(exec, cwd: root, ["worktree", "add"] + noCheckout + [path, branch])
             if !retry.ok {

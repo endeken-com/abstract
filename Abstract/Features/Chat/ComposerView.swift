@@ -10,10 +10,12 @@ struct ComposerView: View {
     @FocusState private var focused: Bool
 
     private var working: Bool { session.status == .running || session.status == .provisioning }
+    /// `abstract` drives the chat: nothing goes to its agent from here.
+    private var readOnly: Bool { model.isDrivenFromCLI(session.id) }
     private var suggestion: String? { working ? nil : model.feed(session.id).suggestion }
     /// A review or attachments can go on their own; otherwise there must be something typed.
     private var canSend: Bool {
-        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.comments(session.id).isEmpty || !attachments.isEmpty
+        !readOnly && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.comments(session.id).isEmpty || !attachments.isEmpty)
     }
     private var attachments: [PromptAttachment] {
         get { model.draftAttachments[session.id] ?? [] }
@@ -48,9 +50,10 @@ struct ComposerView: View {
                 HStack(alignment: .bottom, spacing: Space.sm) {
                     // The agent's guess at your next message shows as the placeholder;
                     // Tab takes it, then Return sends it as usual.
-                    TextField(text: $draft, prompt: Text(suggestion ?? "Reply to \(ProviderRegistry.name(session.providerId))…"), axis: .vertical) {
+                    TextField(text: $draft, prompt: Text(readOnly ? "Driven from the command line" : suggestion ?? "Reply to \(ProviderRegistry.name(session.providerId))…"), axis: .vertical) {
                         Text("Reply")
                     }
+                        .disabled(readOnly)
                         .textFieldStyle(.plain)
                         .font(BTFont.chat(13.5))
                         .onKeyPress(.tab) {
@@ -65,6 +68,7 @@ struct ComposerView: View {
                         .padding(.vertical, 7)
 
                     AttachmentButtons(repoRoot: repoRoot, sessionId: session.id, attachments: attachmentsBinding)
+                        .disabled(readOnly)
 
                     // No round send button: a return glyph says what Return does,
                     // and becomes Stop while the agent works.
@@ -101,7 +105,17 @@ struct ComposerView: View {
             .frame(maxWidth: Space.readingWidth + 2 * Space.lg)
 
             // What the agent runs with, each one a menu to change it.
-            AgentControls(session: session, attachments: attachmentsBinding)
+            Group {
+                if readOnly {
+                    Label("Read-only while its agent runs from the command line. Stop it to take over.", systemImage: "terminal")
+                        .font(.btChatCaption)
+                        .foregroundStyle(Color.btTextTertiary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                } else {
+                    AgentControls(session: session, attachments: attachmentsBinding)
+                }
+            }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, Space.lg - 6) // the menus' own padding lines their text up
                 .padding(.top, 4)

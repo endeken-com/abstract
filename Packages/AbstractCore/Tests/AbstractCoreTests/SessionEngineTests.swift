@@ -96,4 +96,26 @@ struct SessionEngineTests {
         }
         #expect(engine.replay(sessionId: "s3").map(\.line.line) == ["alpha", "beta"])
     }
+
+    @Test func aLogIsFollowedAWholeLineAtATime() throws {
+        let (engine, dir) = makeEngine()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        engine.recordInput(sessionId: "s4", text: "one")
+        engine.recordInput(sessionId: "s4", text: "two")
+        let first = engine.tail(sessionId: "s4", fromByte: 0, firstSeq: 1)
+        #expect(first.lines.map(\.seq) == [1, 2])
+        #expect(first.lines.map(\.line.line) == ["one", "two"])
+
+        // Half a line (still being written) waits for the rest.
+        let handle = try FileHandle(forWritingTo: dir.appendingPathComponent("s4.jsonl"))
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data(#"{"stream":"user","li"#.utf8))
+        #expect(engine.tail(sessionId: "s4", fromByte: first.end, firstSeq: 3).lines.isEmpty)
+        try handle.write(contentsOf: Data(#"ne":"three"}"#.utf8 + [0x0A]))
+        try handle.close()
+        let next = engine.tail(sessionId: "s4", fromByte: first.end, firstSeq: 3)
+        #expect(next.lines.map(\.seq) == [3])
+        #expect(next.lines.map(\.line.line) == ["three"])
+        #expect(engine.tail(sessionId: "s4", fromByte: next.end, firstSeq: 4).lines.isEmpty)
+    }
 }

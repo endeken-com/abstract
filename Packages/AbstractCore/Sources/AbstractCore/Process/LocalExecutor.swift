@@ -263,6 +263,9 @@ final class LocalProcess: RunningProcess, Sendable {
     /// How long output may keep flowing after exit before onExit fires anyway
     /// (a grandchild that inherited stdout must not keep the session open).
     private static let eofGrace: TimeInterval = 2
+    /// How much longer to wait, past the grace, for output the child wrote
+    /// before it exited but a busy machine hasn't read yet.
+    private static let unreadGrace: TimeInterval = 20
     private let killGrace: TimeInterval
     private let stdoutFD: Int32
     private let stderrFD: Int32
@@ -410,11 +413,29 @@ final class LocalProcess: RunningProcess, Sendable {
         }
         stdinQueue.async { [self] in closeStdinNow() }
         reportIfFinished()
-        queue.asyncAfter(deadline: .now() + Self.eofGrace) { [self] in forceFinishOutput() }
+        let giveUp = Date().addingTimeInterval(Self.eofGrace + Self.unreadGrace)
+        queue.asyncAfter(deadline: .now() + Self.eofGrace) { [self] in forceFinishOutput(giveUpAt: giveUp) }
+    }
+
+    /// Bytes waiting in a stream's pipe that nothing has read yet. Only asked
+    /// while that stream is open, so its descriptor is still this process's.
+    private func unread(_ kind: OutputStreamKind) -> Int32 {
+        let fd = kind == .stdout ? stdoutFD : stderrFD
+        guard fd >= 0, state.withLock({ s in s.withBuffer(kind) { $0.isOpen } }) else { return 0 }
+        var count: Int32 = 0
+        // FIONREAD (_IOR('f', 127, int)), which Swift doesn't import.
+        let fionread: UInt = 0x4004_667F
+        return withUnsafeMutablePointer(to: &count) { ioctl(fd, fionread, $0) } == 0 ? count : 0
     }
 
     /// On `queue`: stop waiting for EOF held up by a grandchild.
-    private func forceFinishOutput() {
+    private func forceFinishOutput(giveUpAt: Date) {
+        // Output the child left in the pipe is still on its way, not a
+        // grandchild's: wait for it (on a starved machine the reader lags).
+        if Date() < giveUpAt, unread(.stdout) > 0 || unread(.stderr) > 0 {
+            queue.asyncAfter(deadline: .now() + 0.1) { [self] in forceFinishOutput(giveUpAt: giveUpAt) }
+            return
+        }
         let (lines, channels) = state.withLock { s -> ([OutputLine], [DispatchIO]) in
             var lines: [OutputLine] = []
             for kind in [OutputStreamKind.stdout, .stderr] {
@@ -490,9 +511,9 @@ enum Spawner {
 
     /// Spawn in a new session (so also a new process group whose id is the
     /// child's pid), with signals reset to default and no inherited fds other
-    /// than 0, 1 and 2.
+    /// than 0, 1 and 2, and those in `inherit` (the child's fd: this process's).
     static func launch(executable: String, arguments: [String], environment: [String: String], cwd: String?,
-                       stdin: Stream, stdout: Stream, stderr: Stream) throws -> Child {
+                       stdin: Stream, stdout: Stream, stderr: Stream, inherit: [Int32: Int32] = [:]) throws -> Child {
         var parentEnds: [Int32] = []
         var childEnds: [Int32] = []
         func closeAll() { (parentEnds + childEnds).forEach { _ = close($0) } }
@@ -531,6 +552,11 @@ enum Spawner {
         } catch {
             closeAll()
             throw error
+        }
+        for (target, source) in inherit {
+            // dup2 onto itself would keep close-on-exec set.
+            if target == source { posix_spawn_file_actions_addinherit_np(&actions, source) }
+            else { posix_spawn_file_actions_adddup2(&actions, source, target) }
         }
         if let cwd { posix_spawn_file_actions_addchdir_np(&actions, cwd) }
 

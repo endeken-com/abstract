@@ -40,6 +40,14 @@ targets:
       - package: Textual
       - package: SwiftTerm
       - package: Sparkle
+      # `abstract`, the command line, inside the app. Not Contents/MacOS: on a
+      # case-insensitive disk it would be the app's own `Abstract`.
+      - target: AbstractCLI
+        embed: true
+        codeSign: false
+        copy:
+          destination: wrapper
+          subpath: Contents/Helpers
     info:
       path: Abstract/Resources/Info.plist
       properties:
@@ -79,6 +87,20 @@ targets:
         SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
         SWIFT_APPROACHABLE_CONCURRENCY: YES
         GENERATE_INFOPLIST_FILE: NO
+  AbstractCLI:
+    type: tool
+    platform: macOS
+    sources:
+      - path: Packages/AbstractCore/Sources/AbstractCLI
+    dependencies:
+      - package: AbstractCore
+    settings:
+      base:
+        PRODUCT_NAME: abstract
+        PRODUCT_BUNDLE_IDENTIFIER: sh.abstract.cli
+        ENABLE_HARDENED_RUNTIME: NO
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "-"
 schemes:
   Abstract:
     build:

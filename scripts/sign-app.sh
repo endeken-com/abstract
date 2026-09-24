@@ -1,6 +1,7 @@
 #!/bin/zsh
 # Re-signs a built Abstract.app for distribution: scripts/sign-app.sh <app> <identity> [keychain]
-# Signs inside out, as notarization requires: Sparkle's helpers, Sparkle, then the app, each
+# Signs inside out, as notarization requires: Sparkle's helpers, Sparkle, the `abstract`
+# command line, then the app, each
 # with the hardened runtime and a secure timestamp. Identity "-" signs ad hoc, for local checks,
 # and leaves the runtime off: its library validation refuses ad hoc frameworks.
 set -euo pipefail
@@ -18,5 +19,6 @@ rm -rf "$SPARKLE/XPCServices" "$SPARKLE/Versions/B/XPCServices"
 codesign "${FLAGS[@]}" "$SPARKLE/Versions/B/Autoupdate"
 codesign "${FLAGS[@]}" "$SPARKLE/Versions/B/Updater.app"
 codesign "${FLAGS[@]}" "$SPARKLE"
+codesign "${FLAGS[@]}" "$APP/Contents/Helpers/abstract"
 codesign "${FLAGS[@]}" --entitlements Abstract/Resources/Abstract.entitlements "$APP"
 codesign --verify --deep --strict "$APP"

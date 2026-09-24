@@ -163,12 +163,34 @@ public final class Store: Sendable {
         try writer.write { db in try SessionRow(session).save(db) }
     }
 
+    /// Adds a new chat unless an unarchived chat in its project already has
+    /// its name, checked in the same transaction so two callers racing for
+    /// one name can't both win. Returns false when the name is taken.
+    public func insertUniquelyNamed(_ session: Session) throws -> Bool {
+        try writer.write { db in
+            let taken = try Bool.fetchOne(
+                db, sql: "SELECT EXISTS (SELECT 1 FROM sessions WHERE project_id IS ? AND name = ? AND archived_at IS NULL)",
+                arguments: [session.projectId, session.name]) ?? false
+            if taken { return false }
+            try SessionRow(session).insert(db)
+            return true
+        }
+    }
+
     /// Also bumps `lastEventAt`.
     public func updateSessionStatus(_ id: String, _ status: SessionStatus, detail: String?) throws {
         try writer.write { db in
             try db.execute(
                 sql: "UPDATE sessions SET status = ?, status_detail = ?, last_event_at = ? WHERE id = ?",
                 arguments: [status.rawValue, detail, Date(), id])
+        }
+    }
+
+    /// Only the agent's own session id, so a write from another process never
+    /// undoes a rename or archive the app made meanwhile.
+    public func updateProviderSessionId(_ id: String, _ providerSessionId: String?) throws {
+        try writer.write { db in
+            try db.execute(sql: "UPDATE sessions SET provider_session_id = ? WHERE id = ?", arguments: [providerSessionId, id])
         }
     }
 
@@ -187,18 +209,21 @@ public final class Store: Sendable {
     /// Sessions that were mid-turn when the app last quit get marked errored with
     /// detail "Interrupted when Abstract quit"; idle ones had finished their turn,
     /// so they become finished. `lastEventAt` is left alone so the list keeps
-    /// its order. Returns how many sessions changed.
-    public func reconcileInterruptedSessions() throws -> Int {
+    /// its order. Returns how many sessions changed. Sessions in `excluding`
+    /// (their agent runs from `abstract`, not the app) are left as they are.
+    public func reconcileInterruptedSessions(excluding: Set<String> = []) throws -> Int {
         let active = SessionStatus.allCases.filter { $0.isActive && $0 != .idle }.map(\.rawValue)
         let placeholders = active.map { _ in "?" }.joined(separator: ", ")
+        let kept = excluding.sorted()
+        let keep = kept.isEmpty ? "" : " AND id NOT IN (\(kept.map { _ in "?" }.joined(separator: ", ")))"
         return try writer.write { db in
             try db.execute(
-                sql: "UPDATE sessions SET status = ?, status_detail = NULL WHERE status = ?",
-                arguments: [SessionStatus.finished.rawValue, SessionStatus.idle.rawValue])
+                sql: "UPDATE sessions SET status = ?, status_detail = NULL WHERE status = ?\(keep)",
+                arguments: StatementArguments([SessionStatus.finished.rawValue, SessionStatus.idle.rawValue] + kept))
             var changed = db.changesCount
             try db.execute(
-                sql: "UPDATE sessions SET status = ?, status_detail = ? WHERE status IN (\(placeholders))",
-                arguments: StatementArguments([SessionStatus.errored.rawValue, "Interrupted when Abstract quit"] + active))
+                sql: "UPDATE sessions SET status = ?, status_detail = ? WHERE status IN (\(placeholders))\(keep)",
+                arguments: StatementArguments([SessionStatus.errored.rawValue, "Interrupted when Abstract quit"] + active + kept))
             changed += db.changesCount
             return changed
         }
