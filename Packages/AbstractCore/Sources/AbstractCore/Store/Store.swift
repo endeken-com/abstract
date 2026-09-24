@@ -184,17 +184,23 @@ public final class Store: Sendable {
         }
     }
 
-    /// Sessions that were active when the app last quit get marked errored with
-    /// detail "Interrupted when Abstract quit". `lastEventAt` is left alone so
-    /// the list keeps its order. Returns how many sessions changed.
+    /// Sessions that were mid-turn when the app last quit get marked errored with
+    /// detail "Interrupted when Abstract quit"; idle ones had finished their turn,
+    /// so they become finished. `lastEventAt` is left alone so the list keeps
+    /// its order. Returns how many sessions changed.
     public func reconcileInterruptedSessions() throws -> Int {
-        let active = SessionStatus.allCases.filter(\.isActive).map(\.rawValue)
+        let active = SessionStatus.allCases.filter { $0.isActive && $0 != .idle }.map(\.rawValue)
         let placeholders = active.map { _ in "?" }.joined(separator: ", ")
         return try writer.write { db in
             try db.execute(
+                sql: "UPDATE sessions SET status = ?, status_detail = NULL WHERE status = ?",
+                arguments: [SessionStatus.finished.rawValue, SessionStatus.idle.rawValue])
+            var changed = db.changesCount
+            try db.execute(
                 sql: "UPDATE sessions SET status = ?, status_detail = ? WHERE status IN (\(placeholders))",
                 arguments: StatementArguments([SessionStatus.errored.rawValue, "Interrupted when Abstract quit"] + active))
-            return db.changesCount
+            changed += db.changesCount
+            return changed
         }
     }
 

@@ -133,7 +133,7 @@ import AbstractCore
         #expect(try store.sessions().map(\.id) == ["s2"])
     }
 
-    @Test func reconcileMarksOnlyActiveSessionsInterrupted() throws {
+    @Test func reconcileMarksMidTurnSessionsInterruptedAndIdleOnesFinished() throws {
         for status in SessionStatus.allCases {
             try store.save(Self.session(status.rawValue, projectId: nil, status: status, lastEventAt: Self.at(42)))
         }
@@ -141,7 +141,10 @@ import AbstractCore
         for status in SessionStatus.allCases {
             let session = try #require(try store.session(status.rawValue))
             #expect(session.lastEventAt == Self.at(42))
-            if status.isActive {
+            if status == .idle {
+                #expect(session.status == .finished)
+                #expect(session.statusDetail == nil)
+            } else if status.isActive {
                 #expect(session.status == .errored)
                 #expect(session.statusDetail == "Interrupted when Abstract quit")
             } else {
