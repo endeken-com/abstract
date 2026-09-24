@@ -4,17 +4,23 @@ import AbstractCore
 struct HomeView: View {
     @Environment(AppModel.self) private var model
 
+    private var hasAvailableProject: Bool {
+        !model.projects.isEmpty || model.remote.links.values.contains { link in
+            link.state == .online && link.snapshot?.projects.contains { $0.archivedAt == nil } == true
+        }
+    }
+
     var body: some View {
         ScrollView {
             VStack(spacing: 0) {
                 VStack(spacing: Space.md) {
                     BrandMark()
-                    Text(model.projects.isEmpty ? "Welcome to Abstract" : "What should we build?")
+                    Text(hasAvailableProject ? "What should we build?" : "Welcome to Abstract")
                         .font(BTFont.ui(26, .semibold))
                         .foregroundStyle(Color.btText)
-                    Text(model.projects.isEmpty
-                         ? "Add a git repository to begin. Agents work in their own worktrees, and you review every change before it lands."
-                         : "Each chat runs its own agent in an isolated worktree, so several can work at once without stepping on each other.")
+                    Text(hasAvailableProject
+                         ? "Each chat runs its own agent in an isolated worktree, so several can work at once without stepping on each other."
+                         : "Add a git repository to begin. Agents work in their own worktrees, and you review every change before it lands.")
                         .font(BTFont.ui(13.5))
                         .foregroundStyle(Color.btTextSecondary)
                         .multilineTextAlignment(.center)
@@ -24,12 +30,12 @@ struct HomeView: View {
                 .padding(.top, 72)
                 .padding(.bottom, Space.xxl)
 
-                if model.projects.isEmpty {
-                    Button { model.isAddingProject = true } label: { Label("Add a Project", systemImage: "folder.badge.plus") }
-                        .buttonStyle(.bt(.primary, size: .large))
-                } else {
+                if hasAvailableProject {
                     TaskLauncher(autofocus: true)
                         .frame(maxWidth: 680)
+                } else {
+                    Button { model.isAddingProject = true } label: { Label("Add a Project", systemImage: "folder.badge.plus") }
+                        .buttonStyle(.bt(.primary, size: .large))
                 }
 
                 let recent = Array(model.sessions.filter { $0.archivedAt == nil }.prefix(6))

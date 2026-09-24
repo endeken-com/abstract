@@ -248,7 +248,6 @@ private struct RemoteDeviceGroup: View {
     @Environment(AppModel.self) private var model
     let link: RemoteLink
     @AppStorage("sidebar.remoteCollapsed") private var collapsedRaw = ""
-    @State private var starting: Project?
 
     var body: some View {
         let snapshot = link.snapshot
@@ -264,7 +263,7 @@ private struct RemoteDeviceGroup: View {
                 let chats = snapshot.sessions.filter { $0.projectId == project.id }
                     .sorted { ($0.lastEventAt ?? $0.createdAt) > ($1.lastEventAt ?? $1.createdAt) }
                 RailGroup(title: project.name, trailing: AnyView(
-                    Button { starting = project } label: { Image(systemName: "plus") }
+                    Button { model.showNewChat(in: project.id) } label: { Image(systemName: "plus") }
                         .buttonStyle(RailIconStyle())
                         .help("New chat in \(project.name) on \(link.device.peer.name)")
                 )) {
@@ -277,9 +276,6 @@ private struct RemoteDeviceGroup: View {
             }
         }
         }
-        .sheet(item: $starting) { project in
-            RemoteNewChat(link: link, project: project) { starting = nil }
-        }
     }
 
     private var collapsed: Binding<Bool> {
@@ -289,69 +285,6 @@ private struct RemoteDeviceGroup: View {
             var ids = Set(collapsedRaw.split(separator: ",").map(String.init))
             if value { ids.insert(link.device.id) } else { ids.remove(link.device.id) }
             collapsedRaw = ids.sorted().joined(separator: ",")
-        }
-    }
-}
-
-/// A new chat in a project on another Mac.
-private struct RemoteNewChat: View {
-    @Environment(AppModel.self) private var model
-    let link: RemoteLink
-    let project: Project
-    let done: () -> Void
-    @State private var prompt = ""
-    @State private var providerId = ""
-    @State private var policy: PermissionPolicy = .ask
-    @State private var working = false
-    @State private var error: String?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Space.md) {
-            Text("New chat in \(project.name)").font(BTFont.ui(15, .semibold))
-            Text("Runs on \(link.device.peer.name), in a new worktree there.").font(.btCallout).foregroundStyle(Color.btTextSecondary)
-            BTTextEditor(text: $prompt, placeholder: "Describe the task", minHeight: 110)
-            HStack(spacing: Space.md) {
-                Picker("Agent", selection: $providerId) {
-                    ForEach(link.snapshot?.providers ?? [], id: \.self) { Text(ProviderRegistry.name($0)).tag($0) }
-                }
-                .fixedSize()
-                Picker("Mode", selection: $policy) {
-                    ForEach(PermissionPolicy.allCases, id: \.self) { Text($0.title).tag($0) }
-                }
-                .fixedSize()
-                Spacer()
-            }
-            if let error { Text(error).font(.btCallout).foregroundStyle(Color.btRemoved) }
-            HStack {
-                Spacer()
-                Button("Cancel", action: done).buttonStyle(.bt(.ghost))
-                Button(working ? "Starting…" : "Start", action: start).buttonStyle(.bt(.primary))
-                    .disabled(working || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || providerId.isEmpty)
-                    .keyboardShortcut(.defaultAction)
-            }
-        }
-        .padding(Space.xl)
-        .frame(width: 520)
-        .onAppear {
-            providerId = link.snapshot?.providers.contains(project.defaultProviderId) == true ? project.defaultProviderId : (link.snapshot?.providers.first ?? "")
-            policy = project.defaultPermissionPolicy
-        }
-    }
-
-    private func start() {
-        working = true
-        Task {
-            do {
-                let id = try await model.remote.startChat(on: link.device.id, projectId: project.id, providerId: providerId,
-                                                          prompt: prompt.trimmingCharacters(in: .whitespacesAndNewlines), policy: policy)
-                done()
-                // The chat shows once the other Mac lists it.
-                for _ in 0..<20 where model.session(id) == nil { try? await Task.sleep(for: .milliseconds(150)) }
-                model.open(id)
-            } catch {
-                self.error = error.localizedDescription
-                working = false
-            }
         }
     }
 }
