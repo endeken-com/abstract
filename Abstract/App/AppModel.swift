@@ -492,7 +492,7 @@ final class AppModel {
         let name = naming?.title ?? Workspace.title(fromPrompt: gist)
         let city = existing == nil ? WorktreeNaming.cityName(avoiding: Set(sessions
             .filter { $0.projectId == projectId }
-            .compactMap { $0.branch.flatMap { branch in branch.split(separator: "/").last.map(String.init) } })) : nil
+            .compactMap { $0.worktreePath.map { URL(fileURLWithPath: $0).lastPathComponent } })) : nil
         var session = Session(projectId: projectId, name: name, providerId: providerId, baseRef: existing == nil ? baseRef : nil,
                               status: .provisioning, permissionPolicy: policy, prompt: prompt, model: model, effort: effort)
         if let existing {
@@ -508,7 +508,7 @@ final class AppModel {
             let workspace = try await Workspace.provision(
                 executor: executor, project: project, name: name, baseRef: baseRef,
                 template: project.worktreeTemplate ?? worktreeTemplate, prefix: prefix,
-                slug: Project.nonBlank(project.namingInstructions) == nil ? city : (naming?.branch ?? city)
+                slug: naming?.branch, worktreeName: city
             )
             session.worktreePath = workspace.path
             session.branch = workspace.branch
