@@ -38,11 +38,6 @@ struct ProviderStatus: Hashable {
     var version: String?
 }
 
-struct ProviderOverride: Codable, Hashable {
-    var path: String?
-    var extraArgs: [String]?
-}
-
 /// The app's single source of truth. Views read it; actions go through it;
 /// it writes through to the store and drives the session engine.
 @Observable
@@ -107,10 +102,10 @@ final class AppModel {
     /// Attachments waiting in each chat's composer, kept while you look at other tabs.
     var draftAttachments: [String: [PromptAttachment]] = [:]
     /// Chats being restarted on purpose; their exit is not an error.
-    private var relaunching: Set<String> = []
+    private(set) var relaunching: Set<String> = []
     /// Chats passing to another agent: the outgoing one's summary turn is
     /// running, and its exit is not an ending.
-    private var handingOff: Set<String> = []
+    private(set) var handingOff: Set<String> = []
     /// Tool names to approve without asking, per chat.
     var autoContinueTools: [String: Set<String>] = [:]
     /// A file the Changes pane should select next time it loads, per chat.
@@ -138,7 +133,7 @@ final class AppModel {
     @ObservationIgnored var githubProjects: [String: Bool] = [:]
 
     // Navigation & transient UI
-    var destination: Destination = .home
+    var destination: Destination = .home { didSet { if destination != oldValue { syncLocks(); followCLIChat() } } }
     var collapsedProjects: Set<String> = []
     var showArchived = false
     var newChatProjectId: String?? = nil
@@ -183,6 +178,15 @@ final class AppModel {
     /// as its last edit left it, so the next edit's diff is its own.
     @ObservationIgnored private var enrichers: [String: any LineEnricher] = [:]
     @ObservationIgnored private var seenSeq: [String: Int] = [:]
+    /// Chats `abstract` drives, and what it says about them; see AppModel+SessionLocks.
+    var cliDriven: [String: SessionLockInfo] = [:]
+    /// The chats' locks the app holds: the chat showing, and those whose agent it runs.
+    @ObservationIgnored var heldLocks: [String: SessionLock] = [:]
+    /// The agent the app runs in each chat, as its lock publishes it.
+    @ObservationIgnored var appAgents: [String: AgentRecord] = [:]
+    /// Where following each chat's log got to: the byte after the last line read, and its number.
+    @ObservationIgnored private var tailPositions: [String: (byte: UInt64, seq: Int)] = [:]
+    @ObservationIgnored var storeObserver: Int32?
     @ObservationIgnored private var configuredModels: [String: (model: String?, read: Date)] = [:]
     @ObservationIgnored var scheduler: AutomationScheduler?
 
@@ -216,9 +220,12 @@ final class AppModel {
     // MARK: - Bootstrap
 
     func bootstrap() async {
-        _ = try? store.reconcileInterruptedSessions()
+        // A chat whose agent still runs from the command line wasn't interrupted.
+        refreshCLIDriven()
+        _ = try? store.reconcileInterruptedSessions(excluding: Set(cliDriven.keys))
         reload()
         Task { await listen() }
+        watchCommandLine()
         Task { await detectProviders() }
         Task { await refreshModels() }
         scheduler = AutomationScheduler(model: self)
@@ -378,7 +385,8 @@ final class AppModel {
     }
     func pendingPermissions(_ sessionId: String) -> [PendingPermission] { permissions[sessionId] ?? [] }
     func isAlive(_ sessionId: String) -> Bool {
-        sessionId.hasPrefix(RemoteService.mirrorPrefix) ? remote.isAlive(sessionId) : alive.contains(sessionId)
+        sessionId.hasPrefix(RemoteService.mirrorPrefix) ? remote.isAlive(sessionId)
+            : alive.contains(sessionId) || cliDriven[sessionId]?.agent != nil
     }
 
     var selectedSession: Session? {
@@ -463,7 +471,7 @@ final class AppModel {
     }
 
     func removeProject(_ id: String) {
-        for s in sessions where s.projectId == id { engine.stop(sessionId: s.id) }
+        for s in sessions where s.projectId == id { stop(s.id) }
         try? store.deleteProject(id)
         if case .session(let sid) = destination, session(sid)?.projectId == id { destination = .home }
         if destination == .projectSettings(id) { destination = .home }
@@ -540,7 +548,7 @@ final class AppModel {
         let key = Self.canonical(path)
         var names: [String] = []
         for var other in sessions where other.id != newSessionId && other.worktreePath.map(Self.canonical) == key {
-            engine.stop(sessionId: other.id)
+            stop(other.id)
             other.worktreePath = nil
             try? store.save(other)
             names.append(other.name)
@@ -574,12 +582,8 @@ final class AppModel {
         guard let provider = ProviderRegistry.provider(session.providerId) else {
             throw AbstractError.message("Unknown agent “\(session.providerId)”.")
         }
-        let override = providerOverrides[provider.id]
-        let ctx = LaunchContext(cwd: session.worktreePath ?? executor.homeDirectory, prompt: prompt,
-                                permissionPolicy: session.permissionPolicy, extraArgs: override?.extraArgs ?? [],
-                                binaryOverride: override?.path.flatMap { $0.isEmpty ? nil : $0 }, model: session.model,
-                                effort: session.effort, outputStyle: outputStyle, images: images,
-                                readableDirs: [AttachmentStore.root.path])
+        // Never beside an agent `abstract` runs: the app must hold the chat's lock.
+        try holdLock(session.id)
         var resumeId = resume ? session.providerSessionId : nil
         // A chat started under another Claude account resumes under the one
         // chosen now: its conversation is copied across first. When no
@@ -592,18 +596,20 @@ final class AppModel {
                 flash("The earlier conversation wasn't found, so the agent starts fresh in this worktree.")
             }
         }
-        var spec = resumeId.map { provider.buildResume(ctx, resumeId: $0) } ?? provider.buildLaunch(ctx)
+        let settings = LaunchSettings(providerOverrides: providerOverrides, outputStyle: outputStyle, claudeProfile: claudeProfile,
+                                      standardClaudeProfile: accounts.standardProfilePath, attachmentsDirectory: AttachmentStore.root.path)
+        var spec = AgentLaunch.spec(for: session, provider: provider, prompt: prompt, resumeId: resumeId, images: images,
+                                    settings: settings, home: executor.homeDirectory)
+        let cwd = spec.cwd
         if isDemo { spec = DemoAgent.wrap(spec, session: session, prompt: prompt, followUp: resume) }
-        if session.providerId == "claude" {
-            if let profile = claudeProfile, profile != accounts.standardProfilePath { spec.env["CLAUDE_CONFIG_DIR"] = profile }
-            sessionProfiles[session.id] = claudeProfile ?? accounts.standardProfilePath
-        }
+        if session.providerId == "claude" { sessionProfiles[session.id] = claudeProfile ?? accounts.standardProfilePath }
         let enricherKey = "\(session.id)/\(provider.id)"
-        if enrichers[enricherKey] == nil { enrichers[enricherKey] = provider.makeLineEnricher(executor: executor, cwd: ctx.cwd) }
+        if enrichers[enricherKey] == nil { enrichers[enricherKey] = provider.makeLineEnricher(executor: executor, cwd: cwd) }
         loadTimelineIfNeeded(session.id)
         stream(for: session.id)?.restart(providerId: provider.id)
         try engine.launch(sessionId: session.id, spec: spec, enricher: enrichers[enricherKey])
         alive.insert(session.id)
+        publishAgent(session.id, providerId: provider.id)
         turnStartedAt[session.id] = Date()
         setStatus(session.id, .running)
     }
@@ -611,6 +617,7 @@ final class AppModel {
     func sendFollowUp(_ sessionId: String, text: String, attachments: [PromptAttachment] = []) throws {
         // On another Mac, your message comes back with its output.
         if sessionId.hasPrefix(RemoteService.mirrorPrefix) { try remote.send(sessionId, text: text, attachments: attachments); return }
+        if isDrivenFromCLI(sessionId) { throw Self.drivenFromCLI }
         guard let session = session(sessionId), let provider = ProviderRegistry.provider(session.providerId) else { return }
         let message = PromptAttachments.message(text, attachments)
         let images = PromptAttachments.images(attachments)
@@ -647,7 +654,7 @@ final class AppModel {
             remote.onlineLink(for: sessionId)?.fire(.setAgent(sessionId: host, providerId: providerId, model: model, effort: effort))
             return
         }
-        guard var s = session(sessionId), (s.providerId, s.model, s.effort) != (providerId, model, effort) else { return }
+        guard !isDrivenFromCLI(sessionId), var s = session(sessionId), (s.providerId, s.model, s.effort) != (providerId, model, effort) else { return }
         if s.providerId != providerId {
             let logged = engine.logLength(sessionId: sessionId)
             // Only the agent the log last belongs to leaves a seat: one picked
@@ -676,7 +683,7 @@ final class AppModel {
             remote.onlineLink(for: sessionId)?.fire(.setPolicy(sessionId: host, policy: policy))
             return
         }
-        guard var s = session(sessionId), s.permissionPolicy != policy,
+        guard !isDrivenFromCLI(sessionId), var s = session(sessionId), s.permissionPolicy != policy,
               let provider = ProviderRegistry.provider(s.providerId) else { return }
         s.permissionPolicy = policy
         try? store.save(s)
@@ -861,6 +868,7 @@ final class AppModel {
 
     func stop(_ sessionId: String) {
         if sessionId.hasPrefix(RemoteService.mirrorPrefix) { remote.stop(sessionId); return }
+        if stopCLIAgent(sessionId) { return }
         engine.stop(sessionId: sessionId)
     }
 
@@ -891,6 +899,7 @@ final class AppModel {
 
     func resume(_ sessionId: String) {
         if let (_, host) = RemoteService.split(sessionId) { remote.onlineLink(for: sessionId)?.fire(.resume(sessionId: host)); return }
+        if isDrivenFromCLI(sessionId) { flash(Self.drivenFromCLI.localizedDescription, isError: true); return }
         guard let session = session(sessionId) else { return }
         if session.handoffFrom != nil {
             Task { await handOver(session, message: "Continue where you left off.", images: []) }
@@ -929,7 +938,7 @@ final class AppModel {
 
     func delete(_ sessionId: String, removeWorktree: Bool) async {
         guard let s = session(sessionId) else { return }
-        engine.stop(sessionId: sessionId)
+        stop(sessionId)
         if removeWorktree, let path = s.worktreePath, let project = project(s.projectId) {
             await runTeardownScript(project, worktree: path)
             do {
@@ -963,6 +972,7 @@ final class AppModel {
         case let .line(sessionId, seq, line):
             guard seq > (seenSeq[sessionId] ?? 0) else { return }
             seenSeq[sessionId] = seq
+            tailPositions[sessionId] = nil
             // Claude reports its account's limits as it goes; Usage shows the latest.
             if line.line.contains("rate_limit_event"), let quota = ClaudeAccounts.quota(fromLine: line.line) {
                 accounts.record(quota, profile: sessionProfiles[sessionId] ?? accounts.standardProfilePath)
@@ -979,6 +989,11 @@ final class AppModel {
             remote.forward(sessionId: sessionId, seq: seq, line: line)
         case let .exit(sessionId, code):
             alive.remove(sessionId)
+            // Only once its last status is written may `abstract` take the chat.
+            defer {
+                publishAgent(sessionId, providerId: nil)
+                syncLocks()
+            }
             // Stopped only to start again with a new model or agent: not an ending.
             if relaunching.remove(sessionId) != nil { permissions[sessionId] = nil; return }
             if handingOff.contains(sessionId) {
@@ -1081,13 +1096,30 @@ final class AppModel {
 
     func loadTimelineIfNeeded(_ sessionId: String) {
         guard !feed(sessionId).isLoaded, let s = session(sessionId) else { return }
-        let replay = engine.replay(sessionId: sessionId)
+        let (replay, end, lastSeq) = engine.tail(sessionId: sessionId, fromByte: 0, firstSeq: 1)
+        tailPositions[sessionId] = (end, lastSeq)
         let lines = replay.map(\.line)
         // Each agent's part of the log is read by its own parser.
         let stream = ChatStream(providerId: ChatStream.firstProvider(in: lines, current: s.handoffFrom ?? s.providerId))
         feed(sessionId).reset(stream.replay(lines))
         seenSeq[sessionId] = max(seenSeq[sessionId] ?? 0, replay.last?.seq ?? 0)
         streams[sessionId] = streams[sessionId] ?? stream
+    }
+
+    /// Reads what's new in a chat's log into its transcript: the log another
+    /// process (`abstract`'s agent) writes. What it did to the chat's status
+    /// is already in the store.
+    func tailLog(_ sessionId: String) {
+        guard feed(sessionId).isLoaded else { loadTimelineIfNeeded(sessionId); return }
+        // From where it last got to; the first time, from the top (once).
+        let from = tailPositions[sessionId] ?? (0, 0)
+        let (lines, end, lastSeq) = engine.tail(sessionId: sessionId, fromByte: from.byte, firstSeq: from.seq + 1)
+        tailPositions[sessionId] = (end, lastSeq)
+        for (seq, line) in lines where seq > (seenSeq[sessionId] ?? 0) {
+            seenSeq[sessionId] = seq
+            guard let stream = stream(for: sessionId) else { return }
+            for event in stream.feed(line) { append(event, to: sessionId) }
+        }
     }
 
     // MARK: - Feedback

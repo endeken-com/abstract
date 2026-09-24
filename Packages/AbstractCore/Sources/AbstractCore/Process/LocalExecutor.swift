@@ -490,9 +490,9 @@ enum Spawner {
 
     /// Spawn in a new session (so also a new process group whose id is the
     /// child's pid), with signals reset to default and no inherited fds other
-    /// than 0, 1 and 2.
+    /// than 0, 1 and 2, and those in `inherit` (the child's fd: this process's).
     static func launch(executable: String, arguments: [String], environment: [String: String], cwd: String?,
-                       stdin: Stream, stdout: Stream, stderr: Stream) throws -> Child {
+                       stdin: Stream, stdout: Stream, stderr: Stream, inherit: [Int32: Int32] = [:]) throws -> Child {
         var parentEnds: [Int32] = []
         var childEnds: [Int32] = []
         func closeAll() { (parentEnds + childEnds).forEach { _ = close($0) } }
@@ -531,6 +531,11 @@ enum Spawner {
         } catch {
             closeAll()
             throw error
+        }
+        for (target, source) in inherit {
+            // dup2 onto itself would keep close-on-exec set.
+            if target == source { posix_spawn_file_actions_addinherit_np(&actions, source) }
+            else { posix_spawn_file_actions_adddup2(&actions, source, target) }
         }
         if let cwd { posix_spawn_file_actions_addchdir_np(&actions, cwd) }
 

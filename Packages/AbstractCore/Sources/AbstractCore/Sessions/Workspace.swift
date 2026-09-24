@@ -1,5 +1,16 @@
 import Foundation
 
+public enum WorkspaceError: Error, LocalizedError, Equatable {
+    /// An exact branch was asked for and git already has it.
+    case branchExists(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .branchExists(let branch): "The branch “\(branch)” already exists."
+        }
+    }
+}
+
 /// Creates the isolated place a chat's agent works in.
 public enum Workspace {
     public struct Provisioned: Sendable {
@@ -12,6 +23,10 @@ public enum Workspace {
     /// the branch and may hold a type folder (`fix/login-button`). When given,
     /// `worktreeName` independently supplies the folder's `{slug}` token.
     /// The project's sparse-checkout folders apply.
+    ///
+    /// `exactBranch` is created exactly as given, with no prefix and never
+    /// suffixed: only the folder moves aside. It must not exist yet
+    /// (`WorkspaceError.branchExists`).
     public static func provision(
         executor: any Executor,
         project: Project,
@@ -20,7 +35,8 @@ public enum Workspace {
         template: String,
         prefix: String,
         slug: String? = nil,
-        worktreeName: String? = nil
+        worktreeName: String? = nil,
+        exactBranch: String? = nil
     ) async throws -> Provisioned {
         let repo = URL(fileURLWithPath: project.rootPath).lastPathComponent
         let hash = WorktreeNaming.shortHash(project.rootPath)
@@ -29,18 +45,29 @@ public enum Workspace {
             ?? baseSlug.replacingOccurrences(of: "/", with: "-")
         let base = (baseRef?.isEmpty == false ? baseRef : nil) ?? project.defaultBaseRef
 
+        if let exactBranch, await Git.branchExists(executor, root: project.rootPath, branch: "refs/heads/\(exactBranch)") {
+            throw WorkspaceError.branchExists(exactBranch)
+        }
         for attempt in 0..<50 {
             let branchSlug = attempt == 0 ? baseSlug : "\(baseSlug)-\(attempt)"
             let folderSlug = attempt == 0 ? baseFolderSlug : "\(baseFolderSlug)-\(attempt)"
-            let branch = "\(prefix)\(branchSlug)"
+            let branch = exactBranch ?? "\(prefix)\(branchSlug)"
             let path = WorktreeNaming.render(
                 template: template, home: executor.homeDirectory, repo: repo, hash: hash,
-                slug: folderSlug, branch: branch, prefix: prefix
+                slug: folderSlug, branch: branch, prefix: exactBranch == nil ? prefix : ""
             )
             if executor.fileExists(path) { continue }
-            if await Git.branchExists(executor, root: project.rootPath, branch: branch) { continue }
-            try await Git.addWorktree(executor, root: project.rootPath, path: path, branch: branch, baseRef: base,
-                                      sparse: project.sparseCheckout)
+            if exactBranch == nil, await Git.branchExists(executor, root: project.rootPath, branch: branch) { continue }
+            do {
+                try await Git.addWorktree(executor, root: project.rootPath, path: path, branch: branch, baseRef: base,
+                                          sparse: project.sparseCheckout, attachExisting: exactBranch == nil)
+            } catch where exactBranch != nil {
+                // Someone else made the branch since the check above.
+                if await Git.branchExists(executor, root: project.rootPath, branch: "refs/heads/\(branch)") {
+                    throw WorkspaceError.branchExists(branch)
+                }
+                throw error
+            }
             return Provisioned(path: path, branch: branch)
         }
         throw AbstractError.message("Could not find a free worktree path or branch name for “\(name)”.")

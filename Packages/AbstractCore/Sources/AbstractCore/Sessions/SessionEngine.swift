@@ -137,6 +137,26 @@ public final class SessionEngine: Sendable {
         return out
     }
 
+    /// The log's whole lines from byte `offset` on, numbered from `firstSeq`
+    /// (a line that doesn't decode keeps its number), and the byte after the
+    /// last of them and its number. For following a log another process
+    /// writes, a bit at a time.
+    public func tail(sessionId: String, fromByte offset: UInt64,
+                     firstSeq: Int) -> (lines: [(seq: Int, line: OutputLine)], end: UInt64, lastSeq: Int) {
+        guard let handle = try? FileHandle(forReadingFrom: logFile(sessionId)) else { return ([], offset, firstSeq - 1) }
+        defer { try? handle.close() }
+        guard (try? handle.seek(toOffset: offset)) != nil, let data = try? handle.readToEnd(),
+              let last = data.lastIndex(of: 0x0A) else { return ([], offset, firstSeq - 1) }
+        let decoder = JSONDecoder()
+        var out: [(Int, OutputLine)] = []
+        var n = firstSeq - 1
+        for raw in data[data.startIndex...last].split(separator: 0x0A, omittingEmptySubsequences: true) {
+            n += 1
+            if let line = try? decoder.decode(OutputLine.self, from: Data(raw)) { out.append((n, line)) }
+        }
+        return (out, offset + UInt64(data.distance(from: data.startIndex, to: last) + 1), n)
+    }
+
     public func deleteLog(sessionId: String) {
         try? FileManager.default.removeItem(at: logFile(sessionId))
     }
