@@ -257,8 +257,11 @@ struct GitActionsButton: View {
     }
 
     private func glyph(_ action: GitAction) -> some View {
-        Image(nsImage: icon(action)).renderingMode(.template).resizable()
-            .frame(width: 13, height: 13).foregroundStyle(Color.btTextSecondary)
+        let tint = (action == .createPR || action == .viewPR)
+            ? model.pullRequests[session.id]?.tint ?? Color.btTextSecondary
+            : Color.btTextSecondary
+        return Image(nsImage: icon(action)).renderingMode(.template).resizable()
+            .frame(width: 13, height: 13).foregroundStyle(tint)
     }
 
     // MARK: Running
