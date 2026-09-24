@@ -48,6 +48,19 @@ import AbstractCore
         #expect(!spec.keepStdinOpen)
     }
 
+    /// `codex exec resume` rejects `-C` and `-s` (codex-cli 0.153.4), so a
+    /// follow-up relies on the process cwd and sets the sandbox as config.
+    @Test func resumeOmitsFlagsThatOnlyExecAccepts() {
+        let spec = provider.buildResume(ctx, resumeId: "thread-1")
+        #expect(!spec.args.contains("-C"))
+        #expect(!spec.args.contains("-s"))
+        #expect(spec.cwd == "/tmp/work")
+        #expect(spec.args == ["exec", "resume", "thread-1", "--json", "--skip-git-repo-check",
+                              "-c", "sandbox_mode=\"workspace-write\"", "make hi.txt"])
+        var bypass = ctx; bypass.permissionPolicy = .bypass
+        #expect(provider.buildResume(bypass, resumeId: "thread-1").args.contains("sandbox_mode=\"danger-full-access\""))
+    }
+
     @Test func binaryOverrideReplacesTheCommand() {
         var c = ctx; c.binaryOverride = "/opt/bin/codex"
         #expect(provider.buildLaunch(c).command == "/opt/bin/codex")
@@ -176,7 +189,7 @@ import AbstractCore
             #"{"type":"item.completed","item":{"id":"p","type":"file_change","status":"completed","changes":[{"path":"a.txt","diff":"--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new\n"}]}}"#,
         ])
         let edit = EditPreview(filePath: "a.txt", additions: 1, deletions: 1,
-                               lines: [.init(origin: .removed, content: "old"), .init(origin: .added, content: "new")])
+                               lines: [.init(origin: .removed, content: "old", oldLine: 1), .init(origin: .added, content: "new", newLine: 1)])
         #expect(events.count == 2)
         if case let .toolUse(id, name, _, e) = events.first {
             #expect(id == "p"); #expect(name == "ApplyPatch"); #expect(e == edit)
@@ -184,6 +197,23 @@ import AbstractCore
             Issue.record("expected a toolUse, got \(String(describing: events.first))")
         }
         #expect(events.last == .toolResult(toolUseId: "p", output: "", isError: false, edit: edit))
+    }
+
+    /// codex-cli 0.153.4 sends paths only, and batches a patch's files into
+    /// one item; each file gets its own row, with the path where rows read it.
+    @Test func fileChangeBecomesOneCallPerFile() {
+        let events = Self.feed([
+            #"{"type":"item.started","item":{"id":"i","type":"file_change","changes":[{"path":"/w/a.swift","kind":"update"},{"path":"/w/b.swift","kind":"add"}],"status":"in_progress"}}"#,
+            #"{"type":"item.completed","item":{"id":"i","type":"file_change","changes":[{"path":"/w/a.swift","kind":"update"},{"path":"/w/b.swift","kind":"add"}],"status":"completed"}}"#,
+        ])
+        let a: JSONValue = .object(["type": .string("file_change"), "file_path": .string("/w/a.swift"), "kind": .string("update"), "status": .string("in_progress")])
+        let b: JSONValue = .object(["type": .string("file_change"), "file_path": .string("/w/b.swift"), "kind": .string("add"), "status": .string("in_progress")])
+        #expect(events == [
+            .toolUse(id: "i", name: "ApplyPatch", input: a, edit: nil),
+            .toolUse(id: "i#1", name: "Write", input: b, edit: nil),
+            .toolResult(toolUseId: "i", output: "", isError: false, edit: nil),
+            .toolResult(toolUseId: "i#1", output: "", isError: false, edit: nil),
+        ])
     }
 
     @Test func streamingAgentMessageIsPartialUntilCompleted() {

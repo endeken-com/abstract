@@ -148,7 +148,7 @@ struct GitActionsButton: View {
             item(model.pullRequests[session.id] == nil ? .createPR : .viewPR)
             Divider()
             Button { model.requestArchive = session.id } label: {
-                Label("Archive Chat", systemImage: "archivebox")
+                Label { Text("Archive Chat") } icon: { Image(nsImage: Octicon.archive) }
             }
             .keyboardShortcut(.delete, modifiers: [.command, .shift])
         }
@@ -165,14 +165,9 @@ struct GitActionsButton: View {
         .disabled(why != nil)
     }
 
-    /// Menus draw images, not views: the pull-request glyph goes in as a template image.
-    @ViewBuilder
+    /// Menus draw images, not views: every icon goes in as a template image.
     private func menuIcon(_ action: GitAction) -> some View {
-        if action == .createPR || action == .viewPR, let image = PullRequestGlyph.image(prKind) {
-            Image(nsImage: image)
-        } else {
-            Image(systemName: symbol(action))
-        }
+        Image(nsImage: icon(action))
     }
 
     /// Open, draft, merged or closed: the chat's pull request as it stands.
@@ -248,26 +243,25 @@ struct GitActionsButton: View {
         }
     }
 
-    private func symbol(_ action: GitAction) -> String {
+    private func icon(_ action: GitAction) -> NSImage {
         switch action {
-        case .commit: "circle.dotted"
-        case .pull: "arrow.down.to.line"
-        case .push: "arrow.up.to.line"
-        case .pullAndPush: "arrow.up.arrow.down"
-        case .updateFromBase: "arrow.triangle.2.circlepath"
-        case .mergeLocally: "arrow.triangle.merge"
-        case .createPR, .viewPR: "arrow.triangle.pull"
-        case .archive: "archivebox"
+        case .commit: Octicon.gitCommit
+        case .pull: Octicon.arrowDown
+        case .push: Octicon.arrowUp
+        case .pullAndPush: Octicon.arrowSwitch
+        case .updateFromBase: Octicon.sync
+        case .mergeLocally: Octicon.gitMerge
+        case .createPR, .viewPR: PullRequestGlyph.image(prKind)
+        case .archive: Octicon.archive
         }
     }
 
-    @ViewBuilder
     private func glyph(_ action: GitAction) -> some View {
-        switch action {
-        case .commit: CommitGlyph().frame(width: 16, height: 10).foregroundStyle(Color.btTextSecondary)
-        case .createPR, .viewPR: PullRequestGlyph(kind: prKind).frame(width: 13, height: 13).foregroundStyle(Color.btTextSecondary)
-        default: Image(systemName: symbol(action)).font(.system(size: 11)).foregroundStyle(Color.btTextSecondary)
-        }
+        let tint = (action == .createPR || action == .viewPR)
+            ? model.pullRequests[session.id]?.tint ?? Color.btTextSecondary
+            : Color.btTextSecondary
+        return Image(nsImage: icon(action)).renderingMode(.template).resizable()
+            .frame(width: 13, height: 13).foregroundStyle(tint)
     }
 
     // MARK: Running
@@ -331,33 +325,5 @@ struct GitActionsButton: View {
             }
             await refresh()
         }
-    }
-}
-
-/// Paseo's commit glyph: a ring on a line.
-private struct CommitGlyph: View {
-    var body: some View {
-        Canvas { context, size in
-            let mid = size.height / 2
-            let r = min(size.height, size.width) * 0.32
-            var line = Path()
-            line.move(to: CGPoint(x: 0, y: mid)); line.addLine(to: CGPoint(x: size.width / 2 - r, y: mid))
-            line.move(to: CGPoint(x: size.width / 2 + r, y: mid)); line.addLine(to: CGPoint(x: size.width, y: mid))
-            context.stroke(line, with: .foreground, lineWidth: 1.3)
-            context.stroke(Path(ellipseIn: CGRect(x: size.width / 2 - r, y: mid - r, width: r * 2, height: r * 2)),
-                           with: .foreground, lineWidth: 1.3)
-        }
-    }
-}
-
-extension PullRequestGlyph {
-    /// The glyph as a template image, for menu items.
-    @MainActor
-    static func image(_ kind: Kind, size: CGFloat = 15) -> NSImage? {
-        let renderer = ImageRenderer(content: PullRequestGlyph(kind: kind).frame(width: size, height: size).foregroundStyle(.black))
-        renderer.scale = NSScreen.main?.backingScaleFactor ?? 2
-        guard let image = renderer.nsImage else { return nil }
-        image.isTemplate = true
-        return image
     }
 }

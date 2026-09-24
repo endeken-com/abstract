@@ -76,7 +76,7 @@ struct TaskLauncher: View {
                         Picker("Agent", selection: providerBinding) {
                             ForEach(deviceProviders, id: \.id) { p in
                                 Label {
-                                    Text(p.name + (model.providerStatus[p.id]?.available == false ? " — not installed" : ""))
+                                    Text(p.name + (device == nil && model.providerStatus[p.id]?.available == false ? " — not installed" : ""))
                                 } icon: {
                                     if let icon = ProviderRegistry.menuImage(p.id) { Image(nsImage: icon) }
                                 }
@@ -143,7 +143,10 @@ struct TaskLauncher: View {
         .modifier(OptionalFieldChrome(active: !embedded, focused: focused))
         .attachmentInput($attachments, focused: focused)
         .onAppear {
-            let initial = initialProjectId ?? model.selectedSession?.projectId ?? model.projects.first?.id
+            let firstRemoteProject = onlineDevices.compactMap { device in
+                model.remote.links[device.id]?.snapshot?.projects.first { $0.archivedAt == nil }?.id
+            }.first
+            let initial = initialProjectId ?? model.selectedSession?.projectId ?? model.projects.first?.id ?? firstRemoteProject
             // A project on a paired Mac starts its chat there.
             device = initial.flatMap { id in model.projects.contains { $0.id == id } ? nil : model.remote.device(ofProject: id) }
             select(initial)
@@ -189,6 +192,8 @@ struct TaskLauncher: View {
             guard new != device else { return }
             device = new
             worktree = nil
+            modelId = nil
+            effort = nil
             select(deviceProjects.first?.id)
         })
     }
@@ -205,14 +210,18 @@ struct TaskLauncher: View {
     }
 
     private var canStart: Bool {
-        !starting && projectId != nil && (!prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty)
+        !starting && projectId != nil && (device == nil || deviceProviders.contains { $0.id == providerId })
+            && (!prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty)
     }
 
     private func select(_ id: String?) {
+        if id != projectId { worktree = nil }
         projectId = id
         guard let p = model.project(id) else { return }
-        if p.defaultProviderId != providerId { modelId = nil; effort = nil }
-        providerId = p.defaultProviderId
+        let selectedProvider = device == nil ? p.defaultProviderId
+            : (deviceProviders.first { $0.id == p.defaultProviderId } ?? deviceProviders.first)?.id ?? p.defaultProviderId
+        if selectedProvider != providerId { modelId = nil; effort = nil }
+        providerId = selectedProvider
         baseRef = p.defaultBaseRef
         policy = p.defaultPermissionPolicy
     }
@@ -485,7 +494,9 @@ struct NewChatSheet: View {
                     .keyboardShortcut(.cancelAction)
                     .help("Close")
             }
-            if model.projects.isEmpty {
+            if model.projects.isEmpty && model.project(initialProjectId) == nil && !model.remote.links.values.contains(where: {
+                $0.state == .online && ($0.snapshot?.projects.contains { $0.archivedAt == nil } ?? false)
+            }) {
                 VStack(alignment: .leading, spacing: Space.md) {
                     Text("Chats live inside a project. Add a git repository first.").font(.btBody).foregroundStyle(Color.btTextSecondary)
                     Button("Add Project…") { dismiss(); model.isAddingProject = true }.buttonStyle(.btPrimary)

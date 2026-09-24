@@ -248,6 +248,7 @@ private struct AttachPicker: View {
         var reference: String
         var title: String
         var state: String
+        var stateTint: Color? = nil
         var attachment: PromptAttachment
     }
 
@@ -338,7 +339,8 @@ private struct AttachPicker: View {
                 if attached.contains(item.attachment.url ?? "") {
                     Image(systemName: "checkmark").font(.system(size: 10, weight: .semibold)).foregroundStyle(Color.btTextSecondary)
                 } else {
-                    Text(item.state).font(BTFont.ui(11)).foregroundStyle(Color.btTextTertiary).lineLimit(1)
+                    Text(item.state).font(BTFont.ui(11))
+                        .foregroundStyle(item.stateTint ?? Color.btTextTertiary).lineLimit(1)
                 }
             }
             .padding(.horizontal, 8)
@@ -371,7 +373,9 @@ private struct AttachPicker: View {
                     : try await GitHub.searchIssues(executor, repo: repoRoot, query: query)
                 items = found.map {
                     Item(id: $0.id, reference: "#\($0.number)", title: $0.title,
-                         state: $0.isDraft ? "Draft" : $0.state.capitalized, attachment: $0.attachment)
+                         state: $0.isDraft ? "Draft" : $0.state.capitalized,
+                         stateTint: source == .pullRequest ? prStateTint($0.state, isDraft: $0.isDraft) : nil,
+                         attachment: $0.attachment)
                 }
             }
             problem = nil
@@ -379,6 +383,16 @@ private struct AttachPicker: View {
         } catch {
             items = []
             problem = error.localizedDescription
+        }
+    }
+
+    private func prStateTint(_ state: String, isDraft: Bool) -> Color {
+        if isDraft { return .btPullRequestDraftInk }
+        switch state.uppercased() {
+        case "OPEN": return .btPullRequestOpenInk
+        case "MERGED": return .btPullRequestMergedInk
+        case "CLOSED": return .btPullRequestClosedInk
+        default: return .btTextTertiary
         }
     }
 }

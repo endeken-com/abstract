@@ -129,4 +129,74 @@ struct RealAgentTests {
         #expect(asked, "the question came to Abstract, even with full autonomy")
         #expect(reply.contains("BLUE"), "the agent heard the answer")
     }
+
+    /// A command the agent leaves running in the background is a task
+    /// Abstract lists, with its output file, and can stop.
+    @Test(.timeLimit(.minutes(3)))
+    func claudeRunsABackgroundCommandThatAbstractCanStop() async throws {
+        let (engine, provider, dir) = try launch("background", prompt: "Run the Bash command `sleep 120; echo late` with run_in_background set to true. "
+            + "Then reply with only the word STARTED.")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let parser = provider.makeParser()
+        var timeline = Timeline()
+        var stopSent = false
+        var ended: AgentTask?
+        for await event in engine.events {
+            guard case let .line(_, _, line) = event else { break }
+            timeline.append(contentsOf: parser.feed(line.line, stream: line.stream))
+            if !stopSent, let task = timeline.tasks.first(where: { $0.isBackgrounded && $0.kind == .shell }) {
+                stopSent = true
+                try engine.write(sessionId: "background", provider.buildStopTask(task.id, requestId: "stop-1")!)
+            }
+            if let task = timeline.tasks.first(where: { $0.kind == .shell && $0.status != .running }) { ended = task; break }
+        }
+        engine.stop(sessionId: "background")
+        #expect(stopSent, "the command became a background task")
+        #expect(ended?.status == .stopped, "stop_task ended it: \(String(describing: ended))")
+        #expect(ended?.outputFile?.hasSuffix(".output") == true)
+    }
+
+    /// Ctrl+B over the control channel: a command working in the foreground
+    /// moves to the background, and its call returns while it still runs.
+    @Test(.timeLimit(.minutes(3)))
+    func claudeMovesAForegroundCommandToTheBackground() async throws {
+        // Not `sleep`: the CLI refuses a foreground sleep and says to use run_in_background.
+        let (engine, provider, dir) = try launch("foreground", prompt: "Run the Bash command `ping -c 90 127.0.0.1 > /dev/null; echo done` in the foreground "
+            + "(do not set run_in_background). Then reply with only the word FINISHED.")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let parser = provider.makeParser()
+        var timeline = Timeline()
+        var moved: AgentTask?
+        var returnedWhileRunning = false
+        loop: for await event in engine.events {
+            guard case let .line(_, _, line) = event else { break }
+            for e in parser.feed(line.line, stream: line.stream) {
+                timeline.append(e)
+                if case let .toolResult(toolUseId, _, _, _) = e, let moved, toolUseId == moved.toolUseId {
+                    returnedWhileRunning = timeline.tasks.first { $0.id == moved.id }?.status == .running
+                    break loop
+                }
+            }
+            // It becomes a task after several seconds at work.
+            if moved == nil, let task = timeline.tasks.first(where: { $0.kind == .shell && !$0.isBackgrounded && !$0.ownedBySubagent }) {
+                moved = task
+                try engine.write(sessionId: "foreground", provider.buildBackground(toolUseId: task.toolUseId, requestId: "bg-1")!)
+            }
+        }
+        engine.stop(sessionId: "foreground")
+        #expect(moved != nil, "the long command became a task that could be moved")
+        #expect(timeline.tasks.first { $0.kind == .shell }?.isBackgrounded == true, "it is now a background task")
+        #expect(returnedWhileRunning, "its call returned while the command carried on")
+    }
+
+    /// Claude in a fresh folder with full autonomy, on the smallest model.
+    private func launch(_ id: String, prompt: String) throws -> (SessionEngine, ClaudeProvider, URL) {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("real-\(id)-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let provider = ClaudeProvider()
+        let spec = provider.buildLaunch(LaunchContext(cwd: dir.path, prompt: prompt, permissionPolicy: .bypass, model: "haiku"))
+        let engine = SessionEngine(executor: LocalExecutor.shared, logDirectory: dir.appendingPathComponent("logs"))
+        try engine.launch(sessionId: id, spec: spec)
+        return (engine, provider, dir)
+    }
 }

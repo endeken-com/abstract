@@ -29,7 +29,7 @@ struct SidebarView: View {
                     RailNavRow(title: "New", symbol: "plus", destination: .home)
                     RailNavRow(title: "Automations", symbol: "clock", destination: .automations)
                     RailNavRow(title: "Worktrees", symbol: "arrow.triangle.branch", destination: .worktrees)
-                    RailNavRow(title: "Pull Requests", symbol: RailNavRow.pullRequestSymbol, destination: .pullRequests)
+                    RailNavRow(title: "Pull Requests", symbol: PullRequestGlyph.symbol, destination: .pullRequests)
                 }
 
                 if !model.projects.isEmpty {
@@ -48,7 +48,7 @@ struct SidebarView: View {
                 let scratch = model.sessions(in: nil)
                 if !scratch.isEmpty {
                     RailGroup(title: "Scratch") {
-                        ForEach(scratch) { s in RailChatRow(session: s).equatable() }
+                        ForEach(scratch) { s in RailChatRow(session: s, backgroundTasks: model.runningBackgroundTasks(s.id)).equatable() }
                     }
                 }
 
@@ -108,9 +108,6 @@ private struct RailNavRow: View {
     let destination: Destination
     var count = 0
 
-    /// Stands for Abstract's own pull-request glyph, which has no system symbol.
-    static let pullRequestSymbol = "abstract.pullrequest"
-
     var body: some View {
         let selected = model.destination == destination
         Button {
@@ -118,7 +115,7 @@ private struct RailNavRow: View {
         } label: {
             HStack(spacing: 8) {
                 Group {
-                    if symbol == Self.pullRequestSymbol {
+                    if symbol == PullRequestGlyph.symbol {
                         PullRequestGlyph(kind: .open).frame(width: 12, height: 12)
                     } else {
                         Image(systemName: symbol).font(.system(size: 12, weight: .medium))
@@ -269,7 +266,7 @@ private struct RailProjectGroup: View {
                     .padding(.leading, Rail.rowPadding + Rail.chatIndent + Rail.iconColumn + 8)
                     .frame(maxWidth: .infinity, minHeight: Rail.rowHeight, alignment: .leading)
             }
-            ForEach(chats) { s in RailChatRow(session: s).equatable() }
+            ForEach(chats) { s in RailChatRow(session: s, backgroundTasks: model.runningBackgroundTasks(s.id)).equatable() }
         }
         .overlay(alignment: dropEdge == .bottom ? .bottom : .top) {
             if let dropEdge {
@@ -309,6 +306,8 @@ private struct RailProjectGroup: View {
 struct RailChatRow: View {
     @Environment(AppModel.self) private var model
     let session: Session
+    /// Still at work in the background, so an idle chat doesn't look done.
+    var backgroundTasks = 0
     var showProject = false
     @State private var renaming = false
     @State private var draft = ""
@@ -348,6 +347,15 @@ struct RailChatRow: View {
                         .truncationMode(.tail)
                 }
                 Spacer(minLength: 0)
+                if backgroundTasks > 0 {
+                    HStack(spacing: 3) {
+                        Image(systemName: "square.stack.3d.up").font(.system(size: 9))
+                        Text("\(backgroundTasks)").monospacedDigit()
+                    }
+                    .font(.btCaption)
+                    .foregroundStyle(Color.btTextTertiary)
+                    .help(backgroundTasks == 1 ? "1 task in the background" : "\(backgroundTasks) tasks in the background")
+                }
                 if showProject, let p = model.project(session.projectId) {
                     Text(p.name).font(.btCaption).foregroundStyle(Color.btTextTertiary).lineLimit(1)
                 }
@@ -379,7 +387,8 @@ struct RailChatRow: View {
     }
 
     private var tooltip: String {
-        [session.status.label, model.project(session.projectId)?.name, ProviderRegistry.name(session.providerId),
+        [session.prompt.map { Workspace.title(fromPrompt: $0) }, session.status.label,
+         model.project(session.projectId)?.name, ProviderRegistry.name(session.providerId),
          RelativeTime.short(session.lastEventAt ?? session.createdAt)]
             .compactMap { $0 }.joined(separator: " · ")
     }
@@ -562,6 +571,6 @@ private struct ProjectDrop: DropDelegate {
 /// A row redraws when its chat changes, not whenever any chat does.
 extension RailChatRow: Equatable {
     nonisolated static func == (a: RailChatRow, b: RailChatRow) -> Bool {
-        a.session == b.session && a.showProject == b.showProject
+        a.session == b.session && a.backgroundTasks == b.backgroundTasks && a.showProject == b.showProject
     }
 }

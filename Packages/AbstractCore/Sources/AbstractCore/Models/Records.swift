@@ -97,6 +97,11 @@ public struct Session: Sendable, Hashable, Identifiable, Codable {
     public var model: String?
     /// Reasoning effort, e.g. "high"; nil = the agent's own default.
     public var effort: String?
+    /// The agent the chat was just switched from: it hands over with the next message.
+    public var handoffFrom: String? = nil
+    /// Each agent that has worked in the chat, as it left it, so switching
+    /// back resumes its own conversation.
+    public var providerSessions: [String: ProviderSeat] = [:]
 
     public init(
         id: String = UUID().uuidString, projectId: String?, name: String, providerId: String,
@@ -112,6 +117,20 @@ public struct Session: Sendable, Hashable, Identifiable, Codable {
         self.baseRef = baseRef; self.status = status; self.statusDetail = statusDetail
         self.permissionPolicy = permissionPolicy; self.prompt = prompt; self.automationId = automationId
         self.createdAt = createdAt; self.lastEventAt = lastEventAt; self.archivedAt = archivedAt
+    }
+}
+
+/// Where an agent left a chat it may come back to.
+public struct ProviderSeat: Sendable, Hashable, Codable {
+    /// Its own session id, to resume.
+    public var sessionId: String?
+    public var model: String?
+    public var effort: String?
+    /// Log lines when it left: a handover back covers only what came after.
+    public var logOffset: Int
+
+    public init(sessionId: String?, model: String?, effort: String?, logOffset: Int) {
+        self.sessionId = sessionId; self.model = model; self.effort = effort; self.logOffset = logOffset
     }
 }
 

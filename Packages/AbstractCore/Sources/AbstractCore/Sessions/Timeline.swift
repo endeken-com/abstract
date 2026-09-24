@@ -89,11 +89,14 @@ public enum TimelineBlock: Sendable, Identifiable, Hashable {
     case turn(id: Int, summary: String?, durationMs: Int?, usage: UsageTotals?, costUsd: Double?)
     case error(id: Int, message: String)
     case raw(id: Int, lines: [OutputLine])
+    /// The chat passed to another agent here.
+    case handoff(id: Int, from: String, to: String, summary: String?, source: HandoffSource?)
 
     public var id: Int {
         switch self {
         case .user(let id, _), .assistant(let id, _, _, _), .thinking(let id, _), .tools(let id, _),
-             .system(let id, _, _), .turn(let id, _, _, _, _), .error(let id, _), .raw(let id, _): id
+             .system(let id, _, _), .turn(let id, _, _, _, _), .error(let id, _), .raw(let id, _),
+             .handoff(let id, _, _, _, _): id
         }
     }
 }
@@ -175,7 +178,11 @@ extension Timeline {
                 } else {
                     out.append(.raw(id: entry.id, lines: [OutputLine(stream: stream, line: line)]))
                 }
-            case .status, .sessionId, .toolResult, .permissionRequest, .promptSuggestion:
+            case let .handoff(from, to, summary, source):
+                out.append(.handoff(id: entry.id, from: from, to: to, summary: summary, source: source))
+                assistantOpen = false
+            // Tasks and what subagents did are listed apart from the conversation.
+            case .status, .sessionId, .toolResult, .permissionRequest, .promptSuggestion, .task, .subagent:
                 break
             }
         }

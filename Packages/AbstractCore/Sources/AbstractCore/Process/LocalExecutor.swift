@@ -254,8 +254,8 @@ final class LocalProcess: RunningProcess, Sendable {
         mutating func withBuffer<R>(_ kind: OutputStreamKind, _ body: (inout LineBuffer) -> R) -> R {
             switch kind {
             case .stdout: body(&stdout)
-            // A process only writes stdout and stderr; `.user` is Abstract's own.
-            case .stderr, .user: body(&stderr)
+            // A process only writes stdout and stderr; `.user` and `.handoff` are Abstract's own.
+            case .stderr, .user, .handoff: body(&stderr)
             }
         }
     }
