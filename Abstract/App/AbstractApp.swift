@@ -75,10 +75,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard !model.engine.aliveSessionIds.isEmpty, DemoBootstrap.current == nil else { return .terminateNow }
+        let working = model.workingSessionIds.count
+        guard working > 0, DemoBootstrap.current == nil else { model.engine.stopAll(); return .terminateNow }
         let alert = NSAlert()
         alert.messageText = "Quit while agents are working?"
-        alert.informativeText = "\(model.engine.aliveSessionIds.count) agent\(model.engine.aliveSessionIds.count == 1 ? " is" : "s are") still running. Quitting stops them; their worktrees stay as they are."
+        alert.informativeText = "\(working) agent\(working == 1 ? " is" : "s are") still running. Quitting stops them; their worktrees stay as they are."
         alert.addButton(withTitle: "Quit")
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return .terminateCancel }
