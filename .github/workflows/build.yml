@@ -280,8 +280,12 @@ jobs:
       - name: Remove superseded nightly DMGs
         if: inputs.channel == 'nightly'
         run: |
+          # Keep the new DMG and the one before it: Pages caches appcast.xml for up to
+          # ten minutes, so some clients still follow the previous feed's link.
           KEEP=$(basename "$URL")
-          gh release view nightly -R "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' |
+          export KEEP
+          gh release view nightly -R "$GITHUB_REPOSITORY" --json assets \
+            --jq '[.assets[] | select(.name != env.KEEP)] | sort_by(.createdAt) | reverse | .[1:] | .[].name' |
             while read -r NAME; do
-              if [ "$NAME" != "$KEEP" ]; then gh release delete-asset nightly "$NAME" -R "$GITHUB_REPOSITORY" --yes; fi
+              gh release delete-asset nightly "$NAME" -R "$GITHUB_REPOSITORY" --yes
             done
