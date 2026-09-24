@@ -73,6 +73,11 @@ final class AppModel {
     @ObservationIgnored private var feeds: [String: ChatFeed] = [:]
     private(set) var permissions: [String: [PendingPermission]] = [:]
     private(set) var alive: Set<String> = []
+    /// Chats mid-turn. An idle chat's agent is alive too, awaiting a follow-up,
+    /// but stopping it loses nothing.
+    var workingSessionIds: [String] {
+        alive.filter { id in session(id).map { $0.status.isActive && $0.status != .idle } ?? false }
+    }
     /// When each session's current turn started, for the "working for 12s" label.
     private(set) var turnStartedAt: [String: Date] = [:]
     /// Panel layouts by chat id; see AppModel+Panes.
@@ -819,6 +824,13 @@ final class AppModel {
             alive.remove(sessionId)
             // Stopped only to start again with a new model or agent: not an ending.
             if relaunching.contains(sessionId) { permissions[sessionId] = nil; return }
+            // Stopped between turns (quit, stop): the turn was over, nothing failed.
+            if session(sessionId)?.status == .idle {
+                setStatus(sessionId, .finished)
+                remote.forwardExit(sessionId: sessionId, code: code)
+                permissions[sessionId] = nil
+                return
+            }
             if let parser = parsers[sessionId] {
                 for e in parser.onExit(code: code) { apply(e, to: sessionId) }
             }
