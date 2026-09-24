@@ -185,6 +185,12 @@ public enum AgentEvent: Sendable, Hashable {
     case raw(line: String, stream: OutputStreamKind)
     /// What the agent predicts you'll say next, offered in the reply box.
     case promptSuggestion(String)
+    /// A subagent or shell command it runs beside the conversation started,
+    /// progressed or ended.
+    case task(TaskEvent)
+    /// Something a subagent did, under the tool call that started it. It stays
+    /// out of the conversation; its task shows it.
+    indirect case subagent(parentToolUseId: String, AgentEvent)
 }
 
 public protocol OutputParser: AnyObject {
@@ -253,6 +259,11 @@ public protocol ProviderDefinition: Sendable {
     /// A stdin line that switches a running agent's permission mode, when the
     /// agent can change it live. nil: the new mode applies at the next launch.
     func buildPermissionModeChange(_ policy: PermissionPolicy, requestId: String) -> String?
+    /// A stdin line that stops one of the agent's tasks. nil: it can't.
+    func buildStopTask(_ taskId: String, requestId: String) -> String?
+    /// A stdin line that moves running work into the background, as Ctrl+B
+    /// does in Claude Code: one tool call's, or all of it. nil: it can't.
+    func buildBackground(toolUseId: String?, requestId: String) -> String?
     /// Offered until discovery succeeds, and whenever it fails. Any other
     /// name can still be typed in.
     var fallbackModels: ModelCatalog { get }
@@ -269,4 +280,6 @@ public extension ProviderDefinition {
     func configuredDefaultEffort(home: String) -> String? { nil }
     func buildUserMessage(_ text: String, images: [String]) -> String? { buildUserMessage(text) }
     func buildPermissionModeChange(_ policy: PermissionPolicy, requestId: String) -> String? { nil }
+    func buildStopTask(_ taskId: String, requestId: String) -> String? { nil }
+    func buildBackground(toolUseId: String?, requestId: String) -> String? { nil }
 }
