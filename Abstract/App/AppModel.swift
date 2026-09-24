@@ -488,12 +488,11 @@ final class AppModel {
         let prompt = PromptAttachments.message(text, attachments)
         // Named for what was asked, or for what was attached when nothing was typed.
         let gist = text.isEmpty ? attachments.map(\.label).joined(separator: ", ") : text
-        // A new worktree in a project with naming instructions: a quick model call names it.
-        let naming = existing == nil ? await suggestedNaming(project, prompt: gist) : nil
-        let city = existing == nil && naming == nil
-            ? WorktreeNaming.cityName(avoiding: Set(sessions.filter { $0.projectId == projectId }.map(\.name)))
-            : nil
-        let name = naming?.title ?? city ?? Workspace.title(fromPrompt: gist)
+        let naming = await suggestedNaming(project, providerId: providerId, model: model, prompt: gist)
+        let name = naming?.title ?? Workspace.title(fromPrompt: gist)
+        let city = existing == nil ? WorktreeNaming.cityName(avoiding: Set(sessions
+            .filter { $0.projectId == projectId }
+            .compactMap { $0.branch.flatMap { branch in branch.split(separator: "/").last.map(String.init) } })) : nil
         var session = Session(projectId: projectId, name: name, providerId: providerId, baseRef: existing == nil ? baseRef : nil,
                               status: .provisioning, permissionPolicy: policy, prompt: prompt, model: model, effort: effort)
         if let existing {
@@ -509,15 +508,10 @@ final class AppModel {
             let workspace = try await Workspace.provision(
                 executor: executor, project: project, name: name, baseRef: baseRef,
                 template: project.worktreeTemplate ?? worktreeTemplate, prefix: prefix,
-                slug: naming?.branch
+                slug: Project.nonBlank(project.namingInstructions) == nil ? city : (naming?.branch ?? city)
             )
             session.worktreePath = workspace.path
             session.branch = workspace.branch
-            if city != nil {
-                // A preexisting branch or folder may make provision append a
-                // number. Keep the visible name in sync with the actual branch.
-                session.name += String(workspace.branch.dropFirst((prefix + WorktreeNaming.slugify(name)).count))
-            }
         }
         try store.save(session)
         reload()

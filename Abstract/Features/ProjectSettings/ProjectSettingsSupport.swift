@@ -103,12 +103,14 @@ extension AppModel {
     static let setupLabel = "Setup"
     static let runLabel = "Run"
 
-    /// Title and branch from the project's naming instructions, or nil to
-    /// name the chat the usual way (no instructions, demo mode, any failure).
-    func suggestedNaming(_ project: Project, prompt: String) async -> ChatNaming.Suggestion? {
-        guard !isDemo, let instructions = Project.nonBlank(project.namingInstructions) else { return nil }
-        let binary = providerOverrides["claude"]?.path.flatMap { $0.isEmpty ? nil : $0 }
-        return await ChatNaming.suggest(executor: executor, binary: binary, instructions: instructions, task: prompt)
+    /// Ask the chat's provider for a short title. Project instructions can
+    /// also guide the branch; a failed naming call leaves a readable fallback.
+    func suggestedNaming(_ project: Project, providerId: String, model: String?, prompt: String) async -> ChatNaming.Suggestion? {
+        guard !isDemo else { return nil }
+        let binaryId = providerId == "ollama" || providerId == "lmstudio" ? "codex" : providerId
+        let binary = providerOverrides[binaryId]?.path.flatMap { $0.isEmpty ? nil : $0 }
+        return await ChatNaming.suggest(executor: executor, binary: binary, providerId: providerId, model: model,
+                                        instructions: project.namingInstructions ?? "", task: prompt)
     }
 
     /// A new chat's worktree exists: run the project's setup script in a

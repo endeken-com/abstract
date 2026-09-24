@@ -1,8 +1,7 @@
 import Foundation
 
-/// A chat's title and branch from a quick headless model call, following a
-/// project's naming instructions. Any failure returns nil and the caller
-/// keeps its usual naming.
+/// A chat's summarized title from a quick headless model call. Project
+/// instructions may also supply a branch name. A failed call returns nil.
 public enum ChatNaming {
     public struct Suggestion: Sendable, Hashable {
         public var title: String
@@ -22,17 +21,18 @@ public enum ChatNaming {
 
     public static func prompt(instructions: String, task: String) -> String {
         let task = task.count > taskLimit ? String(task.prefix(taskLimit)) + "…" : task
+        let guidance = instructions.trimmingCharacters(in: .whitespacesAndNewlines)
         return """
-            Name a coding task for a developer tool. Reply with only a JSON object and nothing else:
+            Summarize this coding request as a short chat title. Reply with only a JSON object and nothing else:
             {"title": "…", "branch": "…"}
 
             - title: a short chat title for the task, at most 60 characters, in plain words.
             - branch: a git branch name for the work: lowercase kebab-case words, at most 60 characters, \
             no spaces. It may start with a type folder such as fix/ or feat/ when the instructions say so.
 
-            Follow these naming instructions from the project:
+            Follow these naming instructions from the project when provided:
             <instructions>
-            \(instructions.trimmingCharacters(in: .whitespacesAndNewlines))
+            \(guidance)
             </instructions>
 
             The task:
@@ -59,14 +59,46 @@ public enum ChatNaming {
         return Suggestion(title: title, branch: branch)
     }
 
-    /// Runs the CLI (`binary`, else `claude` on the login PATH) for at most
-    /// `timeout`.
-    public static func suggest(executor: any Executor, binary: String?, instructions: String, task: String,
+    /// Runs the selected provider's CLI for at most `timeout`.
+    public static func suggest(executor: any Executor, binary: String?, providerId: String = "claude", model: String? = nil,
+                               instructions: String, task: String,
                                timeout: Duration = .seconds(20)) async -> Suggestion? {
-        let spec = LaunchSpec(command: binary ?? "claude", args: arguments, cwd: executor.homeDirectory,
-                              stdinInitial: prompt(instructions: instructions, task: task), keepStdinOpen: false)
+        guard let spec = launchSpec(home: executor.homeDirectory, binary: binary, providerId: providerId, model: model,
+                                    instructions: instructions, task: task) else { return nil }
         guard let result = try? await executor.run(spec, timeout: timeout), result.ok else { return nil }
-        return parse(result.stdout)
+        return providerId == "claude" ? parse(result.stdout) : parseCodex(result.stdout)
+    }
+
+    static func launchSpec(home: String, binary: String?, providerId: String, model: String?,
+                           instructions: String, task: String) -> LaunchSpec? {
+        let request = prompt(instructions: instructions, task: task)
+        if providerId == "claude" {
+            return LaunchSpec(command: binary ?? "claude", args: arguments, cwd: home,
+                              stdinInitial: request, keepStdinOpen: false)
+        }
+        let kind = LocalModelKind(rawValue: providerId)
+        guard providerId == "codex" || kind != nil else { return nil }
+        var args = ["exec", "--json", "-C", home, "--skip-git-repo-check", "-s", "read-only"]
+        if let kind { args += LocalModelProvider(kind).serverArgs() }
+        if let model = model ?? kind.flatMap({ LocalModelCatalogs.first($0) }) { args += ["-m", model] }
+        args += ["--", request]
+        return LaunchSpec(command: binary ?? "codex", args: args, cwd: home,
+                          stdinInitial: nil, keepStdinOpen: false)
+    }
+
+    /// Codex writes one event per line; the final agent message contains the
+    /// requested JSON, and earlier messages may be commentary.
+    static func parseCodex(_ output: String) -> Suggestion? {
+        var suggestion: Suggestion?
+        for line in output.split(separator: "\n") {
+            guard let data = String(line).data(using: .utf8),
+                  let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  event["type"] as? String == "item.completed",
+                  let item = event["item"] as? [String: Any], item["type"] as? String == "agent_message",
+                  let text = item["text"] as? String else { continue }
+            if let parsed = parse(text) { suggestion = parsed }
+        }
+        return suggestion
     }
 
     /// One line, no surrounding quotes, clipped like `Workspace.title`.
