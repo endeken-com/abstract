@@ -11,7 +11,9 @@ settings:
     MACOSX_DEPLOYMENT_TARGET: "15.0"
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     DEAD_CODE_STRIPPING: YES
-    # Overridden with the CI run number for release builds (scripts/package-dmg.sh).
+    # Local builds are dev builds (0.0.0, and their updater stays off). CI sets
+    # both from git tags when it builds a release (scripts/next-version.sh).
+    MARKETING_VERSION: "0.0.0"
     CURRENT_PROJECT_VERSION: "1"
 packages:
   AbstractCore:
@@ -23,6 +25,10 @@ packages:
     # 1.12+ compiles Metal shaders, which needs Xcode's separate Metal
     # Toolchain download. 1.11.2 renders with Core Text and builds as-is.
     exactVersion: 1.11.2
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    # Keep in step with SPARKLE_VERSION in .github/workflows/build.yml.
+    exactVersion: 2.10.0
 targets:
   Abstract:
     type: application
@@ -33,12 +39,13 @@ targets:
       - package: AbstractCore
       - package: Textual
       - package: SwiftTerm
+      - package: Sparkle
     info:
       path: Abstract/Resources/Info.plist
       properties:
         CFBundleDisplayName: Abstract
         CFBundleName: Abstract
-        CFBundleShortVersionString: "0.8.2"
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         LSApplicationCategoryType: public.app-category.developer-tools
         LSMinimumSystemVersion: "15.0"
@@ -46,6 +53,9 @@ targets:
         NSLocalNetworkUsageDescription: "Abstract finds your other Macs on this network so you can pair them and run agents on one from another."
         NSBonjourServices:
           - _abstract._tcp
+        SUFeedURL: https://endeken-com.github.io/abstract/appcast.xml
+        # Check daily from first launch, without Sparkle's "may we check?" prompt.
+        SUEnableAutomaticChecks: true
     entitlements:
       path: Abstract/Resources/Abstract.entitlements
       properties:
