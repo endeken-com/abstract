@@ -8,10 +8,10 @@ public enum Workspace {
     }
 
     /// Pick a free worktree path and branch from the templates, then create
-    /// the worktree. Suffixes `-1`, `-2`… until both are unused. `slug`, when
-    /// given, names the branch instead of `name` and may hold a type folder
-    /// (`fix/login-button`); the folder's `{slug}` gets it with dashes. The
-    /// project's sparse-checkout folders apply.
+    /// the worktree. Suffixes `-1`, `-2`… until both are unused. `slug` names
+    /// the branch and may hold a type folder (`fix/login-button`). When given,
+    /// `worktreeName` independently supplies the folder's `{slug}` token.
+    /// The project's sparse-checkout folders apply.
     public static func provision(
         executor: any Executor,
         project: Project,
@@ -19,19 +19,23 @@ public enum Workspace {
         baseRef: String?,
         template: String,
         prefix: String,
-        slug: String? = nil
+        slug: String? = nil,
+        worktreeName: String? = nil
     ) async throws -> Provisioned {
         let repo = URL(fileURLWithPath: project.rootPath).lastPathComponent
         let hash = WorktreeNaming.shortHash(project.rootPath)
         let baseSlug = slug.flatMap { WorktreeNaming.branchSlug($0) } ?? WorktreeNaming.slugify(name)
+        let baseFolderSlug = worktreeName.map { WorktreeNaming.slugify($0) }
+            ?? baseSlug.replacingOccurrences(of: "/", with: "-")
         let base = (baseRef?.isEmpty == false ? baseRef : nil) ?? project.defaultBaseRef
 
         for attempt in 0..<50 {
-            let slug = attempt == 0 ? baseSlug : "\(baseSlug)-\(attempt)"
-            let branch = "\(prefix)\(slug)"
+            let branchSlug = attempt == 0 ? baseSlug : "\(baseSlug)-\(attempt)"
+            let folderSlug = attempt == 0 ? baseFolderSlug : "\(baseFolderSlug)-\(attempt)"
+            let branch = "\(prefix)\(branchSlug)"
             let path = WorktreeNaming.render(
                 template: template, home: executor.homeDirectory, repo: repo, hash: hash,
-                slug: slug.replacingOccurrences(of: "/", with: "-"), branch: branch, prefix: prefix
+                slug: folderSlug, branch: branch, prefix: prefix
             )
             if executor.fileExists(path) { continue }
             if await Git.branchExists(executor, root: project.rootPath, branch: branch) { continue }

@@ -172,6 +172,33 @@ import Testing
         #expect(Self.files(full.path).count == 5)
     }
 
+    @Test func cityFolderIsIndependentOfDescriptiveBranch() async throws {
+        let exec = LocalExecutor.shared
+        let root = try await Self.makeRepo(exec)
+        defer {
+            try? FileManager.default.removeItem(atPath: root)
+            try? FileManager.default.removeItem(atPath: root + "-wt")
+        }
+        let project = Project(name: "app", rootPath: root, defaultBaseRef: "main")
+        let first = try await Workspace.provision(executor: exec, project: project, name: "Fix login button", baseRef: nil,
+                                                  template: root + "-wt/{slug}", prefix: "abstract/",
+                                                  slug: "fix/Login Button", worktreeName: "Oslo")
+        #expect(first.path == root + "-wt/oslo")
+        #expect(first.branch == "abstract/fix/login-button")
+
+        let second = try await Workspace.provision(executor: exec, project: project, name: "Improve search", baseRef: nil,
+                                                   template: root + "-wt/{slug}", prefix: "abstract/",
+                                                   slug: "feat/search", worktreeName: "Oslo")
+        #expect(second.path == root + "-wt/oslo-1")
+        #expect(second.branch == "abstract/feat/search-1")
+
+        let fallback = try await Workspace.provision(executor: exec, project: project, name: "Improve cache", baseRef: nil,
+                                                     template: root + "-wt/{slug}", prefix: "abstract/",
+                                                     worktreeName: "Lima")
+        #expect(fallback.path == root + "-wt/lima")
+        #expect(fallback.branch == "abstract/improve-cache")
+    }
+
     @Test func aFailedSparseCheckoutLeavesNothingBehind() async throws {
         let exec = LocalExecutor.shared
         let root = try await Self.makeRepo(exec)

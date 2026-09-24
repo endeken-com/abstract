@@ -7,6 +7,7 @@ struct WorktreeSettingsPane: View {
 
     private static let sampleRepo = "api"
     private static let sampleSlug = "oslo"
+    private static let sampleBranchSlug = "fix-login"
 
     private static let tokens: [(token: String, meaning: String)] = [
         ("{home}", "Your home folder"),
@@ -71,7 +72,7 @@ struct WorktreeSettingsPane: View {
             } header: {
                 Text("Preview")
             } footer: {
-                SettingsCaption("New chats get short city names by default. This shows “Oslo” in a repository named “\(Self.sampleRepo)”.")
+                SettingsCaption("By default, worktree folders use city names and branches describe the task. This shows “Oslo” and “fix-login” in “\(Self.sampleRepo)”.")
             }
 
             Section {
@@ -111,7 +112,7 @@ struct WorktreeSettingsPane: View {
     private var preview: (path: String, branch: String) {
         let home = model.executor.homeDirectory
         let prefix = model.branchPrefix
-        let branch = prefix + Self.sampleSlug
+        let branch = prefix + Self.sampleBranchSlug
         let path = WorktreeNaming.render(
             template: model.worktreeTemplate.isEmpty ? WorktreeNaming.defaultTemplate : model.worktreeTemplate,
             home: home, repo: Self.sampleRepo, hash: WorktreeNaming.shortHash(home + "/code/" + Self.sampleRepo),

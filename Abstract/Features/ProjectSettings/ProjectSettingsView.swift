@@ -402,7 +402,7 @@ private struct BranchSection: View {
                 }
             }
             StackedSetting(title: "Naming instructions",
-                           detail: "Guides AI-generated workspace and branch names for this project. Empty uses the default naming.") {
+                           detail: "Guides AI-generated chat titles and branch names. Default worktree folders keep city names.") {
                 GrowingEditor(text: $instructions,
                              placeholder: "e.g. Start branches with fix/ or feat/. Keep titles short, in sentence case.",
                              minHeight: 76)
