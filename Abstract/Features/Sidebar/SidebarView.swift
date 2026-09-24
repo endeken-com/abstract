@@ -376,7 +376,8 @@ struct RailChatRow: View {
     }
 
     private var tooltip: String {
-        [session.status.label, model.project(session.projectId)?.name, ProviderRegistry.name(session.providerId),
+        [session.prompt.map { Workspace.title(fromPrompt: $0) }, session.status.label,
+         model.project(session.projectId)?.name, ProviderRegistry.name(session.providerId),
          RelativeTime.short(session.lastEventAt ?? session.createdAt)]
             .compactMap { $0 }.joined(separator: " · ")
     }

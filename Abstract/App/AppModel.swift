@@ -476,7 +476,10 @@ final class AppModel {
         let gist = text.isEmpty ? attachments.map(\.label).joined(separator: ", ") : text
         // A new worktree in a project with naming instructions: a quick model call names it.
         let naming = existing == nil ? await suggestedNaming(project, prompt: gist) : nil
-        let name = naming?.title ?? Workspace.title(fromPrompt: gist)
+        let city = existing == nil && naming == nil
+            ? WorktreeNaming.cityName(avoiding: Set(sessions.filter { $0.projectId == projectId }.map(\.name)))
+            : nil
+        let name = naming?.title ?? city ?? Workspace.title(fromPrompt: gist)
         var session = Session(projectId: projectId, name: name, providerId: providerId, baseRef: existing == nil ? baseRef : nil,
                               status: .provisioning, permissionPolicy: policy, prompt: prompt, model: model, effort: effort)
         if let existing {
@@ -488,13 +491,19 @@ final class AppModel {
             session.worktreePath = existing.path
             session.branch = existing.branch
         } else {
+            let prefix = project.branchPrefix ?? branchPrefix
             let workspace = try await Workspace.provision(
                 executor: executor, project: project, name: name, baseRef: baseRef,
-                template: project.worktreeTemplate ?? worktreeTemplate, prefix: project.branchPrefix ?? branchPrefix,
+                template: project.worktreeTemplate ?? worktreeTemplate, prefix: prefix,
                 slug: naming?.branch
             )
             session.worktreePath = workspace.path
             session.branch = workspace.branch
+            if city != nil {
+                // A preexisting branch or folder may make provision append a
+                // number. Keep the visible name in sync with the actual branch.
+                session.name += String(workspace.branch.dropFirst((prefix + WorktreeNaming.slugify(name)).count))
+            }
         }
         try store.save(session)
         reload()

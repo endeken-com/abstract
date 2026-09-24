@@ -294,6 +294,7 @@ private struct WorktreeRow: View {
                 .font(.btBodyMedium)
                 .foregroundStyle(Color.btText)
                 .lineLimit(1)
+                .help(s.prompt.map { Workspace.title(fromPrompt: $0) } ?? s.name)
         }
     }
 
