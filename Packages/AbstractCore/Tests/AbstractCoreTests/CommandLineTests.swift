@@ -107,15 +107,34 @@ private final class Sandbox {
     var envLog: String { (try? String(contentsOf: root.appendingPathComponent("agents/responsive/env.log"), encoding: .utf8)) ?? "" }
     var answersLog: String { (try? String(contentsOf: root.appendingPathComponent("agents/responsive/answers.log"), encoding: .utf8)) ?? "" }
 
-    /// Runs `abstract`, checking it printed exactly one JSON value.
+    /// Runs `abstract`, checking it printed exactly one JSON value. On a
+    /// thread of its own: it waits seconds for an agent, and the test pool has
+    /// few threads to spare for the other suites' processes.
     @discardableResult
-    func run(_ args: [String], stdin: String? = nil, environment extra: [String: String] = [:]) throws -> Output {
-        let process = Process()
-        process.executableURL = Self.binary
-        process.arguments = args
+    func run(_ args: [String], stdin: String? = nil, environment extra: [String: String] = [:]) async throws -> Output {
         var environment = ProcessInfo.processInfo.environment
         environment["ABSTRACT_DATA_DIR"] = data.path
+        // The CLI and its host each look up the login shell's PATH; a plain
+        // shell keeps that quick whatever the runner's own profile does.
+        environment["SHELL"] = "/bin/sh"
         environment.merge(extra) { _, new in new }
+        let (status, data) = try await withCheckedThrowingContinuation { (done: CheckedContinuation<(Int32, Data), any Error>) in
+            Thread.detachNewThread { [environment] in
+                done.resume(with: Result { try Self.runBlocking(args, stdin: stdin, environment: environment) })
+            }
+        }
+        let text = String(decoding: data, as: UTF8.self)
+        let lines = text.split(separator: "\n")
+        #expect(lines.count == 1, "stdout should be one JSON line: \(text)")
+        let json = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
+        #expect(json != nil, "stdout isn't JSON: \(text)")
+        return Output(status: status, stdout: text, json: json)
+    }
+
+    private static func runBlocking(_ args: [String], stdin: String?, environment: [String: String]) throws -> (Int32, Data) {
+        let process = Process()
+        process.executableURL = binary
+        process.arguments = args
         process.environment = environment
         let out = Pipe(), input = Pipe()
         process.standardOutput = out
@@ -126,18 +145,13 @@ private final class Sandbox {
         try input.fileHandleForWriting.close()
         let data = out.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
-        let text = String(decoding: data, as: UTF8.self)
-        let lines = text.split(separator: "\n")
-        #expect(lines.count == 1, "stdout should be one JSON line: \(text)")
-        let json = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
-        #expect(json != nil, "stdout isn't JSON: \(text)")
-        return Output(status: process.terminationStatus, stdout: text, json: json)
+        return (process.terminationStatus, data)
     }
 
     /// `session create` with a prompt on stdin.
     func create(name: String = "Fix the login", branch: String = "fix/login", prompt: String = "Fix the login button",
-                environment: [String: String] = [:]) throws -> Output {
-        try run(["session", "create", "--project", project.id, "--name", name, "--branch", branch, "--agent", "claude",
+                environment: [String: String] = [:]) async throws -> Output {
+        try await run(["session", "create", "--project", project.id, "--name", name, "--branch", branch, "--agent", "claude",
                  "--prompt-file", "-"], stdin: prompt, environment: environment)
     }
 
@@ -195,7 +209,7 @@ struct CommandLineTests {
     @Test func createMakesAnOrdinaryChat() async throws {
         let box = try await Sandbox()
         defer { box.tearDown() }
-        let out = try box.create()
+        let out = try await box.create()
         #expect(out.status == 0)
         let id = try #require(out.object["id"] as? String)
         let agent = try #require(out.object["agent"] as? [String: Any])
@@ -229,15 +243,15 @@ struct CommandLineTests {
         let token = try #require(StoreChanges.observe(storePath: box.data.appendingPathComponent("abstract.sqlite").path,
                                                       queue: .global()) { heard.mark() })
         defer { StoreChanges.stop(token) }
-        #expect(try box.create().status == 0)
+        #expect(try await box.create().status == 0)
         try await waitUntil { heard.count > 0 }
     }
 
     @Test func nameTaken() async throws {
         let box = try await Sandbox()
         defer { box.tearDown() }
-        #expect(try box.create(name: "Nightly", branch: "one").status == 0)
-        let out = try box.create(name: "Nightly", branch: "two")
+        #expect(try await box.create(name: "Nightly", branch: "one").status == 0)
+        let out = try await box.create(name: "Nightly", branch: "two")
         #expect(out.status != 0)
         #expect(out.code == "name_taken")
         #expect(try await !box.branches().contains("two"))
@@ -249,19 +263,19 @@ struct CommandLineTests {
         var old = Session(projectId: box.project.id, name: "Nightly", providerId: "claude")
         old.archivedAt = Date()
         try box.store.save(old)
-        #expect(try box.create(name: "Nightly", branch: "nightly").status == 0)
+        #expect(try await box.create(name: "Nightly", branch: "nightly").status == 0)
     }
 
     @Test func branchExists() async throws {
         let box = try await Sandbox()
         defer { box.tearDown() }
         _ = try await LocalExecutor.shared.run("git", ["branch", "stray"], cwd: box.repo.path)
-        let stray = try box.create(branch: "stray")
+        let stray = try await box.create(branch: "stray")
         #expect(stray.status != 0)
         #expect(stray.code == "branch_exists")
 
-        #expect(try box.create(name: "First", branch: "mine").status == 0)
-        let owned = try box.create(name: "Second", branch: "mine")
+        #expect(try await box.create(name: "First", branch: "mine").status == 0)
+        let owned = try await box.create(name: "Second", branch: "mine")
         #expect(owned.code == "branch_exists")
         #expect(try box.store.sessions().count == 1)
     }
@@ -270,7 +284,7 @@ struct CommandLineTests {
         let box = try await Sandbox()
         defer { box.tearDown() }
         try box.store.setSetting("branchPrefix", "abstract/")
-        let out = try box.create(branch: "Team/ABC-123_fix")
+        let out = try await box.create(branch: "Team/ABC-123_fix")
         #expect(out.object["branch"] as? String == "Team/ABC-123_fix")
         #expect(try await box.branches().contains("Team/ABC-123_fix"))
     }
@@ -278,7 +292,7 @@ struct CommandLineTests {
     @Test func aFailedStartLeavesNothingBehind() async throws {
         let box = try await Sandbox(agent: .failsToStart)
         defer { box.tearDown() }
-        let out = try box.create(branch: "doomed")
+        let out = try await box.create(branch: "doomed")
         #expect(out.status != 0)
         #expect(out.code == "agent_start_failed")
         #expect((out.object["message"] as? String)?.contains("not signed in") == true)
@@ -287,7 +301,7 @@ struct CommandLineTests {
 
         // The same when the agent's binary isn't there at all.
         try box.useMissingAgent()
-        #expect(try box.create(branch: "doomed").code == "agent_start_failed")
+        #expect(try await box.create(branch: "doomed").code == "agent_start_failed")
         try expectNothingLeft(box, branch: "doomed")
         #expect(try await !box.branches().contains("doomed"))
     }
@@ -295,7 +309,7 @@ struct CommandLineTests {
     @Test func anAgentThatCantWorkIsAFailedStart() async throws {
         let box = try await Sandbox(agent: .errorsAfterInit)
         defer { box.tearDown() }
-        let out = try box.create(branch: "unsigned")
+        let out = try await box.create(branch: "unsigned")
         #expect(out.code == "agent_start_failed")
         #expect((out.object["message"] as? String)?.contains("Invalid API key") == true)
         try expectNothingLeft(box, branch: "unsigned")
@@ -305,7 +319,7 @@ struct CommandLineTests {
     @Test func theCallersEnvironmentStaysOut() async throws {
         let box = try await Sandbox()
         defer { box.tearDown() }
-        let out = try box.create(environment: ["ANTHROPIC_API_KEY": "sk-leak", "CLAUDE_CONFIG_DIR": "/tmp/elsewhere",
+        let out = try await box.create(environment: ["ANTHROPIC_API_KEY": "sk-leak", "CLAUDE_CONFIG_DIR": "/tmp/elsewhere",
                                                "CLAUDECODE": "1"])
         #expect(out.status == 0)
         try await waitUntil { !box.envLog.isEmpty }
@@ -319,11 +333,11 @@ struct CommandLineTests {
         let box = try await Sandbox()
         defer { box.tearDown() }
         let idle = ["ABSTRACT_AGENT_IDLE_TIMEOUT": "1"]
-        let id = try #require(try box.create(environment: idle).object["id"] as? String)
+        let id = try #require(try await box.create(environment: idle).object["id"] as? String)
         try await waitUntil { SessionLock.holder(of: id, in: box.locks) == nil }
         #expect(try box.store.session(id)?.status == .finished)
-        #expect(try box.run(["agent", "find", "--session", id]).json is NSNull)
-        let out = try box.run(["agent", "respawn", "--session", id, "--agent", "claude", "--prompt-file", box.file("Again")],
+        #expect(try await box.run(["agent", "find", "--session", id]).json is NSNull)
+        let out = try await box.run(["agent", "respawn", "--session", id, "--agent", "claude", "--prompt-file", box.file("Again")],
                               environment: idle)
         #expect(out.status == 0)
     }
@@ -332,14 +346,14 @@ struct CommandLineTests {
         let box = try await Sandbox()
         defer { box.tearDown() }
         _ = try await LocalExecutor.shared.run("git", ["tag", "release"], cwd: box.repo.path)
-        #expect(try box.create(branch: "release").status == 0)
+        #expect(try await box.create(branch: "release").status == 0)
         #expect(try await box.branches().contains("release"))
     }
 
     @Test func worktreeFailedLeavesNothingBehind() async throws {
         let box = try await Sandbox(baseRef: "no-such-ref")
         defer { box.tearDown() }
-        let out = try box.create(branch: "based")
+        let out = try await box.create(branch: "based")
         #expect(out.code == "worktree_failed")
         try expectNothingLeft(box, branch: "based")
     }
@@ -359,30 +373,30 @@ struct CommandLineTests {
     @Test func listShowsTheProjectsSessionsAndTheirAgents() async throws {
         let box = try await Sandbox()
         defer { box.tearDown() }
-        let created = try box.create()
+        let created = try await box.create()
         var archived = Session(projectId: box.project.id, name: "Old", providerId: "claude")
         archived.archivedAt = Date()
         try box.store.save(archived)
         try box.store.save(Session(projectId: nil, name: "Elsewhere", providerId: "claude"))
 
-        let list = try box.run(["session", "list", "--project", box.project.rootPath])
+        let list = try await box.run(["session", "list", "--project", box.project.rootPath])
         let sessions = try #require(list.json as? [[String: Any]])
         #expect(sessions.map { $0["name"] as? String } == ["Fix the login"])
         let agent = try #require(sessions.first?["agent"] as? [String: Any])
         #expect(agent["id"] as? String == (created.object["agent"] as? [String: Any])?["id"] as? String)
 
-        let all = try box.run(["session", "list", "--project", "Sandbox", "--include-archived"])
+        let all = try await box.run(["session", "list", "--project", "Sandbox", "--include-archived"])
         #expect(Set((all.json as? [[String: Any]] ?? []).compactMap { $0["name"] as? String }) == ["Fix the login", "Old"])
     }
 
     @Test func projectNotFound() async throws {
         let box = try await Sandbox()
         defer { box.tearDown() }
-        let out = try box.run(["session", "list", "--project", "nope"])
+        let out = try await box.run(["session", "list", "--project", "nope"])
         #expect(out.status != 0)
         #expect(out.code == "project_not_found")
-        #expect(try box.create().status == 0) // the real one still works
-        #expect(try box.run(["session", "create", "--project", "nope", "--name", "n", "--branch", "b", "--agent", "claude",
+        #expect(try await box.create().status == 0) // the real one still works
+        #expect(try await box.run(["session", "create", "--project", "nope", "--name", "n", "--branch", "b", "--agent", "claude",
                              "--prompt-file", box.file("p")]).code == "project_not_found")
     }
 
@@ -391,12 +405,12 @@ struct CommandLineTests {
     @Test func findReportsTheRunningAgentOrNull() async throws {
         let box = try await Sandbox()
         defer { box.tearDown() }
-        let created = try box.create()
+        let created = try await box.create()
         let id = try #require(created.object["id"] as? String)
-        let found = try box.run(["agent", "find", "--session", id])
+        let found = try await box.run(["agent", "find", "--session", id])
         #expect(found.object["id"] as? String == (created.object["agent"] as? [String: Any])?["id"] as? String)
         try await box.stopAgent(id)
-        let none = try box.run(["agent", "find", "--session", id])
+        let none = try await box.run(["agent", "find", "--session", id])
         #expect(none.status == 0)
         #expect(none.json is NSNull)
     }
@@ -404,12 +418,12 @@ struct CommandLineTests {
     @Test func sendReachesTheAgentAndTheLog() async throws {
         let box = try await Sandbox()
         defer { box.tearDown() }
-        let created = try box.create()
+        let created = try await box.create()
         let id = try #require(created.object["id"] as? String)
         let agentId = try #require((created.object["agent"] as? [String: Any])?["id"] as? String)
         try await waitUntil { try box.store.session(id)?.status == .idle }
 
-        let out = try box.run(["agent", "send", "--session", id, "--agent", agentId, "--text-file", box.file("Now add a test\n")])
+        let out = try await box.run(["agent", "send", "--session", id, "--agent", agentId, "--text-file", box.file("Now add a test\n")])
         #expect(out.status == 0)
         #expect(out.object["id"] as? String == agentId)
         try await waitUntil { box.log(id).contains(OutputLine(stream: .user, line: "Now add a test")) }
@@ -420,7 +434,7 @@ struct CommandLineTests {
     @Test func questionsAreDeniedSoTheAgentCarriesOn() async throws {
         let box = try await Sandbox()
         defer { box.tearDown() }
-        let created = try box.run(["session", "create", "--project", box.project.id, "--name", "Ask", "--branch", "ask",
+        let created = try await box.run(["session", "create", "--project", box.project.id, "--name", "Ask", "--branch", "ask",
                                    "--agent", "claude", "--prompt-file", "-"], stdin: "Please ASK first")
         let id = try #require(created.object["id"] as? String)
         try await waitUntil { box.answersLog.contains(#""behavior":"deny""#) }
@@ -430,13 +444,13 @@ struct CommandLineTests {
     @Test func agentNotRunning() async throws {
         let box = try await Sandbox(agent: .exitsAfterTurn)
         defer { box.tearDown() }
-        let created = try box.create()
+        let created = try await box.create()
         let id = try #require(created.object["id"] as? String)
         let agentId = try #require((created.object["agent"] as? [String: Any])?["id"] as? String)
         try await waitUntil { SessionLock.holder(of: id, in: box.locks) == nil }
         #expect(try box.store.session(id)?.status == .finished)
 
-        let out = try box.run(["agent", "send", "--session", id, "--agent", agentId, "--text-file", box.file("hello")])
+        let out = try await box.run(["agent", "send", "--session", id, "--agent", agentId, "--text-file", box.file("hello")])
         #expect(out.status != 0)
         #expect(out.code == "agent_not_running")
     }
@@ -444,8 +458,8 @@ struct CommandLineTests {
     @Test func aMessageForAnotherAgentIsRefused() async throws {
         let box = try await Sandbox()
         defer { box.tearDown() }
-        let id = try #require(try box.create().object["id"] as? String)
-        let out = try box.run(["agent", "send", "--session", id, "--agent", "someone-else", "--text-file", box.file("hi")])
+        let id = try #require(try await box.create().object["id"] as? String)
+        let out = try await box.run(["agent", "send", "--session", id, "--agent", "someone-else", "--text-file", box.file("hi")])
         #expect(out.code == "agent_not_running")
     }
 
@@ -456,7 +470,7 @@ struct CommandLineTests {
         for args in [["agent", "find", "--session", "nope"],
                      ["agent", "send", "--session", "nope", "--agent", "a", "--text-file", text],
                      ["agent", "respawn", "--session", "nope", "--agent", "claude", "--prompt-file", text]] {
-            let out = try box.run(args)
+            let out = try await box.run(args)
             #expect(out.status != 0)
             #expect(out.code == "session_not_found", "\(args)")
         }
@@ -467,14 +481,14 @@ struct CommandLineTests {
     @Test func respawnStartsAFreshAgentInTheSameWorktree() async throws {
         let box = try await Sandbox()
         defer { box.tearDown() }
-        let created = try box.create()
+        let created = try await box.create()
         let id = try #require(created.object["id"] as? String)
         let first = try #require((created.object["agent"] as? [String: Any])?["id"] as? String)
         try await waitUntil { try box.store.session(id)?.providerSessionId != nil }
         let before = try #require(try box.store.session(id))
         try await box.stopAgent(id)
 
-        let out = try box.run(["agent", "respawn", "--session", id, "--agent", "claude", "--prompt-file", box.file("Start over")])
+        let out = try await box.run(["agent", "respawn", "--session", id, "--agent", "claude", "--prompt-file", box.file("Start over")])
         #expect(out.status == 0)
         let second = try #require(out.object["id"] as? String)
         #expect(second != first)
@@ -490,8 +504,8 @@ struct CommandLineTests {
     @Test func agentAlreadyRunning() async throws {
         let box = try await Sandbox()
         defer { box.tearDown() }
-        let id = try #require(try box.create().object["id"] as? String)
-        let out = try box.run(["agent", "respawn", "--session", id, "--agent", "claude", "--prompt-file", box.file("again")])
+        let id = try #require(try await box.create().object["id"] as? String)
+        let out = try await box.run(["agent", "respawn", "--session", id, "--agent", "claude", "--prompt-file", box.file("again")])
         #expect(out.status != 0)
         #expect(out.code == "agent_already_running")
     }
@@ -499,10 +513,10 @@ struct CommandLineTests {
     @Test func worktreeMissing() async throws {
         let box = try await Sandbox()
         defer { box.tearDown() }
-        let id = try #require(try box.create().object["id"] as? String)
+        let id = try #require(try await box.create().object["id"] as? String)
         try await box.stopAgent(id)
         try FileManager.default.removeItem(atPath: try #require(try box.store.session(id)?.worktreePath))
-        let out = try box.run(["agent", "respawn", "--session", id, "--agent", "claude", "--prompt-file", box.file("again")])
+        let out = try await box.run(["agent", "respawn", "--session", id, "--agent", "claude", "--prompt-file", box.file("again")])
         #expect(out.code == "worktree_missing")
         #expect(SessionLock.holder(of: id, in: box.locks) == nil)
     }
@@ -512,13 +526,13 @@ struct CommandLineTests {
         defer { box.tearDown() }
         let prompt = try box.file("p")
         for agent in ["codex", "nobody"] {
-            let out = try box.run(["session", "create", "--project", box.project.id, "--name", "n", "--branch", "b",
+            let out = try await box.run(["session", "create", "--project", box.project.id, "--name", "n", "--branch", "b",
                                    "--agent", agent, "--prompt-file", prompt])
             #expect(out.code == "unknown_agent")
         }
-        let id = try #require(try box.create().object["id"] as? String)
+        let id = try #require(try await box.create().object["id"] as? String)
         try await box.stopAgent(id)
-        #expect(try box.run(["agent", "respawn", "--session", id, "--agent", "codex", "--prompt-file", prompt]).code == "unknown_agent")
+        #expect(try await box.run(["agent", "respawn", "--session", id, "--agent", "codex", "--prompt-file", prompt]).code == "unknown_agent")
     }
 
     // MARK: The lock, both ways
@@ -526,7 +540,7 @@ struct CommandLineTests {
     @Test func aSessionOpenInTheAppIsLockedToTheCommandLine() async throws {
         let box = try await Sandbox()
         defer { box.tearDown() }
-        let created = try box.create()
+        let created = try await box.create()
         let id = try #require(created.object["id"] as? String)
         let agentId = try #require((created.object["agent"] as? [String: Any])?["id"] as? String)
         try await box.stopAgent(id)
@@ -534,22 +548,22 @@ struct CommandLineTests {
         // The app shows the chat: it holds the chat's lock.
         let app = try SessionLock.acquire(id, as: .app, in: box.locks)
         let text = try box.file("hi")
-        let send = try box.run(["agent", "send", "--session", id, "--agent", agentId, "--text-file", text])
+        let send = try await box.run(["agent", "send", "--session", id, "--agent", agentId, "--text-file", text])
         #expect(send.status != 0)
         #expect(send.code == "session_locked")
-        let respawn = try box.run(["agent", "respawn", "--session", id, "--agent", "claude", "--prompt-file", text])
+        let respawn = try await box.run(["agent", "respawn", "--session", id, "--agent", "claude", "--prompt-file", text])
         #expect(respawn.code == "session_locked")
         #expect(try box.store.session(id)?.prompt == "Fix the login button")
 
         // Closed in the app: the command line may drive it again.
         app.release()
-        #expect(try box.run(["agent", "respawn", "--session", id, "--agent", "claude", "--prompt-file", text]).status == 0)
+        #expect(try await box.run(["agent", "respawn", "--session", id, "--agent", "claude", "--prompt-file", text]).status == 0)
     }
 
     @Test func aSessionDrivenFromTheCommandLineIsReadOnlyInTheApp() async throws {
         let box = try await Sandbox()
         defer { box.tearDown() }
-        let created = try box.create()
+        let created = try await box.create()
         let id = try #require(created.object["id"] as? String)
         let agentId = try #require((created.object["agent"] as? [String: Any])?["id"] as? String)
 
@@ -596,7 +610,7 @@ struct CommandLineTests {
              "--prompt-file", prompt],
         ]
         for args in cases {
-            let out = try box.run(args)
+            let out = try await box.run(args)
             #expect(out.code == "invalid_arguments", "\(args)")
             #expect(out.status == 2, "\(args)")
         }
