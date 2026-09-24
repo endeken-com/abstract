@@ -27,13 +27,19 @@ extension PullRequest {
         }
     }
 
-    /// Neutral, except a failing check, the one thing that needs a look.
+    /// GitHub's state colours, with failed checks taking priority on open PRs.
     var tint: Color {
         switch state {
         case .open where checksSummary.failed > 0: .btRemoved
-        case .open: isDraft ? .btTextTertiary : .btTextSecondary
-        case .merged: .btTextSecondary
-        case .closed: .btTextTertiary
+        default: stateTint
+        }
+    }
+
+    var stateTint: Color {
+        switch state {
+        case .open: isDraft ? .btPullRequestDraftInk : .btPullRequestOpenInk
+        case .merged: .btPullRequestMergedInk
+        case .closed: .btPullRequestClosedInk
         }
     }
 
@@ -304,7 +310,7 @@ private struct PullRequestDetail: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 PullRequestMark(pr: pr, size: 12)
-                Text(pr.stateLabel).font(.btCallout).foregroundStyle(Color.btTextSecondary)
+                Text(pr.stateLabel).font(.btCallout).foregroundStyle(pr.stateTint)
                 Text(verbatim: pr.label).font(.btCallout).foregroundStyle(Color.btTextTertiary)
                 Spacer(minLength: Space.sm)
                 if let url = pr.url {
