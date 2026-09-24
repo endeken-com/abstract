@@ -62,6 +62,9 @@ struct SidebarView: View {
             .padding(.bottom, Space.lg)
         }
         .scrollIndicators(.automatic)
+        // Rows scrolling up under the traffic lights and sidebar toggle blur
+        // away instead of colliding with them.
+        .btUnderTitle()
         .focusable()
         .focused($focused)
         .focusEffectDisabled()
