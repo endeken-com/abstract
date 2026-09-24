@@ -40,6 +40,9 @@ public enum RemoteRequest: Codable, Sendable {
     /// A chat's agent, model and effort, or how much it may do alone.
     case setAgent(sessionId: String, providerId: String, model: String?, effort: String?)
     case setPolicy(sessionId: String, policy: PermissionPolicy)
+    /// One of the agent's background tasks, or work to move there (Ctrl+B).
+    case stopTask(sessionId: String, taskId: String)
+    case moveToBackground(sessionId: String, toolUseId: String?)
     case resume(sessionId: String)
     case rename(sessionId: String, name: String)
     case setArchived(sessionId: String, archived: Bool)

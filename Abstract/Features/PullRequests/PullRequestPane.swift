@@ -142,54 +142,26 @@ struct PullRequestMark: View {
     }
 }
 
-/// Branch lines and commit rings, drawn for small sizes where the system's
-/// pull-request symbols blur: open (a branch pointing back), draft (its
-/// return still dotted), merged (joined), closed (crossed out).
+/// GitHub's own pull-request marks, from Primer Octicons:
+/// open, draft, merged, closed. Template images, so they take the foreground style.
 struct PullRequestGlyph: View {
     enum Kind { case open, draft, merged, closed }
     let kind: Kind
 
-    var body: some View {
-        Canvas { context, size in
-            let s = min(size.width, size.height) / 12
-            func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: x * s, y: y * s) }
-            func ring(_ x: CGFloat, _ y: CGFloat) -> Path {
-                Path(ellipseIn: CGRect(x: (x - 1.6) * s, y: (y - 1.6) * s, width: 3.2 * s, height: 3.2 * s))
-            }
-            let style = StrokeStyle(lineWidth: 1.1 * s, lineCap: .round, lineJoin: .round)
-            var trunk = ring(2.8, 2.4)
-            trunk.addPath(ring(2.8, 9.6))
-            trunk.move(to: p(2.8, 4.0))
-            trunk.addLine(to: p(2.8, 8.0))
-            context.stroke(trunk, with: .foreground, style: style)
+    /// Stands for the glyph where a system symbol name is expected.
+    static let symbol = "abstract.pullrequest"
 
-            var branch = Path()
-            switch kind {
-            case .open, .draft:
-                branch.addPath(ring(9.2, 9.6))
-                branch.move(to: p(9.2, 8.0))
-                branch.addLine(to: p(9.2, 5.2))
-                branch.addQuadCurve(to: p(6.6, 2.4), control: p(9.2, 2.4))
-                if kind == .open {
-                    branch.move(to: p(7.9, 1.1))
-                    branch.addLine(to: p(6.6, 2.4))
-                    branch.addLine(to: p(7.9, 3.7))
-                }
-            case .merged:
-                branch.addPath(ring(9.2, 7.0))
-                branch.move(to: p(2.8, 4.0))
-                branch.addQuadCurve(to: p(7.6, 7.0), control: p(2.8, 7.0))
-            case .closed:
-                branch.addPath(ring(9.2, 9.6))
-                branch.move(to: p(9.2, 8.0))
-                branch.addLine(to: p(9.2, 6.4))
-                branch.move(to: p(7.7, 1.2))
-                branch.addLine(to: p(10.7, 4.2))
-                branch.move(to: p(10.7, 1.2))
-                branch.addLine(to: p(7.7, 4.2))
-            }
-            context.stroke(branch, with: .foreground,
-                           style: kind == .draft ? StrokeStyle(lineWidth: 1.1 * s, lineCap: .round, dash: [0.1 * s, 2 * s]) : style)
+    var body: some View {
+        Image(nsImage: Self.image(kind)).renderingMode(.template).resizable().aspectRatio(contentMode: .fit)
+    }
+
+    /// The 16px mark. Menus draw images, not views, so they take it as is.
+    static func image(_ kind: Kind) -> NSImage {
+        switch kind {
+        case .open: Octicon.gitPullRequest
+        case .draft: Octicon.gitPullRequestDraft
+        case .merged: Octicon.gitMerge
+        case .closed: Octicon.gitPullRequestClosed
         }
     }
 }
@@ -214,7 +186,7 @@ struct PullRequestPane: View {
             case .loading:
                 ProgressView().controlSize(.small).frame(maxWidth: .infinity, maxHeight: .infinity)
             case let .unavailable(title, message):
-                EmptyStateView(symbol: "arrow.triangle.pull", title: title, message: message)
+                EmptyStateView(symbol: PullRequestGlyph.symbol, title: title, message: message)
             case .ready:
                 ScrollView {
                     VStack(alignment: .leading, spacing: Space.lg) {

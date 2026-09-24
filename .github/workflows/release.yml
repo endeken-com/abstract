@@ -1,0 +1,63 @@
+# Every push to main builds the DMG and publishes it as the GitHub release v<version>.
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  dmg:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: |
+          xcodebuild -version
+          xcodegen generate
+
+      - name: Build DMG
+        id: dmg
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          VERSION=$(scripts/version.sh)
+          test -n "$VERSION" || { echo "::error file=project.yml::CFBundleShortVersionString must be MAJOR.MINOR.PATCH"; exit 1; }
+          scripts/package-dmg.sh
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "path=build/release/Abstract-$VERSION.dmg" >> "$GITHUB_OUTPUT"
+
+      - name: Upload build log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: build/xcodebuild-release.log
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Abstract-${{ steps.dmg.outputs.version }}
+          path: ${{ steps.dmg.outputs.path }}
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.dmg.outputs.version }}
+          DMG: ${{ steps.dmg.outputs.path }}
+        run: |
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            echo "::warning::v$VERSION is already released, so this build is only kept as a workflow artifact. Bump the version to publish it."
+            exit 0
+          fi
+          gh release create "v$VERSION" "$DMG" --target "$GITHUB_SHA" --title "Abstract $VERSION" --generate-notes
