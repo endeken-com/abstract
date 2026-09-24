@@ -215,7 +215,7 @@ impl SessionManager {
                     &self.db,
                     &s.id,
                     "errored",
-                    Some("interrupted when Backtick last closed"),
+                    Some("interrupted when Abstract last closed"),
                 )?;
             }
         }

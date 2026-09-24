@@ -12,7 +12,7 @@ export function AddProjectDialog() {
   const isOpen = useApp((s) => s.addProjectOpen);
   const setOpen = useApp((s) => s.setAddProjectOpen);
   return (
-    <Dialog open={isOpen} onOpenChange={setOpen} title="Add project" description="Point Backtick at a git repository on this machine." width={560}>
+    <Dialog open={isOpen} onOpenChange={setOpen} title="Add project" description="Point Abstract at a git repository on this machine." width={560}>
       {isOpen ? <AddProjectForm onDone={() => setOpen(false)} /> : null}
     </Dialog>
   );
@@ -92,7 +92,7 @@ function AddProjectForm({ onDone }: { onDone: () => void }) {
       </button>
 
       {probe && !probe.is_root ? (
-        <Notice>That folder sits inside a larger repository, so Backtick uses its root. Worktrees then carry the whole project.</Notice>
+        <Notice>That folder sits inside a larger repository, so Abstract uses its root. Worktrees then carry the whole project.</Notice>
       ) : null}
       {probe && probe.nested_repos.length > 0 ? (
         <Notice>

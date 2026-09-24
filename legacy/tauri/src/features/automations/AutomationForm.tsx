@@ -493,7 +493,7 @@ export function AutomationForm({
         <Field step={9} label="Catch up on launch">
           <Toggle
             label="Run a missed fire at launch"
-            hint="A fire that came due while Backtick was closed is skipped unless this is on. With it on, the most recent missed fire runs as soon as Backtick opens."
+            hint="A fire that came due while Abstract was closed is skipped unless this is on. With it on, the most recent missed fire runs as soon as Abstract opens."
             checked={form.catchUp}
             onChange={(v) => patch({ catchUp: v })}
           />

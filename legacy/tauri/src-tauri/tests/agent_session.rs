@@ -2,26 +2,26 @@
 //! argv the provider builds, stream its output, persist it, and replay it.
 //!
 //! Needs the `claude` binary and a logged-in subscription, so it is opt-in:
-//!   BACKTICK_E2E=1 cargo test --test agent_session -- --nocapture
+//!   ABSTRACT_E2E=1 cargo test --test agent_session -- --nocapture
 
-use backtick_lib::db::Db;
-use backtick_lib::executor::{local::LocalExecutor, LaunchSpec};
-use backtick_lib::models::{new_id, timestamp, Session};
-use backtick_lib::sessions::manager::{SessionEvent, SessionManager};
-use backtick_lib::store;
+use abstract_lib::db::Db;
+use abstract_lib::executor::{local::LocalExecutor, LaunchSpec};
+use abstract_lib::models::{new_id, timestamp, Session};
+use abstract_lib::sessions::manager::{SessionEvent, SessionManager};
+use abstract_lib::store;
 use std::sync::Arc;
 
 #[tokio::test]
 async fn streams_persists_and_replays_a_real_agent_run() {
-    if std::env::var("BACKTICK_E2E").is_err() {
-        eprintln!("skipping: set BACKTICK_E2E=1 to run against the real claude CLI");
+    if std::env::var("ABSTRACT_E2E").is_err() {
+        eprintln!("skipping: set ABSTRACT_E2E=1 to run against the real claude CLI");
         return;
     }
 
     // Keep every side effect inside a throwaway data directory.
-    let data_dir = std::env::temp_dir().join(format!("backtick-e2e-{}", uuid::Uuid::new_v4()));
+    let data_dir = std::env::temp_dir().join(format!("abstract-e2e-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&data_dir).unwrap();
-    std::env::set_var("BACKTICK_DATA_DIR", &data_dir);
+    std::env::set_var("ABSTRACT_DATA_DIR", &data_dir);
 
     let workdir = data_dir.join("work");
     std::fs::create_dir_all(&workdir).unwrap();

@@ -201,7 +201,7 @@ export function AppearanceSection(): JSX.Element {
         </div>
       </Card>
 
-      <Muted>Sharp corners are fixed and not configurable — no radius option exists anywhere in Backtick.</Muted>
+      <Muted>Sharp corners are fixed and not configurable — no radius option exists anywhere in Abstract.</Muted>
     </Section>
   );
 }

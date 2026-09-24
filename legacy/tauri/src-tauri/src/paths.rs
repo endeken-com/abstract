@@ -1,13 +1,13 @@
 use crate::error::{Error, Result};
 use std::path::PathBuf;
 
-/// Root of all Backtick state on this machine: `~/.backtick` unless overridden.
+/// Root of all Abstract state on this machine: `~/.abstract` unless overridden.
 pub fn data_root() -> Result<PathBuf> {
-    if let Ok(custom) = std::env::var("BACKTICK_DATA_DIR") {
+    if let Ok(custom) = std::env::var("ABSTRACT_DATA_DIR") {
         return Ok(PathBuf::from(custom));
     }
     let home = dirs::home_dir().ok_or_else(|| Error::msg("cannot resolve home directory"))?;
-    Ok(home.join(".backtick"))
+    Ok(home.join(".abstract"))
 }
 
 pub fn ensure_dir(p: &PathBuf) -> Result<()> {
@@ -18,7 +18,7 @@ pub fn ensure_dir(p: &PathBuf) -> Result<()> {
 pub fn db_file() -> Result<PathBuf> {
     let root = data_root()?;
     ensure_dir(&root)?;
-    Ok(root.join("backtick.db"))
+    Ok(root.join("abstract.db"))
 }
 
 pub fn session_log_dir() -> Result<PathBuf> {

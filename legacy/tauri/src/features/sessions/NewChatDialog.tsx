@@ -55,7 +55,7 @@ function NewChatForm({ initialProjectId, onDone }: { initialProjectId: string | 
     setPolicy(project.default_permission_policy as PermissionPolicy);
   }, [project?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const prefix = project?.branch_prefix || (settings.branch_prefix as string | undefined) || 'backtick/';
+  const prefix = project?.branch_prefix || (settings.branch_prefix as string | undefined) || 'abstract/';
   const branchPreview = useMemo(() => `${prefix}${slugify(prompt.split('\n')[0] ?? '')}`, [prefix, prompt]);
   const status = providerStatus[provider];
 

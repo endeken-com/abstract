@@ -1,9 +1,9 @@
-# Backtick
+# Abstract
 
 An agentic development environment: run several CLI coding agents in parallel,
 each isolated in its own git worktree, then review and merge what they changed.
 
-Backtick drives agents you already pay for as **subscription CLIs** (`claude`,
+Abstract drives agents you already pay for as **subscription CLIs** (`claude`,
 `codex`), not metered API calls. It never sees your API keys and never talks to
 a model itself.
 
@@ -70,7 +70,7 @@ The parsers are tested against JSONL recorded from real runs of both CLIs, in
 
 Each chat gets `git worktree add -b <prefix><slug> <path> <base-ref>`, with the
 path and branch prefix set by templates in Settings. Worktrees live outside the
-repository by default (`~/.backtick/worktrees/<repo>-<hash>/<slug>`).
+repository by default (`~/.abstract/worktrees/<repo>-<hash>/<slug>`).
 
 Nested repositories are detected when a project is added, excluded from diffs,
 and — because one nested repo makes a whole-tree `git add -N` fail and would
@@ -94,11 +94,11 @@ workspace mode. A run is `created` once its workspace exists; whether the
 agent's work succeeded is the session's own status.
 
 Two differences from a cloud orchestrator, by necessity: the scheduler runs
-inside the app, so closing the window hides Backtick to the tray instead of
+inside the app, so closing the window hides Abstract to the tray instead of
 quitting, and a fire missed while the app was closed is skipped unless "catch up
 on launch" is on. In exchange, firing is exactly-once rather than at-least-once.
 
 ## Non-goals
 
-No built-in editor, no cloud sync, no model training. Backtick orchestrates
+No built-in editor, no cloud sync, no model training. Abstract orchestrates
 agents that already exist.

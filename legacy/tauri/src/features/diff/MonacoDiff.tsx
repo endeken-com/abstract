@@ -45,7 +45,7 @@ export function MonacoDiff({
     if (!host) return;
     const monaco = setupMonaco();
     const editor = monaco.editor.createDiffEditor(host, {
-      theme: 'backtick',
+      theme: 'abstract',
       readOnly: true,
       originalEditable: false,
       automaticLayout: true,

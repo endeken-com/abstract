@@ -24,7 +24,7 @@ const ahead = (min: number) => new Date(now + min * 60_000).toISOString();
 const uid = () => Math.random().toString(36).slice(2, 10);
 
 const projects: Project[] = [
-  project('p1', 'backtick', '/Users/dev/code/backtick', 'main'),
+  project('p1', 'abstract', '/Users/dev/code/abstract', 'main'),
   project('p2', 'payments-api', '/Users/dev/code/payments-api', 'develop', ['vendor/stripe-go']),
   project('p3', 'marketing-site', '/Users/dev/code/marketing-site', 'main'),
 ];
@@ -52,8 +52,8 @@ function session(id: string, projectId: string, name: string, status: string, mi
   const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40).replace(/-$/, '');
   return {
     id, project_id: projectId, name, provider_id: provider, provider_session_id: null,
-    worktree_path: `/Users/dev/.backtick/worktrees/${p.name}-3f9a21c0/${slug}`,
-    branch: `backtick/${slug}`, base_ref: p.default_base_ref, status, status_detail: null,
+    worktree_path: `/Users/dev/.abstract/worktrees/${p.name}-3f9a21c0/${slug}`,
+    branch: `abstract/${slug}`, base_ref: p.default_base_ref, status, status_detail: null,
     permission_policy: 'ask', prompt: name, automation_id: null, created_at: ago(minAgo + 30),
     last_event_at: ago(minAgo), archived_at: null, alive: status === 'running' || status === 'waiting_input',
   };
@@ -83,8 +83,8 @@ const runs: AutomationRun[] = [
 ];
 
 const settings: Record<string, unknown> = {
-  worktree_template: '{home}/.backtick/worktrees/{repo}-{hash}/{slug}',
-  branch_prefix: 'backtick/',
+  worktree_template: '{home}/.abstract/worktrees/{repo}-{hash}/{slug}',
+  branch_prefix: 'abstract/',
 };
 
 // ---------- streaming ----------
@@ -377,7 +377,7 @@ export function installMock() {
           const list: WorktreeInfo[] = [
             { path: p.root_path, head: 'a1b2c3d', branch: p.default_base_ref, bare: false, detached: false, locked: false, session_id: null, session_name: null, orphan: false },
             ...sessions.filter((s) => s.project_id === p.id).map((s) => ({ path: s.worktree_path ?? '', head: 'f00ba12', branch: s.branch, bare: false, detached: false, locked: false, session_id: s.id, session_name: s.name, orphan: false })),
-            { path: `/Users/dev/.backtick/worktrees/${p.name}-3f9a21c0/old-experiment`, head: 'dead001', branch: 'backtick/old-experiment', bare: false, detached: false, locked: false, session_id: null, session_name: null, orphan: true },
+            { path: `/Users/dev/.abstract/worktrees/${p.name}-3f9a21c0/old-experiment`, head: 'dead001', branch: 'abstract/old-experiment', bare: false, detached: false, locked: false, session_id: null, session_name: null, orphan: true },
           ];
           return list;
         }

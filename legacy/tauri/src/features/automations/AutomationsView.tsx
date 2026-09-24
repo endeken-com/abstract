@@ -60,7 +60,7 @@ export function AutomationsView(): JSX.Element {
               </h1>
               <Muted>
                 Pick an automation on the left to see its run history, or create one to have an agent
-                pick up a recurring job on its own. Backtick keeps firing them from the tray after you
+                pick up a recurring job on its own. Abstract keeps firing them from the tray after you
                 close the window.
               </Muted>
             </div>

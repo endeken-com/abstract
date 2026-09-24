@@ -2,8 +2,8 @@ import type { JSX } from 'react';
 import { Card, Field, Mono, Muted, Section } from './ui';
 import { useDebouncedSetting } from './hooks';
 
-export const DEFAULT_WORKTREE_TEMPLATE = '{home}/.backtick/worktrees/{repo}-{hash}/{slug}';
-export const DEFAULT_BRANCH_PREFIX = 'backtick/';
+export const DEFAULT_WORKTREE_TEMPLATE = '{home}/.abstract/worktrees/{repo}-{hash}/{slug}';
+export const DEFAULT_BRANCH_PREFIX = 'abstract/';
 
 /** The example every preview is drawn from, so the shape is always concrete. */
 const SAMPLE = {
@@ -71,7 +71,7 @@ export function WorktreesSection(): JSX.Element {
 
           <Field
             label="Branch prefix"
-            hint="Prepended to every branch Backtick creates, so its branches are easy to spot and easy to delete."
+            hint="Prepended to every branch Abstract creates, so its branches are easy to spot and easy to delete."
           >
             <input
               className="w-full max-w-sm font-mono"

@@ -1,12 +1,12 @@
 [package]
-name = "backtick"
+name = "abstract"
 version = "0.1.0"
-description = "Backtick — agentic development environment"
+description = "Abstract — agentic development environment"
 authors = ["Wesley Guirra"]
 edition = "2021"
 
 [lib]
-name = "backtick_lib"
+name = "abstract_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

@@ -1,6 +1,6 @@
 /**
  * Monaco is bundled locally (no CDN) so the app works offline and inside the
- * webview CSP. Only the plain editor worker is wired up: Backtick shows diffs,
+ * webview CSP. Only the plain editor worker is wired up: Abstract shows diffs,
  * it does not run language services.
  */
 import * as monaco from 'monaco-editor';
@@ -16,7 +16,7 @@ export function setupMonaco(): typeof monaco {
     getWorker: () => new EditorWorker(),
   };
 
-  monaco.editor.defineTheme('backtick', {
+  monaco.editor.defineTheme('abstract', {
     base: 'vs-dark',
     inherit: true,
     rules: [],
@@ -35,7 +35,7 @@ export function setupMonaco(): typeof monaco {
       'scrollbarSlider.hoverBackground': '#4a4a4a88',
     },
   });
-  monaco.editor.setTheme('backtick');
+  monaco.editor.setTheme('abstract');
   return monaco;
 }
 

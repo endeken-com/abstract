@@ -31,10 +31,10 @@ export function Home() {
               boxShadow: 'inset 0 0 0 1px var(--bt-border-strong), inset 0 1px 0 var(--bt-highlight), 0 20px 50px -20px color-mix(in srgb, var(--bt-accent) 45%, transparent)',
             }}
           >
-            <BacktickMark />
+            <AbstractMark />
           </div>
           <h1 className="text-center text-[24px] font-semibold tracking-[-0.02em]" style={{ color: 'var(--bt-text)' }}>
-            {hasProjects ? 'What should we build?' : 'Welcome to Backtick'}
+            {hasProjects ? 'What should we build?' : 'Welcome to Abstract'}
           </h1>
           <p className="mt-2 max-w-[46ch] text-center text-[13.5px] leading-relaxed" style={{ color: 'var(--bt-text-faint)' }}>
             {hasProjects
@@ -104,8 +104,8 @@ export function Home() {
   );
 }
 
-/** The backtick glyph, drawn rather than typeset so it reads at any size. */
-function BacktickMark() {
+/** The abstract glyph, drawn rather than typeset so it reads at any size. */
+function AbstractMark() {
   return (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
       <path d="M9 5.5 L14.5 13" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" />

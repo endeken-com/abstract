@@ -273,7 +273,7 @@ pub async fn apply_patch(
     reverse: bool,
     three_way: bool,
 ) -> Result<()> {
-    let tmp = format!("{}/.backtick-patch-{}.diff", cwd.trim_end_matches('/'), uuid::Uuid::new_v4());
+    let tmp = format!("{}/.abstract-patch-{}.diff", cwd.trim_end_matches('/'), uuid::Uuid::new_v4());
     write_file(exec, &tmp, patch).await?;
     let mut args: Vec<&str> = vec!["apply"];
     if reverse {
@@ -300,7 +300,7 @@ pub async fn apply_patch(
 async fn write_file(exec: &dyn Executor, path: &str, content: &str) -> Result<()> {
     // Heredoc keeps this identical for local and ssh executors.
     let script = format!(
-        "cat > {} <<'BACKTICK_PATCH_EOF'\n{}\nBACKTICK_PATCH_EOF",
+        "cat > {} <<'ABSTRACT_PATCH_EOF'\n{}\nABSTRACT_PATCH_EOF",
         shell_escape::escape(path.into()),
         content
     );

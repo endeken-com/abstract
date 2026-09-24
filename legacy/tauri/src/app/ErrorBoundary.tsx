@@ -17,7 +17,7 @@ export class ErrorBoundary extends Component<
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error('[Backtick] view crashed', error, info.componentStack);
+    console.error('[Abstract] view crashed', error, info.componentStack);
   }
 
   componentDidUpdate(prev: { resetKey?: string }) {

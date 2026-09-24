@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Backtick",
+  "productName": "Abstract",
   "version": "0.1.0",
-  "identifier": "sh.backtick.app",
+  "identifier": "sh.abstract.app",
   "build": {
     "beforeDevCommand": "bun run dev",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Backtick",
+        "title": "Abstract",
         "width": 1280,
         "height": 820,
         "minWidth": 900,

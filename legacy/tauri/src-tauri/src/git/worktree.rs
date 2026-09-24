@@ -242,15 +242,15 @@ mod tests {
     #[test]
     fn template_expands_every_token() {
         let out = render_template(
-            "{home}/.backtick/worktrees/{repo}-{hash}/{slug}",
+            "{home}/.abstract/worktrees/{repo}-{hash}/{slug}",
             "/Users/w",
             "api",
             "ab12cd34",
             "fix-login",
-            "backtick/fix-login",
-            "backtick/",
+            "abstract/fix-login",
+            "abstract/",
         );
-        assert_eq!(out, "/Users/w/.backtick/worktrees/api-ab12cd34/fix-login");
+        assert_eq!(out, "/Users/w/.abstract/worktrees/api-ab12cd34/fix-login");
     }
 
     #[test]

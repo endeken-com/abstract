@@ -11,7 +11,7 @@ export function GeneralSection(): JSX.Element {
   return (
     <Section
       title="General"
-      lead="Notifications and the defaults Backtick falls back on when nothing more specific is set."
+      lead="Notifications and the defaults Abstract falls back on when nothing more specific is set."
     >
       <Card>
         <div className="flex flex-col gap-5">
@@ -64,9 +64,9 @@ export function GeneralSection(): JSX.Element {
             Closing the window
           </span>
           <p className="max-w-[70ch]" style={{ color: 'var(--bt-text-dim)' }}>
-            Closing the window hides Backtick to the tray rather than quitting it, so automations keep
+            Closing the window hides Abstract to the tray rather than quitting it, so automations keep
             firing on schedule. Choose Quit in the tray menu to exit fully — after that nothing fires
-            until you open Backtick again.
+            until you open Abstract again.
           </p>
         </div>
       </Card>

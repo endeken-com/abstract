@@ -3,7 +3,7 @@
 @import "@fontsource-variable/jetbrains-mono";
 
 /*
- * Backtick design tokens.
+ * Abstract design tokens.
  * Near-black layered surfaces, hairline borders with a faint top highlight,
  * a soft radius scale, one accent reserved for "active" and "needs you",
  * and short ease-out motion. Colour tokens keep their --bt-* names so every

@@ -148,7 +148,7 @@ export function AgentsSection(): JSX.Element {
   return (
     <Section
       title="Agents"
-      lead="Backtick drives whichever agent CLIs it can find. Detection runs at startup; the overrides below win over it."
+      lead="Abstract drives whichever agent CLIs it can find. Detection runs at startup; the overrides below win over it."
     >
       {PROVIDERS.map((provider) => (
         <ProviderBlock key={provider.id} providerId={provider.id} providerName={provider.name} />

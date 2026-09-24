@@ -7,8 +7,8 @@ use crate::store;
 use parking_lot::Mutex;
 use std::sync::Arc;
 
-pub const DEFAULT_WORKTREE_TEMPLATE: &str = "{home}/.backtick/worktrees/{repo}-{hash}/{slug}";
-pub const DEFAULT_BRANCH_PREFIX: &str = "backtick/";
+pub const DEFAULT_WORKTREE_TEMPLATE: &str = "{home}/.abstract/worktrees/{repo}-{hash}/{slug}";
+pub const DEFAULT_BRANCH_PREFIX: &str = "abstract/";
 
 pub struct AppState {
     pub db: Db,

@@ -20,7 +20,7 @@ pub fn run() {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "backtick=info".into()),
+                .unwrap_or_else(|_| "abstract=info".into()),
         )
         .init();
 
@@ -92,17 +92,17 @@ pub fn run() {
             commands::schedule_preset,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running Backtick");
+        .expect("error while running Abstract");
 }
 
 fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
-    let show = MenuItem::with_id(app, "show", "Open Backtick", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit Backtick", true, None::<&str>)?;
+    let show = MenuItem::with_id(app, "show", "Open Abstract", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit Abstract", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show, &quit])?;
 
     TrayIconBuilder::with_id("main")
         .icon(app.default_window_icon().cloned().unwrap())
-        .tooltip("Backtick")
+        .tooltip("Abstract")
         .menu(&menu)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => {

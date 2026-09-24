@@ -2,8 +2,8 @@
 //! provision a worktree, change files inside it, collect the diff, accept one
 //! hunk into the main working tree, and reject a change in the worktree.
 
-use backtick_lib::executor::{local::LocalExecutor, Executor};
-use backtick_lib::git::{diff, worktree};
+use abstract_lib::executor::{local::LocalExecutor, Executor};
+use abstract_lib::git::{diff, worktree};
 
 async fn git(exec: &dyn Executor, cwd: &str, args: &[&str]) -> String {
     let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
@@ -24,12 +24,12 @@ impl Drop for TempRepo {
 }
 
 async fn make_repo(exec: &dyn Executor, label: &str) -> TempRepo {
-    let dir = std::env::temp_dir().join(format!("backtick-test-{label}-{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("abstract-test-{label}-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     let root = dir.to_string_lossy().to_string();
     git(exec, &root, &["init", "-q", "-b", "main"]).await;
-    git(exec, &root, &["config", "user.email", "test@backtick.local"]).await;
-    git(exec, &root, &["config", "user.name", "Backtick Test"]).await;
+    git(exec, &root, &["config", "user.email", "test@abstract.local"]).await;
+    git(exec, &root, &["config", "user.name", "Abstract Test"]).await;
     let base: String = (1..=20).map(|n| format!("line {n}\n")).collect();
     std::fs::write(dir.join("app.txt"), &base).unwrap();
     git(exec, &root, &["add", "-A"]).await;
@@ -44,14 +44,14 @@ async fn worktree_diff_accept_and_reject() {
     let wt_path = format!("{}-wt", repo.root);
 
     // 1. Provision an isolated worktree on its own branch.
-    worktree::add(&exec, &repo.root, &wt_path, "backtick/test-session", "HEAD")
+    worktree::add(&exec, &repo.root, &wt_path, "abstract/test-session", "HEAD")
         .await
         .expect("worktree created");
     assert!(std::path::Path::new(&wt_path).join("app.txt").exists());
 
     let listed = worktree::list(&exec, &repo.root).await.unwrap();
     assert_eq!(listed.len(), 2, "main working tree plus the new worktree");
-    assert!(listed.iter().any(|w| w.branch.as_deref() == Some("backtick/test-session")));
+    assert!(listed.iter().any(|w| w.branch.as_deref() == Some("abstract/test-session")));
 
     // 2. The agent edits an existing file (two separate hunks) and adds a new one.
     // Two edits far enough apart that git emits two separate hunks.
@@ -93,7 +93,7 @@ async fn worktree_diff_accept_and_reject() {
     assert!(wt_app.starts_with("FIRST\n"), "the other hunk survived the rejection");
 
     // 6. Tear the worktree down, branch and all.
-    worktree::remove(&exec, &repo.root, &wt_path, Some("backtick/test-session"))
+    worktree::remove(&exec, &repo.root, &wt_path, Some("abstract/test-session"))
         .await
         .expect("worktree removed");
     assert!(!std::path::Path::new(&wt_path).exists());
@@ -130,7 +130,7 @@ async fn nested_repositories_are_found_and_excluded_from_the_diff() {
 #[tokio::test]
 async fn an_unknown_nested_repository_does_not_hide_the_rest_of_the_changes() {
     // The project was added before someone vendored a repository into it, so
-    // Backtick has no record of it. A whole-tree `git add -N` fails outright
+    // Abstract has no record of it. A whole-tree `git add -N` fails outright
     // in that situation; the review must still show everything else.
     let exec = LocalExecutor::new();
     let repo = make_repo(&exec, "unknown-nested").await;
