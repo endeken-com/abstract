@@ -758,7 +758,7 @@ final class RemoteLink {
     @ObservationIgnored private var waiting: [Int: CheckedContinuation<RemoteResponse, any Error>] = [:]
     @ObservationIgnored private var subscribed: Set<String> = []
     @ObservationIgnored private var lastSeq: [String: Int] = [:]
-    @ObservationIgnored private var parsers: [String: any OutputParser] = [:]
+    @ObservationIgnored private var streams: [String: ChatStream] = [:]
     /// Connections to that Mac's local model servers, by tunnel id.
     @ObservationIgnored private var tunnels: [Int: (data: (Data) -> Void, close: (Int) -> Void)] = [:]
     /// Processes, folder watches and shells running there for chats here.
@@ -918,8 +918,8 @@ final class RemoteLink {
         case let .event(.lines(session, lines)):
             deliver(session, lines)
         case let .event(.exit(session, code)):
-            guard let parser = parsers[session] else { return }
-            service?.model?.applyRemote(parser.onExit(code: code), to: RemoteService.mirrorId(device: device.id, session: session))
+            guard let stream = streams[session] else { return }
+            service?.model?.applyRemote(stream.onExit(code: code), to: RemoteService.mirrorId(device: device.id, session: session))
         case let .tunnel(id, .data(data)):
             tunnels[id]?.data(data)
         case let .tunnel(id, .close):
@@ -936,16 +936,17 @@ final class RemoteLink {
 
     private func deliver(_ session: String, _ lines: [RemoteLine]) {
         guard let providerId = snapshot?.sessions.first(where: { $0.id == session })?.providerId,
-              let provider = ProviderRegistry.provider(providerId) else {
+              ProviderRegistry.provider(providerId) != nil else {
             early[session, default: []] += lines
             return
         }
-        let parser = parsers[session] ?? provider.makeParser()
-        parsers[session] = parser
+        // A chat handed over reads each agent's part with its own parser.
+        let stream = streams[session] ?? ChatStream(providerId: ChatStream.firstProvider(in: lines.map(\.line), current: providerId))
+        streams[session] = stream
         var events: [AgentEvent] = []
         for line in lines where line.seq > (lastSeq[session] ?? 0) {
             lastSeq[session] = line.seq
-            events += AppModel.events(line.line, parser)
+            events += stream.feed(line.line)
         }
         service?.model?.applyRemote(events, to: RemoteService.mirrorId(device: device.id, session: session))
     }

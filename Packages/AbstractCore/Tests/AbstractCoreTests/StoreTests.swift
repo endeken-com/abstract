@@ -84,6 +84,22 @@ import AbstractCore
         #expect(try store.sessions() == [updated])
     }
 
+    @Test func sessionKeepsAPendingHandoffAndEachAgentsSeat() throws {
+        var session = Self.session("s1", projectId: nil)
+        session.handoffFrom = "claude"
+        session.providerSessions = [
+            "claude": ProviderSeat(sessionId: "c-1", model: "opus", effort: "high", logOffset: 42),
+            "codex": ProviderSeat(sessionId: nil, model: nil, effort: nil, logOffset: 7),
+        ]
+        try store.save(session)
+        #expect(try store.session("s1") == session)
+
+        session.handoffFrom = nil
+        session.providerSessions = [:]
+        try store.save(session)
+        #expect(try store.session("s1") == session)
+    }
+
     @Test func sessionWithoutProjectIsAllowed() throws {
         let session = Self.session("s1", projectId: nil)
         try store.save(session)

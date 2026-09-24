@@ -85,7 +85,13 @@ public final class SessionEngine: Sendable {
     /// Logs what you sent the agent, numbered with its output, and reports
     /// it like any other line.
     public func recordInput(sessionId: String, text: String) {
-        let line = OutputLine(stream: .user, line: text)
+        record(sessionId: sessionId, OutputLine(stream: .user, line: text))
+    }
+
+    /// Logs a line of Abstract's own (what you sent, a handoff) and reports it
+    /// like any other. Returns its number in the log.
+    @discardableResult
+    public func record(sessionId: String, _ line: OutputLine) -> Int {
         let writer = state.withLock { $0[sessionId]?.writer }
         let n: Int
         if let writer {
@@ -97,6 +103,12 @@ public final class SessionEngine: Sendable {
             once.close()
         }
         continuation.yield(.line(sessionId: sessionId, seq: n, line))
+        return n
+    }
+
+    /// Lines in the session's log so far.
+    public func logLength(sessionId: String) -> Int {
+        lineCount(logFile(sessionId))
     }
 
     public func stop(sessionId: String) {

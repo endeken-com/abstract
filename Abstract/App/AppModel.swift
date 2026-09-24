@@ -108,6 +108,9 @@ final class AppModel {
     var draftAttachments: [String: [PromptAttachment]] = [:]
     /// Chats being restarted on purpose; their exit is not an error.
     private var relaunching: Set<String> = []
+    /// Chats passing to another agent: the outgoing one's summary turn is
+    /// running, and its exit is not an ending.
+    private var handingOff: Set<String> = []
     /// Tool names to approve without asking, per chat.
     var autoContinueTools: [String: Set<String>] = [:]
     /// A file the Changes pane should select next time it loads, per chat.
@@ -174,7 +177,8 @@ final class AppModel {
         }
     }
 
-    @ObservationIgnored private var parsers: [String: any OutputParser] = [:]
+    /// Each chat's output as events, for whichever agent wrote it.
+    @ObservationIgnored private var streams: [String: ChatStream] = [:]
     /// Per chat and agent, kept across relaunches: Codex remembers each file
     /// as its last edit left it, so the next edit's diff is its own.
     @ObservationIgnored private var enrichers: [String: any LineEnricher] = [:]
@@ -600,10 +604,10 @@ final class AppModel {
             if let profile = claudeProfile, profile != accounts.standardProfilePath { spec.env["CLAUDE_CONFIG_DIR"] = profile }
             sessionProfiles[session.id] = claudeProfile ?? accounts.standardProfilePath
         }
-        parsers[session.id] = provider.makeParser()
         let enricherKey = "\(session.id)/\(provider.id)"
         if enrichers[enricherKey] == nil { enrichers[enricherKey] = provider.makeLineEnricher(executor: executor, cwd: ctx.cwd) }
         loadTimelineIfNeeded(session.id)
+        stream(for: session.id)?.restart(providerId: provider.id)
         try engine.launch(sessionId: session.id, spec: spec, enricher: enrichers[enricherKey])
         alive.insert(session.id)
         turnStartedAt[session.id] = Date()
@@ -616,6 +620,12 @@ final class AppModel {
         guard let session = session(sessionId), let provider = ProviderRegistry.provider(session.providerId) else { return }
         let message = PromptAttachments.message(text, attachments)
         let images = PromptAttachments.images(attachments)
+        // The agent was switched: the new one hears what happened first.
+        if session.handoffFrom != nil {
+            if handingOff.contains(sessionId) { throw AbstractError.message("Still handing this chat over; send again in a moment.") }
+            Task { await handOver(session, message: message, images: images) }
+            return
+        }
         engine.recordInput(sessionId: sessionId, text: message)
         // A new agent, model or effort takes effect by restarting between
         // turns, once no background task would end with the old process.
@@ -635,8 +645,9 @@ final class AppModel {
     }
 
     /// Switch a chat's agent, model or effort. The next message uses them: a
-    /// running agent restarts (resuming its conversation when the agent is the
-    /// same; a different agent starts fresh, as they can't share one).
+    /// running agent restarts, resuming its conversation when the agent is the
+    /// same. A different agent is handed the chat with that message (see
+    /// `handOver`); one that worked here before resumes its own conversation.
     func setAgent(_ sessionId: String, providerId: String, model: String?, effort: String?) {
         if let (_, host) = RemoteService.split(sessionId) {
             remote.onlineLink(for: sessionId)?.fire(.setAgent(sessionId: host, providerId: providerId, model: model, effort: effort))
@@ -644,8 +655,16 @@ final class AppModel {
         }
         guard var s = session(sessionId), (s.providerId, s.model, s.effort) != (providerId, model, effort) else { return }
         if s.providerId != providerId {
-            s.providerSessionId = nil
-            parsers[sessionId] = nil
+            let logged = engine.logLength(sessionId: sessionId)
+            // Only the agent the log last belongs to leaves a seat: one picked
+            // and dropped again before a message never joined the chat.
+            if s.handoffFrom == nil {
+                s.providerSessions[s.providerId] = ProviderSeat(sessionId: s.providerSessionId, model: s.model,
+                                                                effort: s.effort, logOffset: logged)
+            }
+            let from = s.handoffFrom ?? s.providerId
+            s.handoffFrom = from == providerId || logged == 0 ? nil : from
+            s.providerSessionId = s.providerSessions[providerId]?.sessionId
         }
         s.providerId = providerId
         s.model = model
@@ -686,6 +705,124 @@ final class AppModel {
             flash(error.localizedDescription, isError: true)
             setStatus(session.id, .errored, detail: error.localizedDescription)
         }
+    }
+
+    // MARK: Handing a chat to another agent
+
+    /// The chat's new agent takes over with `message`: the outgoing agent is
+    /// asked for a handover note (Backtick writes one from the transcript
+    /// when it can't answer), the transcript is saved where the new agent can
+    /// read it, and the new agent starts with both ahead of your message.
+    private func handOver(_ session: Session, message: String, images: [String]) async {
+        let id = session.id
+        guard let from = session.handoffFrom, !handingOff.contains(id) else { return }
+        handingOff.insert(id)
+        let wasRunning = session.status == .running
+        setStatus(id, .running, detail: "Preparing handover…")
+
+        // What the incoming agent hasn't seen: all of it, or since it last left.
+        let incoming = session.providerSessions[session.providerId]
+        let unseen = Array(engine.replay(sessionId: id).map(\.line).dropFirst(incoming?.logOffset ?? 0))
+        let blocks = ChatStream.timeline(unseen, currentProvider: from).blocks
+        let limited = Self.endedOnLimit(blocks)
+
+        let note = limited ? nil : await askForSummary(session, from: from, wasRunning: wasRunning)
+        await stopForRestart(id)
+        needsRelaunch.remove(id)
+        let summary = note ?? HandoffDigest.build(blocks: blocks)
+        let transcript = writeTranscript(id, blocks: blocks, agent: ProviderRegistry.name(from))
+        if transcript == nil { flash("The transcript couldn't be saved; the new agent gets a summary only.", isError: true) }
+
+        engine.record(sessionId: id, HandoffMarker(phase: .handoff, from: from, to: session.providerId, summary: summary,
+                                                   source: note == nil ? .app : .agent, transcriptPath: transcript).line)
+        engine.recordInput(sessionId: id, text: message)
+        handingOff.remove(id)
+
+        guard var current = self.session(id) else { return }
+        current.handoffFrom = nil
+        try? store.save(current)
+        reload()
+        let prompt = HandoffPreamble.compose(from: ProviderRegistry.name(from), summary: summary, transcriptPath: transcript,
+                                             resuming: current.providerSessionId != nil, message: message)
+        do {
+            try launch(current, prompt: prompt, resume: current.providerSessionId != nil, images: images)
+        } catch {
+            flash(error.localizedDescription, isError: true)
+            setStatus(id, .errored, detail: error.localizedDescription)
+        }
+    }
+
+    /// Stops the chat's agent, if running, to start another: its exit isn't an ending.
+    private func stopForRestart(_ sessionId: String) async {
+        guard isAlive(sessionId) else { return }
+        relaunching.insert(sessionId)
+        engine.stop(sessionId: sessionId)
+        for _ in 0..<60 where engine.isAlive(sessionId) { try? await Task.sleep(for: .milliseconds(100)) }
+    }
+
+    /// The last turn stopped on a usage, rate or context limit: the agent
+    /// can't be asked for anything now.
+    static func endedOnLimit(_ blocks: [TimelineBlock]) -> Bool {
+        for block in blocks.reversed() {
+            switch block {
+            case let .error(_, message): if LimitDetector.classify(message) != nil { return true }
+            case .user, .handoff: return false
+            default: continue
+            }
+        }
+        return false
+    }
+
+    /// Asks the outgoing agent for a handover note, in a turn the chat doesn't
+    /// show. nil when it has no conversation to resume, fails or takes too long.
+    private func askForSummary(_ session: Session, from: String, wasRunning: Bool) async -> String? {
+        let id = session.id
+        guard !isDemo, let provider = ProviderRegistry.provider(from) else { return nil }
+        let seat = session.providerSessions[from]
+        let live = isAlive(id) && !wasRunning && provider.followUpMode == .stdin
+        guard live || seat?.sessionId != nil else { return nil }
+        engine.record(sessionId: id, HandoffMarker(phase: .summarize, from: from, to: session.providerId).line)
+        do {
+            if live, let line = provider.buildUserMessage(HandoffPrompt.summaryRequest) {
+                try engine.write(sessionId: id, line)
+            } else {
+                await stopForRestart(id)
+                var outgoing = session
+                outgoing.providerId = from
+                outgoing.providerSessionId = seat?.sessionId
+                outgoing.model = seat?.model
+                outgoing.effort = seat?.effort
+                try launch(outgoing, prompt: HandoffPrompt.summaryRequest, resume: true)
+                setStatus(id, .running, detail: "Preparing handover…")
+            }
+        } catch {
+            return nil
+        }
+        for _ in 0..<450 {
+            if let s = streams[id], s.isSummarizing, s.summaryFinished { break }
+            try? await Task.sleep(for: .milliseconds(200))
+        }
+        guard let s = streams[id], s.isSummarizing, s.summaryFinished, !s.summaryFailed, !s.capturedSummary.isEmpty else { return nil }
+        return s.capturedSummary
+    }
+
+    /// The chat so far as markdown, beside its attachments, where every agent may read.
+    private func writeTranscript(_ sessionId: String, blocks: [TimelineBlock], agent: String) -> String? {
+        let folder = AttachmentStore.root.appendingPathComponent("handoffs", isDirectory: true)
+        let file = folder.appendingPathComponent("\(sessionId)-\(engine.logLength(sessionId: sessionId)).md")
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try HandoffTranscript.render(blocks: blocks, agentName: agent).write(to: file, atomically: true, encoding: .utf8)
+            return file.path
+        } catch {
+            return nil
+        }
+    }
+
+    /// A chat stopped by a limit carries on with another agent.
+    func continueWith(_ sessionId: String, providerId: String) {
+        setAgent(sessionId, providerId: providerId, model: nil, effort: nil)
+        do { try sendFollowUp(sessionId, text: "Continue where you left off.") } catch { flash(error.localizedDescription, isError: true) }
     }
 
     func answerPermission(_ sessionId: String, requestId: String, allow: Bool) {
@@ -761,6 +898,10 @@ final class AppModel {
     func resume(_ sessionId: String) {
         if let (_, host) = RemoteService.split(sessionId) { remote.onlineLink(for: sessionId)?.fire(.resume(sessionId: host)); return }
         guard let session = session(sessionId) else { return }
+        if session.handoffFrom != nil {
+            Task { await handOver(session, message: "Continue where you left off.", images: []) }
+            return
+        }
         do {
             try launch(session, prompt: session.providerSessionId == nil ? (session.prompt ?? "") : "Continue where you left off.",
                        resume: session.providerSessionId != nil)
@@ -809,7 +950,7 @@ final class AppModel {
         try? store.deleteSession(sessionId)
         feeds[sessionId] = nil
         permissions[sessionId] = nil
-        parsers[sessionId] = nil
+        streams[sessionId] = nil
         enrichers = enrichers.filter { !$0.key.hasPrefix(sessionId + "/") }
         if case .session(let id) = destination, id == sessionId { destination = .home }
         reload()
@@ -832,13 +973,25 @@ final class AppModel {
             if line.line.contains("rate_limit_event"), let quota = ClaudeAccounts.quota(fromLine: line.line) {
                 accounts.record(quota, profile: sessionProfiles[sessionId] ?? accounts.standardProfilePath)
             }
-            guard let parser = parser(for: sessionId) else { return }
-            for e in Self.events(line, parser) { apply(e, to: sessionId) }
+            guard let stream = stream(for: sessionId) else { return }
+            for e in stream.feed(line) {
+                if handingOff.contains(sessionId) {
+                    // The summary turn works without tools, and a new id would be the outgoing agent's.
+                    if case let .permissionRequest(requestId, _, _) = e { respond(sessionId, requestId: requestId, allow: false, input: nil); continue }
+                    if case .sessionId = e { continue }
+                }
+                apply(e, to: sessionId)
+            }
             remote.forward(sessionId: sessionId, seq: seq, line: line)
         case let .exit(sessionId, code):
             alive.remove(sessionId)
             // Stopped only to start again with a new model or agent: not an ending.
-            if relaunching.contains(sessionId) { permissions[sessionId] = nil; return }
+            if relaunching.remove(sessionId) != nil { permissions[sessionId] = nil; return }
+            if handingOff.contains(sessionId) {
+                _ = streams[sessionId]?.onExit(code: code)
+                permissions[sessionId] = nil
+                return
+            }
             // Stopped between turns (quit, stop): the turn was over, nothing failed.
             if session(sessionId)?.status == .idle {
                 setStatus(sessionId, .finished)
@@ -846,8 +999,8 @@ final class AppModel {
                 permissions[sessionId] = nil
                 return
             }
-            if let parser = parsers[sessionId] {
-                for e in parser.onExit(code: code) { apply(e, to: sessionId) }
+            if let stream = streams[sessionId] {
+                for e in stream.onExit(code: code) { apply(e, to: sessionId) }
             }
             remote.forwardExit(sessionId: sessionId, code: code)
             if let s = session(sessionId), s.status.isActive {
@@ -861,18 +1014,13 @@ final class AppModel {
         }
     }
 
-    /// A logged line as timeline events: what you sent reads as your message;
-    /// the agent's own output goes through its parser.
-    static func events(_ line: OutputLine, _ parser: any OutputParser) -> [AgentEvent] {
-        line.stream == .user ? [.text(role: .user, text: line.line, blockId: nil, partial: false)] : parser.feed(line.line, stream: line.stream)
-    }
-
-    private func parser(for sessionId: String) -> (any OutputParser)? {
-        if let p = parsers[sessionId] { return p }
-        guard let s = session(sessionId), let provider = ProviderRegistry.provider(s.providerId) else { return nil }
-        let p = provider.makeParser()
-        parsers[sessionId] = p
-        return p
+    /// Until a handoff is logged, output is still the outgoing agent's.
+    private func stream(for sessionId: String) -> ChatStream? {
+        if let s = streams[sessionId] { return s }
+        guard let s = session(sessionId) else { return nil }
+        let stream = ChatStream(providerId: s.handoffFrom ?? s.providerId)
+        streams[sessionId] = stream
+        return stream
     }
 
     private func apply(_ event: AgentEvent, to sessionId: String) {
@@ -938,20 +1086,14 @@ final class AppModel {
     }
 
     func loadTimelineIfNeeded(_ sessionId: String) {
-        guard !feed(sessionId).isLoaded, let s = session(sessionId), let provider = ProviderRegistry.provider(s.providerId) else { return }
-        let parser = provider.makeParser()
-        var t = Timeline()
-        var maxSeq = 0
-        for (seq, line) in engine.replay(sessionId: sessionId) {
-            maxSeq = seq
-            for e in Self.events(line, parser) {
-                if case .permissionRequest = e { continue }
-                t.append(e)
-            }
-        }
-        feed(sessionId).reset(t)
-        seenSeq[sessionId] = max(seenSeq[sessionId] ?? 0, maxSeq)
-        if isAlive(sessionId) { parsers[sessionId] = parsers[sessionId] ?? parser }
+        guard !feed(sessionId).isLoaded, let s = session(sessionId) else { return }
+        let replay = engine.replay(sessionId: sessionId)
+        let lines = replay.map(\.line)
+        // Each agent's part of the log is read by its own parser.
+        let stream = ChatStream(providerId: ChatStream.firstProvider(in: lines, current: s.handoffFrom ?? s.providerId))
+        feed(sessionId).reset(stream.replay(lines))
+        seenSeq[sessionId] = max(seenSeq[sessionId] ?? 0, replay.last?.seq ?? 0)
+        streams[sessionId] = streams[sessionId] ?? stream
     }
 
     // MARK: - Feedback

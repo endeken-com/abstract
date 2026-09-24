@@ -129,15 +129,8 @@ final class DemoBootstrap {
     private func loadHistory(_ path: String, _ model: AppModel) async {
         try? await Task.sleep(for: .seconds(8))
         if let first = model.sessions.first(where: { $0.status != .running }), let text = try? String(contentsOfFile: path, encoding: .utf8) {
-            let parser = ClaudeProvider().makeParser()
-            var timeline = Timeline()
-            for raw in text.split(separator: "\n") {
-                guard let line = try? JSONDecoder().decode(OutputLine.self, from: Data(raw.utf8)) else { continue }
-                for event in AppModel.events(line, parser) {
-                    if case .permissionRequest = event { continue }
-                    timeline.append(event)
-                }
-            }
+            let lines = text.split(separator: "\n").compactMap { try? JSONDecoder().decode(OutputLine.self, from: Data($0.utf8)) }
+            let timeline = ChatStream.timeline(lines, currentProvider: "claude")
             model.feed(first.id).reset(timeline)
             model.open(first.id)
             log("demo: history of \(timeline.entries.count) events in “\(first.name)”")

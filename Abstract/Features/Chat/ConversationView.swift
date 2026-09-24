@@ -94,6 +94,9 @@ enum TranscriptRows {
             }.joined(separator: "\n")
         case let .turn(_, summary, _, _, _): return summary ?? ""
         case let .error(_, message): return message
+        case let .handoff(_, from, to, summary, _):
+            return (["Handed over from \(ProviderRegistry.name(from)) to \(ProviderRegistry.name(to))"] + [summary].compactMap { $0 })
+                .joined(separator: "\n")
         default: return ""
         }
     }
@@ -152,12 +155,16 @@ struct BlockView: View, Equatable {
                 }
                 // Claude's sign-in ran out: sign in again, or carry on with another account.
                 if ClaudeAccounts.isSignInFailure(message) { SignInActions(sessionId: sessionId) }
+                // Out of room: another agent picks the chat up.
+                if LimitDetector.classify(message) != nil { ContinueWithActions(sessionId: sessionId) }
             }
             .btLeadingRule(Color.btRemoved)
         case let .raw(_, lines):
             // Frames no parser understood are debugging material, not
             // conversation. Settings › General can bring them back.
             if UserDefaults.standard.bool(forKey: "showRawAgentOutput") { RawLinesView(lines: lines) }
+        case let .handoff(_, from, to, summary, source):
+            HandoffRow(from: from, to: to, summary: summary, source: source)
         }
     }
 }
@@ -178,6 +185,71 @@ private struct SignInActions: View {
             .buttonStyle(.bt(.ghost, size: .small))
             .help("Pick another Claude account; the chat carries on there")
         }
+    }
+}
+
+/// A limit stopped the agent: carry on with another one.
+private struct ContinueWithActions: View {
+    @Environment(AppModel.self) private var model
+    let sessionId: String
+
+    var body: some View {
+        let current = model.session(sessionId)?.providerId
+        Menu("Continue with…") {
+            ForEach(ProviderRegistry.all.filter { $0.id != current }, id: \.id) { p in
+                Button(p.name) { model.continueWith(sessionId, providerId: p.id) }
+            }
+        }
+        .menuStyle(.button)
+        .buttonStyle(.bt(.secondary, size: .small))
+        .fixedSize()
+        .help("Hand this chat to another agent, with a summary and the transcript")
+    }
+}
+
+/// Where the chat passed to another agent, with the note it was given.
+private struct HandoffRow: View {
+    @Environment(\.transcriptExpansion) private var expansion
+    @Environment(\.transcriptRow) private var row
+    let from: String
+    let to: String
+    let summary: String?
+    let source: HandoffSource?
+    @State private var local = false
+
+    var body: some View {
+        let open = ExpansionSwitch(key: "handoff:\(row?.id ?? 0)", expansion: expansion, row: row)
+        let isOpen = open.value(local: local) ?? false
+        VStack(alignment: .leading, spacing: Space.sm) {
+            Button {
+                if !open.set(!isOpen) { local.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.left.arrow.right").font(.system(size: 10, weight: .medium))
+                    Text("Handed over from \(ProviderRegistry.name(from)) to \(ProviderRegistry.name(to))")
+                    if summary != nil {
+                        Image(systemName: isOpen ? "chevron.down" : "chevron.right").font(.system(size: 9, weight: .semibold))
+                    }
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .font(.btChatCaption)
+            .foregroundStyle(Color.btTextTertiary)
+            .disabled(summary == nil)
+            if isOpen, let summary {
+                VStack(alignment: .leading, spacing: 4) {
+                    SelectableText(TextClip.block(summary)).font(.btChatBody).foregroundStyle(Color.btTextSecondary).lineSpacing(2)
+                    if source == .app {
+                        Text("Summary by Backtick; \(ProviderRegistry.name(from)) couldn't write one.")
+                            .font(.btChatCaption).foregroundStyle(Color.btTextTertiary)
+                    }
+                }
+                .btLeadingRule(Color.btTextTertiary.opacity(0.4))
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
