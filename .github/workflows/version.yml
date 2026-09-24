@@ -1,0 +1,27 @@
+# A pull request into main must bump the version exactly one step: major, minor, or patch.
+name: Version
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  bumped:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Version is one bump past main
+        run: |
+          BASE=$(scripts/version.sh "origin/$GITHUB_BASE_REF")
+          HEAD=$(scripts/version.sh)
+          IFS=. read -r MA MI PA <<< "$BASE"
+          case "$HEAD" in
+            "$((MA + 1)).0.0" | "$MA.$((MI + 1)).0" | "$MA.$MI.$((PA + 1))")
+              echo "$BASE -> $HEAD" ;;
+            *)
+              echo "::error file=project.yml::Version is $HEAD but must be one bump past $BASE on main: $((MA + 1)).0.0, $MA.$((MI + 1)).0, or $MA.$MI.$((PA + 1)). Run scripts/bump-version.sh major|minor|patch (see AGENTS.md)."
+              exit 1 ;;
+          esac
