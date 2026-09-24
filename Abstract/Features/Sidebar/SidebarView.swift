@@ -401,7 +401,7 @@ struct RailChatRow: View {
         // Every pointer move restarts the wait, so the card only opens once the pointer rests.
         .task(id: restingPoint) {
             guard restingPoint != nil, !renaming, !showingDetails else { return }
-            try? await Task.sleep(for: .milliseconds(1200))
+            try? await Task.sleep(for: .milliseconds(600))
             if !Task.isCancelled && hovering { showingDetails = true }
         }
         .popover(isPresented: $showingDetails, arrowEdge: .trailing) {
@@ -484,62 +484,111 @@ private struct RailChatDetails: View {
     @Environment(AppModel.self) private var model
     let session: Session
 
+    /// A local or remote pull request, whichever the chat has.
+    private struct PR {
+        let number: Int
+        let title: String
+        let state: PullRequest.State
+        let isDraft: Bool
+        let url: URL?
+
+        var label: String {
+            switch state {
+            case .merged: "Merged"
+            case .closed: "Closed"
+            case .open: isDraft ? "Draft" : "Open"
+            }
+        }
+
+        var glyph: PullRequestGlyph.Kind {
+            switch state {
+            case .merged: .merged
+            case .closed: .closed
+            case .open: isDraft ? .draft : .open
+            }
+        }
+
+        var ink: Color {
+            switch state {
+            case .open: isDraft ? .btPullRequestDraftInk : .btPullRequestOpenInk
+            case .merged: .btPullRequestMergedInk
+            case .closed: .btPullRequestClosedInk
+            }
+        }
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: Space.sm) {
-            HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
-                Text(session.name)
-                    .font(BTFont.ui(14, .medium))
-                    .foregroundStyle(Color.btText)
-                    .lineLimit(2)
-                Spacer(minLength: 4)
-                Text("\(session.status.label) · \(RelativeTime.short(session.lastEventAt ?? session.createdAt)) ago")
-                    .font(.btCaption)
-                    .foregroundStyle(Color.btTextTertiary)
-                    .fixedSize()
+        VStack(alignment: .leading, spacing: Space.md) {
+            HStack(alignment: .top, spacing: Space.sm) {
+                RailStatus(status: session.status).frame(width: 16, height: 18)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(session.name)
+                        .font(BTFont.ui(14, .medium))
+                        .foregroundStyle(Color.btText)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("\(session.status.label) · updated \(RelativeTime.short(session.lastEventAt ?? session.createdAt)) ago")
+                        .font(.btCaption)
+                        .foregroundStyle(Color.btTextTertiary)
+                }
             }
             Hairline()
-            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: Space.sm, verticalSpacing: 6) {
-                GridRow {
-                    label("Branch")
-                    value(session.branch ?? "No branch", monospaced: true).gridCellColumns(3)
+            VStack(alignment: .leading, spacing: Space.sm) {
+                row("Branch") {
+                    Image(systemName: "arrow.triangle.branch")
+                } content: {
+                    value(session.branch ?? "No branch", monospaced: true)
                 }
-                GridRow {
-                    label("PR")
-                    prValue.gridCellColumns(3)
-                }
-                GridRow {
-                    label("Agent")
+                prRow
+            }
+            Hairline()
+            VStack(alignment: .leading, spacing: Space.sm) {
+                row("Agent") { ProviderLogo(providerId: session.providerId, size: 12) } content: {
                     value(ProviderRegistry.name(session.providerId))
-                    label("Model")
-                    value(modelName)
                 }
-                GridRow {
-                    label("Device")
-                    value(deviceName)
-                    label("Project")
+                row("Model") { Image(systemName: "cpu") } content: { value(modelName) }
+                row("Device") { Image(systemName: "laptopcomputer") } content: { value(deviceName) }
+                row("Project") { Image(systemName: "folder") } content: {
                     value(model.project(session.projectId)?.name ?? "Scratch")
                 }
             }
         }
         .padding(Space.md)
-        .frame(width: 380, alignment: .leading)
+        .frame(width: 360, alignment: .leading)
     }
 
-    @ViewBuilder private var prValue: some View {
+    @ViewBuilder private var prRow: some View {
         if let pr {
-            HStack(spacing: 6) {
-                value("#\(pr.number) · \(pr.state) · \(pr.title)")
-                if let url = pr.url {
-                    Button { NSWorkspace.shared.open(url) } label: {
-                        Image(systemName: "arrow.up.right.square")
+            row("PR") {
+                PullRequestGlyph(kind: pr.glyph).foregroundStyle(pr.ink).frame(width: 12, height: 12)
+            } content: {
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text("#\(pr.number)").font(BTFont.ui(12, .medium)).foregroundStyle(Color.btText)
+                        Text(pr.label)
+                            .font(BTFont.ui(10.5, .medium))
+                            .foregroundStyle(pr.ink)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1)
+                            .background(Capsule().fill(pr.ink.opacity(0.15)))
+                        Spacer(minLength: 0)
+                        if let url = pr.url {
+                            Button { NSWorkspace.shared.open(url) } label: {
+                                Image(systemName: "arrow.up.right.square")
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(Color.btTextSecondary)
+                            .help("Open pull request")
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Color.btTextSecondary)
-                    .help("Open pull request")
+                    value(pr.title)
                 }
             }
         } else {
-            value(remoteDetailsUnavailable ? "Unavailable from this device" : "None for this branch")
+            row("PR") {
+                PullRequestGlyph(kind: .open).frame(width: 12, height: 12)
+            } content: {
+                value(remoteDetailsUnavailable ? "Unavailable from this device" : "None for this branch")
+            }
         }
     }
 
@@ -562,29 +611,40 @@ private struct RailChatDetails: View {
         return model.remote.links[device]?.snapshot?.pullRequests == nil
     }
 
-    private var pr: (number: Int, title: String, state: String, url: URL?)? {
+    private var pr: PR? {
         if let local = model.pullRequests[session.id] {
-            return (local.number, local.title, local.isDraft ? "Draft" : local.state.rawValue.capitalized, local.url)
+            return PR(number: local.number, title: local.title, state: local.state, isDraft: local.isDraft, url: local.url)
         }
         guard let (device, hostId) = RemoteService.split(session.id),
               let remote = model.remote.links[device]?.snapshot?.pullRequests?[hostId] else { return nil }
-        return (remote.number, remote.title, remote.isDraft ? "Draft" : remote.state.capitalized, remote.url)
+        return PR(number: remote.number, title: remote.title, state: PullRequest.State(rawValue: remote.state) ?? .open,
+                  isDraft: remote.isDraft, url: remote.url)
     }
 
-    private func label(_ title: String) -> some View {
-        Text(title).font(.btCaption).foregroundStyle(Color.btTextTertiary)
-            .gridColumnAlignment(.trailing)
+    /// Icon, name, then the value, which wraps rather than truncates.
+    private func row<Icon: View, Content: View>(_ label: String, @ViewBuilder icon: () -> Icon,
+                                                @ViewBuilder content: () -> Content) -> some View {
+        HStack(alignment: .top, spacing: Space.sm) {
+            icon()
+                .font(.system(size: 11))
+                .foregroundStyle(Color.btTextTertiary)
+                .frame(width: 16, height: 16)
+            Text(label)
+                .font(.btCaption)
+                .foregroundStyle(Color.btTextTertiary)
+                .frame(width: 48, height: 16, alignment: .leading)
+            content()
+        }
     }
 
     private func value(_ text: String, monospaced: Bool = false) -> some View {
         Text(text)
             .font(monospaced ? .btMono : BTFont.ui(12))
             .foregroundStyle(Color.btTextSecondary)
-            .lineLimit(1)
-            .truncationMode(.middle)
-            .help(text)
+            .lineLimit(3)
+            .fixedSize(horizontal: false, vertical: true)
             .textSelection(.enabled)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, minHeight: 16, alignment: .leading)
     }
 }
 
