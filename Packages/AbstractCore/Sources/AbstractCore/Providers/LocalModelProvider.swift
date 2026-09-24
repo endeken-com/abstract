@@ -107,6 +107,7 @@ public struct LocalModelProvider: ProviderDefinition {
     public func buildLaunch(_ ctx: LaunchContext) -> LaunchSpec { codex.buildLaunch(withServer(ctx)) }
     public func buildResume(_ ctx: LaunchContext, resumeId: String) -> LaunchSpec { codex.buildResume(withServer(ctx), resumeId: resumeId) }
     public func makeParser() -> OutputParser { LocalModelParser(codex.makeParser()) }
+    public func makeLineEnricher(executor: any Executor, cwd: String) -> (any LineEnricher)? { codex.makeLineEnricher(executor: executor, cwd: cwd) }
     public func buildUserMessage(_ text: String) -> String? { nil }
     public func buildPermissionResponse(requestId: String, allow: Bool, input: JSONValue?) -> String? { nil }
 

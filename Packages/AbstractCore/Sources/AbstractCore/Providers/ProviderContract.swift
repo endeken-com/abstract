@@ -193,6 +193,14 @@ public protocol OutputParser: AnyObject {
     func onExit(code: Int32?) -> [AgentEvent]
 }
 
+/// Fills in what an agent's output leaves out, before the line is logged, so
+/// live streaming, replay and other Macs all read the same thing. Kept for
+/// the life of a chat, across relaunches. Called on the process's reader
+/// queue; must never throw or crash on bad input.
+public protocol LineEnricher: AnyObject, Sendable {
+    func enrich(_ line: OutputLine) -> OutputLine
+}
+
 /// A model an agent can run, as offered in pickers. `id` is passed verbatim
 /// to the CLI, so aliases ("opus") and full names both work.
 public struct ModelOption: Sendable, Hashable, Identifiable, Codable {
@@ -244,6 +252,8 @@ public protocol ProviderDefinition: Sendable {
     func buildLaunch(_ ctx: LaunchContext) -> LaunchSpec
     func buildResume(_ ctx: LaunchContext, resumeId: String) -> LaunchSpec
     func makeParser() -> OutputParser
+    /// nil: the agent's lines are logged as printed.
+    func makeLineEnricher(executor: any Executor, cwd: String) -> (any LineEnricher)?
     /// stdin line for a follow-up turn (stdin mode only).
     func buildUserMessage(_ text: String) -> String?
     /// The same with images, as files on the agent's Mac.
@@ -266,6 +276,7 @@ public protocol ProviderDefinition: Sendable {
 }
 
 public extension ProviderDefinition {
+    func makeLineEnricher(executor: any Executor, cwd: String) -> (any LineEnricher)? { nil }
     func configuredDefaultEffort(home: String) -> String? { nil }
     func buildUserMessage(_ text: String, images: [String]) -> String? { buildUserMessage(text) }
     func buildPermissionModeChange(_ policy: PermissionPolicy, requestId: String) -> String? { nil }

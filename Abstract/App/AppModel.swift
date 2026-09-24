@@ -168,6 +168,9 @@ final class AppModel {
     }
 
     @ObservationIgnored private var parsers: [String: any OutputParser] = [:]
+    /// Per chat and agent, kept across relaunches: Codex remembers each file
+    /// as its last edit left it, so the next edit's diff is its own.
+    @ObservationIgnored private var enrichers: [String: any LineEnricher] = [:]
     @ObservationIgnored private var seenSeq: [String: Int] = [:]
     @ObservationIgnored private var configuredModels: [String: (model: String?, read: Date)] = [:]
     @ObservationIgnored var scheduler: AutomationScheduler?
@@ -582,8 +585,10 @@ final class AppModel {
             sessionProfiles[session.id] = claudeProfile ?? accounts.standardProfilePath
         }
         parsers[session.id] = provider.makeParser()
+        let enricherKey = "\(session.id)/\(provider.id)"
+        if enrichers[enricherKey] == nil { enrichers[enricherKey] = provider.makeLineEnricher(executor: executor, cwd: ctx.cwd) }
         loadTimelineIfNeeded(session.id)
-        try engine.launch(sessionId: session.id, spec: spec)
+        try engine.launch(sessionId: session.id, spec: spec, enricher: enrichers[enricherKey])
         alive.insert(session.id)
         turnStartedAt[session.id] = Date()
         setStatus(session.id, .running)
@@ -788,6 +793,7 @@ final class AppModel {
         feeds[sessionId] = nil
         permissions[sessionId] = nil
         parsers[sessionId] = nil
+        enrichers = enrichers.filter { !$0.key.hasPrefix(sessionId + "/") }
         if case .session(let id) = destination, id == sessionId { destination = .home }
         reload()
     }

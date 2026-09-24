@@ -89,6 +89,7 @@ public struct CodexProvider: ProviderDefinition {
     }
 
     public func makeParser() -> OutputParser { CodexParser() }
+    public func makeLineEnricher(executor: any Executor, cwd: String) -> (any LineEnricher)? { CodexEditDiffs(executor: executor, cwd: cwd) }
 
     public func buildUserMessage(_ text: String) -> String? { nil }
 
@@ -170,9 +171,8 @@ final class CodexParser: OutputParser {
                               blockId: id, partial: phase != .completed)]
         case "command_execution":
             return onCommandExecution(item, id: id, phase: phase)
-        // NOTE: unverified: no file-change item appears in the recorded fixture.
         case "file_change", "patch_apply":
-            return onGenericTool(item, id: id, itemType: itemType, phase: phase, edit: CodexWire.editPreview(item))
+            return onFileChange(item, id: id, itemType: itemType, phase: phase)
         // NOTE: unverified: these item types do not appear in the recorded fixture.
         case "todo_list", "web_search", "mcp_tool_call":
             return onGenericTool(item, id: id, itemType: itemType, phase: phase, edit: nil)
@@ -195,6 +195,25 @@ final class CodexParser: OutputParser {
                                       isError: exitCode.map { $0 != 0 } ?? false, edit: nil))
         }
         return events
+    }
+
+    /// One call per file, the way Claude's edits read. codex-cli 0.153.4 sends
+    /// `changes: [{path, kind}]` (no diff) and batches a patch's files into one
+    /// item; each change becomes a call whose `file_path` the chat reads.
+    private func onFileChange(_ item: JSONValue, id: String, itemType: String, phase: Phase) -> [AgentEvent] {
+        let changes = (item["changes"]?.array ?? []).filter { $0["path"]?.string != nil }
+        guard !changes.isEmpty else { return onGenericTool(item, id: id, itemType: itemType, phase: phase, edit: CodexWire.editPreview(item)) }
+        var uses: [AgentEvent] = [], results: [AgentEvent] = []
+        for (i, change) in changes.enumerated() {
+            var call: [String: JSONValue] = ["type": .string(itemType), "file_path": change["path"] ?? .null]
+            call["kind"] = change["kind"]
+            call["status"] = item["status"]
+            for event in onGenericTool(.object(call), id: i == 0 ? id : "\(id)#\(i)", itemType: itemType, phase: phase,
+                                       edit: CodexWire.editPreview(change)) {
+                if case .toolUse = event { uses.append(event) } else { results.append(event) }
+            }
+        }
+        return uses + results
     }
 
     private func onGenericTool(_ item: JSONValue, id: String, itemType: String, phase: Phase,
@@ -239,7 +258,8 @@ private enum CodexWire {
     static func toolName(_ item: JSONValue, _ itemType: String) -> String {
         switch itemType {
         case "command_execution": "Bash"
-        case "file_change", "patch_apply": "ApplyPatch"
+        // A new file reads "Created", as Claude's Write does.
+        case "file_change", "patch_apply": item["kind"]?.string == "add" ? "Write" : "ApplyPatch"
         case "todo_list": "TodoList"
         case "web_search": "WebSearch"
         case "mcp_tool_call": item["tool"]?.string ?? item["name"]?.string ?? "McpToolCall"
@@ -253,10 +273,9 @@ private enum CodexWire {
             ?? item["text"]?.string ?? ""
     }
 
-    /// Best-effort EditPreview for a `file_change` / `patch_apply` item.
-    ///
-    /// NOTE: unverified: no file-change item appears in the recorded fixture.
-    /// A handful of plausible field names are accepted; nil otherwise.
+    /// EditPreview for a `file_change` / `patch_apply` item or one of its
+    /// changes. Codex sends no diff; `CodexEditDiffs` writes one in before the
+    /// line is logged. A few other plausible field names are accepted too.
     static func editPreview(_ item: JSONValue) -> EditPreview? {
         let first = item["changes"]?.array?.first.flatMap { $0.object == nil ? nil : $0 } ?? item
         let filePath = first["path"]?.string ?? first["file_path"]?.string
@@ -267,18 +286,29 @@ private enum CodexWire {
 
         var lines: [EditPreview.Line] = []
         var additions = 0, deletions = 0
+        // Line numbers once a hunk header gives them; the first hunk needs no gap.
+        var old: Int?, new: Int?, gap = false
         for piece in diff.unicodeScalars.split(separator: "\n", omittingEmptySubsequences: false) {
             let raw = String(Substring(piece))
-            // Unified-diff headers are noise in a mini-diff.
-            if raw.hasPrefix("+++") || raw.hasPrefix("---") || raw.hasPrefix("@@") || raw.isEmpty { continue }
-            if lines.count >= maxPreviewLines { break }
-            let rest = String(Substring(piece.dropFirst()))
-            switch piece.first {
-            case "+": additions += 1; lines.append(.init(origin: .added, content: rest))
-            case "-": deletions += 1; lines.append(.init(origin: .removed, content: rest))
-            case " ": lines.append(.init(origin: .context, content: rest))
-            default: lines.append(.init(origin: .context, content: raw))
+            if raw.hasPrefix("@@") {
+                let (oldStart, _, newStart, _) = Diff.parseHunkHeader(raw)
+                old = oldStart; new = newStart; gap = !lines.isEmpty
+                continue
             }
+            // File headers and "\ No newline at end of file" are noise in a mini-diff.
+            if raw.hasPrefix("+++") || raw.hasPrefix("---") || raw.hasPrefix("\\") || raw.isEmpty { continue }
+            let rest = String(Substring(piece.dropFirst()))
+            var line: EditPreview.Line
+            switch piece.first {
+            case "+": additions += 1; line = .init(origin: .added, content: rest, newLine: new); new = new.map { $0 + 1 }
+            case "-": deletions += 1; line = .init(origin: .removed, content: rest, oldLine: old); old = old.map { $0 + 1 }
+            case " ": line = .init(origin: .context, content: rest, oldLine: old, newLine: new); old = old.map { $0 + 1 }; new = new.map { $0 + 1 }
+            default: line = .init(origin: .context, content: raw)
+            }
+            // The counts cover the whole change; the preview stops at its cap.
+            guard lines.count < maxPreviewLines else { continue }
+            if gap { line.startsHunk = true; gap = false }
+            lines.append(line)
         }
         if lines.isEmpty { return nil }
         return EditPreview(filePath: filePath, additions: additions, deletions: deletions, lines: lines)
