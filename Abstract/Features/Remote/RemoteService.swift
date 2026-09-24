@@ -490,6 +490,13 @@ final class RemoteService {
         return true
     }
 
+    @discardableResult
+    func answerQuestion(_ id: String, requestId: String, answers: [String: String]) -> Bool {
+        guard let (_, session) = Self.split(id), let link = onlineLink(for: id) else { return false }
+        link.fire(.answerQuestion(sessionId: session, requestId: requestId, answers: answers))
+        return true
+    }
+
     /// Starts a chat on another Mac and returns its id here.
     func startChat(on device: String, projectId: String, providerId: String, prompt: String, policy: PermissionPolicy) async throws -> String {
         guard let link = links[device] else { throw AbstractError.message("That Mac isn't connected.") }
@@ -672,6 +679,9 @@ final class HostedPeer {
             return .ok
         case let .answer(session, requestId, allow):
             model.answerPermission(session, requestId: requestId, allow: allow)
+            return .ok
+        case let .answerQuestion(session, requestId, answers):
+            model.answerQuestion(session, requestId: requestId, answers: answers)
             return .ok
         case let .setAgent(session, provider, name, effort):
             model.setAgent(session, providerId: provider, model: name, effort: effort)

@@ -35,6 +35,8 @@ public enum RemoteRequest: Codable, Sendable {
     case startChat(RemoteStart)
     case stop(sessionId: String)
     case answer(sessionId: String, requestId: String, allow: Bool)
+    /// Answers to the agent's questions, by question text.
+    case answerQuestion(sessionId: String, requestId: String, answers: [String: String])
     /// A chat's agent, model and effort, or how much it may do alone.
     case setAgent(sessionId: String, providerId: String, model: String?, effort: String?)
     case setPolicy(sessionId: String, policy: PermissionPolicy)
