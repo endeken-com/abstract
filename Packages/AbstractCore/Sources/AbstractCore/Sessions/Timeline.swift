@@ -181,7 +181,8 @@ extension Timeline {
             case let .handoff(from, to, summary, source):
                 out.append(.handoff(id: entry.id, from: from, to: to, summary: summary, source: source))
                 assistantOpen = false
-            case .status, .sessionId, .toolResult, .permissionRequest, .promptSuggestion:
+            // Tasks and what subagents did are listed apart from the conversation.
+            case .status, .sessionId, .toolResult, .permissionRequest, .promptSuggestion, .task, .subagent:
                 break
             }
         }

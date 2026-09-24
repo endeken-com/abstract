@@ -4,8 +4,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# BUILD_NUMBER becomes CFBundleVersion; the full build log lands in build/xcodebuild-release.log.
+mkdir -p build
 xcodebuild -project Abstract.xcodeproj -scheme Abstract -configuration Release \
-  -derivedDataPath build/dd-release -skipPackagePluginValidation build | tail -1
+  -derivedDataPath build/dd-release -skipPackagePluginValidation \
+  CURRENT_PROJECT_VERSION="${BUILD_NUMBER:-1}" build | tee build/xcodebuild-release.log | tail -1
 
 APP=build/dd-release/Build/Products/Release/Abstract.app
 VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Contents/Info.plist")

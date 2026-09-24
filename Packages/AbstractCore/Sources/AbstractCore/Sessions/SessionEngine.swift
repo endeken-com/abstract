@@ -48,7 +48,7 @@ public final class SessionEngine: Sendable {
 
     /// Spawn the agent for a session. Sequence numbers continue from the log,
     /// so a resumed session appends rather than overwrites.
-    public func launch(sessionId: String, spec: LaunchSpec) throws {
+    public func launch(sessionId: String, spec: LaunchSpec, enricher: (any LineEnricher)? = nil) throws {
         if isAlive(sessionId) { throw AbstractError.message("This chat's agent is already running.") }
         let logURL = logFile(sessionId)
         let startSeq = lineCount(logURL)
@@ -57,6 +57,7 @@ public final class SessionEngine: Sendable {
         let process = try executor.spawn(
             spec,
             onLine: { [weak self] line in
+                let line = enricher?.enrich(line) ?? line
                 // The log is the single source of sequence numbers, so live
                 // streaming and replay always agree.
                 let n = writer.append(line)

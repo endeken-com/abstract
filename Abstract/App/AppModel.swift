@@ -73,6 +73,11 @@ final class AppModel {
     @ObservationIgnored private var feeds: [String: ChatFeed] = [:]
     private(set) var permissions: [String: [PendingPermission]] = [:]
     private(set) var alive: Set<String> = []
+    /// Chats mid-turn. An idle chat's agent is alive too, awaiting a follow-up,
+    /// but stopping it loses nothing.
+    var workingSessionIds: [String] {
+        alive.filter { id in session(id).map { $0.status.isActive && $0.status != .idle } ?? false }
+    }
     /// When each session's current turn started, for the "working for 12s" label.
     private(set) var turnStartedAt: [String: Date] = [:]
     /// Panel layouts by chat id; see AppModel+Panes.
@@ -86,6 +91,8 @@ final class AppModel {
     @ObservationIgnored var localRelays: [LocalModelKind: LocalModelRelay] = [:]
     /// A chat waiting on "Archive?" (⇧⌘⌫, or the git actions menu).
     var requestArchive: String?
+    /// The background tasks list showing, and the task open in it; see AppModel+Tasks.
+    var tasksOpen: TasksFocus?
     /// The main pane's tabs: chats, files and changes; see AppModel+MainTabs.
     var mainTabs = MainTabs() { didSet { if mainTabs != oldValue { save("mainTabs", mainTabs) } } }
     /// The side panel's width on screen, per chat, so its tabs can sit in the
@@ -172,6 +179,9 @@ final class AppModel {
 
     /// Each chat's output as events, for whichever agent wrote it.
     @ObservationIgnored private var streams: [String: ChatStream] = [:]
+    /// Per chat and agent, kept across relaunches: Codex remembers each file
+    /// as its last edit left it, so the next edit's diff is its own.
+    @ObservationIgnored private var enrichers: [String: any LineEnricher] = [:]
     @ObservationIgnored private var seenSeq: [String: Int] = [:]
     @ObservationIgnored private var configuredModels: [String: (model: String?, read: Date)] = [:]
     @ObservationIgnored var scheduler: AutomationScheduler?
@@ -480,7 +490,10 @@ final class AppModel {
         let gist = text.isEmpty ? attachments.map(\.label).joined(separator: ", ") : text
         // A new worktree in a project with naming instructions: a quick model call names it.
         let naming = existing == nil ? await suggestedNaming(project, prompt: gist) : nil
-        let name = naming?.title ?? Workspace.title(fromPrompt: gist)
+        let city = existing == nil && naming == nil
+            ? WorktreeNaming.cityName(avoiding: Set(sessions.filter { $0.projectId == projectId }.map(\.name)))
+            : nil
+        let name = naming?.title ?? city ?? Workspace.title(fromPrompt: gist)
         var session = Session(projectId: projectId, name: name, providerId: providerId, baseRef: existing == nil ? baseRef : nil,
                               status: .provisioning, permissionPolicy: policy, prompt: prompt, model: model, effort: effort)
         if let existing {
@@ -492,13 +505,19 @@ final class AppModel {
             session.worktreePath = existing.path
             session.branch = existing.branch
         } else {
+            let prefix = project.branchPrefix ?? branchPrefix
             let workspace = try await Workspace.provision(
                 executor: executor, project: project, name: name, baseRef: baseRef,
-                template: project.worktreeTemplate ?? worktreeTemplate, prefix: project.branchPrefix ?? branchPrefix,
+                template: project.worktreeTemplate ?? worktreeTemplate, prefix: prefix,
                 slug: naming?.branch
             )
             session.worktreePath = workspace.path
             session.branch = workspace.branch
+            if city != nil {
+                // A preexisting branch or folder may make provision append a
+                // number. Keep the visible name in sync with the actual branch.
+                session.name += String(workspace.branch.dropFirst((prefix + WorktreeNaming.slugify(name)).count))
+            }
         }
         try store.save(session)
         reload()
@@ -585,9 +604,11 @@ final class AppModel {
             if let profile = claudeProfile, profile != accounts.standardProfilePath { spec.env["CLAUDE_CONFIG_DIR"] = profile }
             sessionProfiles[session.id] = claudeProfile ?? accounts.standardProfilePath
         }
+        let enricherKey = "\(session.id)/\(provider.id)"
+        if enrichers[enricherKey] == nil { enrichers[enricherKey] = provider.makeLineEnricher(executor: executor, cwd: ctx.cwd) }
         loadTimelineIfNeeded(session.id)
         stream(for: session.id)?.restart(providerId: provider.id)
-        try engine.launch(sessionId: session.id, spec: spec)
+        try engine.launch(sessionId: session.id, spec: spec, enricher: enrichers[enricherKey])
         alive.insert(session.id)
         turnStartedAt[session.id] = Date()
         setStatus(session.id, .running)
@@ -606,8 +627,9 @@ final class AppModel {
             return
         }
         engine.recordInput(sessionId: sessionId, text: message)
-        // A new agent, model or effort takes effect by restarting between turns.
-        if needsRelaunch.contains(sessionId), isAlive(sessionId), session.status != .running {
+        // A new agent, model or effort takes effect by restarting between
+        // turns, once no background task would end with the old process.
+        if needsRelaunch.contains(sessionId), isAlive(sessionId), session.status != .running, runningBackgroundTasks(sessionId) == 0 {
             needsRelaunch.remove(sessionId)
             setStatus(sessionId, .running)
             Task { await relaunch(session, prompt: message, images: images) }
@@ -929,6 +951,7 @@ final class AppModel {
         feeds[sessionId] = nil
         permissions[sessionId] = nil
         streams[sessionId] = nil
+        enrichers = enrichers.filter { !$0.key.hasPrefix(sessionId + "/") }
         if case .session(let id) = destination, id == sessionId { destination = .home }
         reload()
     }
@@ -969,6 +992,13 @@ final class AppModel {
                 permissions[sessionId] = nil
                 return
             }
+            // Stopped between turns (quit, stop): the turn was over, nothing failed.
+            if session(sessionId)?.status == .idle {
+                setStatus(sessionId, .finished)
+                remote.forwardExit(sessionId: sessionId, code: code)
+                permissions[sessionId] = nil
+                return
+            }
             if let stream = streams[sessionId] {
                 for e in stream.onExit(code: code) { apply(e, to: sessionId) }
             }
@@ -1004,7 +1034,9 @@ final class AppModel {
         case let .status(status, detail):
             setStatus(sessionId, status, detail: detail)
             if status == .idle {
-                notify(sessionId, .finished)
+                // Still at work in the background: not done yet. The agent
+                // takes another turn as each task ends.
+                if runningBackgroundTasks(sessionId) == 0 { notify(sessionId, .finished) }
                 RevundService.shared.turnEnded(sessionId, model: self)
             }
             if status == .waitingInput || status == .errored { notify(sessionId, status, detail: detail) }

@@ -6,13 +6,13 @@ struct WorktreeSettingsPane: View {
     @Environment(AppModel.self) private var model
 
     private static let sampleRepo = "api"
-    private static let sampleSlug = "fix-login"
+    private static let sampleSlug = "oslo"
 
     private static let tokens: [(token: String, meaning: String)] = [
         ("{home}", "Your home folder"),
         ("{repo}", "The repository's folder name"),
         ("{hash}", "8 characters of the repo path's hash, keeping same-named repos apart"),
-        ("{slug}", "The chat's title, lowercased and dashed"),
+        ("{slug}", "The short worktree name, lowercased and dashed"),
         ("{branch}", "The full branch name, prefix included"),
         ("{prefix}", "The branch prefix below"),
     ]
@@ -71,7 +71,7 @@ struct WorktreeSettingsPane: View {
             } header: {
                 Text("Preview")
             } footer: {
-                SettingsCaption("For a repository named “\(Self.sampleRepo)” and a chat titled “Fix login”.")
+                SettingsCaption("New chats get short city names by default. This shows “Oslo” in a repository named “\(Self.sampleRepo)”.")
             }
 
             Section {
