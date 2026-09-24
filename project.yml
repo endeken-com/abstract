@@ -54,6 +54,8 @@ targets:
         NSBonjourServices:
           - _abstract._tcp
         SUFeedURL: https://endeken-com.github.io/abstract/appcast.xml
+        # Sparkle's EdDSA public key; the private half is the SPARKLE_ED_PRIVATE_KEY secret.
+        SUPublicEDKey: "trJXw2M/8e15Dvh4dT8gFPtr4mTofkW/NVPXycB9658="
         # Check daily from first launch, without Sparkle's "may we check?" prompt.
         SUEnableAutomaticChecks: true
     entitlements:

@@ -36,5 +36,7 @@
 	<true/>
 	<key>SUFeedURL</key>
 	<string>https://endeken-com.github.io/abstract/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>trJXw2M/8e15Dvh4dT8gFPtr4mTofkW/NVPXycB9658=</string>
 </dict>
 </plist>
