@@ -6,7 +6,7 @@ import AbstractCore
 /// a pull request and how it stands; a chat's Pull Request tab loads the
 /// full detail (checks, reviews, comments) when it opens.
 extension AppModel {
-    private static let refreshInterval: Duration = .seconds(180)
+    private static let refreshInterval: Duration = .seconds(60)
 
     func watchPullRequests() async {
         guard !isDemo else { return }
@@ -20,22 +20,36 @@ extension AppModel {
     }
 
     /// Re-reads every GitHub project's recent pull requests and matches them to chats by branch.
-    func refreshPullRequests() async {
-        for project in projects where project.archivedAt == nil {
+    func refreshPullRequests(projectId: String? = nil) async {
+        for project in projects where project.archivedAt == nil && (projectId == nil || project.id == projectId) {
             guard await isOnGitHub(project), let list = try? await GitHub.pullRequests(executor, repo: project.rootPath) else { continue }
             projectPullRequests[project.id] = list
             for session in sessions where session.projectId == project.id {
-                guard let branch = session.branch, let summary = list.first(where: { $0.head == branch }) else { continue }
-                // A loaded detail keeps its reviews and comments until the tab reloads it.
-                if let known = pullRequests[session.id], known.number == summary.number, known.updatedAt == summary.updatedAt { continue }
-                // Newer state from the list; the tab re-reads reviews and threads itself.
-                var updated = summary
-                if let known = pullRequests[session.id], known.number == summary.number {
-                    (updated.reviews, updated.comments, updated.threads) = (known.reviews, known.comments, known.threads)
+                let matches = pullRequestsForChat(session.id)
+                let current = pullRequests[session.id]
+                // Keep a selected PR if it falls beyond the recent-list limit
+                // or has not appeared in the list just after creation.
+                guard let summary = matches.first(where: { $0.number == current?.number })
+                    ?? (current == nil ? matches.first : nil) else { continue }
+                guard let known = pullRequests[session.id], known.number == summary.number else {
+                    pullRequests[session.id] = summary
+                    continue
                 }
-                pullRequests[session.id] = updated
+                pullRequests[session.id] = known.refreshingSummary(with: summary)
             }
         }
+    }
+
+    func pullRequestsForChat(_ sessionId: String) -> [PullRequest] {
+        guard let session = session(sessionId), let branch = session.branch,
+              let projectId = session.projectId else { return [] }
+        return (projectPullRequests[projectId] ?? []).filter { $0.head == branch }
+    }
+
+    func selectPullRequest(_ sessionId: String, number: Int) async throws {
+        guard let summary = pullRequestsForChat(sessionId).first(where: { $0.number == number }) else { return }
+        pullRequests[sessionId] = summary
+        try await refreshPullRequest(sessionId)
     }
 
     /// The chat's pull request in full; nil when its branch has none.
@@ -45,11 +59,17 @@ extension AppModel {
         guard let session = session(sessionId), let branch = session.branch, let project = project(session.projectId),
               await isOnGitHub(project) else { return nil }
         let executor = executor(for: sessionId)
-        var pr = try await GitHub.pullRequest(executor, repo: project.rootPath, branch: branch)
+        let selected = pullRequests[sessionId]?.number
+        var pr: PullRequest?
+        if let selected {
+            pr = try await GitHub.pullRequest(executor, repo: project.rootPath, number: selected)
+        } else {
+            pr = try await GitHub.pullRequest(executor, repo: project.rootPath, branch: branch)
+        }
         if let number = pr?.number {
             pr?.threads = (try? await GitHub.reviewThreads(executor, repo: project.rootPath, number: number)) ?? []
         }
-        pullRequests[sessionId] = pr
+        if pullRequests[sessionId]?.number == selected { pullRequests[sessionId] = pr }
         return pr
     }
 
@@ -69,6 +89,7 @@ extension AppModel {
         pullRequests[sessionId] = try await GitHub.create(executor(for: sessionId), repo: project.rootPath, worktree: worktree, branch: branch,
                                                           base: base, title: title, body: body, draft: draft,
                                                           commitMessage: commitFirst ? title : nil)
+        await refreshPullRequests(projectId: project.id)
     }
 
     /// Commits what's in the worktree (if anything) and pushes, updating an open pull request.

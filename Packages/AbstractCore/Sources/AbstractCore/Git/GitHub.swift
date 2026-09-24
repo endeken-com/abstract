@@ -102,6 +102,22 @@ public struct PullRequest: Sendable, Hashable, Identifiable {
     }
 
     public var hasConflicts: Bool { mergeable == "CONFLICTING" }
+
+    /// Apply a fresh list result without discarding fields only `pr view` loads.
+    /// Checks can change while `updatedAt` stays the same.
+    public func refreshingSummary(with summary: PullRequest) -> PullRequest {
+        guard number == summary.number else { return summary }
+        var updated = summary
+        updated.mergeable = mergeable
+        updated.mergeState = mergeState
+        updated.changedFiles = changedFiles
+        updated.createdAt = createdAt
+        updated.body = body
+        updated.reviews = reviews
+        updated.comments = comments
+        updated.threads = threads
+        return updated
+    }
 }
 
 /// Whether `gh` can talk to GitHub for this user.
@@ -131,7 +147,16 @@ public enum GitHub {
     /// The pull request whose head is `branch`, or nil when there is none.
     /// Run in the project's root, so `gh` finds the repository from `origin`.
     public static func pullRequest(_ exec: any Executor, repo root: String, branch: String) async throws -> PullRequest? {
-        let out = try await exec.run("gh", ["pr", "view", branch, "--json", detailFields], cwd: root)
+        try await pullRequest(exec, repo: root, selector: branch)
+    }
+
+    /// Resolve a particular PR when several PRs have used the same branch.
+    public static func pullRequest(_ exec: any Executor, repo root: String, number: Int) async throws -> PullRequest? {
+        try await pullRequest(exec, repo: root, selector: String(number))
+    }
+
+    private static func pullRequest(_ exec: any Executor, repo root: String, selector: String) async throws -> PullRequest? {
+        let out = try await exec.run("gh", ["pr", "view", selector, "--json", detailFields], cwd: root)
         if !out.ok {
             if out.stderr.localizedCaseInsensitiveContains("no pull requests found") { return nil }
             throw AbstractError.command(code: out.code, stderr: GitText.trimmed(out.stderr))
