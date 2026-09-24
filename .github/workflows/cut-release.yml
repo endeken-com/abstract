@@ -1,0 +1,79 @@
+# Cuts a release from main: branches vX.Y.x, tags vX.Y.0, and builds and publishes it.
+# A failed build is retried with "Re-run failed jobs", which keeps the finished prepare job.
+name: Cut release
+
+on:
+  workflow_dispatch:
+    inputs:
+      level:
+        description: minor for new features, major for breaking changes (see AGENTS.md)
+        type: choice
+        options: [minor, major]
+        default: minor
+      notes:
+        description: Written notes shown above the generated list (optional)
+        type: string
+        default: ""
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.cut.outputs.sha }}
+      version: ${{ steps.cut.outputs.version }}
+      build: ${{ steps.cut.outputs.build }}
+      tag: ${{ steps.cut.outputs.tag }}
+      previous-tag: ${{ steps.cut.outputs.previous-tag }}
+    steps:
+      - name: Run from main only
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Run Cut release from main"
+          exit 1
+
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - id: cut
+        env:
+          LEVEL: ${{ inputs.level }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          OUT=$(scripts/next-version.sh cut "$LEVEL")
+          read -r VERSION BUILD <<< "$OUT"
+          TAG=v$VERSION
+          BRANCH=v${VERSION%.*}.x
+          PREVIOUS=$(scripts/next-version.sh previous "$VERSION")
+          gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/heads/$BRANCH" -f sha="$GITHUB_SHA" >/dev/null
+          gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$TAG" -f sha="$GITHUB_SHA" >/dev/null
+          {
+            echo "sha=$GITHUB_SHA"
+            echo "version=$VERSION"
+            echo "build=$BUILD"
+            echo "tag=$TAG"
+            echo "previous-tag=$PREVIOUS"
+          } >> "$GITHUB_OUTPUT"
+          echo "Cut $TAG on $BRANCH from $(git log -1 --format='%h %s')" >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    needs: prepare
+    uses: ./.github/workflows/build.yml
+    secrets: inherit
+    with:
+      ref: ${{ needs.prepare.outputs.sha }}
+      version: ${{ needs.prepare.outputs.version }}
+      build: ${{ needs.prepare.outputs.build }}
+      channel: stable
+      tag: ${{ needs.prepare.outputs.tag }}
+      previous-tag: ${{ needs.prepare.outputs.previous-tag }}
+      notes: ${{ inputs.notes }}
