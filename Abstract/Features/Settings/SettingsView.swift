@@ -300,7 +300,7 @@ private struct UpdatesSection: View {
             Text("Updates")
         } footer: {
             SettingsCaption(updater.isEnabled
-                ? "Nightly builds come from main every day and may be unstable. Switching back to Stable takes effect at the next stable release."
+                ? "Nightly builds come from main every day and may be unstable. Switching back to Stable takes effect once a stable release newer than your nightly comes out."
                 : "Updates are off in development and demo builds.")
         }
         .disabled(!updater.isEnabled)
