@@ -48,7 +48,7 @@ struct SidebarView: View {
                 let scratch = model.sessions(in: nil)
                 if !scratch.isEmpty {
                     RailGroup(title: "Scratch") {
-                        ForEach(scratch) { s in RailChatRow(session: s).equatable() }
+                        ForEach(scratch) { s in RailChatRow(session: s, backgroundTasks: model.runningBackgroundTasks(s.id)).equatable() }
                     }
                 }
 
@@ -263,7 +263,7 @@ private struct RailProjectGroup: View {
                     .padding(.leading, Rail.rowPadding + Rail.chatIndent + Rail.iconColumn + 8)
                     .frame(maxWidth: .infinity, minHeight: Rail.rowHeight, alignment: .leading)
             }
-            ForEach(chats) { s in RailChatRow(session: s).equatable() }
+            ForEach(chats) { s in RailChatRow(session: s, backgroundTasks: model.runningBackgroundTasks(s.id)).equatable() }
         }
         .overlay(alignment: dropEdge == .bottom ? .bottom : .top) {
             if let dropEdge {
@@ -303,6 +303,8 @@ private struct RailProjectGroup: View {
 struct RailChatRow: View {
     @Environment(AppModel.self) private var model
     let session: Session
+    /// Still at work in the background, so an idle chat doesn't look done.
+    var backgroundTasks = 0
     var showProject = false
     @State private var renaming = false
     @State private var draft = ""
@@ -342,6 +344,15 @@ struct RailChatRow: View {
                         .truncationMode(.tail)
                 }
                 Spacer(minLength: 0)
+                if backgroundTasks > 0 {
+                    HStack(spacing: 3) {
+                        Image(systemName: "square.stack.3d.up").font(.system(size: 9))
+                        Text("\(backgroundTasks)").monospacedDigit()
+                    }
+                    .font(.btCaption)
+                    .foregroundStyle(Color.btTextTertiary)
+                    .help(backgroundTasks == 1 ? "1 task in the background" : "\(backgroundTasks) tasks in the background")
+                }
                 if showProject, let p = model.project(session.projectId) {
                     Text(p.name).font(.btCaption).foregroundStyle(Color.btTextTertiary).lineLimit(1)
                 }
@@ -556,6 +567,6 @@ private struct ProjectDrop: DropDelegate {
 /// A row redraws when its chat changes, not whenever any chat does.
 extension RailChatRow: Equatable {
     nonisolated static func == (a: RailChatRow, b: RailChatRow) -> Bool {
-        a.session == b.session && a.showProject == b.showProject
+        a.session == b.session && a.backgroundTasks == b.backgroundTasks && a.showProject == b.showProject
     }
 }

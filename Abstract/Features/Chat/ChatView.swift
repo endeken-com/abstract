@@ -51,7 +51,7 @@ struct ChatToolbarControls: View {
             .help(layout.side.isOpen ? "Hide side panel (⌥⌘B)" : "Show side panel (⌥⌘B)")
             ChromeIconMenu(symbol: "ellipsis", help: "More") {
                 if model.isAlive(session.id) {
-                    Button("Stop Agent") { model.stop(session.id) }
+                    Button(model.runningBackgroundTasks(session.id) > 0 ? "Stop Agent and Its Background Tasks" : "Stop Agent") { model.stop(session.id) }
                 } else {
                     Button(session.providerSessionId == nil ? "Start Agent Again" : "Resume Agent") { model.resume(session.id) }
                 }
