@@ -5,23 +5,24 @@
     <link>https://endeken-com.github.io/abstract/appcast.xml</link>
     <language>en</language>
     <item>
-      <title>Abstract 0.9.0-nightly.1</title>
-      <pubDate>Thu, 24 Sep 2026 18:13:47 GMT</pubDate>
-      <sparkle:version>0.9.0.1</sparkle:version>
-      <sparkle:shortVersionString>0.9.0-nightly.1</sparkle:shortVersionString>
+      <title>Abstract 0.9.0-nightly.2</title>
+      <pubDate>Thu, 24 Sep 2026 18:57:57 GMT</pubDate>
+      <sparkle:version>0.9.0.2</sparkle:version>
+      <sparkle:shortVersionString>0.9.0-nightly.2</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
       <sparkle:channel>nightly</sparkle:channel>
       <sparkle:fullReleaseNotesLink>https://github.com/endeken-com/abstract/releases/tag/nightly</sparkle:fullReleaseNotesLink>
       <description>&lt;h2 dir="auto"&gt;What's Changed&lt;/h2&gt;
 &lt;ul dir="auto"&gt;
 &lt;li&gt;Release strategy: cut releases, nightly builds, signed updates by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/wesguirra/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/wesguirra"&gt;@wesguirra&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5572104845" data-permission-text="Title is private" data-url="https://github.com/endeken-com/abstract/issues/1" data-hovercard-type="pull_request" data-hovercard-url="/endeken-com/abstract/pull/1/hovercard" href="https://github.com/endeken-com/abstract/pull/1"&gt;#1&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;Keep the previous nightly DMG; clarify switching back to Stable by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/wesguirra/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/wesguirra"&gt;@wesguirra&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5572689784" data-permission-text="Title is private" data-url="https://github.com/endeken-com/abstract/issues/2" data-hovercard-type="pull_request" data-hovercard-url="/endeken-com/abstract/pull/2/hovercard" href="https://github.com/endeken-com/abstract/pull/2"&gt;#2&lt;/a&gt;&lt;/li&gt;
 &lt;/ul&gt;
 &lt;h2 dir="auto"&gt;New Contributors&lt;/h2&gt;
 &lt;ul dir="auto"&gt;
 &lt;li&gt;&lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/wesguirra/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/wesguirra"&gt;@wesguirra&lt;/a&gt; made their first contribution in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5572104845" data-permission-text="Title is private" data-url="https://github.com/endeken-com/abstract/issues/1" data-hovercard-type="pull_request" data-hovercard-url="/endeken-com/abstract/pull/1/hovercard" href="https://github.com/endeken-com/abstract/pull/1"&gt;#1&lt;/a&gt;&lt;/li&gt;
 &lt;/ul&gt;
-&lt;p dir="auto"&gt;&lt;strong&gt;Full Changelog&lt;/strong&gt;: &lt;a class="commit-link" href="https://github.com/endeken-com/abstract/compare/v0.8.2...70a6b765c9b74236477dff0efb3ce848c5cd6aa3"&gt;&lt;tt&gt;v0.8.2...70a6b76&lt;/tt&gt;&lt;/a&gt;&lt;/p&gt;</description>
-      <enclosure url="https://github.com/endeken-com/abstract/releases/download/nightly/Abstract-0.9.0-nightly.1.dmg" length="24513796" type="application/octet-stream" sparkle:edSignature="c39C5Vv3cASH5mTqueHVzQzozKpUEECkHdILHo8WSYisGupnAUowCyy7418SLFPtuL+TNYkAg/408jgDWkqJAg==" />
+&lt;p dir="auto"&gt;&lt;strong&gt;Full Changelog&lt;/strong&gt;: &lt;a class="commit-link" href="https://github.com/endeken-com/abstract/compare/v0.8.2...511ec0de467e8600473dc26a20b6bc2c885f10ea"&gt;&lt;tt&gt;v0.8.2...511ec0d&lt;/tt&gt;&lt;/a&gt;&lt;/p&gt;</description>
+      <enclosure url="https://github.com/endeken-com/abstract/releases/download/nightly/Abstract-0.9.0-nightly.2.dmg" length="24513764" type="application/octet-stream" sparkle:edSignature="GI7FepY06fmZFem1eyFxNCPtFvjGBk3kf7ktRSpgXmzprd8KPk5FrVravOqhTM6KW2yZi1USVBwPeT3ZgLJeAA==" />
     </item>
   </channel>
 </rss>
