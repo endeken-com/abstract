@@ -44,6 +44,12 @@ final class ChatFeed {
     /// The agent's suggested next message, until you send one yourself.
     private(set) var suggestion: String?
     private(set) var toolResults = 0
+    /// What the agent runs beside the conversation, oldest first.
+    private(set) var tasks: [AgentTask] = []
+    /// How many things subagents have done, so their tasks' views know to look again.
+    private(set) var subagentSteps = 0
+    /// When each task was first seen running here: the CLI doesn't say when one started.
+    @ObservationIgnored private(set) var taskSeenAt: [String: Date] = [:]
 
     /// All rows, settled and live.
     var rows: [ChatRow] { history + (head.row.map { [$0] } ?? []) }
@@ -98,7 +104,15 @@ final class ChatFeed {
         if timeline.pendingSuggestion != suggestion { suggestion = timeline.pendingSuggestion }
         let results = timeline.entries.count { if case .toolResult = $0.event { true } else { false } }
         if results != toolResults { toolResults = results }
+        let tasks = timeline.tasks
+        for task in tasks where task.status == .running && taskSeenAt[task.id] == nil { taskSeenAt[task.id] = Date() }
+        if tasks != self.tasks { self.tasks = tasks }
+        let steps = timeline.entries.count { if case .subagent = $0.event { true } else { false } }
+        if steps != subagentSteps { subagentSteps = steps }
     }
+
+    /// What the subagent started by `toolUseId` has done so far.
+    func subagent(_ toolUseId: String) -> Timeline { timeline.subagent(toolUseId) }
 
     /// Longest finished reply drawn as one row.
     static let wholeReplyLimit = 24_000

@@ -59,10 +59,10 @@ struct PullRequestsView: View {
     private var content: some View {
         switch model.githubAccess {
         case .missing?:
-            EmptyStateView(symbol: "arrow.triangle.pull", title: "GitHub CLI needed",
+            EmptyStateView(symbol: PullRequestGlyph.symbol, title: "GitHub CLI needed",
                            message: "Install it with `brew install gh`, then run `gh auth login`.")
         case .signedOut?:
-            EmptyStateView(symbol: "arrow.triangle.pull", title: "Sign in to GitHub",
+            EmptyStateView(symbol: PullRequestGlyph.symbol, title: "Sign in to GitHub",
                            message: "Run `gh auth login` in a terminal, then refresh.")
         default:
             let sections = model.projects.compactMap { project -> (Project, [PullRequest])? in
@@ -70,7 +70,7 @@ struct PullRequestsView: View {
                 return prs.isEmpty ? nil : (project, prs)
             }
             if sections.isEmpty {
-                EmptyStateView(symbol: "arrow.triangle.pull", title: emptyTitle, message: emptyMessage)
+                EmptyStateView(symbol: PullRequestGlyph.symbol, title: emptyTitle, message: emptyMessage)
                     .padding(.top, Space.xxl)
             } else {
                 ForEach(sections, id: \.0.id) { project, prs in

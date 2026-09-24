@@ -592,7 +592,7 @@ final class HostedPeer {
     private func tunnel(_ id: Int, _ frame: TunnelFrame) {
         switch frame {
         case .open(let kind):
-            guard let service, service.hosting, service.model?.sharedLocalModels.contains(kind) == true,
+            guard let service, service.hosting, service.model?.sharesLocalModel(kind) == true,
                   let host = LocalModelEndpoints.url(kind).host, let port = NWEndpoint.Port(rawValue: UInt16(LocalModelEndpoints.url(kind).port ?? Int(kind.defaultPort))) else {
                 post(.tunnel(id: id, .close))
                 return
@@ -688,6 +688,12 @@ final class HostedPeer {
             return .ok
         case let .setPolicy(session, policy):
             model.setPolicy(session, policy)
+            return .ok
+        case let .stopTask(session, taskId):
+            model.stopTask(session, taskId: taskId)
+            return .ok
+        case let .moveToBackground(session, toolUseId):
+            model.moveToBackground(session, toolUseId: toolUseId)
             return .ok
         case .resume(let session):
             model.resume(session)
