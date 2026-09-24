@@ -38,11 +38,14 @@ cd Packages/AbstractCore && ABSTRACT_E2E=1 swift test --filter RealAgent
 
 ### Releases
 
-Every merge to `main` builds the DMG and publishes it as the GitHub release
-`v<version>` (`.github/workflows/release.yml`). Each pull request bumps the version
-once with `scripts/bump-version.sh major|minor|patch`, and CI checks that it did; the
-rules for choosing a level are in [AGENTS.md](AGENTS.md). To build the DMG locally, run
-`scripts/package-dmg.sh`.
+Download the latest signed build from
+[Releases](https://github.com/endeken-com/abstract/releases/latest). Abstract updates
+itself from then on: Settings → General → Updates, where you can also switch to nightly
+builds. Coming from 0.8.x or earlier? Download 0.9.0 once by hand; those builds had no updater.
+
+Releases are cut on purpose rather than on every merge; [AGENTS.md](AGENTS.md) explains
+cutting and patching them. `scripts/package-dmg.sh` builds a DMG locally (a dev build,
+version 0.0.0, signed ad hoc).
 
 ### Demo mode
 

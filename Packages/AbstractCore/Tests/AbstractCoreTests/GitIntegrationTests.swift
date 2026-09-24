@@ -148,6 +148,29 @@ private func read(_ path: String) throws -> String {
                 "non-ASCII paths come through unquoted, got \(files.map(\.path))")
         #expect(files.contains { $0.path == "app.txt" })
         #expect(!files.contains { $0.path.hasPrefix("vendor/") })
+        // git 2.55's `add -N` records such a repository as a gitlink it can't hash;
+        // collecting a review must never leave that in the user's index.
+        let index = try await git(exec, repo.root, ["ls-files", "--", "vendor"])
+        #expect(index.isEmpty, "the nested repository must stay out of the index, got \(index)")
+    }
+
+    @Test func anUnknownNestedRepositoryWithCommitsStaysOutOfTheReviewAndIndex() async throws {
+        let repo = try await makeRepo(exec, "unknown-nested-commits")
+        defer { repo.remove() }
+
+        let inner = repo.root + "/vendor/cloned"
+        try FileManager.default.createDirectory(atPath: inner, withIntermediateDirectories: true)
+        _ = try await git(exec, inner, ["init", "-q", "-b", "main"])
+        try "vendored\n".write(toFile: inner + "/lib.txt", atomically: true, encoding: .utf8)
+        _ = try await git(exec, inner, ["add", "lib.txt"])
+        _ = try await git(exec, inner, ["-c", "user.name=t", "-c", "user.email=t@abstract.local", "commit", "-q", "-m", "vendored"])
+        try repo.write("brand-new.txt", "new file\n")
+
+        let files = try await Diff.collect(exec, worktree: repo.root, exclude: [])
+        #expect(files.contains { $0.path == "brand-new.txt" && $0.status == .added })
+        #expect(!files.contains { $0.path.hasPrefix("vendor/") }, "got \(files.map(\.path))")
+        let index = try await git(exec, repo.root, ["ls-files", "--", "vendor"])
+        #expect(index.isEmpty, "the nested repository must stay out of the index, got \(index)")
     }
 
     @Test func repoRootAndAttachingToAnExistingBranch() async throws {
