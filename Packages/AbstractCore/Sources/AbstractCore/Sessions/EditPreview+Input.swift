@@ -48,6 +48,50 @@ extension EditPreview {
         return lines
     }
 
+    /// Two whole files as a unified diff, `context` lines around each change;
+    /// empty when they match. Myers (`CollectionDifference`) rather than
+    /// `lineDiff`, so a large file edited in two far-apart places still reads
+    /// as two small hunks.
+    static func unifiedDiff(_ old: String, _ new: String, context: Int = 3) -> String {
+        let a = old.isEmpty ? [] : splitLines(old), b = new.isEmpty ? [] : splitLines(new)
+        var removed = Set<Int>(), inserted = Set<Int>()
+        for change in b.difference(from: a) {
+            switch change {
+            case let .remove(offset, _, _): removed.insert(offset)
+            case let .insert(offset, _, _): inserted.insert(offset)
+            }
+        }
+        if removed.isEmpty, inserted.isEmpty { return "" }
+        // Every line in order, removals before the additions that replace them.
+        var lines: [(origin: Origin, text: String, old: Int, new: Int)] = []
+        var i = 0, j = 0
+        while i < a.count || j < b.count {
+            if i < a.count, removed.contains(i) { lines.append((.removed, a[i], i, j)); i += 1 }
+            else if j < b.count, inserted.contains(j) { lines.append((.added, b[j], i, j)); j += 1 }
+            else { lines.append((.context, a[i], i, j)); i += 1; j += 1 }
+        }
+        let changed = lines.indices.filter { lines[$0].origin != .context }
+        var hunks: [ClosedRange<Int>] = []
+        for k in changed {
+            let range = max(0, k - context)...min(lines.count - 1, k + context)
+            if let last = hunks.last, range.lowerBound <= last.upperBound + 1 {
+                hunks[hunks.count - 1] = last.lowerBound...range.upperBound
+            } else {
+                hunks.append(range)
+            }
+        }
+        var out = ""
+        for hunk in hunks {
+            let body = lines[hunk]
+            let oldCount = body.count { $0.origin != .added }, newCount = body.count { $0.origin != .removed }
+            let first = body.first!
+            // An empty side starts at the line before, as git writes it.
+            out += "@@ -\(first.old + (oldCount > 0 ? 1 : 0)),\(oldCount) +\(first.new + (newCount > 0 ? 1 : 0)),\(newCount) @@\n"
+            for line in body { out += line.origin.rawValue + line.text + "\n" }
+        }
+        return out
+    }
+
     /// A line diff of two snippets: shared lines stay as context, the rest
     /// become removals and additions. Longest common subsequence on the
     /// middle, after trimming the shared head and tail; very large inputs
