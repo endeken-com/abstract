@@ -1,0 +1,270 @@
+# Builds, signs, notarizes and publishes one release, then adds it to the appcast.
+# Called by cut-release.yml, patch-release.yml and nightly.yml. They hold the `release`
+# concurrency group; declaring it here as well would deadlock the call.
+name: Build release
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit to build
+        type: string
+        required: true
+      version:
+        description: CFBundleShortVersionString, e.g. 0.9.1 or 0.10.0-nightly.42
+        type: string
+        required: true
+      build:
+        description: CFBundleVersion, which Sparkle compares, e.g. 0.9.1 or 0.10.0.42
+        type: string
+        required: true
+      channel:
+        description: stable or nightly
+        type: string
+        required: true
+      tag:
+        description: The release's tag, e.g. v0.9.1 (already created) or nightly
+        type: string
+        required: true
+      previous-tag:
+        description: Tag the generated notes start from; empty for all history
+        type: string
+        default: ""
+      notes:
+        description: Written notes shown above the generated list
+        type: string
+        default: ""
+
+env:
+  SPARKLE_VERSION: 2.10.0  # keep in step with project.yml
+
+jobs:
+  release:
+    runs-on: macos-26
+    environment: release
+    permissions:
+      contents: write
+    outputs:
+      url: ${{ steps.publish.outputs.url }}
+      length: ${{ steps.sparkle.outputs.length }}
+      signature: ${{ steps.sparkle.outputs.signature }}
+    env:
+      REF: ${{ inputs.ref }}
+      VERSION: ${{ inputs.version }}
+      BUILD: ${{ inputs.build }}
+      CHANNEL: ${{ inputs.channel }}
+      TAG: ${{ inputs.tag }}
+      PREVIOUS_TAG: ${{ inputs.previous-tag }}
+      NOTES: ${{ inputs.notes }}
+      TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - name: Install tools
+        run: |
+          brew install xcodegen
+          mkdir -p "$RUNNER_TEMP/sparkle"
+          curl -fsSL "https://github.com/sparkle-project/Sparkle/releases/download/$SPARKLE_VERSION/Sparkle-$SPARKLE_VERSION.tar.xz" |
+            tar -xJ -C "$RUNNER_TEMP/sparkle" ./bin/sign_update
+
+      - name: Generate the project
+        run: xcodegen generate
+
+      - name: Import the Developer ID certificate
+        env:
+          P12: ${{ secrets.DEVELOPER_ID_P12 }}
+          P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+        run: |
+          KEYCHAIN=$RUNNER_TEMP/release.keychain-db
+          PASSWORD=$(openssl rand -hex 24)
+          security create-keychain -p "$PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$PASSWORD" "$KEYCHAIN"
+          printf '%s' "$P12" | base64 --decode > "$RUNNER_TEMP/developer-id.p12"
+          security import "$RUNNER_TEMP/developer-id.p12" -k "$KEYCHAIN" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/developer-id.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$PASSWORD" "$KEYCHAIN" >/dev/null
+          # shellcheck disable=SC2046
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN" |
+            grep -o "\"Developer ID Application: [^\"]*($TEAM_ID)\"" | head -n 1 | tr -d '"')
+          if [ -z "$IDENTITY" ]; then
+            echo "::error::DEVELOPER_ID_P12 holds no Developer ID Application identity for team $TEAM_ID"
+            exit 1
+          fi
+          { echo "KEYCHAIN=$KEYCHAIN"; echo "IDENTITY=$IDENTITY"; } >> "$GITHUB_ENV"
+
+      - name: Build and sign the app
+        env:
+          MARKETING_VERSION: ${{ inputs.version }}
+          BUILD_NUMBER: ${{ inputs.build }}
+        run: |
+          APP=$(scripts/build-app.sh)
+          scripts/sign-app.sh "$APP" "$IDENTITY" "$KEYCHAIN"
+          codesign -dv "$APP" 2>&1 | grep -qx "TeamIdentifier=$TEAM_ID"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")" = "$VERSION"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Contents/Info.plist")" = "$BUILD"
+          echo "APP=$APP" >> "$GITHUB_ENV"
+
+      - name: Upload the build log
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: xcodebuild-log
+          path: build/xcodebuild-release.log
+          if-no-files-found: ignore
+
+      - name: Notarize the app
+        env:
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: |
+          export NOTARY_KEY=$RUNNER_TEMP/notary.p8
+          printf '%s' "$NOTARY_KEY_P8" > "$NOTARY_KEY"
+          echo "NOTARY_KEY=$NOTARY_KEY" >> "$GITHUB_ENV"
+          scripts/notarize.sh "$APP"
+          spctl --assess --type execute -vvv "$APP"
+
+      - name: Package, sign and notarize the DMG
+        env:
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: |
+          DMG=$(DMG_SIGN_IDENTITY="$IDENTITY" DMG_KEYCHAIN="$KEYCHAIN" scripts/package-dmg.sh "$APP")
+          scripts/notarize.sh "$DMG"
+          spctl --assess --type open --context context:primary-signature -vvv "$DMG"
+          echo "DMG=$DMG" >> "$GITHUB_ENV"
+
+      - name: Sign the update for Sparkle
+        id: sparkle
+        env:
+          SPARKLE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          # Prints: sparkle:edSignature="…" length="…"
+          OUT=$(printf '%s' "$SPARKLE_KEY" | "$RUNNER_TEMP/sparkle/bin/sign_update" --ed-key-file - "$DMG")
+          SIGNATURE=$(sed -nE 's/.*sparkle:edSignature="([^"]+)".*/\1/p' <<< "$OUT")
+          LENGTH=$(sed -nE 's/.*length="([0-9]+)".*/\1/p' <<< "$OUT")
+          if [ -z "$SIGNATURE" ] || [ -z "$LENGTH" ]; then
+            echo "::error::Unexpected sign_update output: $OUT"
+            exit 1
+          fi
+          { echo "signature=$SIGNATURE"; echo "length=$LENGTH"; } >> "$GITHUB_OUTPUT"
+
+      - name: Write the release notes
+        run: |
+          ARGS=(-f tag_name="$TAG" -f target_commitish="$REF")
+          if [ -n "$PREVIOUS_TAG" ]; then ARGS+=(-f previous_tag_name="$PREVIOUS_TAG"); fi
+          {
+            if [ -n "$NOTES" ]; then printf '%s\n\n' "$NOTES"; fi
+            gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" "${ARGS[@]}" --jq .body
+          } > "$RUNNER_TEMP/notes.md"
+          gh api markdown -f text="$(cat "$RUNNER_TEMP/notes.md")" -f mode=gfm -f context="$GITHUB_REPOSITORY" > "$RUNNER_TEMP/notes.html"
+
+      - name: Publish the GitHub release
+        id: publish
+        run: |
+          ASSET=$(basename "$DMG")
+          if [ "$CHANNEL" = nightly ]; then
+            # One nightly release whose tag moves. The new DMG goes up beside the old one;
+            # the appcast job deletes the old one once the feed points at the new one.
+            if gh api "repos/$GITHUB_REPOSITORY/git/refs/tags/nightly" >/dev/null 2>&1; then
+              gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/nightly" -f sha="$REF" -F force=true >/dev/null
+            else
+              gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref=refs/tags/nightly -f sha="$REF" >/dev/null
+            fi
+            if gh release view nightly >/dev/null 2>&1; then
+              gh release upload nightly "$DMG" --clobber
+              gh release edit nightly --prerelease --title "Abstract Nightly $VERSION" --notes-file "$RUNNER_TEMP/notes.md"
+            else
+              gh release create nightly "$DMG" --verify-tag --prerelease --title "Abstract Nightly $VERSION" --notes-file "$RUNNER_TEMP/notes.md"
+            fi
+          elif [ "$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null)" = false ]; then
+            # A re-run after the release was published: refresh its DMG only.
+            gh release upload "$TAG" "$DMG" --clobber
+          else
+            gh release delete "$TAG" --yes 2>/dev/null || true  # a draft left by a failed run; the tag stays
+            LATEST=false
+            if [ "$VERSION" = "$(scripts/next-version.sh latest)" ]; then LATEST=true; fi
+            gh release create "$TAG" "$DMG" --verify-tag --title "Abstract $VERSION" \
+              --notes-file "$RUNNER_TEMP/notes.md" --latest="$LATEST"
+          fi
+          echo "url=https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$ASSET" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-notes
+          path: ${{ runner.temp }}/notes.html
+
+      - name: Remove the keychain and keys
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/release.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/notary.p8"
+
+  appcast:
+    needs: release
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}appcast.xml
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+    env:
+      VERSION: ${{ inputs.version }}
+      BUILD: ${{ inputs.build }}
+      CHANNEL: ${{ inputs.channel }}
+      TAG: ${{ inputs.tag }}
+      URL: ${{ needs.release.outputs.url }}
+      LENGTH: ${{ needs.release.outputs.length }}
+      SIGNATURE: ${{ needs.release.outputs.signature }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      # The calling workflow's commit on main, for the newest scripts/appcast.py.
+      - uses: actions/checkout@v7
+        with:
+          path: src
+
+      - uses: actions/checkout@v7
+        with:
+          ref: gh-pages
+          path: site
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-notes
+          path: notes
+
+      - name: Add the release to the appcast
+        run: |
+          python3 src/scripts/appcast.py site/appcast.xml --channel "$CHANNEL" --version "$VERSION" --build "$BUILD" \
+            --url "$URL" --length "$LENGTH" --signature "$SIGNATURE" --notes notes/notes.html \
+            --notes-link "https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG"
+          cd site
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add appcast.xml
+          git commit -m "appcast: Abstract $VERSION" || echo "The appcast already lists Abstract $VERSION"
+          git push origin HEAD:gh-pages
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+
+      - id: deploy
+        uses: actions/deploy-pages@v5
+
+      - name: Remove superseded nightly DMGs
+        if: inputs.channel == 'nightly'
+        run: |
+          KEEP=$(basename "$URL")
+          gh release view nightly -R "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' |
+            while read -r NAME; do
+              if [ "$NAME" != "$KEEP" ]; then gh release delete-asset nightly "$NAME" -R "$GITHUB_REPOSITORY" --yes; fi
+            done
