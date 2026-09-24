@@ -689,6 +689,12 @@ final class HostedPeer {
         case let .setPolicy(session, policy):
             model.setPolicy(session, policy)
             return .ok
+        case let .stopTask(session, taskId):
+            model.stopTask(session, taskId: taskId)
+            return .ok
+        case let .moveToBackground(session, toolUseId):
+            model.moveToBackground(session, toolUseId: toolUseId)
+            return .ok
         case .resume(let session):
             model.resume(session)
             return .ok

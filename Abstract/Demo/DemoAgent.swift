@@ -127,6 +127,8 @@ enum DemoAgent {
         s += tool("Grep", input: ["pattern": "status", "path": "\(cwd)/src/sessions"], output: "src/sessions/SessionRow.swift\nsrc/sessions/Session.swift", sid: sid, wait: 0.3)
         s += tool("Read", input: ["file_path": "\(cwd)/src/sessions/Session.swift"], output: "18 lines", sid: sid, wait: 0.3)
         s += tool("Bash", input: ["command": "swift build --target Sessions", "description": "Build the sessions target"], output: "Building for debugging...\nBuild complete! (3.21s)", sid: sid, wait: 0.7)
+        let background = BackgroundDemo(sid: sid)
+        s += background.start()
         s += todos(["completed", "in_progress", "pending"], sid: sid)
 
         // Real edits, so the Changes tab shows a real diff.
@@ -165,6 +167,7 @@ enum DemoAgent {
         s.append("cat > \(helper) <<'ABSTRACT_EOF'\n\(helperBody)ABSTRACT_EOF")
         s += tool("Write", input: ["file_path": "\(cwd)/\(helper)", "content": helperBody], output: "File created successfully.",
                   result: ["type": "create", "filePath": "\(cwd)/\(helper)", "content": helperBody, "structuredPatch": []], sid: sid)
+        s += background.midway()
         s += todos(["completed", "completed", "completed"], sid: sid)
 
         s += streamText("""
@@ -181,8 +184,103 @@ enum DemoAgent {
         s.append(emit(["type": "result", "subtype": "success", "session_id": sid, "is_error": false, "duration_ms": 18_400, "num_turns": 4, "result": "Done.",
                        "total_cost_usd": 0.1842, "usage": ["input_tokens": 6, "output_tokens": 612, "cache_read_input_tokens": 48_210, "cache_creation_input_tokens": 9_870]]))
         s.append(emit(["type": "prompt_suggestion", "suggestion": "Add a test for derivedStatus", "session_id": sid]))
+        s += background.finish()
         s.append(replyLoop(sid: sid))
         return s.joined(separator: "\n") + "\n"
+    }
+
+    /// Work the demo agent sends to the background, as claude 2.1.280 reports
+    /// it: a subagent and a test run, each ending with a turn of its own after
+    /// the main one, and a preview server that runs until you stop it.
+    private struct BackgroundDemo {
+        let sid: String
+        var agentCall: String { "toolu_demo_agent_\(sid)" }
+        var agentTask: String { "a_demo_\(sid)" }
+        var testsCall: String { "toolu_demo_tests_\(sid)" }
+        var testsTask: String { "b_demo_tests_\(sid)" }
+        var serverCall: String { "toolu_demo_server_\(sid)" }
+        var serverTask: String { "b_demo_server_\(sid)" }
+        var folder: String { FileManager.default.temporaryDirectory.appendingPathComponent("abstract-demo-\(sid)").path }
+        func output(_ task: String) -> String { "\(folder)/\(task).output" }
+
+        private func system(_ subtype: String, _ fields: [String: Any]) -> String {
+            emit(["type": "system", "subtype": subtype, "session_id": sid].merging(fields) { a, _ in a })
+        }
+
+        /// Lines appended to a task's output file over time, in the background.
+        private func writes(_ task: String, _ lines: [String], every seconds: Double, forever: Bool = false) -> String {
+            let body = lines.map { "echo \(shellQuote($0)) >> \(shellQuote(output(task))); sleep \(seconds)" }.joined(separator: "; ")
+            // Bounded, and ended with the agent, so a quit demo leaves nothing writing.
+            let pid = shellQuote(folder + "/server.pid")
+            return forever
+                ? "( for _i in $(seq 1 200); do \(body); done ) & echo $! > \(pid); trap 'kill $(cat \(pid)) 2>/dev/null' EXIT; trap 'exit 143' TERM INT HUP"
+                : "( \(body) ) &"
+        }
+
+        private func sub(_ line: [String: Any]) -> String {
+            emit(line.merging(["parent_tool_use_id": agentCall, "session_id": sid]) { a, _ in a })
+        }
+
+        func start() -> [String] {
+            var s = ["mkdir -p \(shellQuote(folder))", pause(0.3)]
+            s.append(toolUse(agentCall, "Agent", ["description": "Find other readers of session.status", "subagent_type": "Explore", "run_in_background": true,
+                                                  "prompt": "List every place outside SessionRow that reads session.status directly, with file and line."], sid: sid))
+            s.append(system("task_started", ["task_id": agentTask, "tool_use_id": agentCall, "description": "Find other readers of session.status",
+                                             "subagent_type": "Explore", "is_backgrounded": true, "task_type": "local_agent",
+                                             "prompt": "List every place outside SessionRow that reads session.status directly, with file and line."]))
+            s.append(toolResult(agentCall, "Async agent launched successfully.\nThe agent is working in the background. You will be notified automatically when it completes.", nil, sid: sid))
+            for (call, task, command, description, lines, forever) in [
+                (testsCall, testsTask, "swift test --parallel", "Run the test suite",
+                 ["Building for debugging...", "Build complete! (4.02s)", "Test Suite 'All tests' started", "Test Suite 'SessionTests' passed (61 tests)",
+                  "Test Suite 'RowTests' passed (38 tests)", "Test Suite 'All tests' passed: 214 tests, 0 failures"], false),
+                (serverCall, serverTask, "swift run Preview --port 8080", "Serve the preview",
+                 ["[preview] listening on http://localhost:8080", "[preview] GET / 200 3ms", "[preview] rebuilt SessionRow in 0.4s"], true),
+            ] {
+                s.append(pause(0.3))
+                s.append(toolUse(call, "Bash", ["command": command, "description": description, "run_in_background": true], sid: sid))
+                s.append(system("task_started", ["task_id": task, "tool_use_id": call, "description": description, "is_backgrounded": true, "task_type": "local_bash"]))
+                s.append(writes(task, lines, every: forever ? 2.5 : 1.2, forever: forever))
+                s.append(toolResult(call, "Command running in background with ID: \(task). Output is being written to: \(output(task)). You will be notified when it completes.", nil, sid: sid))
+            }
+            s += [pause(0.4),
+                  sub(["type": "assistant", "message": ["id": "msg_sub1_\(sid)", "role": "assistant", "content": [["type": "tool_use", "id": "toolu_sub1_\(sid)", "name": "Grep", "input": ["pattern": "session\\.status", "path": "src"]]]]]),
+                  system("task_progress", ["task_id": agentTask, "tool_use_id": agentCall, "description": "Searching for session.status",
+                                           "usage": ["total_tokens": 8_420, "tool_uses": 1, "duration_ms": 1_900], "last_tool_name": "Grep"]),
+                  sub(["type": "user", "message": ["role": "user", "content": [["tool_use_id": "toolu_sub1_\(sid)", "type": "tool_result", "content": "src/sessions/SessionRow.swift:11\nsrc/sidebar/RailRow.swift:24\nsrc/home/RecentList.swift:40"]]]])]
+            return s
+        }
+
+        func midway() -> [String] {
+            [pause(0.3),
+             sub(["type": "assistant", "message": ["id": "msg_sub2_\(sid)", "role": "assistant", "content": [["type": "tool_use", "id": "toolu_sub2_\(sid)", "name": "Read", "input": ["file_path": "src/sidebar/RailRow.swift"]]]]]),
+             system("task_progress", ["task_id": agentTask, "tool_use_id": agentCall, "description": "Reading RailRow.swift",
+                                      "usage": ["total_tokens": 11_870, "tool_uses": 2, "duration_ms": 4_300], "last_tool_name": "Read"]),
+             sub(["type": "user", "message": ["role": "user", "content": [["tool_use_id": "toolu_sub2_\(sid)", "type": "tool_result", "content": "58 lines"]]]])]
+        }
+
+        /// After the main turn: each task's end, and the turn the agent takes for it.
+        func finish() -> [String] {
+            let report = "Two other places read `session.status` directly:\n\n- `src/sidebar/RailRow.swift:24`\n- `src/home/RecentList.swift:40`\n\nBoth should switch to `derivedStatus`."
+            var s = [pause(3.5),
+                     system("task_updated", ["task_id": testsTask, "patch": ["status": "completed"]]),
+                     system("task_notification", ["task_id": testsTask, "tool_use_id": testsCall, "status": "completed", "output_file": output(testsTask),
+                                                  "summary": "Background command \"Run the test suite\" completed (exit code 0)"])]
+            s += turn("The test suite passed in the background: 214 tests, no failures.", id: "msg_bg1_\(sid)")
+            s += [pause(1.5),
+                  sub(["type": "assistant", "message": ["id": "msg_sub3_\(sid)", "role": "assistant", "content": [["type": "text", "text": report]]]]),
+                  system("task_updated", ["task_id": agentTask, "patch": ["status": "completed"]]),
+                  system("task_notification", ["task_id": agentTask, "tool_use_id": agentCall, "status": "completed", "summary": report,
+                                               "usage": ["total_tokens": 13_900, "tool_uses": 2, "duration_ms": 9_800]])]
+            s += turn("The search found two more places reading `session.status` directly, in `RailRow` and `RecentList`. Want me to switch them to `derivedStatus` too?", id: "msg_bg2_\(sid)")
+            return s
+        }
+
+        private func turn(_ text: String, id: String) -> [String] {
+            [system("init", ["cwd": ".", "model": "claude-opus-5", "permissionMode": "acceptEdits"])]
+                + streamText(text, messageId: id, sid: sid)
+                + [emit(["type": "result", "subtype": "success", "session_id": sid, "is_error": false, "duration_ms": 2_400, "num_turns": 1, "result": "ok",
+                         "total_cost_usd": 0.014, "usage": ["input_tokens": 2, "output_tokens": 70, "cache_read_input_tokens": 51_000, "cache_creation_input_tokens": 300]])]
+        }
     }
 
     private static func followUpScript(sessionId: String) -> String {
@@ -196,11 +294,21 @@ enum DemoAgent {
     }
 
     /// After a turn, answer each follow-up line on stdin like a live agent.
+    /// Stopping a task ends it (and the preview server's writes); other
+    /// control requests get no reply.
     private static func replyLoop(sid: String) -> String {
         var body = streamText("Good call. I checked every caller and none of them read the old field directly, so the change is safe as it stands.", messageId: "msg_f_\(sid)", sid: sid)
         body.append(emit(["type": "result", "subtype": "success", "session_id": sid, "is_error": false, "duration_ms": 4_200, "num_turns": 1, "result": "ok",
                           "total_cost_usd": 0.021, "usage": ["input_tokens": 2, "output_tokens": 88, "cache_read_input_tokens": 52_000, "cache_creation_input_tokens": 400]]))
-        return "while read -r _line; do\n" + body.joined(separator: "\n") + "\ndone"
+        let folder = shellQuote(BackgroundDemo(sid: sid).folder)
+        let stop = #"""
+              _tid=$(printf '%s' "$_line" | sed -n 's/.*"task_id":"\([^"]*\)".*/\1/p')
+              case "$_tid" in b_demo_server_*) kill "$(cat \#(folder)/server.pid 2>/dev/null)" 2>/dev/null ;; esac
+              printf '%s\n' "{\"type\":\"system\",\"subtype\":\"task_updated\",\"task_id\":\"$_tid\",\"patch\":{\"status\":\"killed\"}}"
+              printf '%s\n' "{\"type\":\"system\",\"subtype\":\"task_notification\",\"task_id\":\"$_tid\",\"status\":\"stopped\",\"summary\":\"Stopped from Abstract\"}"
+        """#
+        return "while read -r _line; do\n  case \"$_line\" in\n    *'\"subtype\":\"stop_task\"'*)\n" + stop + "\n      ;;\n    *'\"control_request\"'*) ;;\n    *)\n"
+            + body.joined(separator: "\n") + "\n      ;;\n  esac\ndone"
     }
 
     /// Codex speaks `codex exec --json`: one process per turn, closed stdin.
