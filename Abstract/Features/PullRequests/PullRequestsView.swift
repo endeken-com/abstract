@@ -177,6 +177,7 @@ private struct PullRequestRow: View {
             if let url = pr.url { NSWorkspace.shared.open(url) }
             return
         }
+        model.pullRequests[chat.id] = pr
         model.open(chat.id)
         model.showPane(.review, in: chat.id)
     }

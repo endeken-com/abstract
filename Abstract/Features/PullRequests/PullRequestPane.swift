@@ -197,6 +197,27 @@ struct PullRequestPane: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: Space.lg) {
                         if let error { ErrorLine(text: error) { self.error = nil } }
+                        let requests = model.pullRequestsForChat(session.id)
+                        if requests.count > 1 {
+                            Menu {
+                                ForEach(requests) { request in
+                                    Button {
+                                        run("Loading pull request…") {
+                                            try await model.selectPullRequest(session.id, number: request.number)
+                                        }
+                                    } label: {
+                                        Text("\(request.label) · \(request.stateLabel) · \(request.title)")
+                                        if request.number == model.pullRequests[session.id]?.number {
+                                            Image(systemName: "checkmark")
+                                        }
+                                    }
+                                }
+                            } label: {
+                                Label("Pull request \(model.pullRequests[session.id]?.label ?? "")", systemImage: "chevron.down")
+                            }
+                            .menuStyle(.button)
+                            .disabled(working != nil)
+                        }
                         if let pr = model.pullRequests[session.id] {
                             PullRequestDetail(session: session, pr: pr, working: $working, run: { run($0, $1) })
                         } else {
@@ -216,7 +237,7 @@ struct PullRequestPane: View {
             await load()
             // While the tab is open, keep checks and reviews current.
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(45))
+                try? await Task.sleep(for: .seconds(30))
                 if !Task.isCancelled { await load() }
             }
         }
@@ -247,6 +268,7 @@ struct PullRequestPane: View {
             }
         }
         do {
+            if !model.isDemo { await model.refreshPullRequests(projectId: project.id) }
             try await model.refreshPullRequest(session.id)
             phase = .ready
         } catch {
@@ -313,6 +335,15 @@ private struct PullRequestDetail: View {
                 Text(pr.stateLabel).font(.btCallout).foregroundStyle(pr.stateTint)
                 Text(verbatim: pr.label).font(.btCallout).foregroundStyle(Color.btTextTertiary)
                 Spacer(minLength: Space.sm)
+                Button {
+                    run("Refreshing…") {
+                        await model.refreshPullRequests(projectId: session.projectId)
+                        try await model.refreshPullRequest(session.id)
+                    }
+                } label: { Image(systemName: "arrow.clockwise") }
+                    .buttonStyle(.icon(size: 24))
+                    .disabled(working != nil)
+                    .help("Refresh pull request")
                 if let url = pr.url {
                     Button { NSWorkspace.shared.open(url) } label: { Image(systemName: "arrow.up.forward.square") }
                         .buttonStyle(.icon(size: 24))

@@ -153,7 +153,13 @@ struct GitActionsButton: View {
             .keyboardShortcut(.delete, modifiers: [.command, .shift])
         }
         .disabled(running != nil)
-        .task(id: "\(session.id)|\(session.status.rawValue)") { await refresh() }
+        .task(id: "\(session.id)|\(session.status.rawValue)") {
+            await refresh()
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(30))
+                if !Task.isCancelled { await refresh() }
+            }
+        }
     }
 
     @ViewBuilder
@@ -182,9 +188,9 @@ struct GitActionsButton: View {
         if s.dirty { return .commit }
         if s.behind > 0 { return .pull }
         if s.hasOrigin, s.ahead > 0 { return .push }
+        if s.behindBase > 0 { return .updateFromBase }
         if model.pullRequests[session.id] != nil { return .viewPR }
         if s.aheadOfBase > 0 { return onGitHub ? .createPR : .mergeLocally }
-        if s.behindBase > 0 { return .updateFromBase }
         return .commit
     }
 
@@ -268,7 +274,10 @@ struct GitActionsButton: View {
 
     private func refresh() async {
         guard let worktree = session.worktreePath else { return }
-        state = await GitActions.state(model.executor(for: session.id), worktree: worktree, preferredBase: session.baseRef)
+        let exec = model.executor(for: session.id)
+        // The base comparison needs fresh remote refs when main moves elsewhere.
+        _ = try? await exec.run("git", ["fetch", "--quiet", "origin"], cwd: worktree)
+        state = await GitActions.state(exec, worktree: worktree, preferredBase: session.baseRef)
         if let project = model.project(session.projectId) { onGitHub = await model.isOnGitHub(project) }
     }
 

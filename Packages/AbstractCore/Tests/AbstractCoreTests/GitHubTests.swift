@@ -44,6 +44,21 @@ struct GitHubTests {
         #expect(pr.checks.last?.name == "vercel")
     }
 
+    @Test func checksRefreshEvenWhenPRTimestampDoesNot() throws {
+        let detail = try GitHub.decode(Data(detail.utf8))
+        var summary = detail
+        summary.checks[2].outcome = .passed
+        summary.reviews = []
+        summary.comments = []
+        summary.mergeable = nil
+        let refreshed = detail.refreshingSummary(with: summary)
+        #expect(refreshed.updatedAt == detail.updatedAt)
+        #expect(refreshed.checks[2].outcome == .passed)
+        #expect(refreshed.reviews == detail.reviews)
+        #expect(refreshed.comments == detail.comments)
+        #expect(refreshed.mergeable == detail.mergeable)
+    }
+
     @Test func aListSkipsEntriesItCannotRead() throws {
         let list = #"[{"number": 3, "title": "A", "state": "MERGED", "headRefName": "x", "baseRefName": "main"}, {"oops": true}]"#
         let prs = try GitHub.decodeList(Data(list.utf8))
