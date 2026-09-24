@@ -18,7 +18,14 @@ struct SidebarView: View {
             Hairline()
             RailDevicesBar()
                 .padding(.horizontal, Rail.inset)
-                .padding(.vertical, 6)
+                .padding(.top, 6)
+            Text("Version \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—")")
+                .font(.btCaption)
+                .foregroundStyle(Color.btTextTertiary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, Rail.inset + Rail.rowPadding)
+                .padding(.top, 2)
+                .padding(.bottom, 8)
         }
     }
 
@@ -32,30 +39,35 @@ struct SidebarView: View {
                     RailNavRow(title: "Pull Requests", symbol: PullRequestGlyph.symbol, destination: .pullRequests)
                 }
 
-                if !model.projects.isEmpty {
-                    RailSection(title: "Projects", collapsed: $projectsCollapsed) {
-                        Button { model.isAddingProject = true } label: { Image(systemName: "plus") }
-                            .buttonStyle(RailIconStyle())
-                            .help("Add project")
-                    }
-                    if !projectsCollapsed {
-                        ForEach(model.projects) { project in
-                            RailProjectGroup(project: project, dragging: $draggingProject)
+                RailSection(title: model.remote.identity.name, collapsed: $projectsCollapsed) {
+                    Button { model.isAddingProject = true } label: { Image(systemName: "plus") }
+                        .buttonStyle(RailIconStyle())
+                        .help("Add project")
+                }
+                .contextMenu {
+                    if model.sessions.contains(where: { $0.archivedAt != nil }) {
+                        Button(model.showArchived ? "Hide Archived Chats" : "Show Archived Chats") {
+                            model.showArchived.toggle()
                         }
                     }
                 }
 
-                let scratch = model.sessions(in: nil)
-                if !scratch.isEmpty {
-                    RailGroup(title: "Scratch") {
-                        ForEach(scratch) { s in RailChatRow(session: s, backgroundTasks: model.runningBackgroundTasks(s.id)).equatable() }
+                if !projectsCollapsed {
+                    ForEach(model.projects) { project in
+                        RailProjectGroup(project: project, dragging: $draggingProject)
+                    }
+
+                    let scratch = model.sessions(in: nil)
+                    if !scratch.isEmpty {
+                        RailGroup(title: "Scratch") {
+                            ForEach(scratch) { s in
+                                RailChatRow(session: s, backgroundTasks: model.runningBackgroundTasks(s.id)).equatable()
+                            }
+                        }
                     }
                 }
 
                 RemoteDevicesSection()
-
-                RailFooter()
-                    .padding(.top, Rail.groupGap)
             }
             .padding(.horizontal, Rail.inset)
             .padding(.top, 6)
@@ -79,7 +91,7 @@ struct SidebarView: View {
     private func step(_ delta: Int) -> KeyPress.Result {
         let order = (projectsCollapsed ? [] : model.projects).flatMap { p in
             model.collapsedProjects.contains(p.id) ? [] : model.sessions(in: p.id).map(\.id)
-        } + model.sessions(in: nil).map(\.id)
+        } + (projectsCollapsed ? [] : model.sessions(in: nil).map(\.id))
         var seen = Set<String>()
         let unique = order.filter { seen.insert($0).inserted }
         guard !unique.isEmpty else { return .ignored }
@@ -165,7 +177,7 @@ struct RailSection<Trailing: View>: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help(collapsed ? "Show projects" : "Hide projects")
+            .help(collapsed ? "Show \(title)" : "Hide \(title)")
             Spacer(minLength: 4)
             trailing().opacity(hovering ? 1 : 0)
         }
@@ -314,6 +326,9 @@ struct RailChatRow: View {
     var showProject = false
     @State private var renaming = false
     @State private var draft = ""
+    @State private var hovering = false
+    @State private var hoveringDetails = false
+    @State private var showingDetails = false
     @FocusState private var fieldFocused: Bool
 
     var body: some View {
@@ -369,11 +384,36 @@ struct RailChatRow: View {
         }
         .buttonStyle(RailRowStyle(selected: selected))
         .opacity(session.archivedAt == nil ? 1 : 0.5)
-        .help(tooltip)
+        .onHover {
+            hovering = $0
+            if !$0 {
+                Task {
+                    try? await Task.sleep(for: .milliseconds(250))
+                    if !hovering && !hoveringDetails { showingDetails = false }
+                }
+            }
+        }
+        .task(id: hovering) {
+            guard hovering, !renaming else { return }
+            try? await Task.sleep(for: .milliseconds(500))
+            if !Task.isCancelled && hovering { showingDetails = true }
+        }
+        .popover(isPresented: $showingDetails, arrowEdge: .trailing) {
+            RailChatDetails(session: session)
+                .onHover {
+                    hoveringDetails = $0
+                    if !$0 && !hovering { showingDetails = false }
+                }
+        }
         .simultaneousGesture(TapGesture(count: 2).onEnded { if !remote { draft = session.name; renaming = true } })
         .contextMenu {
-            // A chat on another Mac is managed there.
-            if !remote { localActions }
+            if remote {
+                Button(session.archivedAt == nil ? "Archive" : "Unarchive") {
+                    model.setArchived(session.id, session.archivedAt == nil)
+                }
+            } else {
+                localActions
+            }
         }
     }
 
@@ -387,13 +427,6 @@ struct RailChatRow: View {
         }
         Divider()
         Button("Delete Chat and Worktree…", role: .destructive) { confirmDelete() }
-    }
-
-    private var tooltip: String {
-        [session.prompt.map { Workspace.title(fromPrompt: $0) }, session.status.label,
-         model.project(session.projectId)?.name, ProviderRegistry.name(session.providerId),
-         RelativeTime.short(session.lastEventAt ?? session.createdAt)]
-            .compactMap { $0 }.joined(separator: " · ")
     }
 
     private func commitRename() {
@@ -441,32 +474,93 @@ private struct RailStatus: View {
     }
 }
 
-private struct RailFooter: View {
+private struct RailChatDetails: View {
     @Environment(AppModel.self) private var model
+    let session: Session
 
     var body: some View {
-        HStack(spacing: Space.md) {
-            // With projects listed, the Projects header's + adds one.
-            if model.projects.isEmpty {
-                Button { model.isAddingProject = true } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "folder.badge.plus").font(.system(size: 12, weight: .regular)).frame(width: Rail.iconColumn)
-                        Text("Add project").font(BTFont.ui(13))
+        VStack(alignment: .leading, spacing: Space.md) {
+            Text(session.name)
+                .font(BTFont.ui(15, .medium))
+                .foregroundStyle(Color.btText)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(session.status.label)
+                .font(.btCaption)
+                .foregroundStyle(Color.btTextSecondary)
+            Hairline()
+            detail("Branch", session.branch ?? "No branch", monospaced: true)
+            if let pr {
+                VStack(alignment: .leading, spacing: 4) {
+                    caption("Pull request")
+                    HStack(spacing: Space.sm) {
+                        Text("#\(pr.number) · \(pr.state)")
+                            .font(BTFont.ui(13))
+                        Spacer()
+                        if let url = pr.url {
+                            Button { NSWorkspace.shared.open(url) } label: {
+                                Image(systemName: "arrow.up.right.square")
+                            }
+                            .buttonStyle(.plain)
+                            .help("Open pull request")
+                        }
                     }
-                    .foregroundStyle(Color.btTextTertiary)
-                    .padding(.horizontal, Rail.rowPadding)
-                    .frame(height: Rail.rowHeight)
+                    Text(pr.title).font(.btCaption).foregroundStyle(Color.btTextSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .buttonStyle(RailRowStyle(selected: false))
+            } else {
+                detail("Pull request", remoteDetailsUnavailable ? "Unavailable from this device" : "No PR for this branch")
             }
-            Spacer()
-            if model.sessions.contains(where: { $0.archivedAt != nil }) {
-                Button(model.showArchived ? "Hide archived" : "Show archived") { model.showArchived.toggle() }
-                    .buttonStyle(.plain)
-                    .font(.btCaption)
-                    .foregroundStyle(Color.btTextTertiary)
-                    .padding(.trailing, Rail.rowPadding)
-            }
+            Hairline()
+            detail("Agent", ProviderRegistry.name(session.providerId))
+            detail("Model", modelName)
+            detail("Device", deviceName)
+            if let project = model.project(session.projectId) { detail("Project", project.name) }
+            detail("Updated", "\(RelativeTime.short(session.lastEventAt ?? session.createdAt)) ago")
+        }
+        .padding(Space.lg)
+        .frame(width: 310, alignment: .leading)
+    }
+
+    private var deviceName: String {
+        guard let (device, _) = RemoteService.split(session.id) else { return model.remote.identity.name }
+        return model.remote.paired.first(where: { $0.id == device })?.peer.name ?? "Unknown device"
+    }
+
+    private var modelName: String {
+        guard let (device, _) = RemoteService.split(session.id) else {
+            return model.modelLabel(providerId: session.providerId, model: session.model)
+        }
+        let catalog = model.models(for: session.providerId, on: device)
+        if let selected = session.model { return catalog.option(selected)?.label ?? selected }
+        return model.defaultModelName(for: session.providerId, on: device).map { "Default (\($0))" } ?? "Default model"
+    }
+
+    private var remoteDetailsUnavailable: Bool {
+        guard let (device, _) = RemoteService.split(session.id) else { return false }
+        return model.remote.links[device]?.snapshot?.pullRequests == nil
+    }
+
+    private var pr: (number: Int, title: String, state: String, url: URL?)? {
+        if let local = model.pullRequests[session.id] {
+            return (local.number, local.title, local.isDraft ? "Draft" : local.state.rawValue.capitalized, local.url)
+        }
+        guard let (device, hostId) = RemoteService.split(session.id),
+              let remote = model.remote.links[device]?.snapshot?.pullRequests?[hostId] else { return nil }
+        return (remote.number, remote.title, remote.isDraft ? "Draft" : remote.state.capitalized, remote.url)
+    }
+
+    private func caption(_ title: String) -> some View {
+        Text(title.uppercased()).font(.btSectionLabel).foregroundStyle(Color.btTextTertiary)
+    }
+
+    private func detail(_ title: String, _ value: String, monospaced: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            caption(title)
+            Text(value)
+                .font(monospaced ? .btMono : .btBody)
+                .foregroundStyle(Color.btTextSecondary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }
