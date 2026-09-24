@@ -48,6 +48,19 @@ import AbstractCore
         #expect(!spec.keepStdinOpen)
     }
 
+    /// `codex exec resume` rejects `-C` and `-s` (codex-cli 0.153.4), so a
+    /// follow-up relies on the process cwd and sets the sandbox as config.
+    @Test func resumeOmitsFlagsThatOnlyExecAccepts() {
+        let spec = provider.buildResume(ctx, resumeId: "thread-1")
+        #expect(!spec.args.contains("-C"))
+        #expect(!spec.args.contains("-s"))
+        #expect(spec.cwd == "/tmp/work")
+        #expect(spec.args == ["exec", "resume", "thread-1", "--json", "--skip-git-repo-check",
+                              "-c", "sandbox_mode=\"workspace-write\"", "make hi.txt"])
+        var bypass = ctx; bypass.permissionPolicy = .bypass
+        #expect(provider.buildResume(bypass, resumeId: "thread-1").args.contains("sandbox_mode=\"danger-full-access\""))
+    }
+
     @Test func binaryOverrideReplacesTheCommand() {
         var c = ctx; c.binaryOverride = "/opt/bin/codex"
         #expect(provider.buildLaunch(c).command == "/opt/bin/codex")
