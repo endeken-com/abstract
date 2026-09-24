@@ -1,0 +1,38 @@
+# Checks every pull request into main or a release branch, and main itself.
+name: Test
+
+on:
+  pull_request:
+    branches: [main, "v*.x"]
+  push:
+    branches: [main]
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install tools
+        run: brew install xcodegen actionlint
+
+      - name: Lint workflows
+        run: actionlint -shellcheck=
+
+      - name: Script tests
+        run: |
+          sh scripts/tests/next-version-test.sh
+          python3 -m unittest discover -s scripts/tests -v
+
+      - name: AbstractCore tests
+        working-directory: Packages/AbstractCore
+        run: swift test
+
+      - name: Build the app
+        run: |
+          xcodegen generate
+          scripts/build-app.sh
