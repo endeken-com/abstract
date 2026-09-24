@@ -36,6 +36,14 @@ Opt-in test against the real `claude` CLI (needs a signed-in subscription):
 cd Packages/AbstractCore && ABSTRACT_E2E=1 swift test --filter RealAgent
 ```
 
+### Releases
+
+Every merge to `main` builds the DMG and publishes it as the GitHub release
+`v<version>` (`.github/workflows/release.yml`). Each pull request bumps the version
+once with `scripts/bump-version.sh major|minor|patch`, and CI checks that it did; the
+rules for choosing a level are in [AGENTS.md](AGENTS.md). To build the DMG locally, run
+`scripts/package-dmg.sh`.
+
 ### Demo mode
 
 `Abstract.app/Contents/MacOS/Abstract --demo` seeds throwaway repositories

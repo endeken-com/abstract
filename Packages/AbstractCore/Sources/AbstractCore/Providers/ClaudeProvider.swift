@@ -58,6 +58,21 @@ public struct ClaudeProvider: ProviderDefinition {
             + #","request":{"subtype":"set_permission_mode","mode":"# + ClaudeWire.quoted(mode) + "}}\n"
     }
 
+    /// Verified against claude 2.1.280's control channel: the task ends as
+    /// `stopped`, reported by `task_notification`.
+    public func buildStopTask(_ taskId: String, requestId: String) -> String? {
+        #"{"type":"control_request","request_id":"# + ClaudeWire.quoted(requestId)
+            + #","request":{"subtype":"stop_task","task_id":"# + ClaudeWire.quoted(taskId) + "}}\n"
+    }
+
+    /// `background_tasks`, the control-request form of Ctrl+B: the blocking
+    /// call returns at once and the work carries on as a background task.
+    public func buildBackground(toolUseId: String?, requestId: String) -> String? {
+        let target = toolUseId.map { #","tool_use_id":"# + ClaudeWire.quoted($0) } ?? ""
+        return #"{"type":"control_request","request_id":"# + ClaudeWire.quoted(requestId)
+            + #","request":{"subtype":"background_tasks""# + target + "}}\n"
+    }
+
     // Models: see ClaudeModels.swift.
 
     /// `model` in ~/.claude/settings.json, e.g. "opus[1m]".
@@ -175,19 +190,28 @@ final class ClaudeParser: OutputParser {
     // MARK: - dispatch (nil = not understood, surfaced as a raw line)
 
     private func dispatch(_ obj: JSONValue) -> [AgentEvent]? {
-        switch obj["type"]?.string {
+        // A subagent's messages name the tool call that started it. They come
+        // whole, never streamed, but may land mid-way through the main agent's.
+        let parent = obj["parent_tool_use_id"]?.string.flatMap { $0.isEmpty ? nil : $0 }
+        return switch obj["type"]?.string {
         case "system": onSystem(obj)
-        case "stream_event": onStreamEvent(obj)
-        case "assistant": onAssistant(obj)
-        case "user": onUser(obj)
+        case "stream_event": parent == nil ? onStreamEvent(obj) : []
+        case "assistant": onAssistant(obj, streamed: parent == nil).map { Self.under(parent, $0) }
+        case "user": onUser(obj).map { Self.under(parent, $0) }
         case "result": onResult(obj)
         case "control_request": onControlRequest(obj)
-        // Housekeeping the UI has no use for.
-        case "rate_limit_event": []
+        // Housekeeping the UI has no use for; `tool_progress` is a long
+        // command's heartbeat.
+        case "rate_limit_event", "tool_progress": []
         case "control_response": onControlResponse(obj)
         case "prompt_suggestion": obj["suggestion"]?.string.flatMap { $0.isEmpty ? nil : [.promptSuggestion($0)] } ?? []
         default: nil
         }
+    }
+
+    private static func under(_ parent: String?, _ events: [AgentEvent]) -> [AgentEvent] {
+        guard let parent else { return events }
+        return events.map { .subagent(parentToolUseId: parent, $0) }
     }
 
     private func onSystem(_ obj: JSONValue) -> [AgentEvent]? {
@@ -207,9 +231,12 @@ final class ClaudeParser: OutputParser {
                 events.append(.status(.waitingInput, detail: needsAction))
             }
             return events
+        case "task_started", "task_progress", "task_updated", "task_notification":
+            return ClaudeWire.task(obj).map { [.task($0)] } ?? []
         // Every other system frame is the CLI's own bookkeeping (status,
-        // hooks, thinking_tokens, task_summary, permission_denied…). New ones
-        // appear between releases; none of them belong in the conversation.
+        // hooks, thinking_tokens, task_summary, background_tasks_changed,
+        // permission_denied…). New ones appear between releases; none of
+        // them belong in the conversation.
         default:
             return []
         }
@@ -257,11 +284,12 @@ final class ClaudeParser: OutputParser {
         }
     }
 
-    private func onAssistant(_ obj: JSONValue) -> [AgentEvent]? {
+    /// `mainAgent`: false for a subagent's message, which never streams.
+    private func onAssistant(_ obj: JSONValue, streamed mainAgent: Bool) -> [AgentEvent]? {
         guard let message = obj["message"], message.object != nil else { return [] }
         let id = message["id"]?.string ?? messageId
         // `blocks` describes this message only if it is the one that streamed.
-        let streamed = id == messageId
+        let streamed = mainAgent && id == messageId
         var events: [AgentEvent] = []
         for (position, block) in (message["content"]?.array ?? []).enumerated() {
             switch block["type"]?.string {
@@ -412,6 +440,57 @@ private enum ClaudeWire {
             }
         }
         return out + "\""
+    }
+
+    /// `task_started`, `task_progress`, `task_updated` or `task_notification`,
+    /// as claude 2.1.280 sends them (see `Fixtures/claude-background.jsonl`).
+    static func task(_ obj: JSONValue) -> TaskEvent? {
+        guard let id = obj["task_id"]?.string, !id.isEmpty else { return nil }
+        switch obj["subtype"]?.string {
+        case "task_started":
+            let kind: AgentTask.Kind = switch obj["task_type"]?.string {
+            case "local_agent", "remote_agent": .agent
+            case "local_bash": .shell
+            default: .other
+            }
+            return .started(AgentTask(
+                id: id, kind: kind, description: obj["description"]?.string ?? "", toolUseId: obj["tool_use_id"]?.string,
+                subagentType: obj["subagent_type"]?.string, prompt: obj["prompt"]?.string,
+                isBackgrounded: obj["is_backgrounded"]?.bool == true, ownedBySubagent: obj["owned_by_subagent"]?.bool == true))
+        case "task_progress":
+            return .progress(taskId: id, activity: nonEmpty(obj["summary"]) ?? nonEmpty(obj["description"]),
+                             lastToolName: nonEmpty(obj["last_tool_name"]), usage: taskUsage(obj["usage"]))
+        case "task_updated":
+            let patch = obj["patch"]
+            return .updated(taskId: id, status: patch?["status"]?.string.flatMap(taskStatus),
+                            isBackgrounded: patch?["is_backgrounded"]?.bool, error: nonEmpty(patch?["error"]))
+        case "task_notification":
+            return .finished(taskId: id, status: obj["status"]?.string.flatMap(taskStatus) ?? .completed,
+                             summary: nonEmpty(obj["summary"]), outputFile: nonEmpty(obj["output_file"]),
+                             usage: taskUsage(obj["usage"]))
+        default:
+            return nil
+        }
+    }
+
+    /// The CLI's own task states; "killed" is a stopped task.
+    private static func taskStatus(_ raw: String) -> AgentTask.Status? {
+        switch raw {
+        case "pending", "running": .running
+        case "completed": .completed
+        case "failed": .failed
+        case "killed", "stopped": .stopped
+        default: nil
+        }
+    }
+
+    private static func taskUsage(_ usage: JSONValue?) -> TaskUsage? {
+        guard let usage, usage.object != nil else { return nil }
+        return TaskUsage(tokens: int(usage["total_tokens"]), toolUses: int(usage["tool_uses"]), durationMs: int(usage["duration_ms"]))
+    }
+
+    private static func nonEmpty(_ value: JSONValue?) -> String? {
+        value?.string.flatMap { $0.isEmpty ? nil : $0 }
     }
 
     /// A tool_result `content` field: a string, or an array of content blocks.

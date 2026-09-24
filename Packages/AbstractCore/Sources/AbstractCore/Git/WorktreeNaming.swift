@@ -7,6 +7,73 @@ public enum WorktreeNaming {
     public static let defaultTemplate = "{home}/.abstract/worktrees/{repo}-{hash}/{slug}"
     public static let defaultBranchPrefix = "abstract/"
 
+    /// Short, recognizable names for new chats and their worktrees. Use each
+    /// city once per project, then combine two short cities when needed.
+    public static func cityName(avoiding usedNames: Set<String>) -> String {
+        let used = Set(usedNames.map { $0.lowercased() })
+        let start = Int.random(in: 0..<cities.count)
+        for offset in 0..<cities.count {
+            let city = cities[(start + offset) % cities.count]
+            if !used.contains(city.lowercased()) { return city }
+        }
+
+        let pairCount = pairCities.count * pairCities.count
+        let pairStart = Int.random(in: 0..<pairCount)
+        for offset in 0..<pairCount {
+            let index = (pairStart + offset) % pairCount
+            let first = index / pairCities.count
+            let second = index % pairCities.count
+            if first == second { continue }
+            let name = "\(pairCities[first])-\(pairCities[second])"
+            if !used.contains(name.lowercased()) { return name }
+        }
+
+        let city = cities[start]
+        var number = 2
+        while used.contains("\(city.lowercased())-\(number)") { number += 1 }
+        return "\(city)-\(number)"
+    }
+
+    static let cities = [
+        "Aachen", "Abuja", "Accra", "Adelaide", "Agra", "Ahmedabad", "Albany", "Alexandria",
+        "Algiers", "Amman", "Ankara", "Antalya", "Arequipa", "Athens", "Auckland", "Austin",
+        "Baku", "Bamako", "Bandung", "Bangkok", "Barcelona", "Bari", "Basel", "Beijing",
+        "Belfast", "Belgrade", "Bergen", "Bern", "Bilbao", "Birmingham", "Bogota", "Bordeaux",
+        "Boston", "Braga", "Brisbane", "Bristol", "Brno", "Budapest", "Busan", "Cadiz",
+        "Cairo", "Calgary", "Canberra", "Cardiff", "Chengdu", "Chennai", "Chicago", "Chiba",
+        "Coimbra", "Cologne", "Colombo", "Cordoba", "Cork", "Curitiba", "Cusco", "Daegu",
+        "Dakar", "Dalian", "Dallas", "Delhi", "Denver", "Detroit", "Dhaka", "Dresden",
+        "Dubai", "Dublin", "Durban", "Edinburgh", "Edmonton", "Eindhoven", "Erbil", "Essen",
+        "Exeter", "Faro", "Fez", "Florence", "Frankfurt", "Freiburg", "Fukuoka", "Gaborone",
+        "Galway", "Gdansk", "Geneva", "Genoa", "Ghent", "Glasgow", "Granada", "Graz",
+        "Grenoble", "Guangzhou", "Guayaquil", "Hamburg", "Hangzhou", "Hanoi", "Harare", "Havana",
+        "Helsinki", "Hilo", "Hobart", "Houston", "Huelva", "Hyderabad", "Ibadan", "Innsbruck",
+        "Ipswich", "Islamabad", "Istanbul", "Izmir", "Jaipur", "Jakarta", "Jeddah", "Jodhpur",
+        "Juba", "Kampala", "Kanpur", "Karachi", "Katowice", "Kazan", "Khartoum", "Kigali",
+        "Kingston", "Kobe", "Kochi", "Kolkata", "Krakow", "Kumasi", "Kyoto", "Lagos",
+        "Lahore", "Leeds", "Leicester", "Lille", "Lima", "Linz", "Lisbon", "Liverpool",
+        "Ljubljana", "Lome", "London", "Luanda", "Lublin", "Lucknow", "Luxembourg", "Lyon",
+        "Macau", "Madrid", "Malaga", "Malmo", "Manaus", "Manila", "Maputo", "Marseille",
+        "Medellin", "Mendoza", "Miami", "Milan", "Minsk", "Montreal", "Moscow", "Mumbai",
+        "Munich", "Muscat", "Mysore", "Nagoya", "Nairobi", "Nantes", "Naples", "Nashik",
+        "Newcastle", "Nice", "Nicosia", "Nijmegen", "Norwich", "Nottingham", "Nuuk", "Oakland",
+        "Odense", "Odesa", "Oita", "Oran", "Orlando", "Osaka", "Oslo", "Ottawa",
+        "Padua", "Palermo", "Pamplona", "Patna", "Penang", "Perth", "Phoenix", "Pisa",
+        "Porto", "Poznan", "Prague", "Pretoria", "Puebla", "Pune", "Qingdao", "Quebec",
+        "Quito", "Rabat", "Raleigh", "Ranchi", "Recife", "Rennes", "Reykjavik", "Richmond",
+        "Riga", "Riyadh", "Rome", "Rosario", "Rotterdam", "Salem", "Sapporo", "Sarajevo",
+        "Seattle", "Sendai", "Seoul", "Seville", "Shanghai", "Shenzhen", "Sofia", "Split",
+        "Stockholm", "Stuttgart", "Surat", "Suva", "Sydney", "Tabriz", "Taichung", "Taipei",
+        "Tallinn", "Tampa", "Tartu", "Tashkent", "Tehran", "Tirana", "Tokyo", "Toronto",
+        "Toulouse", "Trento", "Tripoli", "Tucson", "Tunis", "Turin", "Udaipur", "Uppsala",
+        "Utrecht", "Urumqi", "Vadodara", "Valencia", "Vancouver", "Venice", "Veracruz", "Verona",
+        "Victoria", "Vienna", "Vilnius", "Vitoria", "Warsaw", "Wellington", "Wroclaw", "Wuhan",
+        "Xiamen", "Xian", "Xining", "Yerevan", "Yokohama", "York", "Yuma", "Zagreb",
+        "Zanzibar", "Zaragoza", "Zibo", "Zurich",
+    ]
+
+    static let pairCities = cities.filter { $0.count <= 7 }
+
     /// Lowercase ASCII letters and digits joined by single dashes, at most 40
     /// characters, never empty ("session" when nothing usable is left).
     public static func slugify(_ input: String) -> String {

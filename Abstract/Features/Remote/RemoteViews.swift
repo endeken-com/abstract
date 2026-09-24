@@ -270,7 +270,7 @@ private struct RemoteDeviceGroup: View {
                 )) {
                     ForEach(chats) { session in
                         if let mirror = model.session(RemoteService.mirrorId(device: link.device.id, session: session.id)) {
-                            RailChatRow(session: mirror)
+                            RailChatRow(session: mirror, backgroundTasks: model.runningBackgroundTasks(mirror.id))
                         }
                     }
                 }
