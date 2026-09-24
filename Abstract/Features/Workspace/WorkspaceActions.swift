@@ -265,7 +265,9 @@ struct GitActionsButton: View {
     private func glyph(_ action: GitAction) -> some View {
         switch action {
         case .commit: CommitGlyph().frame(width: 16, height: 10).foregroundStyle(Color.btTextSecondary)
-        case .createPR, .viewPR: PullRequestGlyph(kind: prKind).frame(width: 13, height: 13).foregroundStyle(Color.btTextSecondary)
+        case .createPR, .viewPR:
+            PullRequestGlyph(kind: prKind).frame(width: 13, height: 13)
+                .foregroundStyle(model.pullRequests[session.id]?.tint ?? Color.btTextSecondary)
         default: Image(systemName: symbol(action)).font(.system(size: 11)).foregroundStyle(Color.btTextSecondary)
         }
     }
