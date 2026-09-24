@@ -86,6 +86,8 @@ final class AppModel {
     @ObservationIgnored var localRelays: [LocalModelKind: LocalModelRelay] = [:]
     /// A chat waiting on "Archive?" (⇧⌘⌫, or the git actions menu).
     var requestArchive: String?
+    /// The background tasks list showing, and the task open in it; see AppModel+Tasks.
+    var tasksOpen: TasksFocus?
     /// The main pane's tabs: chats, files and changes; see AppModel+MainTabs.
     var mainTabs = MainTabs() { didSet { if mainTabs != oldValue { save("mainTabs", mainTabs) } } }
     /// The side panel's width on screen, per chat, so its tabs can sit in the
@@ -596,8 +598,9 @@ final class AppModel {
         let message = PromptAttachments.message(text, attachments)
         let images = PromptAttachments.images(attachments)
         engine.recordInput(sessionId: sessionId, text: message)
-        // A new agent, model or effort takes effect by restarting between turns.
-        if needsRelaunch.contains(sessionId), isAlive(sessionId), session.status != .running {
+        // A new agent, model or effort takes effect by restarting between
+        // turns, once no background task would end with the old process.
+        if needsRelaunch.contains(sessionId), isAlive(sessionId), session.status != .running, runningBackgroundTasks(sessionId) == 0 {
             needsRelaunch.remove(sessionId)
             setStatus(sessionId, .running)
             Task { await relaunch(session, prompt: message, images: images) }
@@ -856,7 +859,9 @@ final class AppModel {
         case let .status(status, detail):
             setStatus(sessionId, status, detail: detail)
             if status == .idle {
-                notify(sessionId, .finished)
+                // Still at work in the background: not done yet. The agent
+                // takes another turn as each task ends.
+                if runningBackgroundTasks(sessionId) == 0 { notify(sessionId, .finished) }
                 RevundService.shared.turnEnded(sessionId, model: self)
             }
             if status == .waitingInput || status == .errored { notify(sessionId, status, detail: detail) }

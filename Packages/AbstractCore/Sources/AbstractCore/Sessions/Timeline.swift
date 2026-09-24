@@ -175,7 +175,8 @@ extension Timeline {
                 } else {
                     out.append(.raw(id: entry.id, lines: [OutputLine(stream: stream, line: line)]))
                 }
-            case .status, .sessionId, .toolResult, .permissionRequest, .promptSuggestion:
+            // Tasks and what subagents did are listed apart from the conversation.
+            case .status, .sessionId, .toolResult, .permissionRequest, .promptSuggestion, .task, .subagent:
                 break
             }
         }

@@ -172,6 +172,12 @@ struct AbstractCommands: Commands {
                 .disabled(model.selectedSession.map { !model.isAlive($0.id) } ?? true)
             Button("Resume Agent") { if let s = model.selectedSession { model.resume(s.id) } }
                 .disabled(model.selectedSession.map { model.isAlive($0.id) } ?? true)
+            // As Ctrl+B in Claude Code: the command or subagent at work carries on while the chat does.
+            Button("Run in Background") { if let s = model.selectedSession { model.moveToBackground(s.id) } }
+                .keyboardShortcut("b", modifiers: .control)
+                .disabled(model.selectedSession.map { model.foregroundTasks($0.id).isEmpty } ?? true)
+            Button("Background Tasks") { if let s = model.selectedSession { model.tasksOpen = TasksFocus(sessionId: s.id) } }
+                .disabled(model.selectedSession.map { model.backgroundTasks($0.id).isEmpty } ?? true)
             Divider()
             Button("Archive Chat") { if let s = model.selectedSession { model.requestArchive = s.id } }
                 .keyboardShortcut(.delete, modifiers: [.command, .shift])
