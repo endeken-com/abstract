@@ -82,7 +82,7 @@ enum ToolSegment: Identifiable {
 
 /// What a tool is for, which decides how it reads.
 enum ToolKind: Equatable {
-    case explore, edit, command, todo, plan, delegate, other
+    case explore, edit, command, todo, plan, delegate, question, other
 
     init(_ name: String) {
         switch name.lowercased() {
@@ -92,6 +92,7 @@ enum ToolKind: Equatable {
         case "todowrite", "todolist", "todo_list": self = .todo
         case "exitplanmode": self = .plan
         case "task", "agent": self = .delegate
+        case "askuserquestion": self = .question
         default: self = .other
         }
     }
@@ -160,6 +161,8 @@ struct ToolCallView: View {
         // What you're asked to approve shows; otherwise the counts say enough.
         case .edit: return asking
         case .plan: return true
+        // Asked in the reply box's place; the row keeps what you answered.
+        case .question: return !asking
         case .todo: return call.id == latestTodoCallId || asking
         case .command: return asking && ToolPresentation.command(call).map { $0.contains("\n") || $0.count > 80 } == true
         default: return false
@@ -225,7 +228,8 @@ struct ToolCallView: View {
 
             Spacer(minLength: Space.md)
 
-            if asking {
+            // A question is answered in the reply box's place.
+            if asking, kind != .question {
                 Button(kind == .plan ? "Keep Planning" : "Skip") { answer(false) }
                     .buttonStyle(.bt(.ghost, size: .small))
                     .help(kind == .plan ? "Stay in plan mode" : "Don't run this; the agent carries on without it")
@@ -256,6 +260,8 @@ struct ToolCallView: View {
                 if let command = ToolPresentation.command(call) { CodeText(command) }
                 if let result = call.result, !result.output.isEmpty { OutputText(text: result.output, isError: result.isError, key: "out:\(call.id)") }
             }
+        case .question:
+            QuestionAnswers(questions: AgentQuestion.parse(call.input), result: call.result)
         case .delegate:
             VStack(alignment: .leading, spacing: Space.sm) {
                 if let prompt = call.input["prompt"]?.string { Text(prompt).font(.btChatTool).foregroundStyle(Color.btTextSecondary).lineSpacing(3).textSelection(.enabled).btLeadingRule() }
@@ -271,7 +277,7 @@ struct ToolCallView: View {
 
     @ViewBuilder
     private var menu: some View {
-        if asking {
+        if asking, kind != .question {
             Button("Always Continue for \(ToolPresentation.displayName(call.name)) in This Chat") {
                 model.autoContinue(call.name, in: sessionId)
                 answer(true)
@@ -666,6 +672,7 @@ enum ToolPresentation {
         case "exitplanmode": "list.bullet.clipboard"
         case "task", "agent": "person.2"
         case "skill": "book.closed"
+        case "askuserquestion": "questionmark.bubble"
         default: name.hasPrefix("mcp__") ? "puzzlepiece.extension" : "wrench.and.screwdriver"
         }
     }
@@ -685,6 +692,7 @@ enum ToolPresentation {
             case "todowrite", "todolist", "todo_list": return "Updating plan"
             case "exitplanmode": return "Proposed a plan"
             case "skill": return "Using skill"
+            case "askuserquestion": return "Asking"
             default: break
             }
         }
@@ -703,6 +711,7 @@ enum ToolPresentation {
         case "todowrite", "todolist", "todo_list": "Updated plan"
         case "exitplanmode": "Proposed a plan"
         case "skill": "Used skill"
+        case "askuserquestion": "Asked"
         default: name.hasPrefix("mcp__") ? "Used" : displayName(name)
         }
     }
@@ -718,6 +727,7 @@ enum ToolPresentation {
         case "read": "Read"
         case "exitplanmode": "Start on this plan"
         case "skill": "Use skill"
+        case "askuserquestion": "Needs your input"
         default: name.hasPrefix("mcp__") ? "Use" : "Use \(displayName(name))"
         }
     }
@@ -771,6 +781,9 @@ enum ToolPresentation {
             return command(call).map { .command($0.split(separator: "\n").first.map(String.init) ?? $0) }
         case .todo, .plan:
             return nil
+        case .question:
+            let count = AgentQuestion.parse(call.input).count
+            return count > 1 ? .text("\(count) questions") : nil
         case .delegate:
             return (o["description"]?.string).map { .text($0) }
         default:

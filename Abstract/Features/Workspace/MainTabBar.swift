@@ -216,7 +216,12 @@ struct MainTabContent: View {
         default:
             VStack(spacing: 0) {
                 ConversationView(session: session)
-                ComposerView(session: session)
+                // The agent's questions take the reply box's place until answered.
+                if let question = model.pendingPermissions(session.id).first(where: { AgentQuestion.isQuestion($0.toolName) }) {
+                    QuestionPrompt(sessionId: session.id, request: question).id(question.requestId)
+                } else {
+                    ComposerView(session: session)
+                }
             }
         }
     }

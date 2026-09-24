@@ -361,9 +361,12 @@ final class ClaudeParser: OutputParser {
               request["subtype"]?.string == "can_use_tool"
         else { return nil }
         let toolName = request["tool_name"]?.string ?? ""
+        // AskUserQuestion asks the same way; its answers go back as the allowed input.
+        let detail = AgentQuestion.isQuestion(toolName) ? "Question for you"
+            : toolName.isEmpty ? "Permission needed" : "Permission needed: \(toolName)"
         return [
             .permissionRequest(requestId: requestId, toolName: toolName, input: request["input"] ?? .object([:])),
-            .status(.waitingInput, detail: toolName.isEmpty ? "Permission needed" : "Permission needed: \(toolName)"),
+            .status(.waitingInput, detail: detail),
         ]
     }
 }

@@ -672,9 +672,23 @@ final class AppModel {
             if remote.answer(sessionId, requestId: requestId, allow: allow) { permissions[sessionId]?.removeAll { $0.requestId == requestId } }
             return
         }
+        respond(sessionId, requestId: requestId, allow: allow, input: permissions[sessionId]?.first { $0.requestId == requestId }?.input)
+    }
+
+    /// Answers the agent's questions (AskUserQuestion), by question text. The
+    /// agent hears them as its question tool's input, allowed.
+    func answerQuestion(_ sessionId: String, requestId: String, answers: [String: String]) {
+        if sessionId.hasPrefix(RemoteService.mirrorPrefix) {
+            if remote.answerQuestion(sessionId, requestId: requestId, answers: answers) { permissions[sessionId]?.removeAll { $0.requestId == requestId } }
+            return
+        }
+        guard let request = permissions[sessionId]?.first(where: { $0.requestId == requestId }) else { return }
+        respond(sessionId, requestId: requestId, allow: true, input: AgentQuestion.answeredInput(request.input, answers: answers))
+    }
+
+    private func respond(_ sessionId: String, requestId: String, allow: Bool, input: JSONValue?) {
         guard let session = session(sessionId), let provider = ProviderRegistry.provider(session.providerId) else { return }
-        let request = permissions[sessionId]?.first { $0.requestId == requestId }
-        if let line = provider.buildPermissionResponse(requestId: requestId, allow: allow, input: request?.input) {
+        if let line = provider.buildPermissionResponse(requestId: requestId, allow: allow, input: input) {
             do { try engine.write(sessionId: sessionId, line) } catch { flash(error.localizedDescription, isError: true) }
         }
         permissions[sessionId]?.removeAll { $0.requestId == requestId }
@@ -846,6 +860,12 @@ final class AppModel {
                 RevundService.shared.turnEnded(sessionId, model: self)
             }
             if status == .waitingInput || status == .errored { notify(sessionId, status, detail: detail) }
+        case let .permissionRequest(requestId, toolName, input) where AgentQuestion.isQuestion(toolName):
+            // Never answered for you, whatever else is allowed: it needs your choice.
+            permissions[sessionId, default: []].append(PendingPermission(requestId: requestId, toolName: toolName, input: input))
+            setStatus(sessionId, .waitingInput, detail: "Question for you")
+            notify(sessionId, .waitingInput, detail: AgentQuestion.parse(input).first?.question
+                ?? "\(ProviderRegistry.name(session(sessionId)?.providerId ?? "")) has a question")
         case let .permissionRequest(requestId, toolName, input):
             if shouldAutoContinue(toolName, in: sessionId) {
                 permissions[sessionId, default: []].append(PendingPermission(requestId: requestId, toolName: toolName, input: input))

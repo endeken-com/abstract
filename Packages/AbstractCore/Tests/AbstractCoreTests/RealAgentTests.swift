@@ -89,4 +89,44 @@ struct RealAgentTests {
         #expect(asked, "claude asked Abstract instead of silently denying")
         #expect(FileManager.default.fileExists(atPath: dir.path + "/probe.txt"), "allowing ran the command")
     }
+
+    /// Even with nothing else asking, a question waits for you, and the
+    /// answer sent back as its allowed input is what the agent hears.
+    @Test(.timeLimit(.minutes(3)))
+    func claudeAsksItsQuestionsThroughAbstractAndHearsTheAnswer() async throws {
+        let exec = LocalExecutor.shared
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("real-question-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let provider = ClaudeProvider()
+        let prompt = "Use the AskUserQuestion tool to ask me which color I prefer, with the options Red and Blue. "
+            + "Then reply with only the color I chose, in capitals."
+        let spec = provider.buildLaunch(LaunchContext(cwd: dir.path, prompt: prompt, permissionPolicy: .bypass))
+        let engine = SessionEngine(executor: exec, logDirectory: dir.appendingPathComponent("logs"))
+        try engine.launch(sessionId: "question", spec: spec)
+        let parser = provider.makeParser()
+        var asked = false, idle = false, reply = ""
+        for await event in engine.events {
+            guard case let .line(_, _, line) = event else { break }
+            for e in parser.feed(line.line, stream: line.stream) {
+                switch e {
+                case let .permissionRequest(requestId, tool, input) where !asked:
+                    asked = true
+                    #expect(AgentQuestion.isQuestion(tool))
+                    let question = try #require(AgentQuestion.parse(input).first)
+                    #expect(question.options.map(\.label).contains("Blue"))
+                    let answered = AgentQuestion.answeredInput(input, answers: [question.question: "Blue"])
+                    try engine.write(sessionId: "question", provider.buildPermissionResponse(requestId: requestId, allow: true, input: answered)!)
+                case let .text(.assistant, text, _, false): reply = text
+                case .status(.idle, _): idle = true
+                default: break
+                }
+            }
+            if idle { break }
+        }
+        engine.stop(sessionId: "question")
+        #expect(asked, "the question came to Abstract, even with full autonomy")
+        #expect(reply.contains("BLUE"), "the agent heard the answer")
+    }
 }
