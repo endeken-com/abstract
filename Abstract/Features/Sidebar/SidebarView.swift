@@ -14,18 +14,17 @@ struct SidebarView: View {
     var body: some View {
         VStack(spacing: 0) {
             list
-            // Devices stay in reach at the foot, however long the list.
-            Hairline()
-            RailDevicesBar()
-                .padding(.horizontal, Rail.inset)
-                .padding(.top, 6)
             Text("Version \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—")")
                 .font(.btCaption)
                 .foregroundStyle(Color.btTextTertiary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.leading, Rail.inset + Rail.rowPadding)
-                .padding(.top, 2)
-                .padding(.bottom, 8)
+                .padding(.vertical, 6)
+            // Devices stay in reach at the foot, however long the list.
+            Hairline()
+            RailDevicesBar()
+                .padding(.horizontal, Rail.inset)
+                .padding(.vertical, 6)
         }
     }
 
@@ -327,6 +326,7 @@ struct RailChatRow: View {
     @State private var renaming = false
     @State private var draft = ""
     @State private var hovering = false
+    @State private var restingPoint: CGPoint?
     @State private var hoveringDetails = false
     @State private var showingDetails = false
     @FocusState private var fieldFocused: Bool
@@ -384,18 +384,24 @@ struct RailChatRow: View {
         }
         .buttonStyle(RailRowStyle(selected: selected))
         .opacity(session.archivedAt == nil ? 1 : 0.5)
-        .onHover {
-            hovering = $0
-            if !$0 {
+        .onContinuousHover { phase in
+            switch phase {
+            case .active(let point):
+                hovering = true
+                restingPoint = point
+            case .ended:
+                hovering = false
+                restingPoint = nil
                 Task {
                     try? await Task.sleep(for: .milliseconds(250))
                     if !hovering && !hoveringDetails { showingDetails = false }
                 }
             }
         }
-        .task(id: hovering) {
-            guard hovering, !renaming else { return }
-            try? await Task.sleep(for: .milliseconds(500))
+        // Every pointer move restarts the wait, so the card only opens once the pointer rests.
+        .task(id: restingPoint) {
+            guard restingPoint != nil, !renaming, !showingDetails else { return }
+            try? await Task.sleep(for: .milliseconds(1200))
             if !Task.isCancelled && hovering { showingDetails = true }
         }
         .popover(isPresented: $showingDetails, arrowEdge: .trailing) {
@@ -479,46 +485,62 @@ private struct RailChatDetails: View {
     let session: Session
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Space.md) {
-            Text(session.name)
-                .font(BTFont.ui(15, .medium))
-                .foregroundStyle(Color.btText)
-                .fixedSize(horizontal: false, vertical: true)
-            Text(session.status.label)
-                .font(.btCaption)
-                .foregroundStyle(Color.btTextSecondary)
-            Hairline()
-            detail("Branch", session.branch ?? "No branch", monospaced: true)
-            if let pr {
-                VStack(alignment: .leading, spacing: 4) {
-                    caption("Pull request")
-                    HStack(spacing: Space.sm) {
-                        Text("#\(pr.number) · \(pr.state)")
-                            .font(BTFont.ui(13))
-                        Spacer()
-                        if let url = pr.url {
-                            Button { NSWorkspace.shared.open(url) } label: {
-                                Image(systemName: "arrow.up.right.square")
-                            }
-                            .buttonStyle(.plain)
-                            .help("Open pull request")
-                        }
-                    }
-                    Text(pr.title).font(.btCaption).foregroundStyle(Color.btTextSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            } else {
-                detail("Pull request", remoteDetailsUnavailable ? "Unavailable from this device" : "No PR for this branch")
+        VStack(alignment: .leading, spacing: Space.sm) {
+            HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
+                Text(session.name)
+                    .font(BTFont.ui(14, .medium))
+                    .foregroundStyle(Color.btText)
+                    .lineLimit(2)
+                Spacer(minLength: 4)
+                Text("\(session.status.label) · \(RelativeTime.short(session.lastEventAt ?? session.createdAt)) ago")
+                    .font(.btCaption)
+                    .foregroundStyle(Color.btTextTertiary)
+                    .fixedSize()
             }
             Hairline()
-            detail("Agent", ProviderRegistry.name(session.providerId))
-            detail("Model", modelName)
-            detail("Device", deviceName)
-            if let project = model.project(session.projectId) { detail("Project", project.name) }
-            detail("Updated", "\(RelativeTime.short(session.lastEventAt ?? session.createdAt)) ago")
+            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: Space.sm, verticalSpacing: 6) {
+                GridRow {
+                    label("Branch")
+                    value(session.branch ?? "No branch", monospaced: true).gridCellColumns(3)
+                }
+                GridRow {
+                    label("PR")
+                    prValue.gridCellColumns(3)
+                }
+                GridRow {
+                    label("Agent")
+                    value(ProviderRegistry.name(session.providerId))
+                    label("Model")
+                    value(modelName)
+                }
+                GridRow {
+                    label("Device")
+                    value(deviceName)
+                    label("Project")
+                    value(model.project(session.projectId)?.name ?? "Scratch")
+                }
+            }
         }
-        .padding(Space.lg)
-        .frame(width: 310, alignment: .leading)
+        .padding(Space.md)
+        .frame(width: 380, alignment: .leading)
+    }
+
+    @ViewBuilder private var prValue: some View {
+        if let pr {
+            HStack(spacing: 6) {
+                value("#\(pr.number) · \(pr.state) · \(pr.title)")
+                if let url = pr.url {
+                    Button { NSWorkspace.shared.open(url) } label: {
+                        Image(systemName: "arrow.up.right.square")
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.btTextSecondary)
+                    .help("Open pull request")
+                }
+            }
+        } else {
+            value(remoteDetailsUnavailable ? "Unavailable from this device" : "None for this branch")
+        }
     }
 
     private var deviceName: String {
@@ -549,19 +571,20 @@ private struct RailChatDetails: View {
         return (remote.number, remote.title, remote.isDraft ? "Draft" : remote.state.capitalized, remote.url)
     }
 
-    private func caption(_ title: String) -> some View {
-        Text(title.uppercased()).font(.btSectionLabel).foregroundStyle(Color.btTextTertiary)
+    private func label(_ title: String) -> some View {
+        Text(title).font(.btCaption).foregroundStyle(Color.btTextTertiary)
+            .gridColumnAlignment(.trailing)
     }
 
-    private func detail(_ title: String, _ value: String, monospaced: Bool = false) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            caption(title)
-            Text(value)
-                .font(monospaced ? .btMono : .btBody)
-                .foregroundStyle(Color.btTextSecondary)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-        }
+    private func value(_ text: String, monospaced: Bool = false) -> some View {
+        Text(text)
+            .font(monospaced ? .btMono : BTFont.ui(12))
+            .foregroundStyle(Color.btTextSecondary)
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .help(text)
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
