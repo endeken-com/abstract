@@ -123,17 +123,27 @@ enum RemoteProbe {
         // A local model server on the other Mac, used from here through the pairing link.
         if ProcessInfo.processInfo.environment["ABSTRACT_DEMO_LOCAL_MODELS"] != nil {
             model.setLocalModelSource(.ollama, .pairedMac(deviceId: other.id))
-            if let status = await wait(20, { model.localModelStatus[.ollama].flatMap { $0.reachable ? $0 : nil } }) {
+            // Through the relay, not a server that happens to be on this Mac too.
+            let relayed = { LocalModelEndpoints.url(.ollama) != LocalModelKind.ollama.defaultURL }
+            if let status = await wait(20, { relayed() ? model.localModelStatus[.ollama].flatMap { $0.reachable ? $0 : nil } : nil }) {
                 log("remote: ollama on \(other.name) through the link: \(status.models)")
             } else {
                 log("remote: FAIL ollama through the link: \(model.localModelStatus[.ollama]?.error ?? "no status")")
             }
         }
         if ProcessInfo.processInfo.environment["ABSTRACT_DEMO_REMOTE_DROP"] != nil {
+            let relayURL = LocalModelEndpoints.url(.ollama)
             guard await wait(90, { link.state != .online ? true : nil }) != nil else { return log("remote: FAIL link never dropped") }
             log("remote: link dropped")
+            // A look while it's away mustn't move the relay a running Codex is using.
+            await model.refreshLocalModels()
             guard await wait(40, { link.state == .online ? true : nil }) != nil else { return log("remote: FAIL didn't reconnect") }
             log("remote: reconnected")
+            if ProcessInfo.processInfo.environment["ABSTRACT_DEMO_LOCAL_MODELS"] != nil {
+                await model.refreshLocalModels()
+                let after = LocalModelEndpoints.url(.ollama)
+                log(after == relayURL ? "remote: ollama relay kept \(after)" : "remote: FAIL ollama relay moved \(relayURL) -> \(after)")
+            }
             let before = model.feed(mirror).rows.count
             do {
                 try model.sendFollowUp(mirror, text: "Sent after reconnecting.")
