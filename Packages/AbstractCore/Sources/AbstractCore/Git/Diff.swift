@@ -201,7 +201,7 @@ public enum Diff {
         // have a commit checked out"), which would silently drop every new file
         // from the review, so excluded paths are skipped here too and anything
         // still unhappy falls back to adding files one at a time.
-        let excludes = exclude
+        let excludes = (exclude + (await untrackedNestedRepos(exec, worktree: worktree)))
             .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             .map { ":(exclude)" + GitText.trimTrailingSlashes($0) }
 
@@ -214,6 +214,17 @@ public enum Diff {
         let args = ["-c", "core.quotePath=false", "--no-pager", "diff", "HEAD", "--no-color", "--no-ext-diff", "-M",
                     "--", "."] + excludes
         return parse(try await Git.gitOK(exec, cwd: worktree, args))
+    }
+
+    /// Repositories inside the worktree that the project doesn't know about: git
+    /// lists each as one "dir/" entry among the untracked files. `add -N` would
+    /// record them as gitlinks in the user's index (git 2.55 even for one with no
+    /// commit, which `git diff` then can't hash), so they're kept out entirely.
+    private static func untrackedNestedRepos(_ exec: any Executor, worktree: String) async -> [String] {
+        guard let out = try? await Git.git(exec, cwd: worktree, ["ls-files", "--others", "--exclude-standard", "-z"]),
+              out.ok
+        else { return [] }
+        return out.stdout.split(separator: "\0").map(String.init).filter { $0.hasSuffix("/") }
     }
 
     /// Mark untracked files individually, skipping the ones git refuses (an
