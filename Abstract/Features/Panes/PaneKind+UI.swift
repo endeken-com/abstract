@@ -18,7 +18,7 @@ extension PaneKind {
         case .changes: "plusminus"
         case .files: "folder"
         case .terminal: "terminal"
-        case .review: "arrow.triangle.pull"
+        case .review: PullRequestGlyph.symbol
         }
     }
 
