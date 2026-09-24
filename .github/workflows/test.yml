@@ -1,11 +1,15 @@
-# Checks every pull request into main or a release branch, and main itself.
+# Checks every pull request into main or a release branch, and every push to them
+# (the release workflows only ship commits whose `test` check passed).
 name: Test
 
 on:
   pull_request:
     branches: [main, "v*.x"]
   push:
-    branches: [main]
+    branches: [main, "v*.x"]
+
+permissions:
+  contents: read
 
 concurrency:
   group: test-${{ github.ref }}
@@ -26,6 +30,7 @@ jobs:
       - name: Script tests
         run: |
           sh scripts/tests/next-version-test.sh
+          sh scripts/tests/notarize-test.sh
           python3 -m unittest discover -s scripts/tests -v
 
       - name: AbstractCore tests

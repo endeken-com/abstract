@@ -59,6 +59,18 @@ final class Updater: NSObject, SPUUpdaterDelegate {
         controller?.checkForUpdates(nil)
     }
 
+    /// Sparkle's own update window can change these (its "automatically download and
+    /// install" checkbox), so Settings re-reads them whenever it appears.
+    func refreshSettings() {
+        guard let updater = controller?.updater else { return }
+        if automaticallyChecksForUpdates != updater.automaticallyChecksForUpdates {
+            automaticallyChecksForUpdates = updater.automaticallyChecksForUpdates
+        }
+        if automaticallyDownloadsUpdates != updater.automaticallyDownloadsUpdates {
+            automaticallyDownloadsUpdates = updater.automaticallyDownloadsUpdates
+        }
+    }
+
     func allowedChannels(for updater: SPUUpdater) -> Set<String> {
         channel.sparkleChannels
     }

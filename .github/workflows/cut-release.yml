@@ -21,6 +21,7 @@ concurrency:
 
 permissions:
   contents: write
+  checks: read
   pages: write
   id-token: write
 
@@ -49,6 +50,7 @@ jobs:
           LEVEL: ${{ inputs.level }}
           GH_TOKEN: ${{ github.token }}
         run: |
+          scripts/require-tested.sh "$GITHUB_SHA"
           OUT=$(scripts/next-version.sh cut "$LEVEL")
           read -r VERSION BUILD <<< "$OUT"
           TAG=v$VERSION

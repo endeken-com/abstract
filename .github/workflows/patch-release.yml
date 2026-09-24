@@ -19,6 +19,7 @@ concurrency:
 
 permissions:
   contents: write
+  checks: read
   pages: write
   id-token: write
 
@@ -52,6 +53,7 @@ jobs:
           read -r VERSION BUILD <<< "$OUT"
           TAG=v$VERSION
           SHA=$(git rev-parse HEAD)
+          scripts/require-tested.sh "$SHA"
           PREVIOUS=$(scripts/next-version.sh previous "$VERSION")
           gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$TAG" -f sha="$SHA" >/dev/null
           {

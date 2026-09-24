@@ -304,6 +304,7 @@ private struct UpdatesSection: View {
                 : "Updates are off in development and demo builds.")
         }
         .disabled(!updater.isEnabled)
+        .onAppear { updater.refreshSettings() }
     }
 
     private var lastChecked: String {

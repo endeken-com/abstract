@@ -108,6 +108,11 @@ jobs:
           codesign -dv "$APP" 2>&1 | grep -qx "TeamIdentifier=$TEAM_ID"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")" = "$VERSION"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Contents/Info.plist")" = "$BUILD"
+          # Without the key Sparkle won't start, and those installs could never update again.
+          if [ -z "$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$APP/Contents/Info.plist" 2>/dev/null)" ]; then
+            echo "::error file=project.yml::SUPublicEDKey is missing; add the Sparkle public key before releasing"
+            exit 1
+          fi
           echo "APP=$APP" >> "$GITHUB_ENV"
 
       - name: Upload the build log
@@ -157,11 +162,17 @@ jobs:
 
       - name: Write the release notes
         run: |
-          ARGS=(-f tag_name="$TAG" -f target_commitish="$REF")
+          # GitHub ignores target_commitish for a tag that already exists, and the nightly
+          # tag still points at the previous nightly here. So a nightly's notes are generated
+          # for a name no tag has, and the compare link is pointed back at the commit.
+          NAME=$TAG
+          if [ "$CHANNEL" = nightly ]; then NAME=nightly-$BUILD; fi
+          ARGS=(-f tag_name="$NAME" -f target_commitish="$REF")
           if [ -n "$PREVIOUS_TAG" ]; then ARGS+=(-f previous_tag_name="$PREVIOUS_TAG"); fi
           {
             if [ -n "$NOTES" ]; then printf '%s\n\n' "$NOTES"; fi
-            gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" "${ARGS[@]}" --jq .body
+            gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" "${ARGS[@]}" --jq .body |
+              sed "s#\.\.\.$NAME#...$REF#g"
           } > "$RUNNER_TEMP/notes.md"
           gh api markdown -f text="$(cat "$RUNNER_TEMP/notes.md")" -f mode=gfm -f context="$GITHUB_REPOSITORY" > "$RUNNER_TEMP/notes.html"
 
@@ -183,11 +194,17 @@ jobs:
             else
               gh release create nightly "$DMG" --verify-tag --prerelease --title "Abstract Nightly $VERSION" --notes-file "$RUNNER_TEMP/notes.md"
             fi
-          elif [ "$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null)" = false ]; then
-            # A re-run after the release was published: refresh its DMG only.
-            gh release upload "$TAG" "$DMG" --clobber
           else
-            gh release delete "$TAG" --yes 2>/dev/null || true  # a draft left by a failed run; the tag stays
+            DRAFT=$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null || echo none)
+            if [ "$DRAFT" = false ]; then
+              # A re-run after the release was published: refresh its DMG only.
+              gh release upload "$TAG" "$DMG" --clobber
+              echo "url=https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$ASSET" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            # Only a draft (left by a failed run) is ever deleted; the tag stays. If the lookup
+            # itself failed, create below fails on the existing release instead of deleting it.
+            if [ "$DRAFT" = true ]; then gh release delete "$TAG" --yes; fi
             LATEST=false
             if [ "$VERSION" = "$(scripts/next-version.sh latest)" ]; then LATEST=true; fi
             gh release create "$TAG" "$DMG" --verify-tag --title "Abstract $VERSION" \
