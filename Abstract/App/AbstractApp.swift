@@ -17,6 +17,7 @@ struct AbstractApp: App {
             RootView()
                 .font(.btBody)
                 .environment(delegate.model)
+                .environment(delegate.updater)
                 .preferredColorScheme(theme.colorScheme)
         }
         .windowToolbarStyle(.unified)
@@ -25,7 +26,7 @@ struct AbstractApp: App {
         // several demo instances sharing it) must never leave Abstract windowless.
         .defaultLaunchBehavior(.presented)
         .restorationBehavior(.disabled)
-        .commands { AbstractCommands(model: delegate.model) }
+        .commands { AbstractCommands(model: delegate.model, updater: delegate.updater) }
     }
 }
 
@@ -62,6 +63,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// the engine and the automation scheduler must run whether or not a
     /// window ever appears (hidden at login, occluded, on another Space).
     let model = AppModel.make()
+    /// Checks for updates from launch, window or not, like the automation scheduler.
+    let updater = Updater()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Notifier.shared.onOpenSession { [model] id in model.open(id) }
@@ -100,8 +103,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 struct AbstractCommands: Commands {
     let model: AppModel
+    let updater: Updater
 
     var body: some Commands {
+        CommandGroup(after: .appInfo) {
+            CheckForUpdatesButton(updater: updater)
+        }
         // Settings open as a panel over the window, not a separate window.
         CommandGroup(replacing: .appSettings) {
             Button("Settings…") { model.isPaletteOpen = false; model.isSettingsOpen.toggle() }
@@ -184,5 +191,15 @@ struct AbstractCommands: Commands {
                 .keyboardShortcut(.delete, modifiers: [.command, .shift])
                 .disabled(model.selectedSession == nil)
         }
+    }
+}
+
+/// "Check for Updates…" in the app menu. A view, so the menu item follows the updater's state.
+private struct CheckForUpdatesButton: View {
+    let updater: Updater
+
+    var body: some View {
+        Button("Check for Updates…") { updater.checkForUpdates() }
+            .disabled(!updater.canCheckForUpdates)
     }
 }

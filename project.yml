@@ -68,7 +68,10 @@ targets:
         PRODUCT_NAME: Abstract
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
-        ENABLE_HARDENED_RUNTIME: YES
+        # Off for local (ad hoc) builds: the runtime's library validation refuses the
+        # ad hoc Sparkle.framework, so the app wouldn't launch. scripts/sign-app.sh
+        # turns it on when it signs a release with the Developer ID.
+        ENABLE_HARDENED_RUNTIME: NO
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_IDENTITY: "-"
         SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor

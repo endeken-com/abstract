@@ -261,8 +261,54 @@ private struct GeneralSettingsPane: View {
             } footer: {
                 SettingsCaption("Closing the window keeps Abstract running in the background so automations fire on time. Quitting Abstract (⌘Q) stops them until you open it again.")
             }
+
+            UpdatesSection()
         }
         .settingsPane()
+    }
+}
+
+private struct UpdatesSection: View {
+    @Environment(Updater.self) private var updater
+
+    var body: some View {
+        @Bindable var updater = updater
+        Section {
+            Toggle(isOn: $updater.automaticallyChecksForUpdates) {
+                Text("Check for updates automatically")
+                Text("Abstract looks for a new version once a day.")
+            }
+            Toggle(isOn: $updater.automaticallyDownloadsUpdates) {
+                Text("Download and install automatically")
+                Text("Updates install when you quit Abstract.")
+            }
+            .disabled(!updater.automaticallyChecksForUpdates)
+            Picker(selection: $updater.channel) {
+                ForEach(UpdateChannel.allCases) { Text($0.title).tag($0) }
+            } label: {
+                Text("Channel")
+                Text(updater.channel.detail)
+            }
+            LabeledContent {
+                Button("Check Now") { updater.checkForUpdates() }
+                    .disabled(!updater.canCheckForUpdates)
+            } label: {
+                Text("Version \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—")")
+                Text(lastChecked)
+            }
+        } header: {
+            Text("Updates")
+        } footer: {
+            SettingsCaption(updater.isEnabled
+                ? "Nightly builds come from main every day and may be unstable. Switching back to Stable takes effect at the next stable release."
+                : "Updates are off in development and demo builds.")
+        }
+        .disabled(!updater.isEnabled)
+    }
+
+    private var lastChecked: String {
+        guard let date = updater.lastUpdateCheckDate else { return "Not checked yet" }
+        return "Last checked \(date.formatted(.relative(presentation: .named)))"
     }
 }
 
