@@ -75,10 +75,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard !model.engine.aliveSessionIds.isEmpty, DemoBootstrap.current == nil else { return .terminateNow }
+        let working = model.workingSessionIds.count
+        guard working > 0, DemoBootstrap.current == nil else { model.engine.stopAll(); return .terminateNow }
         let alert = NSAlert()
         alert.messageText = "Quit while agents are working?"
-        alert.informativeText = "\(model.engine.aliveSessionIds.count) agent\(model.engine.aliveSessionIds.count == 1 ? " is" : "s are") still running. Quitting stops them; their worktrees stay as they are."
+        alert.informativeText = "\(working) agent\(working == 1 ? " is" : "s are") still running. Quitting stops them; their worktrees stay as they are."
         alert.addButton(withTitle: "Quit")
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return .terminateCancel }
@@ -172,6 +173,12 @@ struct AbstractCommands: Commands {
                 .disabled(model.selectedSession.map { !model.isAlive($0.id) } ?? true)
             Button("Resume Agent") { if let s = model.selectedSession { model.resume(s.id) } }
                 .disabled(model.selectedSession.map { model.isAlive($0.id) } ?? true)
+            // As Ctrl+B in Claude Code: the command or subagent at work carries on while the chat does.
+            Button("Run in Background") { if let s = model.selectedSession { model.moveToBackground(s.id) } }
+                .keyboardShortcut("b", modifiers: .control)
+                .disabled(model.selectedSession.map { model.foregroundTasks($0.id).isEmpty } ?? true)
+            Button("Background Tasks") { if let s = model.selectedSession { model.tasksOpen = TasksFocus(sessionId: s.id) } }
+                .disabled(model.selectedSession.map { model.backgroundTasks($0.id).isEmpty } ?? true)
             Divider()
             Button("Archive Chat") { if let s = model.selectedSession { model.requestArchive = s.id } }
                 .keyboardShortcut(.delete, modifiers: [.command, .shift])

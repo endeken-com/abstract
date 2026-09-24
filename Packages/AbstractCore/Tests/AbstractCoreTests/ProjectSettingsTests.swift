@@ -95,6 +95,33 @@ import Testing
         #expect(ChatNaming.parse(#"{"is_error":false,"result":"I can't help with that."}"#) == nil)
         #expect(ChatNaming.parse("not json") == nil)
         #expect(ChatNaming.prompt(instructions: "Use fix/ for bugs", task: "The button is off").contains("Use fix/ for bugs"))
+        #expect(ChatNaming.prompt(instructions: "", task: "The button is off").contains("Summarize this coding request"))
+    }
+
+    @Test func chatTitlesCanBeGeneratedByTheSelectedProvider() throws {
+        let claude = try #require(ChatNaming.launchSpec(home: "/tmp", binary: nil, providerId: "claude", model: nil,
+                                                        instructions: "", task: "Fix login"))
+        #expect(claude.command == "claude" && claude.stdinInitial != nil)
+
+        let codex = try #require(ChatNaming.launchSpec(home: "/tmp", binary: "/bin/codex", providerId: "codex",
+                                                       model: "gpt-test", instructions: "", task: "Fix login"))
+        #expect(codex.command == "/bin/codex")
+        #expect(codex.args.contains("read-only") && codex.args.contains("gpt-test"))
+        #expect(codex.stdinInitial == nil && !codex.keepStdinOpen)
+
+        let local = try #require(ChatNaming.launchSpec(home: "/tmp", binary: nil, providerId: "ollama", model: "llama-test",
+                                                       instructions: "", task: "Fix login"))
+        #expect(local.args.contains { $0.contains("model_providers.abstract_ollama") })
+        #expect(local.args.contains("llama-test"))
+        #expect(ChatNaming.launchSpec(home: "/tmp", binary: nil, providerId: "missing", model: nil,
+                                      instructions: "", task: "Fix login") == nil)
+
+        let output = """
+            {"type":"item.completed","item":{"type":"agent_message","text":"I will name it."}}
+            {"type":"item.completed","item":{"type":"agent_message","text":"{\\"title\\":\\"Fix login button\\",\\"branch\\":\\"fix/login-button\\"}"}}
+            {"type":"turn.completed"}
+            """
+        #expect(ChatNaming.parseCodex(output) == .init(title: "Fix login button", branch: "fix/login-button"))
     }
 
     // MARK: - Timed commands

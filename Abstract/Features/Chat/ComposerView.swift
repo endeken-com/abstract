@@ -160,6 +160,7 @@ private struct ComposerContext: View {
                     .help(branch)
             }
             Spacer(minLength: Space.md)
+            BackgroundTasksChip(sessionId: session.id)
             RevundComposerStatus(sessionId: session.id)
             if let totals, totals.additions + totals.deletions > 0 {
                 Button { model.openDiffTab(in: session.id) } label: {
@@ -201,7 +202,7 @@ private struct AgentControls: View {
                 }
                 .pickerStyle(.inline)
                 Divider()
-                Text("Another agent starts fresh in this worktree.")
+                Text("Another agent gets a summary of this chat with your next message.")
             }
             let device = RemoteService.split(session.id)?.device
             ModelMenu(providerId: session.providerId, modelId: Binding(get: { session.model }, set: { new in
@@ -222,7 +223,8 @@ private struct AgentControls: View {
             }
             .help("How much the agent may do without asking")
             if model.needsRelaunch.contains(session.id) {
-                Text("· applies to your next message")
+                // Restarting would end them, so the change waits for them.
+                Text(model.runningBackgroundTasks(session.id) > 0 ? "· applies once background tasks end" : "· applies to your next message")
                     .font(.btChatCaption)
                     .foregroundStyle(Color.btTextTertiary)
             }

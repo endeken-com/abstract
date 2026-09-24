@@ -129,15 +129,8 @@ final class DemoBootstrap {
     private func loadHistory(_ path: String, _ model: AppModel) async {
         try? await Task.sleep(for: .seconds(8))
         if let first = model.sessions.first(where: { $0.status != .running }), let text = try? String(contentsOfFile: path, encoding: .utf8) {
-            let parser = ClaudeProvider().makeParser()
-            var timeline = Timeline()
-            for raw in text.split(separator: "\n") {
-                guard let line = try? JSONDecoder().decode(OutputLine.self, from: Data(raw.utf8)) else { continue }
-                for event in AppModel.events(line, parser) {
-                    if case .permissionRequest = event { continue }
-                    timeline.append(event)
-                }
-            }
+            let lines = text.split(separator: "\n").compactMap { try? JSONDecoder().decode(OutputLine.self, from: Data($0.utf8)) }
+            let timeline = ChatStream.timeline(lines, currentProvider: "claude")
             model.feed(first.id).reset(timeline)
             model.open(first.id)
             log("demo: history of \(timeline.entries.count) events in “\(first.name)”")
@@ -291,6 +284,7 @@ struct Snapshotter {
                 model.resetLayout(idle.id)
                 if t == "graphite" { await shootAttachments(model, in: idle.id) }
                 if t == "graphite" { await shootRevund(model, in: idle.id) }
+                if t == "graphite" { await shootBackgroundTasks(model, in: idle.id) }
             }
             if let needsYou {
                 model.open(needsYou.id)
@@ -548,6 +542,32 @@ struct Snapshotter {
         model.open(sessionId)
     }
 
+    /// What the demo agent left in the background: the chip, the list, a
+    /// subagent's work and a command's output, then the preview server stopped.
+    private func shootBackgroundTasks(_ model: AppModel, in sessionId: String) async {
+        model.open(sessionId)
+        // The finished tasks' own turns are over; the preview server still runs.
+        let deadline = Date().addingTimeInterval(30)
+        while Date() < deadline, model.backgroundTasks(sessionId).count { $0.status == .completed } < 2 || model.session(sessionId)?.status != .idle {
+            try? await Task.sleep(for: .milliseconds(200))
+        }
+        await shot("graphite-31-background-chip", settle: 1.0)
+        model.tasksOpen = TasksFocus(sessionId: sessionId)
+        await shot("graphite-32-background-tasks", settle: 1.0)
+        if let agent = model.backgroundTasks(sessionId).first(where: { $0.kind == .agent }) {
+            model.tasksOpen = TasksFocus(sessionId: sessionId, taskId: agent.id)
+            await shot("graphite-33-background-subagent", settle: 1.0)
+        }
+        if let server = model.backgroundTasks(sessionId).first(where: { $0.kind == .shell && $0.status == .running }) {
+            model.tasksOpen = TasksFocus(sessionId: sessionId, taskId: server.id)
+            await shot("graphite-34-background-command", settle: 2.5)
+            model.stopTask(sessionId, taskId: server.id)
+            await shot("graphite-35-background-stopped", settle: 1.5)
+        }
+        log("demo: background tasks " + model.backgroundTasks(sessionId).map { "\($0.description)=\($0.status.rawValue)" }.joined(separator: ", "))
+        model.tasksOpen = nil
+    }
+
     /// Other interface and editor fonts, applied to a file tab.
     private func shootFonts(_ model: AppModel, in sessionId: String) async {
         let d = UserDefaults.standard
@@ -604,8 +624,8 @@ enum WindowCapture {
         guard let window = NSApp.windows.first(where: { $0.isVisible && $0.canBecomeMain }), let create = createImage else { return nil }
         // kCGWindowListOptionIncludingWindow = 1 << 3; imageOption: boundsIgnoreFraming (1) | bestResolution (1 << 3)
         guard let cg = create(.null, 1 << 3, UInt32(window.windowNumber), (1 << 0) | (1 << 3))?.takeRetainedValue() else { return nil }
-        // Sheets are separate windows; composite them over the main one.
-        let sheets = window.sheets.filter(\.isVisible)
+        // Sheets and popovers are separate windows; composite them over the main one.
+        let sheets = (window.sheets + (window.childWindows ?? [])).filter(\.isVisible)
         if sheets.isEmpty { return NSBitmapImageRep(cgImage: cg).representation(using: .png, properties: [:]) }
         let scale = CGFloat(cg.width) / window.frame.width
         guard let ctx = CGContext(data: nil, width: cg.width, height: cg.height, bitsPerComponent: 8, bytesPerRow: 0,

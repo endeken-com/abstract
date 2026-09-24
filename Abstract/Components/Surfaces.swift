@@ -46,10 +46,15 @@ struct EmptyStateView: View {
 
     var body: some View {
         VStack(spacing: Space.md) {
-            Image(systemName: symbol)
-                .font(.system(size: 26, weight: .light))
-                .foregroundStyle(Color.btTextTertiary)
-                .padding(.bottom, Space.xs)
+            Group {
+                if symbol == PullRequestGlyph.symbol {
+                    Image(nsImage: Octicon.gitPullRequestLarge).renderingMode(.template).resizable().frame(width: 26, height: 26)
+                } else {
+                    Image(systemName: symbol).font(.system(size: 26, weight: .light))
+                }
+            }
+            .foregroundStyle(Color.btTextTertiary)
+            .padding(.bottom, Space.xs)
             Text(title).font(.btHeadline).foregroundStyle(Color.btText)
             if let message {
                 Text(message)
@@ -86,4 +91,49 @@ struct SectionLabel: View {
 /// A 0.5pt hairline, the main structural device in place of boxes.
 struct Hairline: View {
     var body: some View { Rectangle().fill(Color.btBorder).frame(height: 0.5) }
+}
+
+/// A progressive blur for the top of a scroll view that runs up under the
+/// window title: content is blurred and washed toward `tint` through the
+/// titlebar band, then clears over `fade` points below it. Built by hand
+/// because the system's soft scroll edge doesn't draw where the toolbar
+/// background is hidden.
+struct TitlebarBlur: View {
+    var tint: Color
+    var band: CGFloat = Chrome.titlebar
+    var fade: CGFloat = 20
+
+    var body: some View {
+        let edge = band / (band + fade)
+        ZStack {
+            WithinWindowBlur()
+            LinearGradient(stops: [
+                .init(color: tint.opacity(0.9), location: 0),
+                .init(color: tint.opacity(0.6), location: edge),
+                .init(color: tint.opacity(0), location: 1),
+            ], startPoint: .top, endPoint: .bottom)
+        }
+        .mask {
+            LinearGradient(stops: [
+                .init(color: .black, location: 0),
+                .init(color: .black, location: edge),
+                .init(color: .clear, location: 1),
+            ], startPoint: .top, endPoint: .bottom)
+        }
+        .frame(height: band + fade)
+        .allowsHitTesting(false)
+    }
+}
+
+/// Blurs whatever the window draws beneath it (not the desktop behind it).
+private struct WithinWindowBlur: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.blendingMode = .withinWindow
+        view.material = .headerView
+        view.state = .active
+        return view
+    }
+
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {}
 }

@@ -30,3 +30,9 @@ The Ollama and LM Studio marks (`Abstract/Resources/Assets.xcassets/ProviderOlla
 projects' own logos, used to name them where they appear as agents. The vector files come from
 [Simple Icons](https://simpleicons.org) (Ollama, CC0-1.0) and [LobeHub Icons](https://github.com/lobehub/lobe-icons)
 (LM Studio, MIT). The marks remain trademarks of their owners.
+
+## Octicons
+
+The pull-request marks and git action icons (`Abstract/Components/Octicon.swift`) and the GitHub issue
+mark (`BrandGlyph.issue`) are [Primer Octicons](https://primer.style/octicons/) 19.38.0,
+Copyright (c) GitHub Inc., under the MIT License (`Licenses/Octicons-LICENSE.txt`).

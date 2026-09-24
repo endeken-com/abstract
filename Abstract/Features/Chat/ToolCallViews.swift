@@ -52,7 +52,8 @@ enum ToolSegment: Identifiable {
         }
         for call in calls {
             let kind = ToolKind(call.name)
-            if folds, kind == .explore || kind == .command, !asking.contains(call.id) {
+            // A command left running in the background stands on its own row.
+            if folds, kind == .explore || kind == .command, !asking.contains(call.id), !ToolPresentation.startsInBackground(call) {
                 if kind != runKind { flush() }
                 runKind = kind
                 run.append(call)
@@ -147,6 +148,17 @@ struct ToolCallView: View {
 
     private var kind: ToolKind { ToolKind(call.name) }
     private var outcome: ToolOutcome { ToolOutcome(call) }
+    /// What the call became if it outlasted a moment: a command or subagent
+    /// in the background, or one at work long enough to be sent there.
+    private var task: AgentTask? {
+        guard kind == .command || kind == .delegate else { return nil }
+        return model.feed(sessionId).tasks.first { $0.toolUseId == call.id }
+    }
+    /// Its result comes at once in the background, so the task says whether it still works.
+    private var working: Bool {
+        if let task, task.isBackgrounded { return task.status == .running && model.isAlive(sessionId) }
+        return outcome == .running
+    }
     private var openSwitch: ExpansionSwitch { ExpansionSwitch(key: "call:\(call.id)", expansion: expansion, row: row) }
     private var answeredSwitch: ExpansionSwitch { ExpansionSwitch(key: "answered:\(call.id)", expansion: expansion, row: row) }
     private var isAnswered: Bool { answeredSwitch.value(local: answered) ?? false }
@@ -199,7 +211,7 @@ struct ToolCallView: View {
                 HStack(spacing: 6) {
                     ToolIcon(symbol: ToolPresentation.symbol(call.name), open: isOpen, hovering: hovering && !asking, failed: outcome.isFailure,
                              file: kind == .edit ? ToolPresentation.path(call) : nil)
-                    let verb = asking ? ToolPresentation.ask(call.name) : ToolPresentation.verb(call.name, pending: outcome == .running)
+                    let verb = asking ? ToolPresentation.ask(call.name) : ToolPresentation.verb(call.name, pending: working)
                     HStack(spacing: 6) {
                         Text(verb)
                             .font(.btChatToolMedium)
@@ -208,7 +220,7 @@ struct ToolCallView: View {
                         ToolTargetView(target: ToolPresentation.target(call, root: model.session(sessionId)?.worktreePath), strong: asking || hovering)
                     }
                     // A call at work shimmers instead of spinning, as in Paseo.
-                    .modifier(Shimmer(active: outcome == .running && !asking && approval == nil, length: verb.count + 24))
+                    .modifier(Shimmer(active: working && !asking && approval == nil, length: verb.count + 24))
                     if let edit = call.edit, kind == .edit {
                         DiffCounts(additions: edit.additions, deletions: edit.deletions, hideZeros: true).fixedSize()
                     }
@@ -220,6 +232,12 @@ struct ToolCallView: View {
                             .foregroundStyle(outcome.isFailure ? Color.btRemoved : Color.btTextTertiary)
                             .fixedSize()
                     }
+                    if let task, task.isBackgrounded, working || task.status != .completed {
+                        Text(working ? "In background" : TaskPresentation.state(task, alive: model.isAlive(sessionId)))
+                            .font(.btChatCaption)
+                            .foregroundStyle(TaskPresentation.isFailure(task) ? Color.btRemoved : Color.btTextTertiary)
+                            .fixedSize()
+                    }
                 }
                 .contentShape(Rectangle())
             }
@@ -227,6 +245,8 @@ struct ToolCallView: View {
             .onHover { hovering = $0 }
 
             Spacer(minLength: Space.md)
+
+            if !asking, let task { taskAction(task) }
 
             // A question is answered in the reply box's place.
             if asking, kind != .question {
@@ -240,6 +260,29 @@ struct ToolCallView: View {
         }
         .frame(minHeight: asking ? 30 : 26)
         .opacity(isAnswered && call.result == nil ? 0.6 : 1)
+    }
+
+    /// Ctrl+B for this call while it works in the foreground; once in the
+    /// background, the way to its task.
+    @ViewBuilder
+    private func taskAction(_ task: AgentTask) -> some View {
+        if task.isBackgrounded {
+            Button("Details") { model.tasksOpen = TasksFocus(sessionId: sessionId, taskId: task.id) }
+                .buttonStyle(.plain)
+                .font(.btChatCaption)
+                .foregroundStyle(Color.btTextTertiary)
+                .help("Show this background task")
+        } else if task.status == .running, !task.ownedBySubagent, call.result == nil, model.isAlive(sessionId), model.canControlTasks(sessionId) {
+            Button("Run in Background") { model.moveToBackground(sessionId, toolUseId: call.id) }
+                .buttonStyle(.bt(.ghost, size: .small))
+                .help("Let this carry on in the background while the agent continues (⌃B)")
+        }
+    }
+
+    /// A background task's report, in place of the note that it started.
+    private var backgroundReport: String? {
+        guard let task, task.isBackgrounded else { return nil }
+        return task.status == .running ? task.activity : task.summary ?? task.error
     }
 
     @ViewBuilder
@@ -258,14 +301,22 @@ struct ToolCallView: View {
         case .command:
             VStack(alignment: .leading, spacing: Space.sm) {
                 if let command = ToolPresentation.command(call) { CodeText(command) }
-                if let result = call.result, !result.output.isEmpty { OutputText(text: result.output, isError: result.isError, key: "out:\(call.id)") }
+                if task?.isBackgrounded == true {
+                    if let report = backgroundReport { Text(report).font(.btChatCallout).foregroundStyle(Color.btTextSecondary).textSelection(.enabled) }
+                } else if let result = call.result, !result.output.isEmpty {
+                    OutputText(text: result.output, isError: result.isError, key: "out:\(call.id)")
+                }
             }
         case .question:
             QuestionAnswers(questions: AgentQuestion.parse(call.input), result: call.result)
         case .delegate:
             VStack(alignment: .leading, spacing: Space.sm) {
                 if let prompt = call.input["prompt"]?.string { Text(prompt).font(.btChatTool).foregroundStyle(Color.btTextSecondary).lineSpacing(3).textSelection(.enabled).btLeadingRule() }
-                if let result = call.result, !result.output.isEmpty { AgentProse(markdown: result.output) }
+                if task?.isBackgrounded == true {
+                    if let report = backgroundReport { AgentProse(markdown: report) }
+                } else if let result = call.result, !result.output.isEmpty {
+                    AgentProse(markdown: result.output)
+                }
             }
         case .explore, .other:
             VStack(alignment: .leading, spacing: Space.sm) {
@@ -738,6 +789,9 @@ enum ToolPresentation {
         let parts = name.dropFirst(5).components(separatedBy: "__")
         return parts.map { $0.replacingOccurrences(of: "_", with: " ") }.joined(separator: " · ")
     }
+
+    /// Asked to run in the background from the start (`run_in_background`).
+    static func startsInBackground(_ call: ToolCall) -> Bool { call.input["run_in_background"]?.bool == true }
 
     static func path(_ call: ToolCall) -> String? {
         guard let o = call.input.object else { return nil }

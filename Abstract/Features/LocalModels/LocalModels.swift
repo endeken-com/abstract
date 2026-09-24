@@ -27,7 +27,7 @@ extension AppModel {
         for kind in LocalModelKind.allCases {
             let url = await endpoint(kind)
             LocalModelEndpoints.set(kind, url)
-            let status = if let url { await LocalModelServer.status(kind, at: url) }
+            let status = if let url, pairedMacOnline(kind) { await LocalModelServer.status(kind, at: url) }
                 else { LocalModelServerStatus(reachable: false, models: [], error: "That Mac isn't connected, or doesn't share \(kind.name).") }
             if localModelStatus[kind] != status { localModelStatus[kind] = status }
             let codex = providerStatus["codex"]
@@ -64,13 +64,19 @@ extension AppModel {
         }
     }
 
+    /// False while the paired Mac a server is reached through is away (its relay is kept, but can't carry anything).
+    private func pairedMacOnline(_ kind: LocalModelKind) -> Bool {
+        guard case .pairedMac(let deviceId) = localModelSource(kind) else { return true }
+        return remote.links[deviceId]?.state == .online
+    }
+
     private func relay(_ kind: LocalModelKind, device: String) async -> LocalModelRelay? {
-        guard let link = remote.links[device], link.state == .online, link.snapshot?.localModels?.contains(kind) == true else {
-            closeRelay(kind)
-            return nil
-        }
-        if let existing = localRelays[kind], existing.deviceId == device, existing.isOpen { return existing }
+        // Once open, a relay stays on its port while that Mac is still paired:
+        // a running Codex has the address baked in, so a link that dropped for
+        // a moment, or a server slow to answer there, mustn't move it.
+        if let existing = localRelays[kind], existing.deviceId == device, existing.isOpen, remote.links[device] != nil { return existing }
         closeRelay(kind)
+        guard let link = remote.links[device], link.state == .online, link.snapshot?.localModels?.contains(kind) == true else { return nil }
         guard let relay = await LocalModelRelay.start(kind, link: link) else { return nil }
         localRelays[kind] = relay
         return relay
@@ -82,12 +88,16 @@ extension AppModel {
 
     /// The servers on this Mac that paired Macs may use.
     var sharedLocalModels: [LocalModelKind] {
-        guard shareLocalModels else { return [] }
-        return LocalModelKind.allCases.filter { kind in
-            // Only its own: a server reached through another Mac isn't passed on.
-            if case .pairedMac = localModelSource(kind) { return false }
-            return localModelStatus[kind]?.reachable == true
-        }
+        LocalModelKind.allCases.filter { sharesLocalModel($0) && localModelStatus[$0]?.reachable == true }
+    }
+
+    /// Whether paired Macs may connect to this server, answering or not: a
+    /// check that timed out (a model loading) mustn't cut them off mid-request.
+    func sharesLocalModel(_ kind: LocalModelKind) -> Bool {
+        guard shareLocalModels else { return false }
+        // Only its own: a server reached through another Mac isn't passed on.
+        if case .pairedMac = localModelSource(kind) { return false }
+        return true
     }
 }
 

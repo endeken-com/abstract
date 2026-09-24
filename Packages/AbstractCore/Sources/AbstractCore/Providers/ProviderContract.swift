@@ -122,6 +122,9 @@ public enum OutputStreamKind: String, Sendable, Codable {
     /// don't echo it, and a transcript rebuilt from the log (after a relaunch,
     /// or on another device) needs it.
     case user
+    /// A chat passing from one agent to another (`HandoffMarker`): the
+    /// replay switches parsers here.
+    case handoff
 }
 
 public struct UsageTotals: Sendable, Hashable, Codable {
@@ -185,12 +188,28 @@ public enum AgentEvent: Sendable, Hashable {
     case raw(line: String, stream: OutputStreamKind)
     /// What the agent predicts you'll say next, offered in the reply box.
     case promptSuggestion(String)
+    /// A subagent or shell command it runs beside the conversation started,
+    /// progressed or ended.
+    case task(TaskEvent)
+    /// Something a subagent did, under the tool call that started it. It stays
+    /// out of the conversation; its task shows it.
+    indirect case subagent(parentToolUseId: String, AgentEvent)
+    /// The chat passed from one agent to another, with what it was told.
+    case handoff(from: String, to: String, summary: String?, source: HandoffSource?)
 }
 
 public protocol OutputParser: AnyObject {
     /// One raw line from the agent. Must never throw or crash on bad input.
     func feed(_ line: String, stream: OutputStreamKind) -> [AgentEvent]
     func onExit(code: Int32?) -> [AgentEvent]
+}
+
+/// Fills in what an agent's output leaves out, before the line is logged, so
+/// live streaming, replay and other Macs all read the same thing. Kept for
+/// the life of a chat, across relaunches. Called on the process's reader
+/// queue; must never throw or crash on bad input.
+public protocol LineEnricher: AnyObject, Sendable {
+    func enrich(_ line: OutputLine) -> OutputLine
 }
 
 /// A model an agent can run, as offered in pickers. `id` is passed verbatim
@@ -244,6 +263,8 @@ public protocol ProviderDefinition: Sendable {
     func buildLaunch(_ ctx: LaunchContext) -> LaunchSpec
     func buildResume(_ ctx: LaunchContext, resumeId: String) -> LaunchSpec
     func makeParser() -> OutputParser
+    /// nil: the agent's lines are logged as printed.
+    func makeLineEnricher(executor: any Executor, cwd: String) -> (any LineEnricher)?
     /// stdin line for a follow-up turn (stdin mode only).
     func buildUserMessage(_ text: String) -> String?
     /// The same with images, as files on the agent's Mac.
@@ -253,6 +274,11 @@ public protocol ProviderDefinition: Sendable {
     /// A stdin line that switches a running agent's permission mode, when the
     /// agent can change it live. nil: the new mode applies at the next launch.
     func buildPermissionModeChange(_ policy: PermissionPolicy, requestId: String) -> String?
+    /// A stdin line that stops one of the agent's tasks. nil: it can't.
+    func buildStopTask(_ taskId: String, requestId: String) -> String?
+    /// A stdin line that moves running work into the background, as Ctrl+B
+    /// does in Claude Code: one tool call's, or all of it. nil: it can't.
+    func buildBackground(toolUseId: String?, requestId: String) -> String?
     /// Offered until discovery succeeds, and whenever it fails. Any other
     /// name can still be typed in.
     var fallbackModels: ModelCatalog { get }
@@ -266,7 +292,10 @@ public protocol ProviderDefinition: Sendable {
 }
 
 public extension ProviderDefinition {
+    func makeLineEnricher(executor: any Executor, cwd: String) -> (any LineEnricher)? { nil }
     func configuredDefaultEffort(home: String) -> String? { nil }
     func buildUserMessage(_ text: String, images: [String]) -> String? { buildUserMessage(text) }
     func buildPermissionModeChange(_ policy: PermissionPolicy, requestId: String) -> String? { nil }
+    func buildStopTask(_ taskId: String, requestId: String) -> String? { nil }
+    func buildBackground(toolUseId: String?, requestId: String) -> String? { nil }
 }
