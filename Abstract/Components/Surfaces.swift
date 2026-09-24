@@ -46,10 +46,15 @@ struct EmptyStateView: View {
 
     var body: some View {
         VStack(spacing: Space.md) {
-            Image(systemName: symbol)
-                .font(.system(size: 26, weight: .light))
-                .foregroundStyle(Color.btTextTertiary)
-                .padding(.bottom, Space.xs)
+            Group {
+                if symbol == PullRequestGlyph.symbol {
+                    Image(nsImage: Octicon.gitPullRequestLarge).renderingMode(.template).resizable().frame(width: 26, height: 26)
+                } else {
+                    Image(systemName: symbol).font(.system(size: 26, weight: .light))
+                }
+            }
+            .foregroundStyle(Color.btTextTertiary)
+            .padding(.bottom, Space.xs)
             Text(title).font(.btHeadline).foregroundStyle(Color.btText)
             if let message {
                 Text(message)

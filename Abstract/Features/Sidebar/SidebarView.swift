@@ -29,7 +29,7 @@ struct SidebarView: View {
                     RailNavRow(title: "New", symbol: "plus", destination: .home)
                     RailNavRow(title: "Automations", symbol: "clock", destination: .automations)
                     RailNavRow(title: "Worktrees", symbol: "arrow.triangle.branch", destination: .worktrees)
-                    RailNavRow(title: "Pull Requests", symbol: RailNavRow.pullRequestSymbol, destination: .pullRequests)
+                    RailNavRow(title: "Pull Requests", symbol: PullRequestGlyph.symbol, destination: .pullRequests)
                 }
 
                 if !model.projects.isEmpty {
@@ -105,9 +105,6 @@ private struct RailNavRow: View {
     let destination: Destination
     var count = 0
 
-    /// Stands for Abstract's own pull-request glyph, which has no system symbol.
-    static let pullRequestSymbol = "abstract.pullrequest"
-
     var body: some View {
         let selected = model.destination == destination
         Button {
@@ -115,7 +112,7 @@ private struct RailNavRow: View {
         } label: {
             HStack(spacing: 8) {
                 Group {
-                    if symbol == Self.pullRequestSymbol {
+                    if symbol == PullRequestGlyph.symbol {
                         PullRequestGlyph(kind: .open).frame(width: 12, height: 12)
                     } else {
                         Image(systemName: symbol).font(.system(size: 12, weight: .medium))
