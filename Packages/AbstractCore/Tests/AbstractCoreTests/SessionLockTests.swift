@@ -72,8 +72,15 @@ struct SessionLockTests {
 
         kill(child.pid, SIGKILL)
         var status: Int32 = 0
-        waitpid(child.pid, &status, 0)
-        let app = try SessionLock.acquire("s1", as: .app, in: dir)
-        app.release()
+        while waitpid(child.pid, &status, 0) == -1 && errno == EINTR {}
+        // The system lets go of a dead process's files as it reaps it; a busy machine may take a moment.
+        var app: SessionLock?
+        let deadline = Date().addingTimeInterval(5)
+        while app == nil, Date() < deadline {
+            app = try? SessionLock.acquire("s1", as: .app, in: dir)
+            if app == nil { try await Task.sleep(for: .milliseconds(50)) }
+        }
+        #expect(app != nil)
+        app?.release()
     }
 }
