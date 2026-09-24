@@ -19,11 +19,13 @@ public struct CodexProvider: ProviderDefinition {
 
     public init() {}
 
-    private static func sandboxArgs(_ policy: PermissionPolicy) -> [String] {
-        switch policy {
-        case .ask, .autoEdits: ["-s", "workspace-write"]
-        case .bypass: ["-s", "danger-full-access"]
+    /// `exec resume` has no `-s`, so a follow-up sets the sandbox as config.
+    private static func sandboxArgs(_ policy: PermissionPolicy, resuming: Bool) -> [String] {
+        let mode = switch policy {
+        case .ask, .autoEdits: "workspace-write"
+        case .bypass: "danger-full-access"
         }
+        return resuming ? ["-c", "sandbox_mode=\"\(mode)\""] : ["-s", mode]
     }
 
     // Models: see CodexModels.swift.
@@ -53,19 +55,20 @@ public struct CodexProvider: ProviderDefinition {
     }
 
     public func buildLaunch(_ ctx: LaunchContext) -> LaunchSpec {
-        launchSpec(ctx, head: ["exec"])
+        launchSpec(ctx, head: ["exec"], resuming: false)
     }
 
     public func buildResume(_ ctx: LaunchContext, resumeId: String) -> LaunchSpec {
-        launchSpec(ctx, head: ["exec", "resume", resumeId])
+        launchSpec(ctx, head: ["exec", "resume", resumeId], resuming: true)
     }
 
-    private func launchSpec(_ ctx: LaunchContext, head: [String]) -> LaunchSpec {
+    private func launchSpec(_ ctx: LaunchContext, head: [String], resuming: Bool) -> LaunchSpec {
         let override = ctx.binaryOverride?.trimmingCharacters(in: .whitespaces)
         return LaunchSpec(
             command: override.flatMap { $0.isEmpty ? nil : $0 } ?? binary,
-            args: head + ["--json", "-C", ctx.cwd, "--skip-git-repo-check"]
-                + Self.sandboxArgs(ctx.permissionPolicy) + (ctx.model.map { ["-m", $0] } ?? [])
+            // `exec resume` has no `-C` either; the process cwd stands in for it.
+            args: head + ["--json"] + (resuming ? [] : ["-C", ctx.cwd]) + ["--skip-git-repo-check"]
+                + Self.sandboxArgs(ctx.permissionPolicy, resuming: resuming) + (ctx.model.map { ["-m", $0] } ?? [])
                 // A config override; the value is TOML, so the level is quoted.
                 + (ctx.effort.map { ["-c", "model_reasoning_effort=\"\($0)\""] } ?? [])
                 + (ctx.outputStyle.instructions.map { ["-c", "developer_instructions=\(Self.tomlString($0))"] } ?? []) + ctx.extraArgs
