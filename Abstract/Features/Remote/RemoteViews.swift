@@ -248,6 +248,7 @@ private struct RemoteDeviceGroup: View {
     @Environment(AppModel.self) private var model
     let link: RemoteLink
     @AppStorage("sidebar.remoteCollapsed") private var collapsedRaw = ""
+    @AppStorage("sidebar.remoteShowArchived") private var showArchivedRaw = ""
 
     var body: some View {
         let snapshot = link.snapshot
@@ -258,18 +259,43 @@ private struct RemoteDeviceGroup: View {
                 .frame(width: 22, height: 22)
                 .help(link.state == .online ? "Connected" : "Not connected")
         }
+        .contextMenu {
+            if snapshot?.sessions.contains(where: { $0.archivedAt != nil }) == true {
+                Button(showArchived ? "Hide Archived Chats" : "Show Archived Chats") {
+                    showArchived.toggle()
+                }
+            }
+        }
         if !collapsed.wrappedValue, let snapshot {
             ForEach(snapshot.projects.sorted { $0.sortOrder < $1.sortOrder }) { project in
-                let chats = snapshot.sessions.filter { $0.projectId == project.id }
+                let chats = snapshot.sessions.filter { $0.projectId == project.id && (showArchived || $0.archivedAt == nil) }
                     .sorted { ($0.lastEventAt ?? $0.createdAt) > ($1.lastEventAt ?? $1.createdAt) }
                 RailGroup(title: project.name, trailing: AnyView(
                     Button { model.showNewChat(in: project.id) } label: { Image(systemName: "plus") }
                         .buttonStyle(RailIconStyle())
                         .help("New chat in \(project.name) on \(link.device.peer.name)")
                 )) {
+                    if chats.isEmpty {
+                        Text("No chats")
+                            .font(BTFont.ui(13))
+                            .foregroundStyle(Color.btTextTertiary.opacity(0.7))
+                            .padding(.leading, Rail.rowPadding + Rail.chatIndent + Rail.iconColumn + 8)
+                            .frame(maxWidth: .infinity, minHeight: Rail.rowHeight, alignment: .leading)
+                    }
                     ForEach(chats) { session in
                         if let mirror = model.session(RemoteService.mirrorId(device: link.device.id, session: session.id)) {
-                            RailChatRow(session: mirror, backgroundTasks: model.runningBackgroundTasks(mirror.id))
+                            RailChatRow(session: mirror, backgroundTasks: model.runningBackgroundTasks(mirror.id)).equatable()
+                        }
+                    }
+                }
+            }
+            let scratch = snapshot.sessions.filter { $0.projectId == nil && (showArchived || $0.archivedAt == nil) }
+                .sorted { ($0.lastEventAt ?? $0.createdAt) > ($1.lastEventAt ?? $1.createdAt) }
+            if !scratch.isEmpty {
+                RailGroup(title: "Scratch") {
+                    ForEach(scratch) { session in
+                        if let mirror = model.session(RemoteService.mirrorId(device: link.device.id, session: session.id)) {
+                            RailChatRow(session: mirror, backgroundTasks: model.runningBackgroundTasks(mirror.id)).equatable()
                         }
                     }
                 }
@@ -285,6 +311,15 @@ private struct RemoteDeviceGroup: View {
             var ids = Set(collapsedRaw.split(separator: ",").map(String.init))
             if value { ids.insert(link.device.id) } else { ids.remove(link.device.id) }
             collapsedRaw = ids.sorted().joined(separator: ",")
+        }
+    }
+
+    private var showArchived: Bool {
+        get { showArchivedRaw.split(separator: ",").contains(Substring(link.device.id)) }
+        nonmutating set {
+            var ids = Set(showArchivedRaw.split(separator: ",").map(String.init))
+            if newValue { ids.insert(link.device.id) } else { ids.remove(link.device.id) }
+            showArchivedRaw = ids.sorted().joined(separator: ",")
         }
     }
 }
@@ -345,13 +380,9 @@ private struct DevicesPopover: View {
     var body: some View {
         @Bindable var remote = model.remote
         VStack(alignment: .leading, spacing: Space.md) {
-            HStack(spacing: Space.sm) {
-                Image(systemName: "laptopcomputer").foregroundStyle(Color.btTextSecondary)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(remote.identity.name).font(BTFont.ui(13, .medium))
-                    Text("This Mac").font(.btCaption).foregroundStyle(Color.btTextTertiary)
-                }
-                Spacer()
+            DevicePopoverRow(name: remote.identity.name,
+                             status: remote.hosting ? "This Mac · Sharing" : "This Mac · Not sharing",
+                             active: remote.hosting) {
                 Toggle("Share", isOn: $remote.hosting).toggleStyle(.switch).controlSize(.small).labelsHidden()
                     .help(remote.hosting ? "Paired Macs can use this one" : "Let paired Macs use this one")
             }
@@ -360,13 +391,11 @@ private struct DevicesPopover: View {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(remote.paired) { device in
                         let online = remote.links[device.id]?.state == .online || remote.hosted[device.id] != nil
-                        HStack(spacing: Space.sm) {
-                            Circle().fill(online ? Color.btAdded : Color.btTextTertiary.opacity(0.5)).frame(width: 6, height: 6)
-                            Text(device.peer.name).font(BTFont.ui(13)).lineLimit(1)
-                            Spacer()
-                            Text(online ? "Connected" : device.lastSeen.map { "Seen \(RelativeTime.short($0)) ago" } ?? "Offline")
-                                .font(.btCaption).foregroundStyle(Color.btTextTertiary)
-                        }
+                        DevicePopoverRow(name: device.peer.name,
+                                         status: remote.hosted[device.id] != nil && remote.links[device.id]?.state != .online
+                                             ? "Using this Mac"
+                                             : online ? "Connected" : device.lastSeen.map { "Seen \(RelativeTime.short($0)) ago" } ?? "Offline",
+                                         active: online) { EmptyView() }
                     }
                 }
             }
@@ -385,5 +414,29 @@ private struct DevicesPopover: View {
         .padding(Space.md)
         .frame(width: 300)
         .task { remote.startBrowsing() }
+    }
+}
+
+private struct DevicePopoverRow<Trailing: View>: View {
+    let name: String
+    let status: String
+    let active: Bool
+    @ViewBuilder let trailing: () -> Trailing
+
+    var body: some View {
+        HStack(spacing: Space.sm) {
+            Image(systemName: "laptopcomputer")
+                .font(.system(size: 13))
+                .foregroundStyle(Color.btTextSecondary)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(name).font(BTFont.ui(13, .medium)).lineLimit(1)
+                Text(status).font(.btCaption).foregroundStyle(Color.btTextTertiary).lineLimit(1)
+            }
+            Spacer(minLength: 4)
+            Circle().fill(active ? Color.btAdded : Color.btTextTertiary.opacity(0.5)).frame(width: 6, height: 6)
+            trailing()
+        }
+        .frame(minHeight: 32)
     }
 }

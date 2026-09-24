@@ -253,10 +253,14 @@ final class RemoteService {
     func snapshot() -> RemoteSnapshot? {
         guard let model else { return nil }
         return RemoteSnapshot(projects: model.projects.filter { $0.archivedAt == nil },
-                              sessions: model.sessions.filter { $0.archivedAt == nil && !$0.id.hasPrefix(Self.mirrorPrefix) },
+                              sessions: model.sessions.filter { !$0.id.hasPrefix(Self.mirrorPrefix) },
                               providers: ProviderRegistry.all.map(\.id).filter { model.providerStatus[$0]?.available ?? false },
                               alive: Array(model.alive), localModels: model.sharedLocalModels,
-                              home: model.executor.homeDirectory, modelCatalogs: model.modelCatalogs)
+                              home: model.executor.homeDirectory, modelCatalogs: model.modelCatalogs,
+                              pullRequests: model.pullRequests.mapValues {
+                                  RemotePullRequest(number: $0.number, title: $0.title, state: $0.state.rawValue,
+                                                    isDraft: $0.isDraft, url: $0.url)
+                              })
     }
 
     /// A chat's new output, to the Macs watching it.

@@ -129,11 +129,27 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
     public var home: String?
     /// The models each agent offers there.
     public var modelCatalogs: [String: ModelCatalog]?
+    /// Pull requests keyed by the host's chat id. Optional for older peers.
+    public var pullRequests: [String: RemotePullRequest]?
 
     public init(projects: [Project], sessions: [Session], providers: [String], alive: [String], localModels: [LocalModelKind]? = nil,
-                home: String? = nil, modelCatalogs: [String: ModelCatalog]? = nil) {
+                home: String? = nil, modelCatalogs: [String: ModelCatalog]? = nil,
+                pullRequests: [String: RemotePullRequest]? = nil) {
         self.projects = projects; self.sessions = sessions; self.providers = providers; self.alive = alive
         self.localModels = localModels; self.home = home; self.modelCatalogs = modelCatalogs
+        self.pullRequests = pullRequests
+    }
+}
+
+public struct RemotePullRequest: Codable, Sendable, Hashable {
+    public var number: Int
+    public var title: String
+    public var state: String
+    public var isDraft: Bool
+    public var url: URL?
+
+    public init(number: Int, title: String, state: String, isDraft: Bool, url: URL?) {
+        self.number = number; self.title = title; self.state = state; self.isDraft = isDraft; self.url = url
     }
 }
 
