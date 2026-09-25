@@ -167,8 +167,10 @@ struct CommandPalette: View {
             model.isSettingsOpen = true
         })
         items.append(Item(id: "new", section: "Start", title: "New chat", symbol: "square.and.pencil", shortcut: ["⌘", "N"]) {
-            model.showNewChat(in: model.selectedSession?.projectId)
+            model.showNewChatLikeCurrent()
         })
+        items.append(Item(id: "new-standalone", section: "Start", title: "New standalone chat", subtitle: "No project, in a folder of its own",
+                          symbol: "square.and.pencil") { model.showNewChat(in: nil, standalone: true) })
         for p in model.projects {
             items.append(Item(id: "new-\(p.id)", section: "Start", title: "New chat in \(p.name)", symbol: "square.and.pencil") { model.showNewChat(in: p.id) })
         }

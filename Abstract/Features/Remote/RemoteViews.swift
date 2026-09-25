@@ -292,7 +292,7 @@ private struct RemoteDeviceGroup: View {
             let scratch = snapshot.sessions.filter { $0.projectId == nil && (showArchived || $0.archivedAt == nil) }
                 .sorted { ($0.lastEventAt ?? $0.createdAt) > ($1.lastEventAt ?? $1.createdAt) }
             if !scratch.isEmpty {
-                RailGroup(title: "Scratch") {
+                RailGroup(title: "Standalone") {
                     ForEach(scratch) { session in
                         if let mirror = model.session(RemoteService.mirrorId(device: link.device.id, session: session.id)) {
                             RailChatRow(session: mirror, backgroundTasks: model.runningBackgroundTasks(mirror.id)).equatable()

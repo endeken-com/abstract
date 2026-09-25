@@ -56,10 +56,14 @@ struct SidebarView: View {
                         RailProjectGroup(project: project, dragging: $draggingProject)
                     }
 
-                    let scratch = model.sessions(in: nil)
-                    if !scratch.isEmpty {
-                        RailGroup(title: "Scratch") {
-                            ForEach(scratch) { s in
+                    let standalone = model.sessions(in: nil)
+                    if !standalone.isEmpty {
+                        RailGroup(title: "Standalone", trailing: AnyView(
+                            Button { model.showNewChat(in: nil, standalone: true) } label: { Image(systemName: "plus") }
+                                .buttonStyle(RailIconStyle())
+                                .help("New standalone chat")
+                        )) {
+                            ForEach(standalone) { s in
                                 RailChatRow(session: s, backgroundTasks: model.runningBackgroundTasks(s.id)).equatable()
                             }
                         }
@@ -424,15 +428,19 @@ struct RailChatRow: View {
     }
 
     private var remote: Bool { session.id.hasPrefix(RemoteService.mirrorPrefix) }
+    /// No project: it works in a folder of its own, not a worktree.
+    private var standalone: Bool { session.projectId == nil }
 
     @ViewBuilder private var localActions: some View {
         Button("Rename") { draft = session.name; renaming = true }
         Button(session.archivedAt == nil ? "Archive" : "Unarchive") { model.setArchived(session.id, session.archivedAt == nil) }
         if let path = session.worktreePath {
-            Button("Reveal Worktree in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
+            Button(standalone ? "Reveal Folder in Finder" : "Reveal Worktree in Finder") {
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+            }
         }
         Divider()
-        Button("Delete Chat and Worktree…", role: .destructive) { confirmDelete() }
+        Button(standalone ? "Delete Chat and Folder…" : "Delete Chat and Worktree…", role: .destructive) { confirmDelete() }
     }
 
     private func commitRename() {
@@ -443,7 +451,9 @@ struct RailChatRow: View {
     private func confirmDelete() {
         let alert = NSAlert()
         alert.messageText = "Delete “\(session.name)”?"
-        alert.informativeText = "The agent is stopped and its worktree is removed. Uncommitted work in the worktree is lost; the branch is kept."
+        alert.informativeText = standalone
+            ? "The agent is stopped and the chat's folder is removed with everything in it."
+            : "The agent is stopped and its worktree is removed. Uncommitted work in the worktree is lost; the branch is kept."
         alert.addButton(withTitle: "Delete")
         alert.addButton(withTitle: "Cancel")
         alert.buttons.first?.hasDestructiveAction = true
@@ -548,7 +558,7 @@ private struct RailChatDetails: View {
                 row("Model") { Image(systemName: "cpu") } content: { value(modelName) }
                 row("Device") { Image(systemName: "laptopcomputer") } content: { value(deviceName) }
                 row("Project") { Image(systemName: "folder") } content: {
-                    value(model.project(session.projectId)?.name ?? "Scratch")
+                    value(model.project(session.projectId)?.name ?? "Standalone")
                 }
             }
         }

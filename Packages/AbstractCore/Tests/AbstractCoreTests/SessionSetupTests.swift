@@ -152,3 +152,29 @@ private struct Remote {
         #expect(SetupScript.clean("\u{1B}]0;title\u{07}text") == "text")
     }
 }
+
+@Suite struct StandaloneFolderTests {
+    @Test func eachChatGetsAFolderOfItsOwn() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("abstract-home-\(UUID().uuidString)").path
+        defer { try? FileManager.default.removeItem(atPath: home) }
+        // Only when no data directory is set; the demo and tests set one.
+        guard ProcessInfo.processInfo.environment["ABSTRACT_DATA_DIR"] == nil else { return }
+        let first = try Workspace.standaloneFolder(home: home)
+        let second = try Workspace.standaloneFolder(home: home)
+        #expect(first != second)
+        #expect(first.hasPrefix(home + "/.abstract/chats/"))
+        var isDirectory: ObjCBool = false
+        #expect(FileManager.default.fileExists(atPath: second, isDirectory: &isDirectory) && isDirectory.boolValue)
+        #expect(Workspace.isChatFolder(first, home: home))
+    }
+
+    @Test func onlyAChatsOwnFolderMayBeDeleted() {
+        let home = "/Users/someone"
+        guard ProcessInfo.processInfo.environment["ABSTRACT_DATA_DIR"] == nil else { return }
+        #expect(Workspace.isChatFolder("/Users/someone/.abstract/chats/lisbon", home: home))
+        #expect(!Workspace.isChatFolder("/Users/someone/.abstract/chats", home: home))
+        #expect(!Workspace.isChatFolder("/Users/someone/.abstract/chats/lisbon/src", home: home))
+        #expect(!Workspace.isChatFolder("/Users/someone/.abstract/chats/../worktrees", home: home))
+        #expect(!Workspace.isChatFolder("/Users/someone/code/app", home: home))
+    }
+}

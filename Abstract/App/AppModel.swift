@@ -132,6 +132,8 @@ final class AppModel {
     var collapsedProjects: Set<String> = []
     var showArchived = false
     var newChatProjectId: String?? = nil
+    /// The next New Chat starts with no project.
+    var newChatStandalone = false
     /// A worktree the next New Chat should start in, from "New Chat Here".
     var newChatWorktree: String?
     var isAddingProject = false
@@ -441,10 +443,19 @@ final class AppModel {
         loadTimelineIfNeeded(sessionId)
     }
 
-    func showNewChat(in projectId: String?, worktree: String? = nil) {
+    /// The New Chat sheet, for `projectId`, or for a standalone chat (one
+    /// with no project) when `standalone`.
+    func showNewChat(in projectId: String?, worktree: String? = nil, standalone: Bool = false) {
         isPaletteOpen = false
         newChatWorktree = worktree
+        newChatStandalone = standalone && projectId == nil
         newChatProjectId = .some(projectId)
+    }
+
+    /// A new chat like the one showing: in its project, or standalone too.
+    func showNewChatLikeCurrent() {
+        let current = selectedSession
+        showNewChat(in: current?.projectId, standalone: current != nil && current?.projectId == nil)
     }
 
     // MARK: - Projects
@@ -510,26 +521,32 @@ final class AppModel {
     /// it takes over from any chat using it. The chat exists at once, named
     /// for its prompt until the model names it; a fresh worktree's chat is
     /// set up first (see AppModel+Setup) and its agent starts after.
+    /// With no project it's a standalone chat, working in a folder of its own.
     /// `name` and `slug`, when given, name the chat and its branch instead.
     /// `select` opens the new chat here; a chat started from another device doesn't take over this screen.
     @discardableResult
-    func startChat(projectId: String, providerId: String, prompt text: String, attachments: [PromptAttachment] = [], baseRef: String?,
+    func startChat(projectId: String?, providerId: String, prompt text: String, attachments: [PromptAttachment] = [], baseRef: String?,
                    policy: PermissionPolicy, model: String? = nil, effort: String? = nil, existing: WorktreeInfo? = nil,
                    name: String? = nil, slug: String? = nil, automationId: String? = nil,
                    select: Bool = true) async throws -> String {
-        guard let project = project(projectId) else { throw AbstractError.notFound("project") }
+        let project = project(projectId)
+        if projectId != nil, project == nil { throw AbstractError.notFound("project") }
         let prompt = PromptAttachments.message(text, attachments)
         let images = PromptAttachments.images(attachments)
         // Named for what was asked, or for what was attached when nothing was typed.
         let gist = text.isEmpty ? attachments.map(\.label).joined(separator: ", ") : text
         let provisional = name ?? Workspace.title(fromPrompt: gist)
         let naming: Task<ChatNaming.Suggestion?, Never>? = name != nil ? nil : Task {
-            await suggestedNaming(project, providerId: providerId, model: model ?? defaultModel(for: providerId), prompt: gist)
+            await suggestedNaming(instructions: project?.namingInstructions, providerId: providerId,
+                                  model: model ?? defaultModel(for: providerId), prompt: gist)
         }
         var session = Session(projectId: projectId, name: provisional, providerId: providerId,
                               baseRef: existing == nil ? baseRef : nil, status: .provisioning, permissionPolicy: policy,
                               prompt: prompt, automationId: automationId, model: model, effort: effort)
-        if let existing {
+        if project == nil {
+            session.baseRef = nil
+            session.worktreePath = try Workspace.standaloneFolder(home: executor.homeDirectory)
+        } else if let existing {
             guard FileManager.default.fileExists(atPath: existing.path) else {
                 throw AbstractError.message("That worktree's folder no longer exists.")
             }
@@ -543,7 +560,7 @@ final class AppModel {
         feed(session.id).reset()
         if select { open(session.id, newTab: true) }
         engine.recordInput(sessionId: session.id, text: prompt)
-        guard existing != nil else {
+        if let projectId, existing == nil {
             let setup = ChatSetup(projectId: projectId, baseRef: baseRef, images: images,
                                   worktreeName: worktreeCityName(projectId: projectId), slug: slug)
             setup.naming = naming
@@ -551,7 +568,13 @@ final class AppModel {
             beginSetup(session.id, setup)
             return session.id
         }
-        try launch(session, prompt: prompt, resume: false, images: images)
+        do {
+            try launch(session, prompt: prompt, resume: false, images: images)
+        } catch {
+            // Saved already: it says why, rather than seem to be starting forever.
+            setStatus(session.id, .errored, detail: error.localizedDescription)
+            throw error
+        }
         if let naming { Task { await rename(session.id, from: provisional, to: naming.value?.title) } }
         return session.id
     }
@@ -984,6 +1007,9 @@ final class AppModel {
             } catch {
                 flash("Worktree not removed: \(error.localizedDescription)", isError: true)
             }
+        } else if removeWorktree, s.projectId == nil, let path = s.worktreePath, Workspace.isChatFolder(path, home: executor.homeDirectory) {
+            // A standalone chat's own folder, which nothing else uses.
+            do { try executor.removeItem(path) } catch { flash("Folder not removed: \(error.localizedDescription)", isError: true) }
         }
         engine.deleteLog(sessionId: sessionId)
         discardLayout(sessionId)

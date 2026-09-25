@@ -59,8 +59,9 @@ struct ChatToolbarControls: View {
                 }
                 Divider()
                 if let path = session.worktreePath, !session.id.hasPrefix(RemoteService.mirrorPrefix) {
-                    Button("Reveal Worktree in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
-                    Button("Copy Worktree Path") { copy(path) }
+                    let kind = session.projectId == nil ? "Folder" : "Worktree"
+                    Button("Reveal \(kind) in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
+                    Button("Copy \(kind) Path") { copy(path) }
                 }
                 if let branch = session.branch { Button("Copy Branch Name (\(branch))") { copy(branch) } }
                 Button("Reset Panels") { model.resetLayout(session.id) }

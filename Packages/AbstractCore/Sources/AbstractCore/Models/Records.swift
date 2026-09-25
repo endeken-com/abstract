@@ -1,6 +1,7 @@
 import Foundation
 
-/// A git repository Abstract manages worktrees for. Every chat belongs to one.
+/// A git repository Abstract manages worktrees for. A chat belongs to one,
+/// or to none (a standalone chat, in a folder of its own).
 public struct Project: Sendable, Hashable, Identifiable, Codable {
     public var id: String
     public var name: String
@@ -73,10 +74,10 @@ public enum SessionStatus: String, Sendable, Codable, CaseIterable {
     public var isActive: Bool { self == .running || self == .provisioning || self == .waitingInput || self == .idle }
 }
 
-/// One chat: an agent working in its own worktree.
+/// One chat: an agent working in its own worktree, or a standalone chat's folder.
 public struct Session: Sendable, Hashable, Identifiable, Codable {
     public var id: String
-    /// nil only for automation runs in "No project" mode.
+    /// nil for a standalone chat, and for automation runs in "No project" mode.
     public var projectId: String?
     public var name: String
     public var providerId: String

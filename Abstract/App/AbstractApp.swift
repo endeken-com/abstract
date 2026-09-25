@@ -115,7 +115,7 @@ struct AbstractCommands: Commands {
                 .keyboardShortcut(",")
         }
         CommandGroup(replacing: .newItem) {
-            Button("New Chat") { model.showNewChat(in: model.selectedSession?.projectId) }
+            Button("New Chat") { model.showNewChatLikeCurrent() }
                 .keyboardShortcut("n")
             Button("Add Project…") { model.isAddingProject = true }
                 .keyboardShortcut("o", modifiers: [.command, .shift])

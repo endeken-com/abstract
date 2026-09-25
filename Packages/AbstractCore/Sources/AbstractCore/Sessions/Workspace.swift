@@ -116,6 +116,35 @@ public enum Workspace {
         return Base(ref: "origin/\(name)", fetchError: fetchError)
     }
 
+    /// A new standalone chat's own folder (it belongs to no project), named
+    /// for a city none of the others has, under `standaloneRoot`.
+    public static func standaloneFolder(home: String) throws -> String {
+        let root = standaloneRoot(home: home)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let used = Set((try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? [])
+        let dir = root.appendingPathComponent(WorktreeNaming.slugify(WorktreeNaming.cityName(avoiding: used)), isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: false)
+        return dir.path
+    }
+
+    /// `~/.abstract/chats`, beside the worktrees; the data directory's own
+    /// when one is set (demo, tests).
+    public static func standaloneRoot(home: String) -> URL {
+        if let dir = ProcessInfo.processInfo.environment["ABSTRACT_DATA_DIR"], !dir.isEmpty {
+            return URL(fileURLWithPath: (dir as NSString).expandingTildeInPath).appendingPathComponent("chats", isDirectory: true)
+        }
+        return URL(fileURLWithPath: home).appendingPathComponent(".abstract/chats", isDirectory: true)
+    }
+
+    /// Whether `path` is a folder Abstract made for a chat with no project
+    /// (a standalone chat's, or an automation run's scratch folder), and so
+    /// may delete with it. Nothing else ever is.
+    public static func isChatFolder(_ path: String, home: String) -> Bool {
+        let folder = URL(fileURLWithPath: path).standardizedFileURL
+        let roots = [standaloneRoot(home: home), URL(fileURLWithPath: Store.defaultPath()).deletingLastPathComponent().appendingPathComponent("scratch")]
+        return roots.contains { folder.deletingLastPathComponent().path == $0.standardizedFileURL.path }
+    }
+
     /// A throwaway directory for "No project" automation runs.
     public static func scratchDirectory(runId: String) throws -> String {
         let dir = URL(fileURLWithPath: Store.defaultPath()).deletingLastPathComponent()

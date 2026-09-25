@@ -70,7 +70,7 @@ struct RootView: View {
         .animation(.snappy(duration: 0.18), value: model.isPaletteOpen)
         .animation(.snappy(duration: 0.18), value: model.isSettingsOpen)
         .sheet(isPresented: Binding(get: { model.newChatProjectId != nil }, set: { if !$0 { model.newChatProjectId = nil } })) {
-            NewChatSheet(initialProjectId: model.newChatProjectId ?? nil)
+            NewChatSheet(initialProjectId: model.newChatProjectId ?? nil, standalone: model.newChatStandalone)
         }
         .sheet(isPresented: $model.isAddingProject) { AddProjectSheet() }
         .confirmationDialog("Archive “\(model.requestArchive.flatMap(model.chatName) ?? "")”?",

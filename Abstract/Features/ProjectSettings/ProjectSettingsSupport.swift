@@ -102,13 +102,14 @@ extension AppModel {
 extension AppModel {
     static let runLabel = "Run"
 
-    /// Ask the chat's provider for a short title. Project instructions can
-    /// also guide the branch; a failed naming call leaves a readable fallback.
-    func suggestedNaming(_ project: Project, providerId: String, model: String?, prompt: String) async -> ChatNaming.Suggestion? {
+    /// Ask the chat's provider for a short title. A project's naming
+    /// instructions can also guide the branch; a failed naming call leaves a
+    /// readable fallback.
+    func suggestedNaming(instructions: String?, providerId: String, model: String?, prompt: String) async -> ChatNaming.Suggestion? {
         guard !isDemo else { return nil }
         let binary = providerOverrides[providerId]?.path.flatMap { $0.isEmpty ? nil : $0 }
         return await ChatNaming.suggest(executor: executor, binary: binary, providerId: providerId, model: model,
-                                        instructions: project.namingInstructions ?? "", task: prompt)
+                                        instructions: instructions ?? "", task: prompt)
     }
 
     /// The chat toolbar's Run: the project's run script in the chat's Run
