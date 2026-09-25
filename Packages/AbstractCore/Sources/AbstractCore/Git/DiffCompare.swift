@@ -8,8 +8,9 @@ public enum DiffCompare: Sendable, Hashable {
     case uncommitted
     /// HEAD against where it left `base` (their merge base).
     case committed(base: String)
-    /// One commit against its first parent.
-    case commit(sha: String)
+    /// One commit against its first parent, in the repository at `repo`
+    /// (relative to the worktree; empty for its own).
+    case commit(sha: String, repo: String = "")
 }
 
 /// A commit on the branch, for the review's commit list.
@@ -19,6 +20,8 @@ public struct CommitSummary: Sendable, Hashable, Identifiable {
     public let author: String
     public let date: Date?
     public let subject: String
+    /// The repository it's in, relative to the worktree; empty for its own.
+    public var repo: String = ""
     public var id: String { sha }
 }
 
@@ -40,7 +43,7 @@ extension Diff {
             let from = await mergeBase(exec, worktree: worktree, base: base) ?? base
             return parse(try await Git.gitOK(exec, cwd: worktree, ["-c", "core.quotePath=false", "--no-pager", "diff", from, "HEAD", "--no-color",
                                                                     "--no-ext-diff", "-M"] + space + ["--", "."] + excludes))
-        case .commit(let sha):
+        case .commit(let sha, _):
             return parse(try await Git.gitOK(exec, cwd: worktree, ["-c", "core.quotePath=false", "--no-pager", "show", sha, "--format=",
                                                                     "--diff-merges=first-parent", "--no-color", "--no-ext-diff", "-M"] + space))
         }

@@ -53,8 +53,27 @@ public struct FileDiff: Sendable, Hashable, Identifiable {
     public var hunks: [Hunk]
     /// Verbatim `diff --git` preamble through the `+++` line.
     public var rawHeader: String
+    /// The repository it's in, relative to the worktree: empty for the
+    /// worktree's own, else a submodule's path. `path` and `oldPath` include
+    /// it; the raw text, and so any patch built from it, stays relative to
+    /// that repository.
+    public var repo: String = ""
 
     public var id: String { path }
+
+    /// `path` as its own repository names it.
+    public var repoPath: String { repo.isEmpty ? path : GitText.dropPrefix(path, repo + "/") }
+    public var repoOldPath: String? { oldPath.map { repo.isEmpty ? $0 : GitText.dropPrefix($0, repo + "/") } }
+
+    /// The same file, placed in the submodule at `repo`.
+    public func inRepo(_ repo: String) -> FileDiff {
+        guard !repo.isEmpty else { return self }
+        var file = self
+        file.repo = repo
+        file.path = repo + "/" + path
+        file.oldPath = oldPath.map { repo + "/" + $0 }
+        return file
+    }
 
     public init(path: String, oldPath: String? = nil, status: FileStatus = .modified, isBinary: Bool = false,
                 additions: Int = 0, deletions: Int = 0, hunks: [Hunk] = [], rawHeader: String) {

@@ -81,4 +81,24 @@ public enum Submodules {
         guard let out = try? await Git.git(exec, cwd: directory, ["rev-parse", "--show-prefix"]), out.ok else { return false }
         return GitText.trimmed(out.stdout).isEmpty
     }
+
+    /// Where each repository stood when the chat's branch left `base`: the
+    /// worktree's own at its merge base with `base` (key ""), each submodule
+    /// at the commit its parent recorded for it there. A submodule with no
+    /// entry didn't exist yet. Empty without a base.
+    public static func baselines(_ exec: any Executor, worktree: String, repos: [ChatRepo], base: String?) async -> [String: String] {
+        guard let base else { return [:] }
+        let top = await Diff.mergeBase(exec, worktree: worktree, base: base) ?? base
+        var found = ["": top]
+        // Parents first, so each submodule finds its parent's baseline.
+        for repo in repos.sorted(by: { $0.depth < $1.depth }) where repo.isSubmodule {
+            guard let parentPath = repo.parentPath, let parent = repos.first(where: { $0.path == parentPath }),
+                  let from = found[parentPath], let inside = parent.inside(repo.path),
+                  let out = try? await Git.git(exec, cwd: parent.directory(in: worktree), ["rev-parse", "\(from):\(inside)"]),
+                  out.ok else { continue }
+            let sha = GitText.trimmed(out.stdout)
+            if !sha.isEmpty { found[repo.path] = sha }
+        }
+        return found
+    }
 }
