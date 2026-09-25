@@ -102,6 +102,8 @@ public struct Session: Sendable, Hashable, Identifiable, Codable {
     /// Each agent that has worked in the chat, as it left it, so switching
     /// back resumes its own conversation.
     public var providerSessions: [String: ProviderSeat] = [:]
+    /// When it was pinned to the top of its project in the sidebar; nil = not pinned.
+    public var pinnedAt: Date? = nil
 
     public init(
         id: String = UUID().uuidString, projectId: String?, name: String, providerId: String,

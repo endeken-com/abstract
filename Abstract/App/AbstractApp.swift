@@ -21,6 +21,9 @@ struct AbstractApp: App {
                 .preferredColorScheme(theme.colorScheme)
         }
         .windowToolbarStyle(.unified)
+        // Abstract draws its own title band, so the toolbar's Icon and Text /
+        // Icon Only choices on right-click mean nothing here.
+        .windowToolbarLabelStyle(fixed: .iconOnly)
         .defaultSize(width: 1280, height: 820)
         // Always open the main window at launch. Restored "closed" state (or
         // several demo instances sharing it) must never leave Abstract windowless.

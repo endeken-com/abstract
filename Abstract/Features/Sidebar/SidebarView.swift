@@ -365,6 +365,12 @@ struct RailChatRow: View {
                         .truncationMode(.tail)
                 }
                 Spacer(minLength: 0)
+                if session.pinnedAt != nil {
+                    Image(systemName: "pin.fill")
+                        .font(.system(size: 9))
+                        .foregroundStyle(Color.btTextTertiary)
+                        .help("Pinned")
+                }
                 if backgroundTasks > 0 {
                     HStack(spacing: 3) {
                         Image(systemName: "square.stack.3d.up").font(.system(size: 9))
@@ -427,6 +433,7 @@ struct RailChatRow: View {
 
     @ViewBuilder private var localActions: some View {
         Button("Rename") { draft = session.name; renaming = true }
+        Button(session.pinnedAt == nil ? "Pin" : "Unpin") { model.setPinned(session.id, session.pinnedAt == nil) }
         Button(session.archivedAt == nil ? "Archive" : "Unarchive") { model.setArchived(session.id, session.archivedAt == nil) }
         if let path = session.worktreePath {
             Button("Reveal Worktree in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
