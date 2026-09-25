@@ -106,8 +106,13 @@ struct DiffView: View {
                         DiffErrorBanner(message: error) { review.actionError = nil }
                     }
                     RevundStrip(sessionId: sessionId, review: review)
-                    if review.files.isEmpty {
+                    if review.sections.isEmpty {
                         ReviewEmptyState(review: review, context: context)
+                    } else if review.files.isEmpty {
+                        // Only headings (a submodule that couldn't be read, or a pointer
+                        // not committed yet), which the tree has no rows for.
+                        DiffFileSections(review: review, context: context, layout: .unified, width: geo.size.width,
+                                         onDiscard: { discarding = [$0] })
                     } else if presentation == .list {
                         // Paseo's Changes list: a file opens the diff in the main pane.
                         ChangesTree(review: review) { model.openDiffTab(in: sessionId, focus: $0) }
@@ -307,7 +312,7 @@ private struct ReviewEmptyState: View {
         VStack(spacing: Space.md) {
             Image(systemName: "checkmark.circle").font(.system(size: 22, weight: .regular)).foregroundStyle(Color.btTextTertiary)
             Text("No changes to display").font(BTFont.ui(14, .medium)).foregroundStyle(Color.btText)
-            Text(review.mode == .uncommitted ? "Everything in the worktree is committed." : "This branch has no commits of its own yet.")
+            Text(message)
                 .font(.btCallout).foregroundStyle(Color.btTextSecondary).multilineTextAlignment(.center)
             if review.otherModeHasChanges {
                 Button(review.mode == .uncommitted ? "See committed changes" : "See uncommitted changes") {
@@ -318,6 +323,18 @@ private struct ReviewEmptyState: View {
         }
         .padding(Space.xl)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var message: String {
+        switch review.mode {
+        // Dirty with nothing to show: only whitespace changed while it's hidden,
+        // say, or only inner repositories git doesn't know about.
+        case .uncommitted: review.dirty ? "The worktree has uncommitted changes, but none that show here."
+                                        : "Everything in the worktree is committed."
+        case .committed: "This branch has no commits of its own yet."
+        // One that only moved a submodule's pointer, say.
+        case .commit: "Nothing this commit changed shows here."
+        }
     }
 }
 

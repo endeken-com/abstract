@@ -484,6 +484,7 @@ final class AppModel {
         var name: String
         var isRoot: Bool
         var nestedRepos: [String]
+        /// What `.gitmodules` registers; the rest of `nestedRepos` git doesn't know about.
         var submodules: [String]
         var defaultBranch: String
     }

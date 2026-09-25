@@ -16,13 +16,16 @@ struct DiffFileSections: View {
 
     var body: some View {
         let metrics = DiffMetrics(files: review.files, width: width, layout: layout)
+        let sections = review.sections
+        let showsRepos = DiffReview.showsRepos(sections)
         ScrollViewReader { proxy in
             ScrollView(.vertical) {
                 LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
-                    ForEach(review.sections) { section in
-                        if review.showsRepos {
+                    ForEach(sections) { section in
+                        if showsRepos {
                             RepoHeader(section: section,
                                        title: section.diff.repo.isSubmodule ? section.diff.repo.path : context.projectName,
+                                       parent: section.diff.repo.parentPath.map { $0.isEmpty ? context.projectName : $0 } ?? "",
                                        collapsed: review.collapsedRepos.contains(section.id)) { review.toggleRepo(section.id) }
                         }
                         if !review.collapsedRepos.contains(section.id) {

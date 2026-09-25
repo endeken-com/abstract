@@ -50,7 +50,8 @@ struct AddProjectSheet: View {
                 Notice(text: "Found \(probe.submodules.count) submodule\(probe.submodules.count == 1 ? "" : "s") (\(probe.submodules.prefix(3).joined(separator: ", "))). Changes inside them show in review under their own heading.")
             }
             if let probe {
-                // Inner repositories git doesn't know about, submodules' own included.
+                // Inner repositories git doesn't know about. One inside a submodule is the
+                // submodule's (its own submodules, say), so it isn't listed here.
                 let unknown = probe.nestedRepos.filter { path in !probe.submodules.contains { path == $0 || path.hasPrefix($0 + "/") } }
                 if !unknown.isEmpty {
                     Notice(text: "Found \(unknown.count) nested repositor\(unknown.count == 1 ? "y" : "ies") (\(unknown.prefix(3).joined(separator: ", "))) that aren't submodules. A worktree can't carry them, so changes inside them stay out of review.")

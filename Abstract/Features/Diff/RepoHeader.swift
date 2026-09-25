@@ -9,6 +9,9 @@ struct RepoHeader: View {
     let section: DiffReview.RepoSection
     /// The project's name for the worktree's own repository, else the submodule's path.
     let title: String
+    /// Where its pointer is committed: the project's name for a top-level
+    /// submodule, else its parent's path.
+    let parent: String
     let collapsed: Bool
     let onToggle: () -> Void
     @State private var access: RepoAccess = .unknown
@@ -33,6 +36,9 @@ struct RepoHeader: View {
                     Text(repo.branch ?? "detached").font(.btMonoSmall).foregroundStyle(Color.btTextTertiary).lineLimit(1)
                     if section.diff.isNew {
                         Text("new submodule").font(.btCaption).foregroundStyle(Color.btTextTertiary)
+                    } else if section.diff.pointerUncommitted {
+                        Text("\(section.diff.ahead > 0 ? "pointer +\(section.diff.ahead)" : "pointer moved"), not committed in \(parent)")
+                            .font(.btCaption).foregroundStyle(Color.btTextTertiary).lineLimit(1)
                     } else if section.diff.ahead > 0 {
                         Text("pointer +\(section.diff.ahead) commit\(section.diff.ahead == 1 ? "" : "s")")
                             .font(.btCaption).foregroundStyle(Color.btTextTertiary)

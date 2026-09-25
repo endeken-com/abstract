@@ -288,17 +288,20 @@ final class DiffReview {
         var id: String { diff.id }
     }
 
-    /// Every repository with something to show, the worktree's own first.
+    /// Every repository with something to show, the worktree's own first. A
+    /// submodule with no files still has its heading to show when it's new,
+    /// couldn't be read, or has a pointer its parent hasn't committed.
     var sections: [RepoSection] {
         let files = orderedFiles
         return repos.compactMap { diff in
             let own = files.filter { $0.diff.repo == diff.repo.path }
-            return own.isEmpty && !diff.isNew && diff.error == nil ? nil : RepoSection(diff: diff, files: own)
+            let noted = diff.isNew || diff.pointerUncommitted || diff.error != nil
+            return own.isEmpty && !noted ? nil : RepoSection(diff: diff, files: own)
         }
     }
 
     /// Whether the changes reach into a submodule, so each repository gets a heading.
-    var showsRepos: Bool { sections.contains { $0.diff.repo.isSubmodule } }
+    static func showsRepos(_ sections: [RepoSection]) -> Bool { sections.contains { $0.diff.repo.isSubmodule } }
 
     func toggleRepo(_ path: String) {
         if collapsedRepos.contains(path) { collapsedRepos.remove(path) } else { collapsedRepos.insert(path) }
