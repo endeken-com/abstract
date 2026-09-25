@@ -142,9 +142,10 @@ private struct PanelTab: View {
     @State private var hovering = false
     @State private var hoveringClose = false
 
-    static let width: CGFloat = 136
+    /// The side panel is narrow, so its tabs are too.
+    private var width: CGFloat { slot == .side ? 108 : 136 }
     /// Tab width less padding, the glyph and its gap.
-    static let titleWidth: CGFloat = width - 10 - 6 - 15 - 7
+    private var titleWidth: CGFloat { width - 10 - 6 - 15 - 7 }
     private var showsClose: Bool { hovering || active }
 
     var body: some View {
@@ -158,7 +159,7 @@ private struct PanelTab: View {
                 .fixedSize()
                 // An exact width: inside the tab strip's scroll view a flexible
                 // frame would take the whole title and spill out of the tab.
-                .frame(width: Self.titleWidth, alignment: .leading)
+                .frame(width: titleWidth, alignment: .leading)
                 // The title fades out instead of ending in "…"; further in when the × is over it.
                 .mask {
                     HStack(spacing: 0) {
@@ -171,7 +172,7 @@ private struct PanelTab: View {
         }
         .padding(.leading, 10)
         .padding(.trailing, 6)
-        .frame(width: Self.width, height: 28)
+        .frame(width: width, height: 28)
         .overlay(alignment: .trailing) {
             Button { model.updateLayout(session.id) { $0.close(item.id) } } label: {
                 Image(systemName: "xmark")

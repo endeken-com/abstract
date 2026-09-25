@@ -513,9 +513,9 @@ private struct ReviewCommits: View {
                         HStack(spacing: Space.sm) {
                             Text(commit.subject).font(BTFont.ui(12.5)).foregroundStyle(Color.btProse).lineLimit(1)
                             Spacer(minLength: Space.sm)
-                            Text(commit.shortSha).font(.btMonoSmall).foregroundStyle(Color.btTextTertiary)
+                            Text(commit.shortSha).font(.btMonoSmall).foregroundStyle(Color.btTextTertiary).fixedSize()
                             if let date = commit.date {
-                                Text(RelativeTime.short(date)).font(.btCaption).foregroundStyle(Color.btTextTertiary).monospacedDigit()
+                                Text(RelativeTime.short(date)).font(.btCaption).foregroundStyle(Color.btTextTertiary).monospacedDigit().fixedSize()
                             }
                         }
                         .padding(.leading, Space.md + 10 + Space.sm)

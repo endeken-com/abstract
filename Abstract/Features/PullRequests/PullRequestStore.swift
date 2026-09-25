@@ -24,13 +24,22 @@ extension AppModel {
         for project in projects where project.archivedAt == nil && (projectId == nil || project.id == projectId) {
             guard await isOnGitHub(project), let list = try? await GitHub.pullRequests(executor, repo: project.rootPath) else { continue }
             projectPullRequests[project.id] = list
+            pullRequestsListedAt[project.id] = .now
             for session in sessions where session.projectId == project.id {
                 let matches = pullRequestsForChat(session.id)
                 let current = pullRequests[session.id]
+                // An open pull request before a finished one; a newer one
+                // opened after the chat's was closed or merged takes its place.
+                let open = matches.first { $0.state == .open }
+                if let open, let current, current.state != .open, open.number > current.number,
+                   pinnedPullRequests[session.id] != current.number {
+                    pullRequests[session.id] = open
+                    continue
+                }
                 // Keep a selected PR if it falls beyond the recent-list limit
                 // or has not appeared in the list just after creation.
                 guard let summary = matches.first(where: { $0.number == current?.number })
-                    ?? (current == nil ? matches.first : nil) else { continue }
+                    ?? (current == nil ? open ?? matches.first : nil) else { continue }
                 guard let known = pullRequests[session.id], known.number == summary.number else {
                     pullRequests[session.id] = summary
                     continue
@@ -38,6 +47,13 @@ extension AppModel {
                 pullRequests[session.id] = known.refreshingSummary(with: summary)
             }
         }
+    }
+
+    /// Lists the project's pull requests again unless that happened in the last `interval`.
+    func refreshPullRequestsIfStale(projectId: String?, interval: Duration = .seconds(20)) async {
+        guard !isDemo, githubAccess == .ready, let projectId else { return }
+        if let listed = pullRequestsListedAt[projectId], ContinuousClock.now - listed < interval { return }
+        await refreshPullRequests(projectId: projectId)
     }
 
     func pullRequestsForChat(_ sessionId: String) -> [PullRequest] {
@@ -48,6 +64,7 @@ extension AppModel {
 
     func selectPullRequest(_ sessionId: String, number: Int) async throws {
         guard let summary = pullRequestsForChat(sessionId).first(where: { $0.number == number }) else { return }
+        pinnedPullRequests[sessionId] = number
         pullRequests[sessionId] = summary
         try await refreshPullRequest(sessionId)
     }
@@ -73,6 +90,29 @@ extension AppModel {
         return pr
     }
 
+    // MARK: The branch
+
+    enum OriginFetch { case never, ifStale, now }
+
+    /// Re-reads where a chat's branch stands, fetching from origin first:
+    /// `.ifStale` at most once a minute per project, `.now` regardless.
+    /// Pruned, so a branch deleted on origin (a merged PR's) shows as gone.
+    func refreshBranch(_ sessionId: String, fetch: OriginFetch = .never) async {
+        guard let session = session(sessionId), let worktree = session.worktreePath else { return }
+        let exec = executor(for: sessionId)
+        let key = session.projectId ?? sessionId
+        let stale = originFetchedAt[key].map { ContinuousClock.now - $0 >= .seconds(60) } ?? true
+        if fetch == .now || (fetch == .ifStale && stale) {
+            originFetchedAt[key] = .now
+            _ = try? await exec.run("git", ["fetch", "--quiet", "--prune", "origin"], cwd: worktree)
+        }
+        let read = (branchReads[sessionId] ?? 0) + 1
+        branchReads[sessionId] = read
+        let state = await GitActions.state(exec, worktree: worktree, preferredBase: session.baseRef)
+        guard branchReads[sessionId] == read, branchStates[sessionId] != state else { return }
+        branchStates[sessionId] = state
+    }
+
     func isOnGitHub(_ project: Project) async -> Bool {
         if let known = githubProjects[project.id] { return known }
         let out = try? await executor(forProject: project.id).run("git", ["remote", "get-url", "origin"], cwd: project.rootPath)
@@ -89,7 +129,9 @@ extension AppModel {
         pullRequests[sessionId] = try await GitHub.create(executor(for: sessionId), repo: project.rootPath, worktree: worktree, branch: branch,
                                                           base: base, title: title, body: body, draft: draft,
                                                           commitMessage: commitFirst ? title : nil)
+        pinnedPullRequests[sessionId] = nil
         await refreshPullRequests(projectId: project.id)
+        await refreshBranch(sessionId)
     }
 
     /// Commits what's in the worktree (if anything) and pushes, updating an open pull request.
@@ -97,6 +139,7 @@ extension AppModel {
         guard let session = session(sessionId), let branch = session.branch, let worktree = session.worktreePath else { return }
         try await Git.commitAll(executor(for: sessionId), worktree: worktree, message: message)
         try await Git.push(executor(for: sessionId), worktree: worktree, branch: branch)
+        await refreshBranch(sessionId)
         try await refreshPullRequest(sessionId)
     }
 
@@ -104,6 +147,8 @@ extension AppModel {
         guard let (root, number) = pullRequestTarget(sessionId) else { return }
         try await GitHub.merge(executor(for: sessionId), repo: root, number: number, method: method)
         try await refreshPullRequest(sessionId)
+        // The base moved on GitHub.
+        await refreshBranch(sessionId, fetch: .now)
     }
 
     func markPullRequestReady(_ sessionId: String) async throws {

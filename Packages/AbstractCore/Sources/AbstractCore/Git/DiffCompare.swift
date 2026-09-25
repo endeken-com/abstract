@@ -48,7 +48,8 @@ extension Diff {
 
     /// Whether anything is uncommitted, new files included.
     public static func isDirty(_ exec: any Executor, worktree: String) async -> Bool {
-        guard let status = try? await Git.git(exec, cwd: worktree, ["status", "--porcelain"]), status.ok else { return false }
+        // Polled often, beside agents running git: don't take the index lock to refresh it.
+        guard let status = try? await Git.git(exec, cwd: worktree, ["--no-optional-locks", "status", "--porcelain"]), status.ok else { return false }
         return !status.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 

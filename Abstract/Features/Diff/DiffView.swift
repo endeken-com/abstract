@@ -188,6 +188,7 @@ private struct ReviewToolbar: View {
             ModeMenu(review: review, context: context)
             if count > 0 {
                 DiffCounts(additions: review.totalAdditions, deletions: review.totalDeletions, compact: true)
+                    .fixedSize()
                     .help("\(count) file\(count == 1 ? "" : "s")")
             }
             if review.isRefreshing || review.isWorking {
@@ -268,7 +269,7 @@ private struct ModeMenu: View {
             }
         } label: {
             HStack(spacing: 4) {
-                Text(title).font(BTFont.ui(13, .medium)).foregroundStyle(Color.btText).lineLimit(1)
+                Text(title).font(BTFont.ui(13, .medium)).foregroundStyle(Color.btText).lineLimit(1).truncationMode(.tail)
                 Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(Color.btTextTertiary)
             }
             .contentShape(Rectangle())
@@ -276,7 +277,9 @@ private struct ModeMenu: View {
         .menuStyle(.button)
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
-        .fixedSize()
+        // A commit's subject can be long: it truncates rather than widening
+        // the toolbar, and gives way to the buttons beside it.
+        .fixedSize(horizontal: false, vertical: true)
         .help(help)
     }
 

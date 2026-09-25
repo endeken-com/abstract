@@ -5,6 +5,9 @@ public struct BranchState: Sendable, Equatable {
     public var dirty = false
     public var hasOrigin = false
     public var hasUpstream = false
+    /// The branch tracked one on origin that's since been deleted, as
+    /// GitHub does when a pull request is merged.
+    public var upstreamGone = false
     /// Commits the upstream (or, with none, `origin`) doesn't have.
     public var ahead = 0
     /// Commits on the upstream this branch doesn't have.
@@ -52,6 +55,9 @@ public enum GitActions {
             state.behind = await count(["rev-list", "--count", "HEAD..@{upstream}"])
         } else if state.hasOrigin {
             state.ahead = await count(["rev-list", "--count", "HEAD", "--not", "--remotes=origin"])
+            if let branch = await out(["symbolic-ref", "--short", "HEAD"]) {
+                state.upstreamGone = await out(["config", "branch.\(branch).merge"]) != nil
+            }
         }
         state.base = await Diff.resolveBase(exec, worktree: worktree, preferred: preferredBase)
         if let base = state.base {
@@ -59,6 +65,48 @@ public enum GitActions {
             state.behindBase = await count(["rev-list", "--count", "HEAD..\(base)"])
         }
         return state
+    }
+
+    /// A step the git actions button can take.
+    public enum Step: Sendable, Hashable {
+        case commit, pull, push, pullAndPush, updateFromBase, mergeLocally, createPR, viewPR, archive
+    }
+
+    /// How the branch's pull request stands, as far as the next step goes.
+    public enum PullRequestStanding: Sendable, Hashable {
+        case open, conflicting, closed, merged
+
+        public init(_ pr: PullRequest) {
+            switch pr.state {
+            case .open: self = pr.hasConflicts ? .conflicting : .open
+            case .closed: self = .closed
+            case .merged: self = .merged
+            }
+        }
+    }
+
+    /// The likeliest next step, after Paseo's order: commit what's
+    /// uncommitted; take what's new upstream; then see the work through its
+    /// pull request, or merge it yourself. `.commit` with nothing to commit
+    /// means there's nothing to do.
+    public static func suggestion(_ s: BranchState, pullRequest pr: PullRequestStanding?, onGitHub: Bool) -> Step {
+        if s.dirty { return .commit }
+        if s.behind > 0 { return s.ahead > 0 ? .pullAndPush : .pull }
+        let unpushed = s.hasOrigin && s.ahead > 0
+        switch pr {
+        case .merged?:
+            // It landed; commits left over from a squash merge aren't news.
+            return .archive
+        case .open?, .conflicting?:
+            if unpushed { return .push }
+            return pr == .conflicting && s.behindBase > 0 ? .updateFromBase : .viewPR
+        case .closed?, nil:
+            // Opening the pull request pushes the branch too.
+            if s.aheadOfBase > 0, onGitHub { return .createPR }
+            if unpushed { return .push }
+            if s.behindBase > 0 { return .updateFromBase }
+            return s.aheadOfBase > 0 ? .mergeLocally : .commit
+        }
     }
 
     public static func pull(_ exec: any Executor, worktree: String) async throws {
