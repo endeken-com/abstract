@@ -7,7 +7,7 @@ struct SlashItem: Identifiable {
     /// What to type after it, for an agent command that takes something.
     var hint: String? = nil
     var detail: String? = nil
-    /// App, Command or Skill.
+    /// Command or Skill, for the agent's own.
     var tag: String? = nil
     /// Choices only: whether it's the current one.
     var checked: Bool? = nil
@@ -25,6 +25,12 @@ struct SlashMenu: View {
 
     static let rowHeight: CGFloat = 28
     static let maxRows = 8
+    static let titleHeight: CGFloat = 26
+
+    /// Its height for `rows` rows, so the composer can set it just above the box.
+    static func height(rows: Int, titled: Bool) -> CGFloat {
+        CGFloat(min(rows, maxRows)) * rowHeight + 8 + (titled ? titleHeight : 0)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -33,7 +39,7 @@ struct SlashMenu: View {
                     .font(.btSectionLabel)
                     .foregroundStyle(Color.btTextTertiary)
                     .padding(.horizontal, Space.md)
-                    .padding(.top, 8)
+                    .frame(height: Self.titleHeight, alignment: .bottomLeading)
             }
             ScrollViewReader { proxy in
                 ScrollView {

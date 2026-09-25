@@ -152,10 +152,10 @@ struct ComposerView: View {
             .overlay(alignment: .top) {
                 let items = slashItems
                 if !items.isEmpty {
-                    SlashMenu(title: slashChoosing.map { "/" + $0.name }, items: items,
-                              selected: min(slashSelected, items.count - 1), hover: { slashSelected = $0 })
-                        // Its bottom sits just above the box.
-                        .alignmentGuide(.top) { $0[.bottom] + 6 }
+                    let title = slashChoosing.map { "/" + $0.name }
+                    SlashMenu(title: title, items: items, selected: min(slashSelected, items.count - 1), hover: { slashSelected = $0 })
+                        // Just above the box. An alignment guide doesn't move an overlay; an offset does.
+                        .offset(y: -(SlashMenu.height(rows: items.count, titled: title != nil) + 6))
                 }
             }
             .onChange(of: draft) {
@@ -236,7 +236,7 @@ struct ComposerView: View {
     private func item(_ entry: SlashEntry) -> SlashItem {
         switch entry {
         case .app(let command):
-            SlashItem(id: "app:" + command.name, title: "/" + command.name, detail: command.detail, tag: "App") { run(command) }
+            SlashItem(id: "app:" + command.name, title: "/" + command.name, detail: command.detail) { run(command) }
         case .agent(let command):
             // It goes to the agent as typed; what follows is up to you.
             SlashItem(id: "agent:" + command.name, title: "/" + command.name, hint: command.argumentHint,
