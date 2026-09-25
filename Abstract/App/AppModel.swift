@@ -83,6 +83,8 @@ final class AppModel {
     var requestArchive: String?
     /// The background tasks list showing, and the task open in it; see AppModel+Tasks.
     var tasksOpen: TasksFocus?
+    /// A chat whose sidebar row should start renaming, from `/rename`.
+    var renamingSessionId: String?
     /// The main pane's tabs: chats, files and changes; see AppModel+MainTabs.
     var mainTabs = MainTabs() { didSet { if mainTabs != oldValue { save("mainTabs", mainTabs) } } }
     /// The side panel's width on screen, per chat, so its tabs can sit in the
@@ -417,6 +419,17 @@ final class AppModel {
         let feed = ChatFeed()
         feeds[sessionId] = feed
         return feed
+    }
+    /// What the chat's agent says it understands. Until it has said (a new
+    /// chat's agent starts with its first message), what the same agent said
+    /// in another loaded chat of the project.
+    func agentCommands(_ session: Session) -> [AgentCommand] {
+        let own = feed(session.id).commands?.commands(for: session.providerId) ?? []
+        guard own.isEmpty, let projectId = session.projectId else { return own }
+        for other in sessions where other.id != session.id && other.projectId == projectId {
+            if let list = feeds[other.id]?.commands?.commands(for: session.providerId), !list.isEmpty { return list }
+        }
+        return []
     }
     func pendingPermissions(_ sessionId: String) -> [PendingPermission] { permissions[sessionId] ?? [] }
     func isAlive(_ sessionId: String) -> Bool {
