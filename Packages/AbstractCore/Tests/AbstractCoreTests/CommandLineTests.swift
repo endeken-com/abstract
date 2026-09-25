@@ -16,6 +16,8 @@ private enum FakeAgent {
     case failsToStart
     /// Starts up, then reports an error, as `claude` does when it isn't signed in; stays alive.
     case errorsAfterInit
+    /// Takes three seconds over the prompt's turn, then answers every message.
+    case slowTurn
 
     var script: String {
         let result = #"{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"fake-session","usage":{"input_tokens":1,"output_tokens":1},"total_cost_usd":0,"duration_ms":1,"num_turns":1}"#
@@ -44,6 +46,16 @@ private enum FakeAgent {
                 """
         case .failsToStart:
             return "#!/bin/sh\necho 'not signed in' >&2\nexit 3\n"
+        case .slowTurn:
+            return """
+                #!/bin/sh
+                echo '{"type":"system","subtype":"init","session_id":"fake-session","model":"fake"}'
+                read -r line
+                echo '{"type":"stream_event","event":{"type":"message_start","message":{"id":"m1"}}}'
+                sleep 3
+                echo '\(result)'
+                while IFS= read -r line; do echo '\(result)'; done
+                """
         case .errorsAfterInit:
             let failed = #"{"type":"result","subtype":"success","is_error":true,"result":"Invalid API key · Please run /login","session_id":"fake-session","usage":{"input_tokens":0,"output_tokens":0},"total_cost_usd":0,"duration_ms":1,"num_turns":1}"#
             return """
@@ -72,6 +84,7 @@ private final class Sandbox {
     var data: URL { root.appendingPathComponent("data") }
     var repo: URL { root.appendingPathComponent("repo") }
     var locks: URL { data.appendingPathComponent("locks") }
+    var storePath: String { data.appendingPathComponent("abstract.sqlite").path }
     let store: Store
     let project: Project
 
@@ -592,6 +605,95 @@ struct CommandLineTests {
         #expect(try await box.run(["agent", "respawn", "--session", id, "--agent", "codex", "--prompt-file", prompt]).code == "unknown_agent")
     }
 
+    // MARK: With the app open
+
+    @Test func withTheAppOpenTheAppRunsTheNewChatsAgent() async throws {
+        let box = try await Sandbox()
+        defer { box.tearDown() }
+        let app = try #require(FakeApp(box))
+        defer { app.stop() }
+        let out = try await box.create()
+        #expect(out.status == 0)
+        let id = try #require(out.object["id"] as? String)
+        #expect((out.object["agent"] as? [String: Any])?["driver"] as? String == "app")
+        #expect(app.requests.map(\.sessionId) == [id])
+        #expect(app.requests.first?.fresh == true)
+        #expect(app.requests.first?.prompt == "Fix the login button")
+        // The app holds the chat; nothing ran the agent from the command line.
+        #expect(SessionLock.holder(of: id, in: box.locks)?.driver == .app)
+        #expect(box.argsLog.isEmpty)
+        #expect(try box.store.session(id)?.branch == "fix/login")
+    }
+
+    @Test func anAppThatCantStartTheAgentLeavesNothingBehind() async throws {
+        let box = try await Sandbox()
+        defer { box.tearDown() }
+        let app = try #require(FakeApp(box, failing: "Not signed in"))
+        defer { app.stop() }
+        let out = try await box.create(branch: "unstarted")
+        #expect(out.code == "agent_start_failed")
+        #expect((out.object["message"] as? String)?.contains("Not signed in") == true)
+        try expectNothingLeft(box, branch: "unstarted")
+        #expect(try await !box.branches().contains("unstarted"))
+    }
+
+    @Test func respawnGoesToTheOpenAppToo() async throws {
+        let box = try await Sandbox()
+        defer { box.tearDown() }
+        let id = try #require(try await box.create().object["id"] as? String)
+        try await box.stopAgent(id)
+        let app = try #require(FakeApp(box))
+        defer { app.stop() }
+        let out = try await box.run(["agent", "respawn", "--session", id, "--agent", "claude", "--prompt-file", box.file("Again")])
+        #expect(out.object["driver"] as? String == "app")
+        #expect(app.requests.first?.fresh == false)
+        #expect(app.requests.first?.prompt == "Again")
+    }
+
+    @Test func aDeadAppSocketFallsBackToTheCommandLine() async throws {
+        let box = try await Sandbox()
+        defer { box.tearDown() }
+        // What an app that crashed leaves behind: the socket's file, and nobody listening.
+        let path = AppLink.socketPath(storePath: box.storePath)
+        close(try HostSocket.listen(path: path))
+        defer { unlink(path) }
+        let out = try await box.create()
+        #expect(out.status == 0)
+        #expect((out.object["agent"] as? [String: Any])?["driver"] as? String == "cli")
+    }
+
+    // MARK: Handing a chat to the app
+
+    @Test func openingTheChatInTheAppTakesItOverOnceIdle() async throws {
+        let box = try await Sandbox()
+        defer { box.tearDown() }
+        let id = try #require(try await box.create().object["id"] as? String)
+        try await waitUntil { try box.store.session(id)?.status == .idle }
+        // What the app does when the chat shows.
+        let host = try #require(SessionLock.holder(of: id, in: box.locks))
+        kill(host.pid, SIGUSR1)
+        try await waitUntil { SessionLock.holder(of: id, in: box.locks) == nil }
+        let session = try #require(try box.store.session(id))
+        #expect(session.status == .finished)
+        // Where the app's next message resumes the conversation.
+        #expect(session.providerSessionId == "fake-session")
+        let app = try SessionLock.acquire(id, as: .app, in: box.locks)
+        app.release()
+    }
+
+    @Test func aTurnUnderWayFinishesBeforeTheAppTakesOver() async throws {
+        let box = try await Sandbox(agent: .slowTurn)
+        defer { box.tearDown() }
+        let id = try #require(try await box.create().object["id"] as? String)
+        let host = try #require(SessionLock.holder(of: id, in: box.locks))
+        kill(host.pid, SIGUSR1)
+        try await Task.sleep(for: .milliseconds(800))
+        #expect(SessionLock.holder(of: id, in: box.locks) != nil, "still at work on its turn")
+        try await waitUntil(timeout: 15) { SessionLock.holder(of: id, in: box.locks) == nil }
+        #expect(box.log(id).contains { $0.line.contains(#""type":"result""#) }, "the turn ran to its end")
+        #expect(try box.store.session(id)?.status == .finished)
+    }
+
     // MARK: The lock, both ways
 
     @Test func aSessionOpenInTheAppIsLockedToTheCommandLine() async throws {
@@ -680,4 +782,42 @@ private final class Heard: @unchecked Sendable {
     private var n = 0
     var count: Int { lock.withLock { n } }
     func mark() { lock.withLock { n += 1 } }
+}
+
+/// Stands in for the open app: takes each chat's lock and says its agent is
+/// up, as the app does once it runs it, or turns it down with `failing`.
+private final class FakeApp: @unchecked Sendable {
+    private let server: AppLink.Server
+    private let log: Log
+
+    private final class Log: @unchecked Sendable {
+        let mutex = NSLock()
+        var requests: [AppLink.StartRequest] = []
+        var locks: [SessionLock] = []
+    }
+
+    init?(_ box: Sandbox, failing message: String? = nil) {
+        let log = Log()
+        let locks = box.locks
+        guard let server = AppLink.Server(storePath: box.storePath, handler: { request in
+            log.mutex.withLock { log.requests.append(request) }
+            if let message { return AppLink.StartReply(agent: nil, message: message) }
+            let agent = AgentRecord(sessionId: request.sessionId, providerId: "claude")
+            guard let lock = try? SessionLock.acquire(request.sessionId, as: .app, in: locks) else {
+                return AppLink.StartReply(agent: nil, message: "The chat's lock wasn't free.")
+            }
+            try? lock.setAgent(agent)
+            log.mutex.withLock { log.locks.append(lock) }
+            return AppLink.StartReply(agent: agent, message: nil)
+        }) else { return nil }
+        self.server = server
+        self.log = log
+    }
+
+    var requests: [AppLink.StartRequest] { log.mutex.withLock { log.requests } }
+
+    func stop() {
+        server.stop()
+        log.mutex.withLock { log.locks.forEach { $0.release() } }
+    }
 }

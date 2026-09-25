@@ -29,17 +29,44 @@ enum HostSocket {
         guard chdir(directory.path) == 0 else { throw posixError("chdir \(directory.path)") }
         let name = name(sessionId)
         unlink(name)
+        return try listen(path: name)
+    }
+
+    /// A listening socket at `path`, which must fit a socket address.
+    static func listen(path: String) throws -> Int32 {
+        guard fits(path) else { throw AbstractError.message("\(path) is too long for a socket") }
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { throw posixError("socket") }
         _ = fcntl(fd, F_SETFD, FD_CLOEXEC)
-        var address = Self.address(name)
+        var address = Self.address(path)
         guard withSockaddr(&address, { bind(fd, $0, $1) }) == 0, Darwin.listen(fd, 8) == 0 else {
-            let error = posixError("listen on \(name)")
+            let error = posixError("listen on \(path)")
             close(fd)
             throw error
         }
-        chmod(name, 0o600)
+        chmod(path, 0o600)
         return fd
+    }
+
+    /// Connected to the socket at `path`; nil when nothing listens there.
+    static func connect(path: String) -> Int32? {
+        guard fits(path) else { return nil }
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard fd >= 0 else { return nil }
+        _ = fcntl(fd, F_SETFD, FD_CLOEXEC)
+        var on: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
+        var address = Self.address(path)
+        guard withSockaddr(&address, { Darwin.connect(fd, $0, $1) }) == 0 else {
+            close(fd)
+            return nil
+        }
+        return fd
+    }
+
+    /// Whether `path` fits a socket address (104 bytes, with its terminator).
+    static func fits(_ path: String) -> Bool {
+        path.utf8.count < MemoryLayout.size(ofValue: sockaddr_un().sun_path)
     }
 
     /// The host's answer; nil when no host listens (or it went away mid-request).
@@ -52,7 +79,7 @@ enum HostSocket {
         var on: Int32 = 1
         setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
         var address = Self.address(name(sessionId))
-        guard withSockaddr(&address, { connect(fd, $0, $1) }) == 0 else { return nil }
+        guard withSockaddr(&address, { Darwin.connect(fd, $0, $1) }) == 0 else { return nil }
         guard writeLine(fd, try JSONEncoder().encode(request)), let line = readLine(fd, timeoutMs: timeoutMs) else { return nil }
         return try? JSONDecoder().decode(HostReply.self, from: line)
     }

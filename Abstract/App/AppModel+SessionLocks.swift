@@ -7,6 +7,8 @@ import AbstractCore
 /// shows or the app runs its agent, so `abstract` can't send to or respawn
 /// it then. A chat whose lock `abstract` holds shows read-only here, its
 /// transcript following the log that agent writes, until the agent stops.
+/// Opening such a chat asks for it: its agent stops once idle (at once, or
+/// when its turn ends), and the chat carries on here like any other.
 extension AppModel {
     static let drivenFromCLI = AbstractError.message(
         "This chat is driven from the command line, so it's read-only here until its agent stops.")
@@ -69,6 +71,15 @@ extension AppModel {
         }
         for id in wanted where heldLocks[id] == nil { _ = try? holdLock(id) }
         refreshCLIDriven()
+        claimShownChat()
+    }
+
+    /// The chat showing is one `abstract`'s agent runs: ask its host for it.
+    /// Asking again changes nothing, so every look can ask.
+    private func claimShownChat() {
+        guard let id = selectedSessionId, heldLocks[id] == nil, let holder = cliDriven[id], holder.agent != nil,
+              SessionLock.holder(of: id, in: locksDirectory)?.pid == holder.pid else { return }
+        kill(holder.pid, SIGUSR1)
     }
 
     /// The chat's lock, taken now if the app doesn't hold it yet. Throws when
@@ -100,6 +111,59 @@ extension AppModel {
     func followCLIChat() {
         guard let id = selectedSessionId, !id.hasPrefix(RemoteService.mirrorPrefix), !alive.contains(id) else { return }
         tailLog(id)
+    }
+
+    // MARK: Chats `abstract` makes while the app is open
+
+    /// Lets `abstract` hand the app the agent of each chat it creates or
+    /// respawns while the app is open, so the chat is the app's from the start.
+    func serveCommandLine() {
+        appLink = AppLink.Server(storePath: storePath) { [weak self] request in
+            guard let self else { return AppLink.StartReply(agent: nil, message: "Abstract is quitting.") }
+            return await self.startForCommandLine(request)
+        }
+    }
+
+    /// Starts the agent of a chat `abstract` just made (or respawned), as
+    /// `startChat` starts one, and answers once it's up or has failed. The
+    /// chat is listed like any other; it doesn't take over the screen.
+    func startForCommandLine(_ request: AppLink.StartRequest) async -> AppLink.StartReply {
+        let id = request.sessionId
+        reload()
+        guard let session = session(id) else { return AppLink.StartReply(agent: nil, message: "Abstract can't find session \(id).") }
+        if request.fresh { feed(id).reset() }
+        if let replacing = request.replacing {
+            engine.record(sessionId: id, HandoffMarker(phase: .handoff, from: replacing, to: session.providerId).line)
+        }
+        engine.recordInput(sessionId: id, text: request.prompt)
+        do {
+            try launch(session, prompt: request.prompt, resume: false)
+        } catch {
+            return AppLink.StartReply(agent: nil, message: error.localizedDescription)
+        }
+        switch await agentStarted(id) {
+        case .up:
+            return AppLink.StartReply(agent: appAgents[id], message: nil)
+        case let .failed(message):
+            stop(id)
+            return AppLink.StartReply(agent: nil, message: message)
+        }
+    }
+
+    /// Waits for the agent just launched in the chat to show it works, or to fail (see `AgentStart`).
+    private func agentStarted(_ id: String) async -> AgentStart.Outcome {
+        await withCheckedContinuation { continuation in
+            startWaits[id] = continuation
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(AgentStart.timeout))
+                self?.agentStart(id, .up)
+            }
+        }
+    }
+
+    /// Settles `agentStarted`'s wait, once.
+    func agentStart(_ id: String, _ outcome: AgentStart.Outcome) {
+        startWaits.removeValue(forKey: id)?.resume(returning: outcome)
     }
 
     /// Stop for a chat whose agent `abstract` runs: its host stops the agent
