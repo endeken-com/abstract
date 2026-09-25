@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// One row of the `/` menu: a command, or one of a command's choices.
 struct SlashItem: Identifiable {
@@ -22,6 +23,9 @@ struct SlashMenu: View {
     let items: [SlashItem]
     let selected: Int
     let hover: (Int) -> Void
+    /// Where the pointer was when a row last took the highlight. Rows that
+    /// scroll under a pointer that hasn't moved don't take it from the arrow keys.
+    @State private var pointer = NSEvent.mouseLocation
 
     static let rowHeight: CGFloat = 28
     static let maxRows = 8
@@ -49,7 +53,12 @@ struct SlashMenu: View {
                                 .id(index)
                                 .contentShape(Rectangle())
                                 .onTapGesture { item.run() }
-                                .onHover { if $0 { hover(index) } }
+                                .onHover { inside in
+                                    let location = NSEvent.mouseLocation
+                                    guard inside, location != pointer else { return }
+                                    pointer = location
+                                    hover(index)
+                                }
                         }
                     }
                     .padding(4)

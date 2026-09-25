@@ -161,6 +161,8 @@ struct ComposerView: View {
             .onChange(of: draft) {
                 slashSelected = 0
                 slashChoosing = nil
+                // Esc closes the menu for that draft only.
+                if draft != slashDismissed { slashDismissed = nil }
             }
             .frame(maxWidth: Space.readingWidth + 2 * Space.lg)
 
