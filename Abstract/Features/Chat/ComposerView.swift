@@ -1,12 +1,14 @@
 import SwiftUI
 import AbstractCore
 
-/// The reply box. Return sends, Option-Return breaks the line, and the round
+/// The reply box. Return breaks the line, Command-Return sends, and the send
 /// button turns into Stop while the agent works.
 struct ComposerView: View {
     @Environment(AppModel.self) private var model
     let session: Session
     @State private var draft = ""
+    @State private var previewingMarkdown = false
+    @State private var markdownHeight: CGFloat = 20
     @FocusState private var focused: Bool
 
     private var working: Bool { session.status == .running || session.status == .provisioning }
@@ -49,29 +51,51 @@ struct ComposerView: View {
                 }
                 HStack(alignment: .bottom, spacing: Space.sm) {
                     // The agent's guess at your next message shows as the placeholder;
-                    // Tab takes it, then Return sends it as usual.
-                    TextField(text: $draft, prompt: Text(readOnly ? "Driven from the command line" : suggestion ?? "Reply to \(ProviderRegistry.name(session.providerId))…"), axis: .vertical) {
-                        Text("Reply")
-                    }
-                        .disabled(readOnly)
-                        .textFieldStyle(.plain)
-                        .font(BTFont.chat(13.5))
-                        .onKeyPress(.tab) {
-                            guard draft.isEmpty, let suggestion else { return .ignored }
-                            draft = suggestion
-                            return .handled
+                    // Tab takes it; Markdown stays literal until Preview is opened.
+                    if previewingMarkdown {
+                        ScrollView {
+                            AgentProse(markdown: draft)
+                                .environment(\.proseStyle, ProseStyle(size: .small))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { markdownHeight = $0 }
                         }
-                        .lineSpacing(2)
-                        .lineLimit(1...10)
-                        .focused($focused)
-                        .onSubmit(send)
+                        .frame(height: min(max(markdownHeight, 20), 180))
                         .padding(.vertical, 7)
+                    } else {
+                        TextField(text: $draft, prompt: Text(readOnly ? "Driven from the command line" : suggestion ?? "Reply to \(ProviderRegistry.name(session.providerId))…"), axis: .vertical) {
+                            Text("Reply")
+                        }
+                            .disabled(readOnly)
+                            .textFieldStyle(.plain)
+                            .font(BTFont.chat(13.5))
+                            .onKeyPress(.tab) {
+                                guard draft.isEmpty, let suggestion else { return .ignored }
+                                draft = suggestion
+                                return .handled
+                            }
+                            .returnBreaksLine(commandReturn: send)
+                            .lineSpacing(2)
+                            .lineLimit(1...10)
+                            .focused($focused)
+                            .padding(.vertical, 7)
+                    }
 
                     AttachmentButtons(repoRoot: repoRoot, sessionId: session.id, attachments: attachmentsBinding)
                         .disabled(readOnly)
 
-                    // No round send button: a return glyph says what Return does,
-                    // and becomes Stop while the agent works.
+                    if !draft.isEmpty {
+                        Button(previewingMarkdown ? "Edit" : "Preview") {
+                            previewingMarkdown.toggle()
+                            if !previewingMarkdown { focused = true }
+                        }
+                        .buttonStyle(.plain)
+                        .font(.btChatCaption)
+                        .foregroundStyle(Color.btTextSecondary)
+                        .frame(height: 26)
+                        .help(previewingMarkdown ? "Edit Markdown" : "Preview Markdown")
+                    }
+
+                    // The send button becomes Stop while the agent works.
                     if working {
                         Button { model.stop(session.id) } label: {
                             Image(systemName: "stop.fill")
@@ -84,7 +108,7 @@ struct ComposerView: View {
                         .help("Stop the agent (⌘.)")
                     } else {
                         Button(action: send) {
-                            Image(systemName: "return")
+                            Image(systemName: "arrow.up")
                                 .font(.system(size: 12, weight: .regular))
                                 .foregroundStyle(canSend ? Color.btText : Color.btTextTertiary)
                                 .frame(width: 26, height: 26)
@@ -92,7 +116,7 @@ struct ComposerView: View {
                         }
                         .buttonStyle(.plain)
                         .disabled(!canSend)
-                        .help("Send (Return)")
+                        .help("Send (⌘↩)")
                         .animation(.snappy(duration: 0.15), value: canSend)
                     }
                 }
@@ -141,6 +165,7 @@ struct ComposerView: View {
         guard canSend else { return }
         let pending = attachments
         draft = ""
+        previewingMarkdown = false
         attachments = []
         RevundService.shared.userWrote(session.id)
         do {
@@ -208,17 +233,17 @@ private struct AgentControls: View {
     var body: some View {
         HStack(spacing: 2) {
             AttachUploadButton(attachments: $attachments)
+            let device = RemoteService.split(session.id)?.device
             CompactMenu(title: ProviderRegistry.name(session.providerId), logo: session.providerId) {
                 Picker("Agent", selection: Binding(get: { session.providerId }, set: { new in
                     model.setAgent(session.id, providerId: new, model: nil, effort: nil)
                 })) {
-                    ForEach(ProviderRegistry.all, id: \.id) { p in Text(p.name).tag(p.id) }
+                    ForEach(model.pickableAgents(on: device, keeping: session.providerId), id: \.id) { p in Text(p.name).tag(p.id) }
                 }
                 .pickerStyle(.inline)
                 Divider()
                 Text("Another agent gets a summary of this chat with your next message.")
             }
-            let device = RemoteService.split(session.id)?.device
             ModelMenu(providerId: session.providerId, modelId: Binding(get: { session.model }, set: { new in
                 let levels = model.efforts(providerId: session.providerId, model: new, on: device).levels
                 model.setAgent(session.id, providerId: session.providerId, model: new,
@@ -233,7 +258,8 @@ private struct AgentControls: View {
                 }
                 .pickerStyle(.inline)
                 Divider()
-                Text(session.permissionPolicy.detail)
+                Text(ProviderRegistry.provider(session.providerId)?.permissionDetail(session.permissionPolicy)
+                     ?? session.permissionPolicy.detail)
             }
             .help("How much the agent may do without asking")
             if model.needsRelaunch.contains(session.id) {

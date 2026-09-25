@@ -107,8 +107,7 @@ extension AppModel {
     /// also guide the branch; a failed naming call leaves a readable fallback.
     func suggestedNaming(_ project: Project, providerId: String, model: String?, prompt: String) async -> ChatNaming.Suggestion? {
         guard !isDemo else { return nil }
-        let binaryId = providerId == "ollama" || providerId == "lmstudio" ? "codex" : providerId
-        let binary = providerOverrides[binaryId]?.path.flatMap { $0.isEmpty ? nil : $0 }
+        let binary = providerOverrides[providerId]?.path.flatMap { $0.isEmpty ? nil : $0 }
         return await ChatNaming.suggest(executor: executor, binary: binary, providerId: providerId, model: model,
                                         instructions: project.namingInstructions ?? "", task: prompt)
     }

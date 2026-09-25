@@ -255,7 +255,7 @@ final class RemoteService {
         return RemoteSnapshot(projects: model.projects.filter { $0.archivedAt == nil },
                               sessions: model.sessions.filter { !$0.id.hasPrefix(Self.mirrorPrefix) },
                               providers: ProviderRegistry.all.map(\.id).filter { model.providerStatus[$0]?.available ?? false },
-                              alive: Array(model.alive), localModels: model.sharedLocalModels,
+                              alive: Array(model.alive),
                               home: model.executor.homeDirectory, modelCatalogs: model.modelCatalogs,
                               pullRequests: model.pullRequests.mapValues {
                                   RemotePullRequest(number: $0.number, title: $0.title, state: $0.state.rawValue,
@@ -545,8 +545,6 @@ final class HostedPeer {
     var terminals: [Int: HostTerminal] = [:]
     private var subscriptions: Set<String> = []
     private var lastSnapshot: RemoteSnapshot?
-    /// Connections to this Mac's local model servers, made for the other Mac.
-    private var tunnels: [Int: NWConnection] = [:]
     private let outbox = AsyncStream<RemoteMessage>.makeStream()
 
     init(channel: RemoteChannel, peer: PeerInfo, service: RemoteService) {
@@ -573,8 +571,6 @@ final class HostedPeer {
         Task {
             defer {
                 outbox.continuation.finish()
-                for connection in tunnels.values { connection.cancel() }
-                tunnels = [:]
                 endStreams()
                 service?.hostedPeerEnded(self)
             }
@@ -583,45 +579,9 @@ final class HostedPeer {
                 switch message {
                 // Each on its own, so a slow git command doesn't hold up the rest.
                 case let .request(id, request): Task { post(.response(id: id, await handle(request, id: id))) }
-                case let .tunnel(id, frame): tunnel(id, frame)
+                // An older version asking for a local model server: none here.
+                case let .tunnel(id, .open): post(.tunnel(id: id, .close))
                 default: break
-                }
-            }
-        }
-    }
-
-    /// The other Mac using this one's local model server: each tunnel is a
-    /// connection to the server here, carried over the pairing link. Only
-    /// the servers this Mac shares, only to their own address.
-    private func tunnel(_ id: Int, _ frame: TunnelFrame) {
-        switch frame {
-        case .open(let kind):
-            guard let service, service.hosting, service.model?.sharesLocalModel(kind) == true,
-                  let host = LocalModelEndpoints.url(kind).host, let port = NWEndpoint.Port(rawValue: UInt16(LocalModelEndpoints.url(kind).port ?? Int(kind.defaultPort))) else {
-                post(.tunnel(id: id, .close))
-                return
-            }
-            let connection = NWConnection(host: NWEndpoint.Host(host), port: port, using: .tcp)
-            tunnels[id] = connection
-            connection.start(queue: .main)
-            pump(connection, id: id)
-        case .data(let data):
-            tunnels[id]?.send(content: data, completion: .idempotent)
-        case .close:
-            tunnels.removeValue(forKey: id)?.cancel()
-        }
-    }
-
-    private func pump(_ connection: NWConnection, id: Int) {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, complete, error in
-            Task { @MainActor in
-                guard let self else { return }
-                if let data, !data.isEmpty { self.post(.tunnel(id: id, .data(data))) }
-                if complete || error != nil {
-                    self.post(.tunnel(id: id, .close))
-                    self.tunnels.removeValue(forKey: id)?.cancel()
-                } else {
-                    self.pump(connection, id: id)
                 }
             }
         }
@@ -658,7 +618,7 @@ final class HostedPeer {
             }
         case let .start(project, provider, prompt, policy):
             do {
-                let id = try await model.startChat(projectId: project, providerId: provider, prompt: prompt, baseRef: nil,
+                let id = try await model.startChat(projectId: project, providerId: RetiredAgents.current(provider), prompt: prompt, baseRef: nil,
                                                    policy: policy, select: false)
                 // Not watched yet: the controller subscribes from the start, so it gets the prompt too.
                 return .started(sessionId: id)
@@ -671,9 +631,14 @@ final class HostedPeer {
                 let existing = start.worktree == nil ? nil : await model.reusableWorktrees(projectId: start.projectId)
                     .first { AppModel.canonical($0.path) == AppModel.canonical(start.worktree!) }
                 if start.worktree != nil, existing == nil { return .failed("That worktree isn't on this Mac any more.") }
-                let id = try await model.startChat(projectId: start.projectId, providerId: start.providerId, prompt: start.prompt,
-                                                   attachments: kept, baseRef: start.baseRef, policy: start.policy, model: start.model,
-                                                   effort: start.effort, existing: existing, select: false)
+                // An older version may still ask for a retired agent: OpenCode
+                // runs it instead, on its own default model.
+                let agent = RetiredAgents.current(start.providerId)
+                let retired = agent != start.providerId
+                let id = try await model.startChat(projectId: start.projectId, providerId: agent, prompt: start.prompt,
+                                                   attachments: kept, baseRef: start.baseRef, policy: start.policy,
+                                                   model: retired ? nil : start.model, effort: retired ? nil : start.effort,
+                                                   existing: existing, select: false)
                 return .started(sessionId: id)
             } catch {
                 return .failed(error.localizedDescription)
@@ -688,7 +653,8 @@ final class HostedPeer {
             model.answerQuestion(session, requestId: requestId, answers: answers)
             return .ok
         case let .setAgent(session, provider, name, effort):
-            model.setAgent(session, providerId: provider, model: name, effort: effort)
+            let agent = RetiredAgents.current(provider)
+            model.setAgent(session, providerId: agent, model: agent == provider ? name : nil, effort: agent == provider ? effort : nil)
             return .ok
         case let .setPolicy(session, policy):
             model.setPolicy(session, policy)
@@ -763,8 +729,6 @@ final class RemoteLink {
     @ObservationIgnored private var subscribed: Set<String> = []
     @ObservationIgnored private var lastSeq: [String: Int] = [:]
     @ObservationIgnored private var streams: [String: ChatStream] = [:]
-    /// Connections to that Mac's local model servers, by tunnel id.
-    @ObservationIgnored private var tunnels: [Int: (data: (Data) -> Void, close: (Int) -> Void)] = [:]
     /// Processes, folder watches and shells running there for chats here.
     @ObservationIgnored var processes: [Int: (line: @Sendable (OutputLine) -> Void, exit: @Sendable (Int32?) -> Void)] = [:]
     @ObservationIgnored var watchers: [Int: () -> Void] = [:]
@@ -857,8 +821,6 @@ final class RemoteLink {
         if state == .online || state == .connecting { state = .offline }
         for (_, waiter) in waiting { waiter.resume(throwing: RemoteChannel.Failure.closed) }
         waiting = [:]
-        for (id, tunnel) in tunnels { tunnel.close(id) }
-        tunnels = [:]
         dropStreams()
     }
 
@@ -885,24 +847,6 @@ final class RemoteLink {
         }
     }
 
-    // MARK: Tunnels to that Mac's local models
-
-    func openTunnel(_ kind: LocalModelKind, onData: @escaping (Data) -> Void, onClose: @escaping (Int) -> Void) -> Int {
-        let id = take()
-        tunnels[id] = (onData, onClose)
-        outbox.continuation.yield(.tunnel(id: id, .open(kind)))
-        return id
-    }
-
-    func tunnelSend(_ id: Int, _ data: Data) {
-        outbox.continuation.yield(.tunnel(id: id, .data(data)))
-    }
-
-    func tunnelClose(_ id: Int) {
-        guard tunnels.removeValue(forKey: id) != nil else { return }
-        outbox.continuation.yield(.tunnel(id: id, .close))
-    }
-
     func subscribe(_ session: String) {
         guard subscribed.insert(session).inserted else { return }
         fire(.subscribe(sessionId: session, afterSeq: lastSeq[session] ?? 0))
@@ -924,13 +868,9 @@ final class RemoteLink {
         case let .event(.exit(session, code)):
             guard let stream = streams[session] else { return }
             service?.model?.applyRemote(stream.onExit(code: code), to: RemoteService.mirrorId(device: device.id, session: session))
-        case let .tunnel(id, .data(data)):
-            tunnels[id]?.data(data)
-        case let .tunnel(id, .close):
-            tunnels.removeValue(forKey: id)?.close(id)
         case .event(let event):
             received(event)
-        case .request, .tunnel(_, .open):
+        case .request, .tunnel:
             break
         }
     }

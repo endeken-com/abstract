@@ -494,6 +494,22 @@ public final class Store: Sendable {
             try db.execute(sql: "ALTER TABLE sessions ADD COLUMN handoff_from TEXT")
             try db.execute(sql: "ALTER TABLE sessions ADD COLUMN provider_sessions TEXT NOT NULL DEFAULT '{}'")
         }
+        // Ollama and LM Studio stop being agents (see RetiredAgents): their
+        // work moves to OpenCode, on its own default model. A chat that ran
+        // hands over with the next message; one already waiting to hand over
+        // goes to OpenCode instead.
+        migrator.registerMigration("v7-retire-local-agents") { db in
+            let retired = "('ollama', 'lmstudio')"
+            try db.execute(sql: "UPDATE projects SET default_provider_id = 'opencode' WHERE default_provider_id IN \(retired)")
+            try db.execute(sql: "UPDATE automations SET provider_id = 'opencode', model = NULL, effort = NULL WHERE provider_id IN \(retired)")
+            try db.execute(sql: """
+                UPDATE sessions
+                SET handoff_from = COALESCE(handoff_from, CASE WHEN provider_session_id IS NULL THEN NULL ELSE provider_id END),
+                    provider_id = 'opencode', provider_session_id = NULL, model = NULL, effort = NULL
+                WHERE provider_id IN \(retired)
+                """)
+            try db.execute(sql: "DELETE FROM settings WHERE key IN ('localModelSources', 'shareLocalModels')")
+        }
         return migrator
     }
 }

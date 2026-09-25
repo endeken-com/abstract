@@ -9,10 +9,9 @@ struct AgentSettingsPane: View {
 
     var body: some View {
         Form {
-            ForEach(ProviderRegistry.all.filter { !($0 is LocalModelProvider) }, id: \.id) { provider in
+            ForEach(ProviderRegistry.all, id: \.id) { provider in
                 ProviderSettingsSection(provider: provider, detecting: detecting, detect: detect)
             }
-            LocalModelsSettings()
             Section {
                 HStack(spacing: Space.md) {
                     SettingsCaption("Abstract looks for each agent on your login shell's PATH when it starts. Detect again after installing or updating one.")
@@ -48,10 +47,28 @@ private struct ProviderSettingsSection: View {
     /// Kept as typed; parsed into `extraArgs` on every change so spaces
     /// can be typed without being trimmed away.
     @State private var argsText = ""
+    @State private var typingModel = false
+    @State private var modelDraft = ""
+    @FocusState private var modelFieldFocused: Bool
 
     var body: some View {
         Section {
             LabeledContent("Detected") { detection }
+
+            LabeledContent("Default model") { defaultModelControl }
+
+            if !model.efforts(providerId: provider.id, model: defaults.model).levels.isEmpty {
+                LabeledContent("Default effort") {
+                    Picker("Default effort", selection: effortBinding) {
+                        Text("Agent default").tag(String?.none)
+                        ForEach(model.efforts(providerId: provider.id, model: defaults.model).levels, id: \.self) { level in
+                            Text(ModelOption.effortTitle(level)).tag(Optional(level))
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(maxWidth: 360)
+                }
+            }
 
             LabeledContent {
                 HStack(spacing: Space.sm) {
@@ -132,6 +149,83 @@ private struct ProviderSettingsSection: View {
 
     private var override: ProviderOverride {
         model.providerOverrides[provider.id] ?? ProviderOverride()
+    }
+
+    private var defaults: AgentDefaults {
+        model.agentDefaults[provider.id] ?? AgentDefaults()
+    }
+
+    @ViewBuilder
+    private var defaultModelControl: some View {
+        if typingModel {
+            HStack(spacing: Space.sm) {
+                TextField("Model ID", text: $modelDraft)
+                    .font(.btMono)
+                    .focused($modelFieldFocused)
+                    .onSubmit(commitModel)
+                    .onExitCommand { typingModel = false }
+                    .btField()
+                Button("Set", action: commitModel)
+            }
+            .frame(maxWidth: 360)
+            .onAppear { modelFieldFocused = true }
+        } else {
+            let catalog = model.models(for: provider.id)
+            HStack(spacing: Space.sm) {
+                Picker("Default model", selection: modelBinding) {
+                    Text("Agent default").tag(String?.none)
+                    ForEach(catalog.models) { option in
+                        Text(option.label).tag(Optional(option.id))
+                    }
+                    if !catalog.versions.isEmpty {
+                        Section("Specific versions") {
+                            ForEach(catalog.versions) { option in
+                                Text(option.label).tag(Optional(option.id))
+                            }
+                        }
+                    }
+                    if let custom = defaults.model, catalog.option(custom) == nil {
+                        Text(custom).tag(Optional(custom))
+                    }
+                }
+                .labelsHidden()
+                Button("Other…") {
+                    modelDraft = defaults.model ?? ""
+                    typingModel = true
+                }
+            }
+            .frame(maxWidth: 360)
+        }
+    }
+
+    private var modelBinding: Binding<String?> {
+        Binding(get: { defaults.model }, set: { selected in
+            var value = defaults
+            value.model = selected
+            let catalog = model.models(for: provider.id)
+            let option = if let selected { catalog.option(selected) }
+                else { catalog.defaultOption(configured: model.configuredModel(for: provider.id)) }
+            if let effort = value.effort, !(option?.efforts.contains(effort) ?? false) { value.effort = nil }
+            saveDefaults(value)
+        })
+    }
+
+    private var effortBinding: Binding<String?> {
+        Binding(get: { defaults.effort }, set: { selected in
+            var value = defaults
+            value.effort = selected
+            saveDefaults(value)
+        })
+    }
+
+    private func commitModel() {
+        let name = modelDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        modelBinding.wrappedValue = name.isEmpty ? nil : name
+        typingModel = false
+    }
+
+    private func saveDefaults(_ value: AgentDefaults) {
+        model.agentDefaults[provider.id] = value.model == nil && value.effort == nil ? nil : value
     }
 
     private var pathBinding: Binding<String> {

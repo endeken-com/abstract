@@ -77,13 +77,6 @@ final class AppModel {
     private(set) var turnStartedAt: [String: Date] = [:]
     /// Panel layouts by chat id; see AppModel+Panes.
     var layouts: [String: PanelLayout] = [:]
-    /// Where each local model server is reached, and whether this Mac shares its own; see AppModel+LocalModels.
-    var localModelSources: [LocalModelKind: LocalModelSource] = [:] { didSet { save("localModelSources", localModelSources) } }
-    var shareLocalModels = true { didSet { save("shareLocalModels", shareLocalModels) } }
-    /// What each server said the last time it was asked.
-    var localModelStatus: [LocalModelKind: LocalModelServerStatus] = [:]
-    /// Relays to a paired Mac's servers, by kind.
-    @ObservationIgnored var localRelays: [LocalModelKind: LocalModelRelay] = [:]
     /// A chat waiting on "Archive?" (⇧⌘⌫, or the git actions menu).
     var requestArchive: String?
     /// The background tasks list showing, and the task open in it; see AppModel+Tasks.
@@ -159,6 +152,18 @@ final class AppModel {
     var worktreeTemplate: String { didSet { save("worktreeTemplate", worktreeTemplate) } }
     var branchPrefix: String { didSet { save("branchPrefix", branchPrefix) } }
     var providerOverrides: [String: ProviderOverride] { didSet { save("providerOverrides", providerOverrides) } }
+    var agentDefaults: [String: AgentDefaults] {
+        didSet {
+            save("agentDefaults", agentDefaults)
+            // An idle stdin agent needs a fresh process before its next turn
+            // to pick up a changed default.
+            for session in sessions where alive.contains(session.id)
+                && (session.model == nil || session.effort == nil)
+                && agentDefaults[session.providerId] != oldValue[session.providerId] {
+                needsRelaunch.insert(session.id)
+            }
+        }
+    }
     var notifyAttention: Bool { didSet { save("notifyAttention", notifyAttention) } }
     var notifyFinished: Bool { didSet { save("notifyFinished", notifyFinished) } }
     var notifyAutomationFailed: Bool { didSet { save("notifyAutomationFailed", notifyAutomationFailed) } }
@@ -201,6 +206,7 @@ final class AppModel {
         worktreeTemplate = store.setting("worktreeTemplate", as: String.self) ?? WorktreeNaming.defaultTemplate
         branchPrefix = store.setting("branchPrefix", as: String.self) ?? WorktreeNaming.defaultBranchPrefix
         providerOverrides = store.setting("providerOverrides", as: [String: ProviderOverride].self) ?? [:]
+        agentDefaults = store.setting("agentDefaults", as: [String: AgentDefaults].self) ?? [:]
         notifyAttention = store.setting("notifyAttention", as: Bool.self) ?? true
         notifyFinished = store.setting("notifyFinished", as: Bool.self) ?? true
         notifyAutomationFailed = store.setting("notifyAutomationFailed", as: Bool.self) ?? true
@@ -209,8 +215,6 @@ final class AppModel {
         claudeProfile = store.setting("claudeProfile", as: String.self)
         modelCatalogs = store.setting("modelCatalogs", as: [String: ModelCatalog].self) ?? [:]
         mainTabs = store.setting("mainTabs", as: MainTabs.self) ?? MainTabs()
-        localModelSources = store.setting("localModelSources", as: [LocalModelKind: LocalModelSource].self) ?? [:]
-        shareLocalModels = store.setting("shareLocalModels", as: Bool.self) ?? true
     }
 
     private func save<T: Codable>(_ key: String, _ value: T) {
@@ -233,7 +237,6 @@ final class AppModel {
         Task { await watchPullRequests() }
         if !isDemo { Task { await accounts.seedFromLogs(engine.logsURL) } }
         if !isDemo { remote.start(model: self) }
-        if !isDemo { Task { await watchLocalModels() } }
         Notifier.shared.requestAuthorization()
     }
 
@@ -275,19 +278,33 @@ final class AppModel {
             }
             providerStatus[provider.id] = ProviderStatus(available: path != nil, path: path, version: version)
         }
-        // Local models also need their server: available only when it answers.
-        await refreshLocalModels()
+    }
+
+    /// The agents a picker offers: those installed on the Mac a chat runs on
+    /// (all of them until detection says otherwise), plus `current`, so a
+    /// choice already made never disappears.
+    func pickableAgents(on device: String? = nil, keeping current: String? = nil) -> [any ProviderDefinition] {
+        ProviderRegistry.all.filter { p in
+            if p.id == current { return true }
+            if let device { return remote.links[device]?.snapshot?.providers.contains(p.id) ?? true }
+            return providerStatus[p.id]?.available != false
+        }
     }
 
     // MARK: - Models
 
-    /// What the agent runs when no model is chosen, from its own config file.
-    func defaultModel(for providerId: String) -> String? {
+    /// The agent's own model choice, from its config file.
+    func configuredModel(for providerId: String) -> String? {
         // Menus ask on every redraw; the agent's settings file is read at most every few seconds.
         if let cached = configuredModels[providerId], cached.read.timeIntervalSinceNow > -5 { return cached.model }
         let model = ProviderRegistry.provider(providerId)?.configuredDefaultModel(home: executor.homeDirectory)
         configuredModels[providerId] = (model, Date())
         return model
+    }
+
+    /// What runs when a chat doesn't select a model explicitly.
+    func defaultModel(for providerId: String) -> String? {
+        agentDefaults[providerId]?.model ?? configuredModel(for: providerId)
     }
 
     /// The agent's models: discovered, else its built-in suggestions.
@@ -341,7 +358,8 @@ final class AppModel {
     func efforts(providerId: String, model: String?) -> (levels: [String], defaultLevel: String?) {
         let option = if let model { models(for: providerId).option(model) } else { defaultModelOption(for: providerId) }
         guard let option, !option.efforts.isEmpty else { return ([], nil) }
-        let configured = ProviderRegistry.provider(providerId)?.configuredDefaultEffort(home: executor.homeDirectory)
+        let configured = agentDefaults[providerId]?.effort
+            ?? ProviderRegistry.provider(providerId)?.configuredDefaultEffort(home: executor.homeDirectory)
         return (option.efforts, configured.flatMap { option.efforts.contains($0) ? $0 : nil } ?? option.defaultEffort)
     }
 
@@ -496,7 +514,7 @@ final class AppModel {
         let prompt = PromptAttachments.message(text, attachments)
         // Named for what was asked, or for what was attached when nothing was typed.
         let gist = text.isEmpty ? attachments.map(\.label).joined(separator: ", ") : text
-        let naming = await suggestedNaming(project, providerId: providerId, model: model, prompt: gist)
+        let naming = await suggestedNaming(project, providerId: providerId, model: model ?? defaultModel(for: providerId), prompt: gist)
         let name = naming?.title ?? Workspace.title(fromPrompt: gist)
         let city = existing == nil ? WorktreeNaming.cityName(avoiding: Set(sessions
             .filter { $0.projectId == projectId }
@@ -597,7 +615,8 @@ final class AppModel {
             }
         }
         let settings = LaunchSettings(providerOverrides: providerOverrides, outputStyle: outputStyle, claudeProfile: claudeProfile,
-                                      standardClaudeProfile: accounts.standardProfilePath, attachmentsDirectory: AttachmentStore.root.path)
+                                      standardClaudeProfile: accounts.standardProfilePath, attachmentsDirectory: AttachmentStore.root.path,
+                                      agentDefaults: agentDefaults, modelCatalogs: modelCatalogs)
         var spec = AgentLaunch.spec(for: session, provider: provider, prompt: prompt, resumeId: resumeId, images: images,
                                     settings: settings, home: executor.homeDirectory)
         let cwd = spec.cwd
