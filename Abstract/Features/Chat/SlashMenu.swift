@@ -63,6 +63,8 @@ struct SlashMenu: View {
                     }
                     .padding(4)
                 }
+                // No system scroller: with one always shown, it takes a strip on the right.
+                .btThinScrollIndicator()
                 .frame(height: CGFloat(min(items.count, Self.maxRows)) * Self.rowHeight + 8)
                 .onChange(of: selected) { _, index in proxy.scrollTo(index) }
             }
