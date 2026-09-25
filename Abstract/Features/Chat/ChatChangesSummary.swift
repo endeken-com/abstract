@@ -53,7 +53,7 @@ struct ChatChangesSummary: View {
     private func load() async {
         guard !(session.status == .running || session.status == .provisioning),
               case .ready(let context) = model.diffAvailability(session.id) else { return }
-        let collected = (try? await Diff.collect(context.executor, worktree: context.worktree, exclude: context.exclude)) ?? []
+        let collected = (try? await Diff.collectUncommitted(context.executor, worktree: context.worktree, exclude: context.exclude)) ?? []
         withAnimation(.snappy(duration: 0.2)) { files = collected }
     }
 }

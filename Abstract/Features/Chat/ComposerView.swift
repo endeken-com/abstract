@@ -223,7 +223,7 @@ private struct ComposerContext: View {
         .task(id: "\(session.status.rawValue)-\(resultCount)") {
             try? await Task.sleep(for: .milliseconds(400))
             guard !Task.isCancelled, case .ready(let context) = model.diffAvailability(session.id) else { totals = nil; return }
-            let files = (try? await Diff.collect(context.executor, worktree: context.worktree, exclude: context.exclude)) ?? []
+            let files = (try? await Diff.collectUncommitted(context.executor, worktree: context.worktree, exclude: context.exclude)) ?? []
             totals = (files.reduce(0) { $0 + $1.additions }, files.reduce(0) { $0 + $1.deletions })
         }
     }

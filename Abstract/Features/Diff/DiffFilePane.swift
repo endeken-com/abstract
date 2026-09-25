@@ -513,7 +513,8 @@ private struct ReviewCommits: View {
                         HStack(spacing: Space.sm) {
                             Text(commit.subject).font(BTFont.ui(12.5)).foregroundStyle(Color.btProse).lineLimit(1)
                             Spacer(minLength: Space.sm)
-                            Text(commit.shortSha).font(.btMonoSmall).foregroundStyle(Color.btTextTertiary).fixedSize()
+                            Text(commit.repo.isEmpty ? commit.shortSha : "\(commit.repo) · \(commit.shortSha)")
+                                .font(.btMonoSmall).foregroundStyle(Color.btTextTertiary).fixedSize()
                             if let date = commit.date {
                                 Text(RelativeTime.short(date)).font(.btCaption).foregroundStyle(Color.btTextTertiary).monospacedDigit().fixedSize()
                             }
@@ -539,7 +540,7 @@ extension ReviewMode {
         switch self {
         case .uncommitted: "uncommitted"
         case .committed: "committed"
-        case .commit(let c): "commit \(c.shortSha)"
+        case .commit(let c): "commit \(c.shortSha)" + (c.repo.isEmpty ? "" : " in \(c.repo)")
         }
     }
 }

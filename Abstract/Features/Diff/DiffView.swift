@@ -262,7 +262,8 @@ private struct ModeMenu: View {
                     ForEach(review.commits) { commit in
                         Button { Task { await review.show(.commit(commit), context) } } label: {
                             Text(commit.subject)
-                            Text([commit.shortSha, commit.author, commit.date.map { RelativeTime.short($0) }].compactMap { $0 }.joined(separator: " · "))
+                            Text([commit.repo.isEmpty ? nil : commit.repo, commit.shortSha, commit.author,
+                                  commit.date.map { RelativeTime.short($0) }].compactMap { $0 }.joined(separator: " · "))
                         }
                     }
                 }
