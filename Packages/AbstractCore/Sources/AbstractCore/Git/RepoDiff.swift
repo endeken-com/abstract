@@ -5,17 +5,25 @@ public struct RepoDiff: Sendable, Hashable, Identifiable {
     public var repo: ChatRepo
     /// Paths include the repository's own (see `FileDiff.repo`).
     public var files: [FileDiff]
-    /// A submodule: the chat's commits in it since its baseline.
+    /// A submodule: the chat's commits in it since its baseline; in
+    /// Uncommitted, since the commit its parent's HEAD records, so the ones
+    /// the parent hasn't committed yet.
     public var ahead: Int
-    /// A submodule that didn't exist where the branch left its base.
+    /// A submodule that didn't exist where the branch left its base (Committed only).
     public var isNew: Bool
     /// Why this submodule couldn't be read; its files are empty then.
     public var error: String?
+    /// A submodule checked out somewhere other than the commit its parent's
+    /// HEAD records, so the parent still has a pointer to commit (Uncommitted
+    /// only). Its own files can all be committed, leaving nothing else to show.
+    public var pointerUncommitted: Bool
 
     public var id: String { repo.id }
 
-    public init(repo: ChatRepo, files: [FileDiff] = [], ahead: Int = 0, isNew: Bool = false, error: String? = nil) {
+    public init(repo: ChatRepo, files: [FileDiff] = [], ahead: Int = 0, isNew: Bool = false, error: String? = nil,
+                pointerUncommitted: Bool = false) {
         self.repo = repo; self.files = files; self.ahead = ahead; self.isNew = isNew; self.error = error
+        self.pointerUncommitted = pointerUncommitted
     }
 }
 
@@ -25,6 +33,12 @@ public extension Diff {
     /// shows the chat's own work in them and not what their main did since.
     /// The worktree's own failing throws; a submodule failing is reported in
     /// its `RepoDiff` and the others still load.
+    ///
+    /// Read on every change the agent makes, so a submodule with nothing to
+    /// show costs little git: in Uncommitted, one the worktree's status calls
+    /// clean isn't read, nor are the submodules inside it; in Committed, one
+    /// still at its baseline only has its HEAD read; for one commit, only the
+    /// commit's repository is read.
     static func collectAll(_ exec: any Executor, worktree: String, repos: [ChatRepo], exclude: [String] = [],
                            compare: DiffCompare, baselines: [String: String] = [:],
                            ignoreWhitespace: Bool = false) async throws -> [RepoDiff] {
@@ -33,9 +47,17 @@ public extension Diff {
                                         compare: compare, baselines: baselines, ignoreWhitespace: ignoreWhitespace)
         let submodules = repos.filter(\.isSubmodule)
         var found: [String: RepoDiff] = [:]
+        // The worktree's status covers everything inside its submodules too.
+        if case .uncommitted = compare, !submodules.isEmpty, let changed = await Submodules.changedPaths(exec, worktree: worktree) {
+            let clean = submodules.filter { $0.parentPath == "" && !changed.contains($0.path) }
+            for repo in submodules where clean.contains(where: { $0.path == repo.path || $0.inside(repo.path) != nil }) {
+                found[repo.path] = RepoDiff(repo: repo)
+            }
+        }
+        let toRead = submodules.filter { found[$0.path] == nil }
         // A few at a time: each has its own index, so they never wait on each other's lock.
-        for start in stride(from: 0, to: submodules.count, by: 4) {
-            let batch = Array(submodules[start..<min(start + 4, submodules.count)])
+        for start in stride(from: 0, to: toRead.count, by: 4) {
+            let batch = Array(toRead[start..<min(start + 4, toRead.count)])
             let done = await withTaskGroup(of: RepoDiff.self, returning: [RepoDiff].self) { group in
                 for repo in batch {
                     group.addTask {
@@ -92,17 +114,54 @@ public extension Diff {
         let inner = repos.filter { $0.parentPath == repo.path }.compactMap { repo.inside($0.path) }
         let excluded = exclude.compactMap(repo.inside) + inner
         let baseline = baselines[repo.path]
-        var result = RepoDiff(repo: repo, isNew: repo.isSubmodule && !baselines.isEmpty && baseline == nil)
-        if repo.isSubmodule, let baseline { result.ahead = await commitCount(exec, cwd: dir, "\(baseline)..HEAD") }
-        let own: DiffCompare? = switch compare {
-        case .uncommitted: .uncommitted
-        case .committed(let base): repo.isSubmodule ? baseline.map { DiffCompare.committed(base: $0) } : .committed(base: base)
-        case .commit(let sha, let inRepo): inRepo == repo.path ? .commit(sha: sha) : nil
+        var result = RepoDiff(repo: repo)
+        let own: DiffCompare
+        switch compare {
+        case .uncommitted:
+            own = .uncommitted
+            if repo.isSubmodule, let recorded = await recordedCommit(exec, worktree: worktree, of: repo, repos: repos),
+               let head = await head(exec, cwd: dir), head != recorded {
+                result.pointerUncommitted = true
+                result.ahead = await commitCount(exec, cwd: dir, "\(recorded)..HEAD")
+            }
+        case .committed(let base):
+            guard repo.isSubmodule else { own = .committed(base: base); break }
+            guard let baseline else {
+                result.isNew = !baselines.isEmpty
+                return result
+            }
+            guard await head(exec, cwd: dir) != baseline else { return result }
+            result.ahead = await commitCount(exec, cwd: dir, "\(baseline)..HEAD")
+            // Straight from the recorded commit: a pointer moved back or
+            // sideways has no merge base to measure from.
+            own = .since(sha: baseline)
+        case .since:
+            // Not a mode of the review's: the worktree's own alone.
+            guard !repo.isSubmodule else { return result }
+            own = compare
+        case .commit(let sha, let inRepo):
+            guard inRepo == repo.path else { return result }
+            if repo.isSubmodule, let baseline { result.ahead = await commitCount(exec, cwd: dir, "\(baseline)..HEAD") }
+            own = .commit(sha: sha)
         }
-        guard let own else { return result }
         result.files = try await collect(exec, worktree: dir, exclude: excluded, compare: own, ignoreWhitespace: ignoreWhitespace)
             .map { $0.inRepo(repo.path) }
         return result
+    }
+
+    /// The commit `repo`'s parent's HEAD records for it; nil when it records none.
+    private static func recordedCommit(_ exec: any Executor, worktree: String, of repo: ChatRepo, repos: [ChatRepo]) async -> String? {
+        guard let parent = repos.first(where: { $0.path == repo.parentPath }), let inside = parent.inside(repo.path),
+              let out = try? await Git.git(exec, cwd: parent.directory(in: worktree), ["rev-parse", "HEAD:\(inside)"]), out.ok
+        else { return nil }
+        let sha = GitText.trimmed(out.stdout)
+        return sha.isEmpty ? nil : sha
+    }
+
+    private static func head(_ exec: any Executor, cwd: String) async -> String? {
+        guard let out = try? await Git.git(exec, cwd: cwd, ["rev-parse", "HEAD"]), out.ok else { return nil }
+        let sha = GitText.trimmed(out.stdout)
+        return sha.isEmpty ? nil : sha
     }
 
     private static func commitCount(_ exec: any Executor, cwd: String, _ range: String) async -> Int {

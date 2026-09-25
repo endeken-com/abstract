@@ -137,6 +137,13 @@ struct SubmoduleTests {
         let fresh = try #require(diffs.first { $0.repo.path == "libs/fresh" })
         #expect(fresh.isNew)
         #expect(fresh.files.isEmpty)
+
+        // Changed, so it's read rather than skipped as clean.
+        try f.write(f.worktree + "/libs/fresh/b.txt", "b\n")
+        let uncommitted = try await Diff.collectAll(exec, worktree: f.worktree, repos: repos, compare: .uncommitted, baselines: baselines)
+        let changed = try #require(uncommitted.first { $0.repo.path == "libs/fresh" })
+        #expect(changed.files.map(\.path) == ["libs/fresh/b.txt"])
+        #expect(!changed.isNew, "only Committed tells what's new since the base")
     }
 
     @Test func aCommitIsShownFromItsOwnRepository() async throws {
@@ -196,10 +203,179 @@ struct SubmoduleTests {
         let f = try await SubmoduleFixture.make()
         defer { f.remove() }
         try f.write(f.worktree + "/top.txt", "top\n")
-        let repos = await Submodules.list(exec, worktree: f.worktree) + [ChatRepo(path: "libs/gone", depth: 1, parentPath: "")]
+        let repos = await Submodules.list(exec, worktree: f.worktree)
+        // Gone between listing and reading: the worktree's status still names it.
+        try FileManager.default.removeItem(atPath: f.worktree + "/libs/other lib")
         let diffs = try await Diff.collectAll(exec, worktree: f.worktree, repos: repos, compare: .uncommitted)
         #expect(diffs.first?.files.map(\.path) == ["top.txt"])
-        #expect(diffs.last?.repo.path == "libs/gone")
+        #expect(diffs.last?.repo.path == "libs/other lib")
         #expect(diffs.last?.error != nil)
+    }
+
+    // MARK: Pointers
+
+    @Test func aParentCommitThatMovedAPointerShowsNoGitlink() async throws {
+        let f = try await SubmoduleFixture.make()
+        defer { f.remove() }
+        let core = f.worktree + "/libs/core"
+        try f.write(core + "/chat.txt", "chat\n")
+        try await f.commitAll(core, "Chat work")
+        try await f.git(f.worktree, ["add", "libs/core"])
+        try await f.git(f.worktree, ["commit", "-qm", "Move core"])
+
+        let repos = await Submodules.list(exec, worktree: f.worktree)
+        let baselines = await Submodules.baselines(exec, worktree: f.worktree, repos: repos, base: "main")
+        let commits = await Diff.commitsAll(exec, worktree: f.worktree, repos: repos, base: "main", baselines: baselines)
+        let move = try #require(commits.first { $0.subject == "Move core" })
+        let shown = try await Diff.collectAll(exec, worktree: f.worktree, repos: repos,
+                                              compare: .commit(sha: move.sha, repo: move.repo), baselines: baselines)
+        #expect(shown.flatMap(\.files).map(\.path) == [], "a pointer isn't a file, and applying one would write a gitlink")
+        // Without the excludes collectAll passes, the parent's own diff still has no gitlink.
+        #expect(try await Diff.collect(exec, worktree: f.worktree, compare: .committed(base: "main")).map(\.path) == [])
+    }
+
+    @Test func aCommitInASubmoduleItsParentHasntRecorded() async throws {
+        let f = try await SubmoduleFixture.make()
+        defer { f.remove() }
+        let core = f.worktree + "/libs/core"
+        try f.write(core + "/chat.txt", "chat\n")
+        try await f.commitAll(core, "Chat work")
+        let repos = await Submodules.list(exec, worktree: f.worktree)
+        let baselines = await Submodules.baselines(exec, worktree: f.worktree, repos: repos, base: "main")
+
+        let before = try await Diff.collectAll(exec, worktree: f.worktree, repos: repos, compare: .uncommitted, baselines: baselines)
+        let moved = try #require(before.first { $0.repo.path == "libs/core" })
+        #expect(moved.pointerUncommitted)
+        #expect(moved.ahead == 1)
+        #expect(moved.files.isEmpty, "chat.txt is committed in libs/core")
+        #expect(before.first { $0.repo.path == "libs/other lib" }?.pointerUncommitted == false)
+
+        try await f.git(f.worktree, ["add", "libs/core"])
+        try await f.git(f.worktree, ["commit", "-qm", "Move core"])
+        // Changed, so it's read rather than skipped as clean.
+        try f.write(core + "/more.txt", "more\n")
+        let after = try await Diff.collectAll(exec, worktree: f.worktree, repos: repos, compare: .uncommitted, baselines: baselines)
+        let recorded = try #require(after.first { $0.repo.path == "libs/core" })
+        #expect(recorded.files.map(\.path) == ["libs/core/more.txt"])
+        #expect(!recorded.pointerUncommitted)
+        #expect(recorded.ahead == 0, "app has committed the pointer: nothing left to count")
+
+        // A nested submodule's pointer is its own parent's to commit.
+        try f.write(core + "/vendor/deep/chat.txt", "chat\n")
+        try await f.commitAll(core + "/vendor/deep", "Deep work")
+        let nested = try await Diff.collectAll(exec, worktree: f.worktree, repos: repos, compare: .uncommitted, baselines: baselines)
+        #expect(nested.first { $0.repo.path == "libs/core/vendor/deep" }?.pointerUncommitted == true)
+        #expect(nested.first { $0.repo.path == "libs/core" }?.pointerUncommitted == false)
+    }
+
+    @Test func aSubmoduleCheckedOutBehindItsRecordedCommitShowsInCommitted() async throws {
+        let f = try await SubmoduleFixture.make()
+        defer { f.remove() }
+        // app records libs/core at "Add deep"; the chat goes back to the commit before it.
+        try await f.git(f.worktree + "/libs/core", ["checkout", "-q", "HEAD~1"])
+
+        let repos = await Submodules.list(exec, worktree: f.worktree)
+        let baselines = await Submodules.baselines(exec, worktree: f.worktree, repos: repos, base: "main")
+        let diffs = try await Diff.collectAll(exec, worktree: f.worktree, repos: repos, compare: .committed(base: "main"), baselines: baselines)
+        let core = try #require(diffs.first { $0.repo.path == "libs/core" })
+        #expect(core.files.map(\.path) == ["libs/core/.gitmodules"], "the recorded commit against HEAD, not their merge base")
+        #expect(core.files.first?.status == .deleted)
+        #expect(core.ahead == 0)
+    }
+
+    // MARK: Paths
+
+    @Test func aChangeInANestedSubmoduleIsThatSubmodules() async throws {
+        let f = try await SubmoduleFixture.make()
+        defer { f.remove() }
+        try f.write(f.worktree + "/libs/core/vendor/deep/a.txt", "deep\nchanged\n")
+        let repos = await Submodules.list(exec, worktree: f.worktree)
+        let diffs = try await Diff.collectAll(exec, worktree: f.worktree, repos: repos, compare: .uncommitted)
+        let deep = try #require(diffs.first { $0.repo.path == "libs/core/vendor/deep" })
+        #expect(deep.files.map(\.path) == ["libs/core/vendor/deep/a.txt"])
+        #expect(deep.files.map(\.repoPath) == ["a.txt"])
+        #expect(diffs.first { $0.repo.path == "libs/core" }?.files.isEmpty == true, "not libs/core's, not even as a gitlink")
+    }
+
+    @Test func aRenameInASubmoduleNamesBothPathsBothWays() async throws {
+        let f = try await SubmoduleFixture.make()
+        defer { f.remove() }
+        try await f.git(f.worktree + "/libs/core", ["mv", "a.txt", "b.txt"])
+        let repos = await Submodules.list(exec, worktree: f.worktree)
+        let diffs = try await Diff.collectAll(exec, worktree: f.worktree, repos: repos, compare: .uncommitted)
+        let file = try #require(diffs.first { $0.repo.path == "libs/core" }?.files.first)
+        #expect(file.status == .renamed)
+        #expect(file.path == "libs/core/b.txt")
+        #expect(file.oldPath == "libs/core/a.txt")
+        #expect(file.repoPath == "b.txt")
+        #expect(file.repoOldPath == "a.txt")
+    }
+
+    // MARK: Reading only what changed
+
+    @Test func theWorktreesStatusNamesTheSubmodulesWithChanges() async throws {
+        let f = try await SubmoduleFixture.make()
+        defer { f.remove() }
+        let other = f.worktree + "/libs/other lib"
+        // Even where the submodule's own settings hide new files from its status.
+        try await f.git(other, ["config", "status.showUntrackedFiles", "no"])
+        try f.write(other + "/new.txt", "new\n")
+        let changed = try #require(await Submodules.changedPaths(exec, worktree: f.worktree))
+        #expect(changed.contains("libs/other lib"))
+        #expect(!changed.contains("libs/core"))
+
+        try f.write(f.worktree + "/libs/core/vendor/deep/a.txt", "deep\nchanged\n")
+        #expect(await Submodules.changedPaths(exec, worktree: f.worktree)?.contains("libs/core") == true,
+                "a change in a nested submodule marks the one holding it")
+        #expect(await Submodules.changedPaths(exec, worktree: f.dir) == nil, "not a repository")
+    }
+
+    @Test func aCleanSubmoduleIsntReadInUncommitted() async throws {
+        let f = try await SubmoduleFixture.make()
+        defer { f.remove() }
+        try f.write(f.worktree + "/libs/other lib/b.txt", "b\n")
+        let repos = await Submodules.list(exec, worktree: f.worktree)
+        let recording = RecordingExecutor()
+        let diffs = try await Diff.collectAll(recording, worktree: f.worktree, repos: repos, compare: .uncommitted)
+        #expect(diffs.map(\.repo.path) == ["", "libs/core", "libs/core/vendor/deep", "libs/other lib"])
+        #expect(diffs[1].files.isEmpty && diffs[2].files.isEmpty)
+        #expect(diffs[3].files.map(\.path) == ["libs/other lib/b.txt"])
+        #expect(!recording.folders.contains { $0.hasPrefix(f.worktree + "/libs/core") },
+                "libs/core and the submodule inside it are clean, so no git runs there")
+    }
+
+    @Test func anUnmovedSubmoduleIsntDiffedInCommitted() async throws {
+        let f = try await SubmoduleFixture.make()
+        defer { f.remove() }
+        let repos = await Submodules.list(exec, worktree: f.worktree)
+        let baselines = await Submodules.baselines(exec, worktree: f.worktree, repos: repos, base: "main")
+        let recording = RecordingExecutor()
+        let diffs = try await Diff.collectAll(recording, worktree: f.worktree, repos: repos, compare: .committed(base: "main"), baselines: baselines)
+        #expect(diffs.allSatisfy { $0.files.isEmpty && $0.ahead == 0 })
+        #expect(recording.calls(in: f.worktree + "/libs/core") == [["rev-parse", "HEAD"]])
+    }
+
+    @Test func oneCommitReadsOnlyItsOwnRepository() async throws {
+        let f = try await SubmoduleFixture.make()
+        defer { f.remove() }
+        try f.write(f.worktree + "/libs/core/chat.txt", "chat\n")
+        try await f.commitAll(f.worktree + "/libs/core", "Chat work")
+        try f.write(f.worktree + "/top.txt", "top\n")
+        try await f.git(f.worktree, ["add", "top.txt"])
+        try await f.git(f.worktree, ["commit", "-qm", "Parent work"])
+        let repos = await Submodules.list(exec, worktree: f.worktree)
+        let baselines = await Submodules.baselines(exec, worktree: f.worktree, repos: repos, base: "main")
+        let sha = GitText.trimmed(try await f.git(f.worktree, ["rev-parse", "HEAD"]))
+
+        let recording = RecordingExecutor()
+        let diffs = try await Diff.collectAll(recording, worktree: f.worktree, repos: repos, compare: .commit(sha: sha), baselines: baselines)
+        #expect(diffs.flatMap(\.files).map(\.path) == ["top.txt"])
+        #expect(recording.folders == [f.worktree], "the submodules aren't asked how far they moved")
+    }
+
+    @Test func commitsInDifferentRepositoriesNeverShareAnID() {
+        let top = CommitSummary(sha: "a1b2c3", shortSha: "a1b2c3", author: "", date: nil, subject: "")
+        let sub = CommitSummary(sha: "a1b2c3", shortSha: "a1b2c3", author: "", date: nil, subject: "", repo: "libs/core")
+        #expect(top.id != sub.id, "two submodules cloned from one upstream share their commits")
     }
 }

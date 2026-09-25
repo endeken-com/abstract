@@ -75,6 +75,27 @@ public enum Submodules {
         }
     }
 
+    /// Every path the worktree's status lists, a submodule's own path when
+    /// anything in it (or in one inside it) changed; nil when git can't say.
+    /// The review reads a submodule only when it's here.
+    static func changedPaths(_ exec: any Executor, worktree: String) async -> Set<String>? {
+        // A submodule's own status.showUntrackedFiles=no would hide one whose
+        // only change is a new file; -c reaches the status git runs inside it.
+        guard let out = try? await Git.git(exec, cwd: worktree, ["-c", "status.showUntrackedFiles=normal", "--no-optional-locks", "status",
+                                                                 "--porcelain=v1", "-z", "--ignore-submodules=none"]),
+              out.ok else { return nil }
+        var paths: Set<String> = []
+        var entries = out.stdout.split(separator: "\0").map(String.init)[...]
+        while let entry = entries.popFirst(), entry.utf8.count > 3 {
+            // "XY path", by bytes so a path starting with a combining mark stays whole.
+            paths.insert(String(decoding: entry.utf8.dropFirst(3), as: UTF8.self))
+            // A rename's entry is followed by its old path.
+            let code = entry.utf8.prefix(2)
+            if code.contains(UInt8(ascii: "R")) || code.contains(UInt8(ascii: "C")), let old = entries.popFirst() { paths.insert(old) }
+        }
+        return paths
+    }
+
     /// Whether `directory` is the top of a repository of its own (a
     /// submodule that's checked out) rather than a folder of its parent's.
     public static func isCheckedOut(_ exec: any Executor, directory: String) async -> Bool {

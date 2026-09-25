@@ -8,6 +8,9 @@ public enum DiffCompare: Sendable, Hashable {
     case uncommitted
     /// HEAD against where it left `base` (their merge base).
     case committed(base: String)
+    /// HEAD against `sha` itself, with no merge base: a submodule against the
+    /// commit its parent recorded, which HEAD may have moved back or sideways from.
+    case since(sha: String)
     /// One commit against its first parent, in the repository at `repo`
     /// (relative to the worktree; empty for its own).
     case commit(sha: String, repo: String = "")
@@ -22,11 +25,15 @@ public struct CommitSummary: Sendable, Hashable, Identifiable {
     public let subject: String
     /// The repository it's in, relative to the worktree; empty for its own.
     public var repo: String = ""
-    public var id: String { sha }
+    /// Two submodules cloned from one upstream can hold the same commit.
+    public var id: String { repo + ":" + sha }
 }
 
 extension Diff {
     /// The files `compare` changed. `ignoreWhitespace` is `git diff -w`.
+    /// Submodule pointers are left out: a submodule's changes are read inside
+    /// it, and a pointer (or the diff `diff.submodule=diff` inlines for one)
+    /// isn't a file anything could accept into this repository.
     public static func collect(_ exec: any Executor, worktree: String, exclude: [String] = [],
                                compare: DiffCompare, ignoreWhitespace: Bool = false) async throws -> [FileDiff] {
         let excludes = exclude
@@ -38,14 +45,17 @@ extension Diff {
             guard ignoreWhitespace else { return try await collect(exec, worktree: worktree, exclude: exclude) }
             _ = try await collect(exec, worktree: worktree, exclude: exclude)
             return parse(try await Git.gitOK(exec, cwd: worktree, ["-c", "core.quotePath=false", "--no-pager", "diff", "HEAD", "--no-color",
-                                                                    "--no-ext-diff", "-M", "-w", "--", "."] + excludes))
+                                                                    "--no-ext-diff", "--ignore-submodules=all", "-M", "-w", "--", "."] + excludes))
         case .committed(let base):
             let from = await mergeBase(exec, worktree: worktree, base: base) ?? base
-            return parse(try await Git.gitOK(exec, cwd: worktree, ["-c", "core.quotePath=false", "--no-pager", "diff", from, "HEAD", "--no-color",
-                                                                    "--no-ext-diff", "-M"] + space + ["--", "."] + excludes))
+            return try await collect(exec, worktree: worktree, exclude: exclude, compare: .since(sha: from), ignoreWhitespace: ignoreWhitespace)
+        case .since(let sha):
+            return parse(try await Git.gitOK(exec, cwd: worktree, ["-c", "core.quotePath=false", "--no-pager", "diff", sha, "HEAD", "--no-color",
+                                                                    "--no-ext-diff", "--ignore-submodules=all", "-M"] + space + ["--", "."] + excludes))
         case .commit(let sha, _):
             return parse(try await Git.gitOK(exec, cwd: worktree, ["-c", "core.quotePath=false", "--no-pager", "show", sha, "--format=",
-                                                                    "--diff-merges=first-parent", "--no-color", "--no-ext-diff", "-M"] + space))
+                                                                    "--diff-merges=first-parent", "--no-color", "--no-ext-diff",
+                                                                    "--ignore-submodules=all", "-M"] + space))
         }
     }
 

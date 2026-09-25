@@ -235,8 +235,9 @@ public enum Diff {
         }
 
         // quotePath=false keeps non-ASCII paths readable instead of octal-escaped and quoted.
-        let args = ["-c", "core.quotePath=false", "--no-pager", "diff", "HEAD", "--no-color", "--no-ext-diff", "-M",
-                    "--", "."] + excludes
+        // No submodule pointers: a submodule's changes are read inside it.
+        let args = ["-c", "core.quotePath=false", "--no-pager", "diff", "HEAD", "--no-color", "--no-ext-diff",
+                    "--ignore-submodules=all", "-M", "--", "."] + excludes
         return parse(try await Git.gitOK(exec, cwd: worktree, args))
     }
 

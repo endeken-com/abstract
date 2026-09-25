@@ -1,6 +1,34 @@
 import Foundation
+import Synchronization
 import Testing
 @testable import AbstractCore
+
+/// The real executor, noting every command it runs and where, so a test can
+/// tell which repositories were read.
+final class RecordingExecutor: Executor {
+    let base = LocalExecutor.shared
+    private let log = Mutex<[(cwd: String?, args: [String])]>([])
+
+    /// The arguments of each command run in `cwd`, in order.
+    func calls(in cwd: String) -> [[String]] { log.withLock { $0.filter { $0.cwd == cwd }.map(\.args) } }
+    /// Every folder a command ran in.
+    var folders: Set<String> { log.withLock { Set($0.compactMap(\.cwd)) } }
+
+    var homeDirectory: String { base.homeDirectory }
+    func run(_ command: String, _ args: [String], cwd: String?) async throws -> ExecResult {
+        log.withLock { $0.append((cwd, args)) }
+        return try await base.run(command, args, cwd: cwd)
+    }
+    func spawn(_ spec: LaunchSpec, onLine: @escaping @Sendable (OutputLine) -> Void,
+               onExit: @escaping @Sendable (Int32?) -> Void) throws -> RunningProcess {
+        try base.spawn(spec, onLine: onLine, onExit: onExit)
+    }
+    func fileExists(_ path: String) -> Bool { base.fileExists(path) }
+    func readFile(_ path: String) throws -> String { try base.readFile(path) }
+    func createDirectory(_ path: String) throws { try base.createDirectory(path) }
+    func removeItem(_ path: String) throws { try base.removeItem(path) }
+    func which(_ binary: String) async -> String? { await base.which(binary) }
+}
 
 /// A project with submodules and a chat worktree of it, in one temp folder:
 ///
