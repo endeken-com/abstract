@@ -1,0 +1,91 @@
+import SwiftUI
+
+/// One row of the `/` menu: a command, or one of a command's choices.
+struct SlashItem: Identifiable {
+    let id: String
+    let title: String
+    /// What to type after it, for an agent command that takes something.
+    var hint: String? = nil
+    var detail: String? = nil
+    /// App, Command or Skill.
+    var tag: String? = nil
+    /// Choices only: whether it's the current one.
+    var checked: Bool? = nil
+    let run: () -> Void
+}
+
+/// The `/` menu over the composer. The composer owns the draft, the
+/// highlighted row and the keys; this draws the rows and takes clicks.
+struct SlashMenu: View {
+    /// The command whose choices are showing; nil while listing commands.
+    let title: String?
+    let items: [SlashItem]
+    let selected: Int
+    let hover: (Int) -> Void
+
+    static let rowHeight: CGFloat = 28
+    static let maxRows = 8
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if let title {
+                Text(title)
+                    .font(.btSectionLabel)
+                    .foregroundStyle(Color.btTextTertiary)
+                    .padding(.horizontal, Space.md)
+                    .padding(.top, 8)
+            }
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(spacing: 0) {
+                        ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                            row(item, highlighted: index == selected)
+                                .id(index)
+                                .contentShape(Rectangle())
+                                .onTapGesture { item.run() }
+                                .onHover { if $0 { hover(index) } }
+                        }
+                    }
+                    .padding(4)
+                }
+                .frame(height: CGFloat(min(items.count, Self.maxRows)) * Self.rowHeight + 8)
+                .onChange(of: selected) { _, index in proxy.scrollTo(index) }
+            }
+        }
+        .background(Color.btField, in: RoundedRectangle(cornerRadius: Field.radius, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: Field.radius, style: .continuous)
+                .strokeBorder(Color.btFieldBorder, lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.2), radius: 12, y: 4)
+    }
+
+    private func row(_ item: SlashItem, highlighted: Bool) -> some View {
+        HStack(spacing: Space.sm) {
+            if let checked = item.checked {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Color.btText)
+                    .opacity(checked ? 1 : 0)
+            }
+            Text(item.title)
+                .font(BTFont.chat(13))
+                .foregroundStyle(Color.btText)
+                .layoutPriority(1)
+            if let hint = item.hint {
+                Text(hint).font(.btChatCaption).foregroundStyle(Color.btTextTertiary)
+            }
+            if let detail = item.detail {
+                Text(detail).font(.btChatCaption).foregroundStyle(Color.btTextSecondary).truncationMode(.tail)
+            }
+            Spacer(minLength: Space.sm)
+            if let tag = item.tag {
+                Text(tag).font(.btChatCaption).foregroundStyle(Color.btTextTertiary).layoutPriority(1)
+            }
+        }
+        .lineLimit(1)
+        .padding(.horizontal, Space.sm)
+        .frame(height: Self.rowHeight)
+        .background(highlighted ? Color.btHover : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+    }
+}
