@@ -108,7 +108,7 @@ public enum ChatNaming {
     }
 
     /// From the first `{` to its matching `}`.
-    private static func firstObject(in text: String) -> String? {
+    static func firstObject(in text: String) -> String? {
         guard let start = text.firstIndex(of: "{") else { return nil }
         var depth = 0
         var inString = false
@@ -129,7 +129,7 @@ public enum ChatNaming {
 
     /// The last balanced object: a model that explains before answering
     /// still ends with the answer.
-    private static func lastObject(in text: String) -> String? {
+    static func lastObject(in text: String) -> String? {
         var rest = Substring(text)
         var found: String?
         while let object = firstObject(in: String(rest)) {

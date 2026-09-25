@@ -168,6 +168,18 @@ struct AutomationDraft: Equatable {
         return a
     }
 
+    /// Fill the page from a drafted automation. A project it didn't name
+    /// leaves the one chosen.
+    mutating func apply(_ proposal: AutomationDrafting.Proposal, projectId drafted: String?, timezone: String) {
+        if !proposal.name.isEmpty { name = proposal.name }
+        prompt = proposal.instructions
+        triggers = proposal.schedules.map { TriggerDraft(AutomationTrigger(rrule: $0, timezone: timezone)) }
+        if let drafted { projectId = drafted }
+        workspaceMode = proposal.continuesOwnChat ? .pinned : .newWorktree
+        pinnedSessionId = nil
+        policy = proposal.policy
+    }
+
     /// Whether saving would change `a`. Compares what would be stored, not
     /// how the page holds it, so switching a preset away and back is no change.
     func differs(from a: Automation) -> Bool {

@@ -83,6 +83,20 @@ extension AppModel {
         try sendFollowUp(chatId, text: prompt)
     }
 
+    /// An automation drafted from `description` by the agent the page has
+    /// chosen when it can draft (Claude or Codex), else whichever of those
+    /// is installed.
+    func draftAutomation(_ description: String, preferring providerId: String) async throws -> AutomationDrafting.Proposal {
+        let drafters = ["claude", "codex"]
+        let installed = drafters.filter { providerStatus[$0]?.available != false }
+        guard let agent = installed.contains(providerId) ? providerId : installed.first else {
+            throw AbstractError.message("Drafting needs Claude or Codex, and neither was found on this Mac.")
+        }
+        let binary = providerOverrides[agent]?.path.flatMap { $0.isEmpty ? nil : $0 }
+        return try await AutomationDrafting.draft(executor: executor, binary: binary, providerId: agent,
+                                                  description: description, projects: projects.map(\.name), timezone: defaultTimezone)
+    }
+
     func automationRuns(_ automationId: String, limit: Int = 50) -> [AutomationRun] {
         (try? store.runs(automationId: automationId, limit: limit)) ?? []
     }

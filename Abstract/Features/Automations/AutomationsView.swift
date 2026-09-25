@@ -148,6 +148,7 @@ private struct AutomationPage: View {
     @State private var confirmingLeave = false
     @State private var saveError: String?
     @FocusState private var titleFocused: Bool
+    @FocusState private var describeFocused: Bool
 
     init(existing: Automation?, draft: AutomationDraft, onClose: @escaping () -> Void, onOpen: @escaping (String) -> Void) {
         self.existing = existing
@@ -164,6 +165,10 @@ private struct AutomationPage: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 header
+                if existing == nil {
+                    DescribeAutomation(draft: $draft, focused: $describeFocused) { editingInstructions = false }
+                        .padding(.top, Space.lg)
+                }
                 PageTabs(selection: $tab, items: [
                     .init(value: .settings, title: "Settings"),
                     .init(value: .history, title: "Run history"),
@@ -192,7 +197,8 @@ private struct AutomationPage: View {
         }
         .onAppear {
             reloadRuns()
-            if existing == nil { titleFocused = true }
+            // Describing it is the quickest start; the title is a click away.
+            if existing == nil { describeFocused = true }
         }
         .onChange(of: model.sessions) { _, _ in reloadRuns() }
         .onChange(of: existing) { old, new in
@@ -360,6 +366,80 @@ private struct AutomationPage: View {
             running = false
             tab = .history
             reloadRuns()
+        }
+    }
+}
+
+/// A new automation from a description in plain words: the agent drafts its
+/// name, schedule, where it runs and its instructions, for you to review.
+private struct DescribeAutomation: View {
+    @Environment(AppModel.self) private var model
+    @Binding var draft: AutomationDraft
+    var focused: FocusState<Bool>.Binding
+    let onDrafted: () -> Void
+    @State private var text = ""
+    @State private var drafting = false
+    @State private var error: String?
+    @State private var drafted = false
+
+    private var canDraft: Bool { !drafting && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Space.xs) {
+            HStack(alignment: .bottom, spacing: Space.sm) {
+                TextField("Describe it and AI drafts the rest, e.g. “Every weekday at 9, triage new issues in payments-api”",
+                          text: $text, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .font(.btInput)
+                    .lineLimit(1...6)
+                    .focused(focused)
+                    .returnBreaksLine(commandReturn: run)
+                    .padding(.vertical, 5)
+                Button(action: run) {
+                    HStack(spacing: 5) {
+                        if drafting { ProgressView().controlSize(.mini) } else { Image(systemName: "sparkles") }
+                        Text(drafting ? "Drafting" : drafted ? "Draft Again" : "Draft with AI")
+                    }
+                }
+                .buttonStyle(.bt(.secondary, size: .small))
+                .disabled(!canDraft)
+                .help("Draft the automation from your description (⌘↩)")
+            }
+            .padding(.leading, Field.inset)
+            .padding(.trailing, 5)
+            .padding(.vertical, 3)
+            .btFieldChrome(focused: focused.wrappedValue)
+            if let error {
+                Text(error)
+                    .font(.btCallout)
+                    .foregroundStyle(Color.btRemoved)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            } else if drafted {
+                Text("Drafted from your description. Look it over below, then save.")
+                    .font(.btCallout)
+                    .foregroundStyle(Color.btTextTertiary)
+            }
+        }
+    }
+
+    private func run() {
+        guard canDraft else { return }
+        drafting = true
+        error = nil
+        Task {
+            do {
+                let proposal = try await model.draftAutomation(text, preferring: draft.providerId)
+                let projectId = proposal.project.flatMap { name in model.projects.first { $0.name == name }?.id }
+                withAnimation(.snappy(duration: 0.2)) {
+                    draft.apply(proposal, projectId: projectId, timezone: model.defaultTimezone)
+                }
+                drafted = true
+                onDrafted()
+            } catch {
+                self.error = error.localizedDescription
+            }
+            drafting = false
         }
     }
 }
