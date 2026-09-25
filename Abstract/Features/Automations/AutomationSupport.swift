@@ -78,7 +78,6 @@ extension AppModel {
     /// next message would, so its agent picks up where it left off.
     func deliverAutomationRun(_ prompt: String, to chatId: String) throws {
         guard let chat = session(chatId) else { throw AbstractError.notFound("chat") }
-        if setups[chatId] != nil { throw AbstractError.message("“\(chat.name)” is still being set up.") }
         if chat.archivedAt != nil { setArchived(chatId, false) }
         try sendFollowUp(chatId, text: prompt)
     }

@@ -185,9 +185,20 @@ struct Commands {
             try? store.updateSessionStatus(sessionId, .provisioning, detail: "Running the setup script")
             StoreChanges.post(storePath: storePath)
             let tail = Mutex<[String]>([])
-            let code = try? await SetupScript.run(script, in: workspace.path, executor: executor) { line in
-                tail.withLock { $0 = Array(($0 + [line]).suffix(5)) }
+            let run = Task {
+                try await SetupScript.run(script, in: workspace.path, executor: executor) { line in
+                    tail.withLock { $0 = Array(($0 + [line]).suffix(5)) }
+                }
             }
+            // Interrupting now stops the script, and everything is undone as below.
+            let interrupts = [SIGINT, SIGTERM, SIGHUP].map { sig in
+                let source = DispatchSource.makeSignalSource(signal: sig, queue: .global())
+                source.setEventHandler { run.cancel() }
+                source.resume()
+                return source
+            }
+            let code = try? await run.value
+            interrupts.forEach { $0.cancel() }
             if code != 0 {
                 await rollBack()
                 let lines = tail.withLock { $0 }.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }

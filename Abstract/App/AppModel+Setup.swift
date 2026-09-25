@@ -102,10 +102,16 @@ nonisolated private final class LineBuffer: Sendable {
 }
 
 extension AppModel {
-    /// A project chat whose setup never finished (Abstract quit during it):
-    /// no worktree and no branch yet, and its agent never ran.
-    func neverSetUp(_ s: Session) -> Bool {
-        s.projectId != nil && s.worktreePath == nil && s.branch == nil && s.providerSessionId == nil && s.handoffFrom == nil
+    static let setupFailedDetail = "Setup failed"
+    static let setupStoppedDetail = "Setup stopped"
+
+    /// A project chat still being set up, or whose setup failed or was
+    /// stopped, as the store has it: its agent never ran. Read before the
+    /// store's interrupted chats are marked errored.
+    func setupUnfinished(_ s: Session) -> Bool {
+        guard s.projectId != nil, s.providerSessionId == nil, s.handoffFrom == nil else { return false }
+        return s.status == .provisioning
+            || (s.status == .errored && [Self.setupFailedDetail, Self.setupStoppedDetail].contains(s.statusDetail ?? ""))
     }
 
     /// A folder name for a project's next worktree, unlike its chats' others.
@@ -115,15 +121,37 @@ extension AppModel {
             .compactMap { $0.worktreePath.map { URL(fileURLWithPath: $0).lastPathComponent } }))
     }
 
-    /// Chats caught mid-setup when Abstract last quit wait to be set up again.
-    func restoreInterruptedSetups() {
-        for s in sessions where neverSetUp(s) && setups[s.id] == nil && s.archivedAt == nil {
-            guard let projectId = s.projectId else { continue }
-            let setup = ChatSetup(projectId: projectId, baseRef: s.baseRef, worktreeName: worktreeCityName(projectId: projectId))
-            setup.fail(.fetch, "Abstract quit before this chat was set up.")
-            setups[s.id] = setup
+    /// Chats whose setup didn't finish before Abstract last quit wait to be
+    /// set up again, from the step they got to: never an agent in a worktree
+    /// its setup script didn't run in.
+    func restoreInterruptedSetups(_ ids: [String]) {
+        let why = "Its setup didn't finish before Abstract quit."
+        for id in ids where setups[id] == nil {
+            guard let s = session(id), let projectId = s.projectId else { continue }
+            let setup = ChatSetup(projectId: projectId, baseRef: s.baseRef,
+                                  worktreeName: s.worktreePath == nil ? worktreeCityName(projectId: projectId) : nil)
+            if s.worktreePath != nil {
+                setup.finish(.fetch)
+                setup.finish(.worktree)
+                if Project.nonBlank(project(projectId)?.setupScript) != nil {
+                    setup.fail(.script, why)
+                } else {
+                    setup.skip(.script)
+                    setup.fail(.agent, why)
+                }
+            } else {
+                setup.fail(.fetch, why)
+            }
+            setups[id] = setup
         }
     }
+
+    /// Quitting: every setup stops, its script and what it started with it.
+    func stopAllSetups() {
+        for setup in setups.values where setup.active { setup.task?.cancel() }
+    }
+
+    var activeSetupCount: Int { setups.values.count { $0.active } }
 
     /// Set the chat up, then start its agent.
     func beginSetup(_ sessionId: String, _ setup: ChatSetup) {
@@ -138,8 +166,12 @@ extension AppModel {
         setup.clearFailure()
         setup.generation += 1
         let generation = setup.generation
+        // A stopped run ends first: git can't be stopped mid-worktree, and two
+        // runs at once would make two worktrees, or run the script twice.
+        let previous = setup.task
         setup.task = Task { [weak self] in
-            await self?.performSetup(sessionId, setup)
+            await previous?.value
+            if !Task.isCancelled { await self?.performSetup(sessionId, setup) }
             if setup.generation == generation { setup.active = false }
         }
     }
@@ -149,8 +181,10 @@ extension AppModel {
         guard let setup = setups[sessionId], setup.active else { return }
         setup.task?.cancel()
         setup.active = false
-        if let step = setup.running { setup.fail(step, "Stopped.") }
-        setStatus(sessionId, .errored, detail: "Setup stopped")
+        // Between steps (waiting for the chat's name, say) the next one is what stopped.
+        let step = setup.running ?? ChatSetup.Step.allCases.first { setup.phase($0) == .pending } ?? .agent
+        setup.fail(step, "Stopped.")
+        setStatus(sessionId, .errored, detail: Self.setupStoppedDetail)
     }
 
     /// Start the agent without the setup script, or without waiting for it to end.
@@ -277,7 +311,7 @@ extension AppModel {
 
     private func failSetup(_ id: String, _ setup: ChatSetup, _ step: ChatSetup.Step, _ message: String) {
         setup.fail(step, message)
-        setStatus(id, .errored, detail: "Setup failed")
+        setStatus(id, .errored, detail: Self.setupFailedDetail)
         guard notifyAttention, let s = session(id) else { return }
         if NSApp.isActive, case .session(let shown) = destination, shown == id { return }
         Notifier.shared.post(title: "\(s.name) couldn't be set up", body: message, sessionId: id)

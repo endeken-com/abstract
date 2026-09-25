@@ -97,6 +97,16 @@ private struct Remote {
         #expect(await Workspace.freshBase(executor: exec, root: remote.origin, base: "main") == Workspace.Base(ref: "main"))
     }
 
+    @Test func aBranchOnlyOriginHasIsFetched() async throws {
+        let remote = try await Remote.make(exec)
+        defer { remote.remove() }
+        _ = try await git(exec, remote.origin, ["branch", "release"])
+        let base = await Workspace.freshBase(executor: exec, root: remote.clone, base: "release")
+        #expect(base == Workspace.Base(ref: "origin/release"))
+        // Not a branch anywhere: as given, and no complaint about origin.
+        #expect(await Workspace.freshBase(executor: exec, root: remote.clone, base: "no-such-branch") == Workspace.Base(ref: "no-such-branch"))
+    }
+
     @Test func aBranchFromOriginDoesNotTrackIt() async throws {
         let remote = try await Remote.make(exec)
         defer { remote.remove() }

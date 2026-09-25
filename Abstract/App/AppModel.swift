@@ -240,9 +240,11 @@ final class AppModel {
     func bootstrap() async {
         // A chat whose agent still runs from the command line wasn't interrupted.
         refreshCLIDriven()
+        // Chats caught setting up, before they're marked interrupted below.
+        let unfinished = ((try? store.sessions()) ?? []).filter { setupUnfinished($0) && cliDriven[$0.id] == nil }.map(\.id)
         _ = try? store.reconcileInterruptedSessions(excluding: Set(cliDriven.keys))
         reload()
-        restoreInterruptedSetups()
+        restoreInterruptedSetups(unfinished)
         Task { await listen() }
         watchCommandLine()
         Task { await detectProviders() }
@@ -685,6 +687,8 @@ final class AppModel {
         if sessionId.hasPrefix(RemoteService.mirrorPrefix) { try remote.send(sessionId, text: text, attachments: attachments); return }
         if isDrivenFromCLI(sessionId) { throw Self.drivenFromCLI }
         guard let session = session(sessionId), let provider = ProviderRegistry.provider(session.providerId) else { return }
+        // Its agent starts once it's set up, with the chat's first message.
+        if setups[sessionId] != nil { throw AbstractError.message("“\(session.name)” is still being set up; its agent starts after.") }
         let message = PromptAttachments.message(text, attachments)
         let images = PromptAttachments.images(attachments)
         // The agent was switched: the new one hears what happened first.

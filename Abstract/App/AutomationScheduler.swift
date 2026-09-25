@@ -97,7 +97,8 @@ final class AutomationScheduler {
             // A chat of its own: made on the first run (and again if it was
             // deleted), then every run continues it.
             let id = try await newChat(a, name: a.name)
-            if var fresh = try model.store.automation(a.id) {
+            // Onto a fresh copy, unless it was pointed at another chat meanwhile.
+            if var fresh = try model.store.automation(a.id), fresh.workspaceMode == .pinned, fresh.pinnedSessionId == a.pinnedSessionId {
                 fresh.pinnedSessionId = id
                 try model.store.save(fresh)
             }

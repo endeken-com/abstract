@@ -129,7 +129,7 @@ private struct SetupStepRow: View {
         let agent = ProviderRegistry.name(session.providerId)
         switch (step, phase) {
         case (.fetch, .running): return "Fetching"
-        case (.fetch, .done): return fetchedFromOrigin ? "Fetched" : "Starting from"
+        case (.fetch, .done): return setup.base == nil || fetchedFromOrigin ? "Fetched" : "Starting from"
         case (.fetch, _): return "Fetch"
         case (.worktree, .running): return "Creating the worktree"
         case (.worktree, .done): return "Created the worktree"
@@ -153,6 +153,8 @@ private struct SetupStepRow: View {
         switch step {
         case .fetch:
             guard let base = setup.base else {
+                // Done before Abstract last quit: what it fetched isn't known now.
+                if setup.phase(.fetch) == .done { return nil }
                 let asked = setup.baseRef.flatMap { $0.isEmpty ? nil : $0 } ?? model.project(setup.projectId)?.defaultBaseRef ?? "HEAD"
                 return (asked.hasPrefix("origin/") || asked == "HEAD" ? asked : "\(asked) from origin", false, nil)
             }

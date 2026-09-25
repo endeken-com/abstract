@@ -89,7 +89,7 @@ public enum Workspace {
     /// (commits not pushed yet). When the fetch fails (offline, say), the
     /// newer of the two copies already here. A base that isn't a branch
     /// (`HEAD`, a tag, a commit), or a repository without `origin`, is used
-    /// as given.
+    /// as given; a branch only origin has is fetched first.
     public static func freshBase(executor: any Executor, root: String, base: String) async -> Base {
         let explicitRemote = base.hasPrefix("origin/")
         let name = explicitRemote ? String(base.dropFirst("origin/".count)) : base
@@ -97,14 +97,17 @@ public enum Workspace {
         let local = "refs/heads/\(name)", remote = "refs/remotes/origin/\(name)"
         let hasLocal = await Git.branchExists(executor, root: root, branch: local)
         let hadRemote = await Git.branchExists(executor, root: root, branch: remote)
-        guard explicitRemote || hasLocal || hadRemote else { return Base(ref: base) }
+        // A tag or commit here is used as it is; a name git doesn't know may
+        // be a branch only origin has, so it's asked for, quietly.
+        let known = explicitRemote || hasLocal || hadRemote
+        if !known, await Git.branchExists(executor, root: root, branch: base + "^{commit}") { return Base(ref: base) }
         var fetchError: String?
         do {
             try await Fetches.shared.fetch(root: root, branch: name) {
                 try await Git.fetch(executor, root: root, branch: name)
             }
         } catch {
-            fetchError = error.localizedDescription
+            fetchError = known ? error.localizedDescription : nil
         }
         guard await Git.branchExists(executor, root: root, branch: remote) else { return Base(ref: base, fetchError: fetchError) }
         // Unpushed work on the local branch: it has everything origin has.

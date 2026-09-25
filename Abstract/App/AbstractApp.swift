@@ -79,13 +79,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         let working = model.workingSessionIds.count
-        guard working > 0, DemoBootstrap.current == nil else { model.engine.stopAll(); return .terminateNow }
+        let settingUp = model.activeSetupCount
+        guard working + settingUp > 0, DemoBootstrap.current == nil else {
+            model.stopAllSetups()
+            model.engine.stopAll()
+            return .terminateNow
+        }
         let alert = NSAlert()
         alert.messageText = "Quit while agents are working?"
-        alert.informativeText = "\(working) agent\(working == 1 ? " is" : "s are") still running. Quitting stops them; their worktrees stay as they are."
+        let agents = working == 0 ? nil : "\(working) agent\(working == 1 ? " is" : "s are") still running."
+        let chats = settingUp == 0 ? nil : "\(settingUp) chat\(settingUp == 1 ? " is" : "s are") still being set up."
+        alert.informativeText = [agents, chats].compactMap { $0 }.joined(separator: " ")
+            + " Quitting stops them; their worktrees stay as they are."
         alert.addButton(withTitle: "Quit")
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return .terminateCancel }
+        model.stopAllSetups()
         model.engine.stopAll()
         return .terminateNow
     }

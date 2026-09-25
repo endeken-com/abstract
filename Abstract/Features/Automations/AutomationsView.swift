@@ -205,7 +205,14 @@ private struct AutomationPage: View {
             reloadRuns()
             // Changed elsewhere (the scheduler, a duplicate, the switch):
             // follow it unless there are edits here to keep.
-            if let old, let new, !draft.differs(from: old) { draft = AutomationDraft(new) }
+            if let old, let new {
+                if !draft.differs(from: old) {
+                    draft = AutomationDraft(new)
+                } else if draft.pinnedSessionId == old.pinnedSessionId {
+                    // Its first run made it a chat of its own: saving the edits keeps that chat.
+                    draft.pinnedSessionId = new.pinnedSessionId
+                }
+            }
         }
         .onChange(of: draft) { _, _ in saveError = nil }
         .confirmationDialog("Delete “\(existing?.name ?? "")”?", isPresented: $confirmingDelete) {
