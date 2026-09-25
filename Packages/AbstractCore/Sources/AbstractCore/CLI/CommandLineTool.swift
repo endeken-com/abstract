@@ -138,7 +138,7 @@ struct Commands {
 
         // From here until the agent is up or everything is undone, an
         // interrupt waits: a session is never left half made.
-        for sig in [SIGINT, SIGTERM, SIGHUP] { signal(sig, SIG_IGN) }
+        for sig in [SIGINT, SIGTERM, SIGHUP, SIGUSR1] { signal(sig, SIG_IGN) }
         let sessionId = UUID().uuidString
         let lock = try SessionLock.acquire(sessionId, as: .cli, in: locks)
         // Named like the app names a new chat's folder.
@@ -257,7 +257,7 @@ struct Commands {
             }
             throw busy(id)
         }
-        for sig in [SIGINT, SIGTERM, SIGHUP] { signal(sig, SIG_IGN) }
+        for sig in [SIGINT, SIGTERM, SIGHUP, SIGUSR1] { signal(sig, SIG_IGN) }
         guard let path = session.worktreePath, FileManager.default.fileExists(atPath: path) else {
             lock.release()
             throw CLIError(.worktreeMissing, "Session \(id) has no worktree to run an agent in.")

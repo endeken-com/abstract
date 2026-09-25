@@ -64,7 +64,8 @@ abstract agent respawn --session <id> --agent claude --prompt-file <path|->
 Every command prints one JSON value on stdout; a failure prints `{"code","message"}` and
 exits non-zero. `session create` fetches the project's base branch from `origin` first and
 runs the project's setup script before the agent starts, as the app does. A chat open in the app is locked to `abstract`, and a chat `abstract`
-drives is read-only in the app until its agent stops. See `CommandLineTool.swift`.
+drives is read-only in the app until you open it there: then its agent stops once idle (at
+once, or when its turn ends) and the chat carries on in the app. See `CommandLineTool.swift`.
 
 ### Demo mode
 

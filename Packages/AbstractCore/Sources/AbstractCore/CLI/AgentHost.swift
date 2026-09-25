@@ -73,6 +73,8 @@ final class AgentHost: @unchecked Sendable {
     private var status: (SessionStatus, String?)?
     private var lastActivity = Date()
     private var stopRequested = false
+    /// The app asked for the chat (SIGUSR1): it's the app's once the agent is idle.
+    private var handOver = false
 
     private var sessionId: String { session.id }
 
@@ -161,6 +163,16 @@ final class AgentHost: @unchecked Sendable {
             source.resume()
             sources.append(source)
         }
+        // The chat was opened in the app: the agent stops as soon as it's
+        // idle (now, or when this turn ends), and the app resumes it from there.
+        signal(SIGUSR1, SIG_IGN)
+        let handOverSource = DispatchSource.makeSignalSource(signal: SIGUSR1, queue: queue)
+        handOverSource.setEventHandler { [self] in
+            handOver = true
+            stopIfHandedOver()
+        }
+        handOverSource.resume()
+        sources.append(handOverSource)
         let listener: Int32
         do { listener = try HostSocket.listen(sessionId: sessionId, in: locks) } catch { fail(error.localizedDescription) }
 
@@ -322,6 +334,14 @@ final class AgentHost: @unchecked Sendable {
         try? store.updateSessionStatus(sessionId, new, detail: detail)
         status = (new, detail)
         StoreChanges.post(storePath: storePath)
+        stopIfHandedOver()
+    }
+
+    /// On `queue`: an idle agent the app has asked for stops, and the chat is the app's.
+    private func stopIfHandedOver() {
+        guard handOver, status?.0 == .idle, !stopRequested else { return }
+        stopRequested = true
+        engine.stop(sessionId: sessionId)
     }
 
     // MARK: Messages (`abstract agent send`)

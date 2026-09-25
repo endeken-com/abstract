@@ -16,6 +16,8 @@ private enum FakeAgent {
     case failsToStart
     /// Starts up, then reports an error, as `claude` does when it isn't signed in; stays alive.
     case errorsAfterInit
+    /// Takes three seconds over the prompt's turn, then answers every message.
+    case slowTurn
 
     var script: String {
         let result = #"{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"fake-session","usage":{"input_tokens":1,"output_tokens":1},"total_cost_usd":0,"duration_ms":1,"num_turns":1}"#
@@ -44,6 +46,16 @@ private enum FakeAgent {
                 """
         case .failsToStart:
             return "#!/bin/sh\necho 'not signed in' >&2\nexit 3\n"
+        case .slowTurn:
+            return """
+                #!/bin/sh
+                echo '{"type":"system","subtype":"init","session_id":"fake-session","model":"fake"}'
+                read -r line
+                echo '{"type":"stream_event","event":{"type":"message_start","message":{"id":"m1"}}}'
+                sleep 3
+                echo '\(result)'
+                while IFS= read -r line; do echo '\(result)'; done
+                """
         case .errorsAfterInit:
             let failed = #"{"type":"result","subtype":"success","is_error":true,"result":"Invalid API key · Please run /login","session_id":"fake-session","usage":{"input_tokens":0,"output_tokens":0},"total_cost_usd":0,"duration_ms":1,"num_turns":1}"#
             return """
@@ -590,6 +602,38 @@ struct CommandLineTests {
         let id = try #require(try await box.create().object["id"] as? String)
         try await box.stopAgent(id)
         #expect(try await box.run(["agent", "respawn", "--session", id, "--agent", "codex", "--prompt-file", prompt]).code == "unknown_agent")
+    }
+
+    // MARK: Handing a chat to the app
+
+    @Test func openingTheChatInTheAppTakesItOverOnceIdle() async throws {
+        let box = try await Sandbox()
+        defer { box.tearDown() }
+        let id = try #require(try await box.create().object["id"] as? String)
+        try await waitUntil { try box.store.session(id)?.status == .idle }
+        // What the app does when the chat shows.
+        let host = try #require(SessionLock.holder(of: id, in: box.locks))
+        kill(host.pid, SIGUSR1)
+        try await waitUntil { SessionLock.holder(of: id, in: box.locks) == nil }
+        let session = try #require(try box.store.session(id))
+        #expect(session.status == .finished)
+        // Where the app's next message resumes the conversation.
+        #expect(session.providerSessionId == "fake-session")
+        let app = try SessionLock.acquire(id, as: .app, in: box.locks)
+        app.release()
+    }
+
+    @Test func aTurnUnderWayFinishesBeforeTheAppTakesOver() async throws {
+        let box = try await Sandbox(agent: .slowTurn)
+        defer { box.tearDown() }
+        let id = try #require(try await box.create().object["id"] as? String)
+        let host = try #require(SessionLock.holder(of: id, in: box.locks))
+        kill(host.pid, SIGUSR1)
+        try await Task.sleep(for: .milliseconds(800))
+        #expect(SessionLock.holder(of: id, in: box.locks) != nil, "still at work on its turn")
+        try await waitUntil(timeout: 15) { SessionLock.holder(of: id, in: box.locks) == nil }
+        #expect(box.log(id).contains { $0.line.contains(#""type":"result""#) }, "the turn ran to its end")
+        #expect(try box.store.session(id)?.status == .finished)
     }
 
     // MARK: The lock, both ways

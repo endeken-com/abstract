@@ -7,6 +7,8 @@ import AbstractCore
 /// shows or the app runs its agent, so `abstract` can't send to or respawn
 /// it then. A chat whose lock `abstract` holds shows read-only here, its
 /// transcript following the log that agent writes, until the agent stops.
+/// Opening such a chat asks for it: its agent stops once idle (at once, or
+/// when its turn ends), and the chat carries on here like any other.
 extension AppModel {
     static let drivenFromCLI = AbstractError.message(
         "This chat is driven from the command line, so it's read-only here until its agent stops.")
@@ -69,6 +71,15 @@ extension AppModel {
         }
         for id in wanted where heldLocks[id] == nil { _ = try? holdLock(id) }
         refreshCLIDriven()
+        claimShownChat()
+    }
+
+    /// The chat showing is one `abstract`'s agent runs: ask its host for it.
+    /// Asking again changes nothing, so every look can ask.
+    private func claimShownChat() {
+        guard let id = selectedSessionId, heldLocks[id] == nil, let holder = cliDriven[id], holder.agent != nil,
+              SessionLock.holder(of: id, in: locksDirectory)?.pid == holder.pid else { return }
+        kill(holder.pid, SIGUSR1)
     }
 
     /// The chat's lock, taken now if the app doesn't hold it yet. Throws when
