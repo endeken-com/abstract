@@ -109,6 +109,13 @@ struct GrowingTextEditor: View {
             .lineSpacing(lineSpacing)
             .scrollContentBackground(.hidden)
             .focused(focused)
+            // Tab moves on, as it did in a text field, instead of typing a tab.
+            // Handlers the caller adds outside this one see Tab first.
+            .onKeyPress(.tab, phases: [.down, .repeat]) { press in
+                guard let window = NSApp.keyWindow else { return .ignored }
+                if press.modifiers.contains(.shift) { window.selectPreviousKeyView(nil) } else { window.selectNextKeyView(nil) }
+                return .handled
+            }
             .background(alignment: .topLeading) {
                 label(text.isEmpty ? placeholder : text)
                     .fixedSize(horizontal: false, vertical: true)

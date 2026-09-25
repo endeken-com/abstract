@@ -58,6 +58,14 @@ struct SlashCommandsTests {
         #expect(SlashCommands.entries(query: "zzz", agentCommands: agent, provider: .none, excluding: []).isEmpty)
     }
 
+    @Test func anExactNameComesFirst() {
+        // "mode" scores the same against "model", which is listed first.
+        #expect(SlashCommands.entries(query: "mode", agentCommands: [], provider: .none, excluding: []).first == .app(.mode))
+        // An agent's exact name beats an app command that only loosely matches.
+        #expect(SlashCommands.entries(query: "re", agentCommands: [AgentCommand(name: "re")], provider: .none, excluding: []).first
+            == .agent(AgentCommand(name: "re")))
+    }
+
     @Test func namespacedNamesMatch() {
         let entries = SlashCommands.entries(query: "plug:do", agentCommands: [AgentCommand(name: "plugin:do-it")], provider: .none, excluding: [])
         #expect(entries == [.agent(AgentCommand(name: "plugin:do-it"))])

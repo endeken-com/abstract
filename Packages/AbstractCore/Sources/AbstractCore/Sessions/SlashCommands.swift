@@ -106,9 +106,10 @@ public enum SlashCommands {
         return rest.contains(where: \.isWhitespace) ? nil : String(rest)
     }
 
-    /// The menu for `query`: app commands first, then the agent's, each group
-    /// by how well it matches. An agent command an app command covers (same
-    /// name, or one the provider says it replaces) is left out.
+    /// The menu for `query`: a command named exactly that first, then app
+    /// commands, then the agent's, each group by how well it matches. An agent
+    /// command an app command covers (same name, or one the provider says it
+    /// replaces) is left out.
     public static func entries(query: String, agentCommands: [AgentCommand], provider: ProviderCommands,
                                excluding: Set<AppCommand>) -> [SlashEntry] {
         let offered = AppCommand.everywhere + provider.extra
@@ -123,6 +124,8 @@ public enum SlashCommands {
                 return score > 0 ? (index, entry, score) : nil
             }
             .sorted { a, b in
+                let aExact = a.entry.name.lowercased() == q, bExact = b.entry.name.lowercased() == q
+                if aExact != bExact { return aExact }
                 if a.entry.isApp != b.entry.isApp { return a.entry.isApp }
                 if a.score != b.score { return a.score > b.score }
                 return a.index < b.index
