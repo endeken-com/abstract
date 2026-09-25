@@ -32,8 +32,6 @@ struct HostStarted: Codable {
 final class AgentHost: @unchecked Sendable {
     /// The hidden command `abstract` runs a host as.
     static let command = "_host"
-    /// How long the agent gets to show it's working; past it, it counts as up.
-    static let startTimeout: TimeInterval = 30
     /// How long an agent may sit idle before it's stopped: 10 minutes, or
     /// `ABSTRACT_AGENT_IDLE_TIMEOUT` seconds.
     static var idleTimeout: TimeInterval {
@@ -73,6 +71,8 @@ final class AgentHost: @unchecked Sendable {
     private var status: (SessionStatus, String?)?
     private var lastActivity = Date()
     private var stopRequested = false
+    /// The app asked for the chat (SIGUSR1): it's the app's once the agent is idle.
+    private var handOver = false
 
     private var sessionId: String { session.id }
 
@@ -109,7 +109,7 @@ final class AgentHost: @unchecked Sendable {
         }
         HostSocket.writeLine(child.stdin, (try? JSONEncoder().encode(request)) ?? Data())
         close(child.stdin)
-        let line = HostSocket.readLine(child.stdout, timeoutMs: Int32((startTimeout + 90) * 1000))
+        let line = HostSocket.readLine(child.stdout, timeoutMs: Int32((AgentStart.timeout + 90) * 1000))
         close(child.stdout)
         let reply = line.flatMap { try? JSONDecoder().decode(HostStarted.self, from: $0) }
         if let agent = reply?.agent {
@@ -161,6 +161,16 @@ final class AgentHost: @unchecked Sendable {
             source.resume()
             sources.append(source)
         }
+        // The chat was opened in the app: the agent stops as soon as it's
+        // idle (now, or when this turn ends), and the app resumes it from there.
+        signal(SIGUSR1, SIG_IGN)
+        let handOverSource = DispatchSource.makeSignalSource(signal: SIGUSR1, queue: queue)
+        handOverSource.setEventHandler { [self] in
+            handOver = true
+            stopIfHandedOver()
+        }
+        handOverSource.resume()
+        sources.append(handOverSource)
         let listener: Int32
         do { listener = try HostSocket.listen(sessionId: sessionId, in: locks) } catch { fail(error.localizedDescription) }
 
@@ -191,7 +201,7 @@ final class AgentHost: @unchecked Sendable {
         // Up once it answers or starts to. An agent prints its setup before it
         // ever reaches its model, so an error then (not signed in, a limit
         // reached) or an exit is a failed start.
-        _ = startSignal.wait(timeout: .now() + Self.startTimeout)
+        _ = startSignal.wait(timeout: .now() + AgentStart.timeout)
         let failure: String? = queue.sync {
             if let startFailure { return startFailure }
             guard exited, !up else { up = true; return nil }
@@ -255,7 +265,14 @@ final class AgentHost: @unchecked Sendable {
             if line.stream == .stderr { stderrTail = Array((stderrTail + [line.line]).suffix(5)) }
             let events = stream.feed(line)
             // Only the agent's own output says how it's doing, never the prompt logged for it.
-            if !up, startFailure == nil, line.stream == .stdout { checkStart(events) }
+            if !up, startFailure == nil, line.stream == .stdout,
+               let outcome = AgentStart.outcome(of: events, agentName: provider.name) {
+                switch outcome {
+                case .up: up = true
+                case let .failed(message): startFailure = message
+                }
+                startSignal.signal()
+            }
             let asked = events.contains { if case .permissionRequest = $0 { true } else { false } }
             for event in events { apply(event, asked: asked) }
         case let .exit(_, code):
@@ -273,25 +290,6 @@ final class AgentHost: @unchecked Sendable {
                 }
             }
             exitSignal.signal()
-        }
-    }
-
-    /// Before it's up: working (its turn started, or ended) or failed.
-    private func checkStart(_ events: [AgentEvent]) {
-        for event in events {
-            switch event {
-            case let .error(message):
-                startFailure = message
-            case .status(.errored, _):
-                startFailure = startFailure ?? "\(provider.name) reported an error before it started."
-            case .status(.running, _), .status(.idle, _), .status(.waitingInput, _), .text, .thinking, .toolUse, .turnEnd,
-                 .permissionRequest:
-                up = true
-            default:
-                continue
-            }
-            startSignal.signal()
-            return
         }
     }
 
@@ -322,6 +320,14 @@ final class AgentHost: @unchecked Sendable {
         try? store.updateSessionStatus(sessionId, new, detail: detail)
         status = (new, detail)
         StoreChanges.post(storePath: storePath)
+        stopIfHandedOver()
+    }
+
+    /// On `queue`: an idle agent the app has asked for stops, and the chat is the app's.
+    private func stopIfHandedOver() {
+        guard handOver, status?.0 == .idle, !stopRequested else { return }
+        stopRequested = true
+        engine.stop(sessionId: sessionId)
     }
 
     // MARK: Messages (`abstract agent send`)

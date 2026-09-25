@@ -167,7 +167,8 @@ struct ComposerView: View {
             // What the agent runs with, each one a menu to change it.
             Group {
                 if readOnly {
-                    Label("Read-only while its agent runs from the command line. Stop it to take over.", systemImage: "terminal")
+                    Label("Its agent is working from the command line. The chat is yours when this turn ends, or Stop it now.",
+                          systemImage: "terminal")
                         .font(.btChatCaption)
                         .foregroundStyle(Color.btTextTertiary)
                         .padding(.horizontal, 6)

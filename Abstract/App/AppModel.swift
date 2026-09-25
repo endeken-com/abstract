@@ -208,6 +208,10 @@ final class AppModel {
     /// Where following each chat's log got to: the byte after the last line read, and its number.
     @ObservationIgnored private var tailPositions: [String: (byte: UInt64, seq: Int)] = [:]
     @ObservationIgnored var storeObserver: Int32?
+    /// Where `abstract` hands the app the agents of chats it makes; see AppModel+SessionLocks.
+    @ObservationIgnored var appLink: AppLink.Server?
+    /// Chats whose agent was just started for `abstract`, waiting to be up.
+    @ObservationIgnored var startWaits: [String: CheckedContinuation<AgentStart.Outcome, Never>] = [:]
     @ObservationIgnored private var configuredModels: [String: (model: String?, read: Date)] = [:]
     @ObservationIgnored var scheduler: AutomationScheduler?
 
@@ -249,6 +253,7 @@ final class AppModel {
         restoreInterruptedSetups(unfinished)
         Task { await listen() }
         watchCommandLine()
+        serveCommandLine()
         Task { await detectProviders() }
         Task { await refreshModels() }
         scheduler = AutomationScheduler(model: self)
@@ -1076,7 +1081,12 @@ final class AppModel {
                 accounts.record(quota, profile: sessionProfiles[sessionId] ?? accounts.standardProfilePath)
             }
             guard let stream = stream(for: sessionId) else { return }
-            for e in stream.feed(line) {
+            let events = stream.feed(line)
+            if startWaits[sessionId] != nil, line.stream == .stdout,
+               let outcome = AgentStart.outcome(of: events, agentName: ProviderRegistry.name(stream.providerId)) {
+                agentStart(sessionId, outcome)
+            }
+            for e in events {
                 if handingOff.contains(sessionId) {
                     // The summary turn works without tools, and a new id would be the outgoing agent's.
                     if case let .permissionRequest(requestId, _, _) = e { respond(sessionId, requestId: requestId, allow: false, input: nil); continue }
@@ -1091,6 +1101,10 @@ final class AppModel {
             defer {
                 publishAgent(sessionId, providerId: nil)
                 syncLocks()
+            }
+            if startWaits[sessionId] != nil {
+                let name = ProviderRegistry.name(session(sessionId)?.providerId ?? "")
+                agentStart(sessionId, .failed("\(name) exited with code \(code.map(String.init) ?? "?") before it started."))
             }
             // Stopped only to start again with a new model or agent: not an ending.
             if relaunching.remove(sessionId) != nil { permissions[sessionId] = nil; return }

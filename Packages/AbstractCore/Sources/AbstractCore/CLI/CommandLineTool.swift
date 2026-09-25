@@ -16,11 +16,12 @@ import Synchronization
 ///
 /// It reads and writes the app's own database and chat logs, so it works with
 /// the app closed, and a session it creates is an ordinary chat there (the app
-/// picks changes up live when it's open). An agent it starts runs in a host
-/// process of its own (`AgentHost`) until the agent exits, or has sat idle
-/// for 10 minutes (`ABSTRACT_AGENT_IDLE_TIMEOUT`, in seconds). It runs under
-/// the project's default permission policy, and any approval it would ask for
-/// is denied: nobody is there to answer.
+/// picks changes up live when it's open). With the app open, the app runs the
+/// agent (`AppLink`), so the chat is the app's from its first second. With it
+/// closed, the agent runs in a host process of its own (`AgentHost`) until
+/// it exits, has sat idle for 10 minutes (`ABSTRACT_AGENT_IDLE_TIMEOUT`, in
+/// seconds), or the chat is opened in the app; any approval it would ask for
+/// there is denied, since nobody is there to answer.
 ///
 /// `session create` starts the worktree from the project's base branch as
 /// `origin` has it (fetched first), and runs the project's setup script in it
@@ -138,9 +139,9 @@ struct Commands {
 
         // From here until the agent is up or everything is undone, an
         // interrupt waits: a session is never left half made.
-        for sig in [SIGINT, SIGTERM, SIGHUP] { signal(sig, SIG_IGN) }
+        for sig in [SIGINT, SIGTERM, SIGHUP, SIGUSR1] { signal(sig, SIG_IGN) }
         let sessionId = UUID().uuidString
-        let lock = try SessionLock.acquire(sessionId, as: .cli, in: locks)
+        var lock = try SessionLock.acquire(sessionId, as: .cli, in: locks)
         // Named like the app names a new chat's folder.
         let city = WorktreeNaming.cityName(avoiding: Set(siblings.compactMap {
             $0.worktreePath.map { URL(fileURLWithPath: $0).lastPathComponent }
@@ -170,6 +171,8 @@ struct Commands {
             // Apart, so a worktree that won't go never keeps its branch.
             _ = try? await Git.git(executor, cwd: project.rootPath, ["branch", "-D", workspace.branch])
             lock.discard()
+            // Handed to the app and back: take it once more to clear it away.
+            (try? SessionLock.acquire(sessionId, as: .cli, in: locks))?.discard()
             StoreChanges.post(storePath: storePath)
         }
         let inserted: Bool
@@ -208,6 +211,10 @@ struct Commands {
         }
 
         do {
+            let request = AppLink.StartRequest(sessionId: sessionId, prompt: prompt, replacing: nil, fresh: true)
+            if let agent = try startInApp(request, lock: &lock) {
+                return SessionJSON(session: (try? store.session(sessionId)) ?? session, agent: AgentJSON(agent, driver: .app))
+            }
             let agent = try AgentHost.start(session, prompt: prompt, replacing: nil, lock: lock, executable: executable)
             return SessionJSON(session: (try? store.session(sessionId)) ?? session, agent: AgentJSON(agent, driver: .cli))
         } catch {
@@ -247,7 +254,7 @@ struct Commands {
     func respawn(session id: String, agent providerId: String, prompt: String) throws -> AgentJSON {
         let provider = try drivableProvider(providerId)
         var session = try existingSession(id)
-        let lock: SessionLock
+        var lock: SessionLock
         do {
             lock = try SessionLock.acquire(id, as: .cli, in: locks)
         } catch SessionLockError.held(let holder) {
@@ -257,7 +264,7 @@ struct Commands {
             }
             throw busy(id)
         }
-        for sig in [SIGINT, SIGTERM, SIGHUP] { signal(sig, SIG_IGN) }
+        for sig in [SIGINT, SIGTERM, SIGHUP, SIGUSR1] { signal(sig, SIG_IGN) }
         guard let path = session.worktreePath, FileManager.default.fileExists(atPath: path) else {
             lock.release()
             throw CLIError(.worktreeMissing, "Session \(id) has no worktree to run an agent in.")
@@ -279,8 +286,10 @@ struct Commands {
         }
         StoreChanges.post(storePath: storePath)
         do {
-            let agent = try AgentHost.start(session, prompt: prompt, replacing: previous == provider.id ? nil : previous,
-                                            lock: lock, executable: executable)
+            let replacing = previous == provider.id ? nil : previous
+            let request = AppLink.StartRequest(sessionId: id, prompt: prompt, replacing: replacing, fresh: false)
+            if let agent = try startInApp(request, lock: &lock) { return AgentJSON(agent, driver: .app) }
+            let agent = try AgentHost.start(session, prompt: prompt, replacing: replacing, lock: lock, executable: executable)
             return AgentJSON(agent, driver: .cli)
         } catch {
             let failure = error as? CLIError ?? CLIError(.agentStartFailed, error.localizedDescription)
@@ -289,6 +298,23 @@ struct Commands {
             StoreChanges.post(storePath: storePath)
             throw failure
         }
+    }
+
+    /// With the app open, the app runs the agent: the chat is the app's from
+    /// its first second, like one started there. Gives the app the chat's lock
+    /// to do it; nil, with the lock taken back, when no app answers.
+    private func startInApp(_ request: AppLink.StartRequest, lock: inout SessionLock) throws -> AgentRecord? {
+        guard FileManager.default.fileExists(atPath: AppLink.socketPath(storePath: storePath)) else { return nil }
+        lock.release()
+        guard let reply = try AppLink.start(request, storePath: storePath) else {
+            // Nobody there after all: the agent runs here, as with the app closed.
+            do { lock = try SessionLock.acquire(request.sessionId, as: .cli, in: locks) } catch { throw busy(request.sessionId) }
+            return nil
+        }
+        guard let agent = reply.agent else {
+            throw CLIError(.agentStartFailed, reply.message ?? "Abstract couldn't start the agent.")
+        }
+        return agent
     }
 
     // MARK: Lookups
@@ -328,7 +354,7 @@ struct Commands {
     }
 
     private func openInApp(_ id: String) -> CLIError {
-        CLIError(.sessionLocked, "Session \(id) is open in Abstract. Try again once it's closed there and its agent has stopped.")
+        CLIError(.sessionLocked, "Abstract is using session \(id): it's open there, or the app runs its agent.")
     }
 
     private func busy(_ id: String) -> CLIError {
