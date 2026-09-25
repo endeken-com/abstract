@@ -121,6 +121,16 @@ extension AppModel {
         return onGitHub
     }
 
+    /// Whether you can push to `owner/name`, asked of GitHub once per run.
+    /// Unknown (and asked again later) while `gh` isn't ready.
+    func access(to slug: String) async -> RepoAccess {
+        if let known = repoAccess[slug] { return known }
+        guard !isDemo, githubAccess == .ready else { return .unknown }
+        let found = await GitHub.permission(executor, repo: slug)
+        if found != .unknown { repoAccess[slug] = found }
+        return found
+    }
+
     // MARK: Actions
 
     func createPullRequest(_ sessionId: String, title: String, body: String, base: String?, draft: Bool, commitFirst: Bool) async throws {

@@ -126,6 +126,8 @@ final class AppModel {
     var githubViewer: String?
     /// Whether each project's origin is on GitHub, by project id.
     @ObservationIgnored var githubProjects: [String: Bool] = [:]
+    /// Whether you can push to each GitHub repository, by `owner/name`, once asked.
+    @ObservationIgnored var repoAccess: [String: RepoAccess] = [:]
     /// When each project's pull requests were last listed, by project id.
     @ObservationIgnored var pullRequestsListedAt: [String: ContinuousClock.Instant] = [:]
     /// A pull request picked by hand for a chat, which a newer one won't replace.

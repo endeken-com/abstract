@@ -19,16 +19,25 @@ struct DiffFileSections: View {
         ScrollViewReader { proxy in
             ScrollView(.vertical) {
                 LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
-                    ForEach(review.orderedFiles) { file in
-                        Section {
-                            if review.isExpanded(file) {
-                                DiffFileBody(review: review, file: file, layout: layout, context: context,
-                                             metrics: metrics, highlights: highlights)
-                            }
-                        } header: {
-                            DiffFileHeader(review: review, file: file, context: context, onDiscard: { onDiscard(file) })
+                    ForEach(review.sections) { section in
+                        if review.showsRepos {
+                            RepoHeader(section: section,
+                                       title: section.diff.repo.isSubmodule ? section.diff.repo.path : context.projectName,
+                                       collapsed: review.collapsedRepos.contains(section.id)) { review.toggleRepo(section.id) }
                         }
-                        .id(file.path)
+                        if !review.collapsedRepos.contains(section.id) {
+                            ForEach(section.files) { file in
+                                Section {
+                                    if review.isExpanded(file) {
+                                        DiffFileBody(review: review, file: file, layout: layout, context: context,
+                                                     metrics: metrics, highlights: highlights)
+                                    }
+                                } header: {
+                                    DiffFileHeader(review: review, file: file, context: context, onDiscard: { onDiscard(file) })
+                                }
+                                .id(file.path)
+                            }
+                        }
                     }
                     if !review.commits.isEmpty { ReviewCommits(review: review, context: context) }
                 }

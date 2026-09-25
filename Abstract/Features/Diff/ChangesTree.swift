@@ -11,7 +11,7 @@ struct ChangesTree: View {
     @State private var collapsed: Set<String> = []
 
     var body: some View {
-        let rows = ChangesTreeRow.flatten(ChangesTreeRow.build(review.files), collapsed: collapsed)
+        let rows = ChangesTreeRow.flatten(ChangesTreeRow.build(review.files, repos: Set(review.repos.map(\.repo.path).filter { !$0.isEmpty })), collapsed: collapsed)
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 ForEach(rows) { row in
@@ -42,9 +42,11 @@ struct ChangesTreeRow: Identifiable {
     let additions: Int
     let deletions: Int
     var children: [ChangesTreeRow] = []
+    /// A submodule's folder.
+    var isRepo = false
 
     /// Folders before files, each in plain character order.
-    static func build(_ files: [ReviewFile]) -> [ChangesTreeRow] {
+    static func build(_ files: [ReviewFile], repos: Set<String> = []) -> [ChangesTreeRow] {
         final class Folder {
             var folders: [String: Folder] = [:]
             var files: [ReviewFile] = []
@@ -65,7 +67,8 @@ struct ChangesTreeRow: Identifiable {
                 var label = name
                 var path = prefix + name
                 // A folder whose only content is one folder reads as one row.
-                while child.files.isEmpty, child.folders.count == 1, let (next, grandchild) = child.folders.first {
+                // …but never through a submodule, whose folder is its own row.
+                while !repos.contains(path), child.files.isEmpty, child.folders.count == 1, let (next, grandchild) = child.folders.first {
                     label += "/" + next
                     path += "/" + next
                     child = grandchild
@@ -74,7 +77,7 @@ struct ChangesTreeRow: Identifiable {
                 let adds = inner.reduce(0) { $0 + $1.additions }
                 let dels = inner.reduce(0) { $0 + $1.deletions }
                 out.append(ChangesTreeRow(kind: .folder, id: path + "/", path: path, name: label, depth: depth,
-                                          additions: adds, deletions: dels, children: inner))
+                                          additions: adds, deletions: dels, children: inner, isRepo: repos.contains(path)))
             }
             for file in folder.files.sorted(by: { $0.name < $1.name }) {
                 out.append(ChangesTreeRow(kind: .file(file.diff.status), id: file.path, path: file.path, name: file.name, depth: depth,
@@ -112,7 +115,11 @@ private struct TreeRowView: View {
                         .foregroundStyle(Color.btTextTertiary)
                         .rotationEffect(.degrees(collapsed ? 0 : 90))
                         .frame(width: 10)
-                    FileIcon(path: row.path, isDirectory: true, open: !collapsed)
+                    if row.isRepo {
+                        Image(systemName: "shippingbox").font(.system(size: 11)).foregroundStyle(Color.btTextSecondary).frame(width: 16)
+                    } else {
+                        FileIcon(path: row.path, isDirectory: true, open: !collapsed)
+                    }
                     Text(row.name).font(BTFont.ui(12.5)).foregroundStyle(Color.btTextSecondary).lineLimit(1).truncationMode(.middle)
                 case .file:
                     Color.clear.frame(width: 10)
@@ -134,6 +141,6 @@ private struct TreeRowView: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .help(row.path)
+        .help(row.isRepo ? "Submodule \(row.path)" : row.path)
     }
 }
