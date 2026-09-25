@@ -195,18 +195,21 @@ private struct PanelTab: View {
         .onTapGesture { model.updateLayout(session.id) { $0.activate(item.id) } }
         .onHover { hovering = $0 }
         .animation(.snappy(duration: 0.12), value: hovering)
-        .contextMenu {
-            let other = slot.other
-            Button(other == .side ? "Move to Side Panel" : "Move to Bottom Panel") {
+        .secondaryClickMenu(menu)
+    }
+
+    private var menu: [MenuEntry] {
+        let other = slot.other
+        return [
+            .action(other == .side ? "Move to Side Panel" : "Move to Bottom Panel", enabled: item.kind.fits(other)) {
                 model.updateLayout(session.id) { $0.move(item.id, to: other) }
-            }
-            .disabled(!item.kind.fits(other))
-            Divider()
-            Button("Close") { model.updateLayout(session.id) { $0.close(item.id) } }
-            Button("Close Others") {
+            },
+            .divider,
+            .action("Close") { model.updateLayout(session.id) { $0.close(item.id) } },
+            .action("Close Others") {
                 model.updateLayout(session.id) { l in for t in l[slot].tabs where t.id != item.id { l.close(t.id) } }
-            }
-        }
+            },
+        ]
     }
 }
 

@@ -12,4 +12,10 @@ public enum Ordering {
         order.insert(moving, at: after ? index + 1 : index)
         return order
     }
+
+    /// Pinned chats first, in the order they were pinned; the rest keep their order.
+    public static func pinnedFirst(_ sessions: [Session]) -> [Session] {
+        let pinned = sessions.filter { $0.pinnedAt != nil }.sorted { $0.pinnedAt! < $1.pinnedAt! }
+        return pinned + sessions.filter { $0.pinnedAt == nil }
+    }
 }
