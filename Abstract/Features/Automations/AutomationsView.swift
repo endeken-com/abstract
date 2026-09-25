@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 import AbstractCore
 
@@ -27,7 +26,7 @@ struct AutomationsView: View {
                 EmptyStateView(
                     symbol: "clock.arrow.2.circlepath",
                     title: "No automations yet",
-                    message: "Run an agent on a schedule — nightly dependency bumps, issue triage, recurring cleanups. Every run opens its own chat you review like any other.",
+                    message: "Run an agent on a schedule — nightly dependency bumps, issue triage, recurring cleanups. Each run starts a chat you review like any other, or continues one, whose agent can start chats of its own.",
                     action: ("New Automation", { creating = true })
                 )
             } else {
@@ -67,7 +66,7 @@ private struct AutomationList: View {
                     AutoSectionLabel(title: model.automations.count == 1 ? "1 automation" : "\(model.automations.count) automations")
                         .padding(.bottom, Space.xs)
                     ForEach(model.automations) { a in
-                        AutomationListRow(automation: a, projectName: model.project(a.projectId)?.name, now: context.date) {
+                        AutomationListRow(automation: a, place: place(of: a), now: context.date) {
                             open(a.id)
                         }
                     }
@@ -78,11 +77,17 @@ private struct AutomationList: View {
             .padding(.bottom, Space.xxl)
         }
     }
+
+    /// The chat it continues, or where its new chats start.
+    private func place(of a: Automation) -> String {
+        if a.workspaceMode == .pinned, let chat = model.session(a.pinnedSessionId) { return "in “\(chat.name)”" }
+        return model.project(a.projectId)?.name ?? "No project"
+    }
 }
 
 private struct AutomationListRow: View {
     let automation: Automation
-    let projectName: String?
+    let place: String
     let now: Date
     let action: () -> Void
 
@@ -102,7 +107,7 @@ private struct AutomationListRow: View {
                     .foregroundStyle(Color.btText)
                     .lineLimit(1)
                     .layoutPriority(1)
-                Text([AutomationText.schedule(automation), projectName ?? "No project"].joined(separator: " · "))
+                Text([AutomationText.schedule(automation), place].joined(separator: " · "))
                     .font(.btCallout)
                     .foregroundStyle(Color.btTextTertiary)
                     .lineLimit(1)
@@ -206,7 +211,7 @@ private struct AutomationPage: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This removes the automation and its run history. Chats and worktrees its runs created stay.")
+            Text("This removes the automation and its run history. The chats its runs used stay.")
         }
         .confirmationDialog("Discard your changes?", isPresented: $confirmingLeave) {
             Button("Discard Changes", role: .destructive, action: onClose)
@@ -274,14 +279,11 @@ private struct AutomationPage: View {
                     .accessibilityLabel("Title")
                 saveControls
             }
-            HStack(spacing: Space.lg) {
-                Toggle(isOn: Binding(get: { isActive }, set: { setActive($0) })) {
-                    Text("Active").font(.btCallout).foregroundStyle(Color.btTextSecondary)
-                }
-                .toggleStyle(QuietSwitchStyle())
-                .help(isActive ? "Pause: scheduled runs stop until you turn it back on" : "Resume the schedule")
-                OwnerLabel()
+            Toggle(isOn: Binding(get: { isActive }, set: { setActive($0) })) {
+                Text("Active").font(.btCallout).foregroundStyle(Color.btTextSecondary)
             }
+            .toggleStyle(QuietSwitchStyle())
+            .help(isActive ? "Pause: scheduled runs stop until you turn it back on" : "Resume the schedule")
         }
     }
 
@@ -378,34 +380,5 @@ private struct BreadcrumbLink: View {
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
         .help("Back to all automations")
-    }
-}
-
-/// Who the automation belongs to: this Mac's user, until there are others.
-private struct OwnerLabel: View {
-    private static let name: String = {
-        let full = NSFullUserName()
-        return full.isEmpty ? NSUserName() : full
-    }()
-
-    private static var initials: String {
-        let words = name.split(separator: " ")
-        return String((words.first?.prefix(1) ?? "") + (words.count > 1 ? words.last!.prefix(1) : "")).uppercased()
-    }
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Text(Self.initials)
-                .font(BTFont.ui(8, .semibold))
-                .foregroundStyle(Color.btTextSecondary)
-                .frame(width: 16, height: 16)
-                .background(Color.btInset, in: Circle())
-            Text(Self.name)
-                .font(.btCallout)
-                .foregroundStyle(Color.btTextSecondary)
-                .lineLimit(1)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Owner: \(Self.name)")
     }
 }

@@ -137,21 +137,12 @@ public enum Workspace {
     }
 
     /// Whether `path` is a folder Abstract made for a chat with no project
-    /// (a standalone chat's, or an automation run's scratch folder), and so
-    /// may delete with it. Nothing else ever is.
+    /// (a standalone chat's, or the scratch folder an automation run had
+    /// before those), and so may delete with it. Nothing else ever is.
     public static func isChatFolder(_ path: String, home: String) -> Bool {
         let folder = URL(fileURLWithPath: path).standardizedFileURL
         let roots = [standaloneRoot(home: home), URL(fileURLWithPath: Store.defaultPath()).deletingLastPathComponent().appendingPathComponent("scratch")]
         return roots.contains { folder.deletingLastPathComponent().path == $0.standardizedFileURL.path }
-    }
-
-    /// A throwaway directory for "No project" automation runs.
-    public static func scratchDirectory(runId: String) throws -> String {
-        let dir = URL(fileURLWithPath: Store.defaultPath()).deletingLastPathComponent()
-            .appendingPathComponent("scratch", isDirectory: true)
-            .appendingPathComponent(runId, isDirectory: true)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.path
     }
 
     /// First non-empty line of a prompt, trimmed to a chat title.

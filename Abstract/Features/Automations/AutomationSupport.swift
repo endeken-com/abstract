@@ -48,8 +48,7 @@ extension AppModel {
         }
     }
 
-    /// Removes the automation and its run history. Chats and worktrees it
-    /// created stay.
+    /// Removes the automation and its run history. The chats its runs used stay.
     func deleteAutomation(_ id: String) {
         do {
             try store.deleteAutomation(id)
@@ -73,6 +72,15 @@ extension AppModel {
             flash("“\(a.name)” started")
         }
         return run
+    }
+
+    /// A run in a chat that already exists: its instructions arrive as your
+    /// next message would, so its agent picks up where it left off.
+    func deliverAutomationRun(_ prompt: String, to chatId: String) throws {
+        guard let chat = session(chatId) else { throw AbstractError.notFound("chat") }
+        if setups[chatId] != nil { throw AbstractError.message("“\(chat.name)” is still being set up.") }
+        if chat.archivedAt != nil { setArchived(chatId, false) }
+        try sendFollowUp(chatId, text: prompt)
     }
 
     func automationRuns(_ automationId: String, limit: Int = 50) -> [AutomationRun] {
