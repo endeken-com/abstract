@@ -289,6 +289,8 @@ public protocol ProviderDefinition: Sendable {
     func configuredDefaultModel(home: String) -> String?
     /// The effort the CLI uses when none is passed, read from its own config.
     func configuredDefaultEffort(home: String) -> String?
+    /// What `policy` means for this agent, shown under the permissions menu.
+    func permissionDetail(_ policy: PermissionPolicy) -> String
 }
 
 public extension ProviderDefinition {
@@ -298,4 +300,5 @@ public extension ProviderDefinition {
     func buildPermissionModeChange(_ policy: PermissionPolicy, requestId: String) -> String? { nil }
     func buildStopTask(_ taskId: String, requestId: String) -> String? { nil }
     func buildBackground(toolUseId: String?, requestId: String) -> String? { nil }
+    func permissionDetail(_ policy: PermissionPolicy) -> String { policy.detail }
 }

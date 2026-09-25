@@ -63,7 +63,7 @@ struct AddProjectSheet: View {
                     GridRow {
                         Text("Default agent").foregroundStyle(Color.btTextSecondary)
                         Picker("", selection: $providerId) {
-                            ForEach(ProviderRegistry.all, id: \.id) { p in Text(p.name).tag(p.id) }
+                            ForEach(model.pickableAgents(keeping: providerId), id: \.id) { p in Text(p.name).tag(p.id) }
                         }
                         .labelsHidden()
                     }

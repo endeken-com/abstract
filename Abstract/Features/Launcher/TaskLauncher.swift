@@ -44,11 +44,7 @@ struct TaskLauncher: View {
                 // In the sheet the prompt is the field; on the New screen the whole box is.
                 .modifier(OptionalFieldChrome(active: embedded, focused: focused))
                 .padding(.bottom, embedded ? Space.md : 0)
-                .onKeyPress(.return, phases: .down) { press in
-                    guard press.modifiers.contains(.command) else { return .ignored }
-                    start()
-                    return .handled
-                }
+                .returnBreaksLine(commandReturn: start)
 
             if !attachments.isEmpty {
                 AttachmentTray(attachments: $attachments)
@@ -74,9 +70,9 @@ struct TaskLauncher: View {
                     }
                     CompactMenu(title: ProviderRegistry.name(providerId), logo: providerId) {
                         Picker("Agent", selection: providerBinding) {
-                            ForEach(deviceProviders, id: \.id) { p in
+                            ForEach(model.pickableAgents(on: device, keeping: providerId), id: \.id) { p in
                                 Label {
-                                    Text(p.name + (device == nil && model.providerStatus[p.id]?.available == false ? " — not installed" : ""))
+                                    Text(p.name)
                                 } icon: {
                                     if let icon = ProviderRegistry.menuImage(p.id) { Image(nsImage: icon) }
                                 }
@@ -95,7 +91,7 @@ struct TaskLauncher: View {
                         }
                         .pickerStyle(.inline)
                         Divider()
-                        Text(policy.detail)
+                        Text(ProviderRegistry.provider(providerId)?.permissionDetail(policy) ?? policy.detail)
                     }
                     HStack(spacing: 4) {
                         WorktreeMenu(worktree: $worktree, worktrees: worktrees)

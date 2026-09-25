@@ -109,10 +109,8 @@ import Testing
         #expect(codex.args.contains("read-only") && codex.args.contains("gpt-test"))
         #expect(codex.stdinInitial == nil && !codex.keepStdinOpen)
 
-        let local = try #require(ChatNaming.launchSpec(home: "/tmp", binary: nil, providerId: "ollama", model: "llama-test",
-                                                       instructions: "", task: "Fix login"))
-        #expect(local.args.contains { $0.contains("model_providers.abstract_ollama") })
-        #expect(local.args.contains("llama-test"))
+        #expect(ChatNaming.launchSpec(home: "/tmp", binary: nil, providerId: "ollama", model: "llama-test",
+                                      instructions: "", task: "Fix login") == nil)
         #expect(ChatNaming.launchSpec(home: "/tmp", binary: nil, providerId: "missing", model: nil,
                                       instructions: "", task: "Fix login") == nil)
 

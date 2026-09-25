@@ -58,6 +58,50 @@ struct RealAgentTests {
         #expect(!engine.isAlive("real"))
     }
 
+    /// OpenCode runs a turn per process; the follow-up resumes its session.
+    /// Uses OpenCode's free model unless ABSTRACT_OPENCODE_MODEL names another.
+    @Test(.timeLimit(.minutes(3)))
+    func openCodeRunsATurnAndResumesItsSession() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("real-opencode-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let provider = OpenCodeProvider()
+        let model = ProcessInfo.processInfo.environment["ABSTRACT_OPENCODE_MODEL"] ?? "opencode/big-pickle"
+        let engine = SessionEngine(executor: LocalExecutor.shared, logDirectory: dir.appendingPathComponent("logs"))
+
+        func turn(_ spec: LaunchSpec) async throws -> (events: [AgentEvent], raw: [String]) {
+            try engine.launch(sessionId: "opencode", spec: spec)
+            let parser = provider.makeParser()
+            var events: [AgentEvent] = [], raw: [String] = []
+            for await event in engine.events {
+                switch event {
+                case let .line(_, _, line):
+                    for e in parser.feed(line.line, stream: line.stream) {
+                        events.append(e)
+                        if case let .raw(l, s) = e, s == .stdout { raw.append(l) }
+                    }
+                case let .exit(_, code):
+                    return (events + parser.onExit(code: code), raw)
+                }
+            }
+            return (events, raw)
+        }
+
+        let context = LaunchContext(cwd: dir.path, prompt: "Create a file named hi.txt containing the word hi. Then stop.",
+                                    permissionPolicy: .bypass, model: model)
+        let first = try await turn(provider.buildLaunch(context))
+        #expect(first.raw.isEmpty, "every stdout frame was understood: \(first.raw.prefix(3))")
+        #expect(first.events.contains(.status(.finished, detail: nil)))
+        #expect(FileManager.default.fileExists(atPath: dir.path + "/hi.txt"), "the agent worked in its own directory")
+        let sessionId = try #require(first.events.lazy.compactMap { if case let .sessionId(id) = $0 { id } else { nil } }.first)
+
+        var followUp = context
+        followUp.prompt = "What is the name of the file you just created? Reply with the file name only."
+        let second = try await turn(provider.buildResume(followUp, resumeId: sessionId))
+        #expect(second.events.contains(.sessionId(sessionId)), "the follow-up continued the same session")
+        #expect(second.events.contains { if case let .text(.assistant, text, _, _) = $0 { text.contains("hi.txt") } else { false } })
+    }
+
     @Test(.timeLimit(.minutes(3)))
     func askModeRoutesAnApprovalThroughAbstractAndAllowRunsTheTool() async throws {
         let exec = LocalExecutor.shared

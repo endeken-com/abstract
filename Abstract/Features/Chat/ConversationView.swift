@@ -196,7 +196,7 @@ private struct ContinueWithActions: View {
     var body: some View {
         let current = model.session(sessionId)?.providerId
         Menu("Continue with…") {
-            ForEach(ProviderRegistry.all.filter { $0.id != current }, id: \.id) { p in
+            ForEach(model.pickableAgents(on: RemoteService.split(sessionId)?.device).filter { $0.id != current }, id: \.id) { p in
                 Button(p.name) { model.continueWith(sessionId, providerId: p.id) }
             }
         }
@@ -281,21 +281,24 @@ private struct UserBubble: View {
     private var openSwitch: ExpansionSwitch { ExpansionSwitch(key: "user:\(row?.id ?? 0)", expansion: expansion, row: row) }
 
     private func bubble(_ text: String) -> some View {
-        // A paragraph per Text: one long selectable Text lays itself out in
-        // time that grows much faster than its length, and a long paste would
-        // stall the transcript. A very long message folds.
+        // A very long message folds. Keep unusually large expanded pastes as
+        // separate plain lines so a single Markdown parse cannot stall the list.
         let paragraphs = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         let long = paragraphs.count > Self.foldLines || text.count > Self.foldCharacters
         let open = openSwitch.value(local: local) ?? false
         let shown = long && !open ? Self.fold(paragraphs) : Array(paragraphs.prefix(2_000))
+        let shownText = shown.joined(separator: "\n")
         return HStack {
             Spacer(minLength: 80)
             VStack(alignment: .leading, spacing: prose.lineSpacing - 1) {
-                // Textual's selectable text, so a drag selects across rows.
-                SelectableLines(shown.map { TextClip.line($0, max: 4_000) }, spacing: prose.lineSpacing - 1)
-                    .font(prose.font(size: prose.points - 1))
-                    .lineSpacing(prose.lineSpacing - 1)
-                    .foregroundStyle(Color.btText)
+                if shownText.count <= 24_000 {
+                    AgentProse(markdown: long && !open ? MarkdownHealing.heal(shownText) : shownText)
+                } else {
+                    SelectableLines(shown.map { TextClip.line($0, max: 4_000) }, spacing: prose.lineSpacing - 1)
+                        .font(prose.font(size: prose.points - 1))
+                        .lineSpacing(prose.lineSpacing - 1)
+                        .foregroundStyle(Color.btText)
+                }
                 if long {
                     Button(open ? "Show less" : "Show more") {
                         if !openSwitch.set(!open) { local.toggle() }

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Every text input in Abstract looks the same: one steady fill that never
@@ -44,6 +45,21 @@ private struct BTFieldModifier: ViewModifier {
 
 extension View {
     func btField(compact: Bool = false) -> some View { modifier(BTFieldModifier(compact: compact)) }
+}
+
+extension View {
+    /// For a vertical TextField: Return breaks the line at the caret and
+    /// Command-Return runs `send`. Left alone, Return ends editing and selects
+    /// everything, so the next key typed replaces the draft.
+    func returnBreaksLine(commandReturn send: @escaping () -> Void) -> some View {
+        onKeyPress(.return, phases: .down) { press in
+            if press.modifiers.contains(.command) { send(); return .handled }
+            // An input method uses Return to commit the text it is composing.
+            guard let editor = NSApp.keyWindow?.firstResponder as? NSTextView, !editor.hasMarkedText() else { return .ignored }
+            editor.insertNewlineIgnoringFieldEditor(nil)
+            return .handled
+        }
+    }
 }
 
 /// A single-line text field in the shared style.

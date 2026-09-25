@@ -10,13 +10,13 @@ public enum RemoteMessage: Codable, Sendable {
     case request(id: Int, RemoteRequest)
     case response(id: Int, RemoteResponse)
     case event(RemoteEvent)
-    /// A connection to a local model server on the other Mac, carried over
-    /// this channel, so the server itself never has to listen on the network.
+    /// Older versions carried a connection to a local model server over this
+    /// channel. Kept so their frames still decode: an open is answered with close.
     case tunnel(id: Int, TunnelFrame)
 }
 
 public enum TunnelFrame: Codable, Sendable {
-    case open(LocalModelKind)
+    case open(String)
     case data(Data)
     case close
 }
@@ -123,8 +123,6 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
     public var providers: [String]
     /// Chats whose agent process is running.
     public var alive: [String]
-    /// Local model servers on that Mac that it shares.
-    public var localModels: [LocalModelKind]?
     /// That Mac's home folder.
     public var home: String?
     /// The models each agent offers there.
@@ -132,11 +130,11 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
     /// Pull requests keyed by the host's chat id. Optional for older peers.
     public var pullRequests: [String: RemotePullRequest]?
 
-    public init(projects: [Project], sessions: [Session], providers: [String], alive: [String], localModels: [LocalModelKind]? = nil,
+    public init(projects: [Project], sessions: [Session], providers: [String], alive: [String],
                 home: String? = nil, modelCatalogs: [String: ModelCatalog]? = nil,
                 pullRequests: [String: RemotePullRequest]? = nil) {
         self.projects = projects; self.sessions = sessions; self.providers = providers; self.alive = alive
-        self.localModels = localModels; self.home = home; self.modelCatalogs = modelCatalogs
+        self.home = home; self.modelCatalogs = modelCatalogs
         self.pullRequests = pullRequests
     }
 }

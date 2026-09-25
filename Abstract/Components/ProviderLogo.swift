@@ -4,7 +4,7 @@ import AbstractCore
 /// The agent's own mark, wherever an agent is named.
 struct ProviderLogo: View {
     /// Marks drawn in the text colour: single-colour logos.
-    private static let templates: Set<String> = ["ProviderOpenAI", "ProviderOllama", "ProviderLMStudio"]
+    private static let templates: Set<String> = ["ProviderOpenAI"]
     let providerId: String
     var size: CGFloat = 16
     /// Tint the mark instead of using its brand colour, for dense lists.
@@ -38,8 +38,4 @@ struct ProviderAvatar: View {
         ProviderLogo(providerId: providerId, size: size * 0.72)
             .frame(width: size, height: size)
     }
-}
-
-extension ProviderRegistry {
-    static func name(_ id: String) -> String { provider(id)?.name ?? id }
 }

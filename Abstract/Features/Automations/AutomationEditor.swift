@@ -586,9 +586,9 @@ private struct AgentChip: View {
         return SentenceMenu(title: title(catalog, efforts), logo: providerId) {
             Section("Agent") {
                 Picker("Agent", selection: Binding(get: { providerId }, set: { select($0) })) {
-                    ForEach(ProviderRegistry.all, id: \.id) { p in
+                    ForEach(model.pickableAgents(keeping: providerId), id: \.id) { p in
                         Label {
-                            Text(p.name + (model.providerStatus[p.id]?.available == false ? " — not installed" : ""))
+                            Text(p.name)
                         } icon: {
                             if let icon = ProviderRegistry.menuImage(p.id) { Image(nsImage: icon) }
                         }

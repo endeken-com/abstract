@@ -76,11 +76,9 @@ public enum ChatNaming {
             return LaunchSpec(command: binary ?? "claude", args: arguments, cwd: home,
                               stdinInitial: request, keepStdinOpen: false)
         }
-        let kind = LocalModelKind(rawValue: providerId)
-        guard providerId == "codex" || kind != nil else { return nil }
+        guard providerId == "codex" else { return nil }
         var args = ["exec", "--json", "-C", home, "--skip-git-repo-check", "-s", "read-only"]
-        if let kind { args += LocalModelProvider(kind).serverArgs() }
-        if let model = model ?? kind.flatMap({ LocalModelCatalogs.first($0) }) { args += ["-m", model] }
+        if let model { args += ["-m", model] }
         args += ["--", request]
         return LaunchSpec(command: binary ?? "codex", args: args, cwd: home,
                           stdinInitial: nil, keepStdinOpen: false)

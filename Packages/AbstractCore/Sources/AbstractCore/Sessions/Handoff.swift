@@ -58,7 +58,7 @@ public final class ChatStream {
     private var summaryTurn = Timeline()
 
     public init(providerId: String,
-                makeParser: @escaping (String) -> (any OutputParser)? = { ProviderRegistry.provider($0)?.makeParser() }) {
+                makeParser: @escaping (String) -> (any OutputParser)? = ProviderRegistry.makeParser) {
         self.providerId = providerId
         self.makeParser = makeParser
         parser = makeParser(providerId)
@@ -158,7 +158,7 @@ public final class ChatStream {
 /// A chat as markdown, for the agent taking it over to read.
 public enum HandoffTranscript {
     public static func render(blocks: [TimelineBlock], agentName: String,
-                              name: (String) -> String = { ProviderRegistry.provider($0)?.name ?? $0 }) -> String {
+                              name: (String) -> String = ProviderRegistry.name) -> String {
         var out = "# Chat transcript\n\nEarlier work in this chat, oldest first.\n"
         var agent = agentName
         var speaker: String?
