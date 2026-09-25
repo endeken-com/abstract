@@ -484,17 +484,19 @@ final class AppModel {
         var name: String
         var isRoot: Bool
         var nestedRepos: [String]
+        var submodules: [String]
         var defaultBranch: String
     }
 
     func probe(directory: String) async throws -> Probe {
         let root = try await Git.repoRoot(executor, dir: directory)
         let nested = (try? await Git.nestedRepos(executor, root: root)) ?? []
+        let submodules = await Submodules.registered(executor, root: root)
         let branch = ((try? await Git.currentBranch(executor, root: root)) ?? nil) ?? "HEAD"
         let rootURL = URL(fileURLWithPath: root).standardizedFileURL
         let dirURL = URL(fileURLWithPath: directory).standardizedFileURL
         return Probe(rootPath: root, name: rootURL.lastPathComponent, isRoot: rootURL.path == dirURL.path,
-                     nestedRepos: nested, defaultBranch: branch)
+                     nestedRepos: nested, submodules: submodules, defaultBranch: branch)
     }
 
     func addProject(_ probe: Probe, name: String, baseRef: String, providerId: String, policy: PermissionPolicy) throws {
