@@ -50,15 +50,18 @@ struct ChatToolbarControls: View {
             .buttonStyle(ChromeIconStyle())
             .help(layout.side.isOpen ? "Hide side panel (⌥⌘B)" : "Show side panel (⌥⌘B)")
             ChromeIconMenu(symbol: "ellipsis", help: "More") {
-                if model.isAlive(session.id) {
+                if let setup = model.setups[session.id] {
+                    if setup.failure == nil { Button("Stop Setup") { model.stop(session.id) } } else { Button("Set Up Again") { model.resume(session.id) } }
+                } else if model.isAlive(session.id) {
                     Button(model.runningBackgroundTasks(session.id) > 0 ? "Stop Agent and Its Background Tasks" : "Stop Agent") { model.stop(session.id) }
                 } else {
                     Button(session.providerSessionId == nil ? "Start Agent Again" : "Resume Agent") { model.resume(session.id) }
                 }
                 Divider()
                 if let path = session.worktreePath, !session.id.hasPrefix(RemoteService.mirrorPrefix) {
-                    Button("Reveal Worktree in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
-                    Button("Copy Worktree Path") { copy(path) }
+                    let kind = session.projectId == nil ? "Folder" : "Worktree"
+                    Button("Reveal \(kind) in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
+                    Button("Copy \(kind) Path") { copy(path) }
                 }
                 if let branch = session.branch { Button("Copy Branch Name (\(branch))") { copy(branch) } }
                 Button("Reset Panels") { model.resetLayout(session.id) }

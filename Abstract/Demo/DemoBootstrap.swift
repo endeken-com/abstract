@@ -355,9 +355,11 @@ struct Snapshotter {
         window.setFrame(frame, display: true)
     }
 
-    /// A new chat in payments-api runs its setup script in a terminal, Run
-    /// opens (then reuses) a Run terminal, and deleting the chat runs the
-    /// teardown script. Sparse checkout applies to the new worktree.
+    /// A new chat in payments-api is set up before its agent starts (its
+    /// origin can't be reached, so the base is the copy already here, and
+    /// the setup script's output shows in the chat), Run opens (then reuses)
+    /// a Run terminal, and deleting the chat runs the teardown script.
+    /// Sparse checkout applies to the new worktree.
     private func projectLifecycleCheck() async {
         guard let root = DemoBootstrap.current?.root, let p = model.projects.first(where: { $0.name == "payments-api" }) else { return }
         let marker = root.appendingPathComponent("teardown-ran").path
@@ -376,18 +378,34 @@ struct Snapshotter {
         model.updateProject(p.id) { p in
             p.sparseCheckout = ["src"]
             p.teardownScript = "echo \"$PWD\" > '\(marker)'"
+            p.setupScript = "echo \"Setting up $(basename \"$PWD\")\"\nls\nsleep 2\necho ready"
         }
+        let id: String
         do {
-            try await model.startChat(projectId: p.id, providerId: "claude", prompt: "Check the lifecycle scripts", baseRef: "main",
-                                      policy: .autoEdits)
+            id = try await model.startChat(projectId: p.id, providerId: "claude", prompt: "Check the lifecycle scripts", baseRef: "main",
+                                           policy: .autoEdits)
         } catch {
             log("demo: lifecycle chat failed: \(error.localizedDescription)")
             return
         }
-        guard let s = model.selectedSession, let path = s.worktreePath else { return }
+        // Mid-setup: the card under the prompt, the script's output coming in.
+        var seen: (phases: String, log: [String]) = ("", [])
+        let deadline = Date().addingTimeInterval(60)
+        var shotMidSetup = false
+        while let setup = model.setups[id], Date() < deadline {
+            seen = (ChatSetup.Step.allCases.map { "\($0)=\(setup.phase($0))" }.joined(separator: " "), setup.log)
+            if !shotMidSetup, setup.phase(.script) == .running, !setup.log.isEmpty {
+                shotMidSetup = true
+                await shot("graphite-20-chat-setup", settle: 0.4)
+            }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        log("demo: lifecycle setup ended \(model.setups[id] == nil ? "and the agent started" : "unfinished: \(seen.phases)"); "
+            + "last phases \(seen.phases); script printed \(seen.log.joined(separator: " | "))")
+        guard let s = model.session(id), let path = s.worktreePath else { return }
+        log("demo: lifecycle chat status \(s.status.rawValue), base \(s.baseRef ?? "?"), alive=\(model.isAlive(id))")
         let top = (try? FileManager.default.contentsOfDirectory(atPath: path))?.filter { $0 != ".git" }.sorted() ?? []
         log("demo: lifecycle worktree \(s.branch ?? "?") has \(top.joined(separator: ","))")
-        await shot("graphite-20-setup-terminal", settle: 3.0)
         func terminals() -> [String] {
             model.layout(for: s.id).items(of: .terminal).map { item in
                 let host = TerminalRegistry.shared.existingHost(for: item.id)
@@ -396,7 +414,6 @@ struct Snapshotter {
                 return "[\(host?.title ?? "?")] " + lines.suffix(4).joined(separator: " | ")
             }
         }
-        log("demo: lifecycle after setup: \(terminals())")
         model.runProjectScript(in: s.id)
         await shot("graphite-21-run-terminal", settle: 2.5)
         model.runProjectScript(in: s.id)
@@ -687,3 +704,4 @@ enum WindowCapture {
 func log(_ message: String) {
     FileHandle.standardError.write(Data((message + "\n").utf8))
 }
+

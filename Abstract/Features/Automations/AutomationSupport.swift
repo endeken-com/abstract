@@ -48,8 +48,7 @@ extension AppModel {
         }
     }
 
-    /// Removes the automation and its run history. Chats and worktrees it
-    /// created stay.
+    /// Removes the automation and its run history. The chats its runs used stay.
     func deleteAutomation(_ id: String) {
         do {
             try store.deleteAutomation(id)
@@ -73,6 +72,28 @@ extension AppModel {
             flash("“\(a.name)” started")
         }
         return run
+    }
+
+    /// A run in a chat that already exists: its instructions arrive as your
+    /// next message would, so its agent picks up where it left off.
+    func deliverAutomationRun(_ prompt: String, to chatId: String) throws {
+        guard let chat = session(chatId) else { throw AbstractError.notFound("chat") }
+        if chat.archivedAt != nil { setArchived(chatId, false) }
+        try sendFollowUp(chatId, text: prompt)
+    }
+
+    /// An automation drafted from `description` by the agent the page has
+    /// chosen when it can draft (Claude or Codex), else whichever of those
+    /// is installed.
+    func draftAutomation(_ description: String, preferring providerId: String) async throws -> AutomationDrafting.Proposal {
+        let drafters = ["claude", "codex"]
+        let installed = drafters.filter { providerStatus[$0]?.available != false }
+        guard let agent = installed.contains(providerId) ? providerId : installed.first else {
+            throw AbstractError.message("Drafting needs Claude or Codex, and neither was found on this Mac.")
+        }
+        let binary = providerOverrides[agent]?.path.flatMap { $0.isEmpty ? nil : $0 }
+        return try await AutomationDrafting.draft(executor: executor, binary: binary, providerId: agent,
+                                                  description: description, projects: projects.map(\.name), timezone: defaultTimezone)
     }
 
     func automationRuns(_ automationId: String, limit: Int = 50) -> [AutomationRun] {

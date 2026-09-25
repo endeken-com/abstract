@@ -20,7 +20,7 @@ struct HomeView: View {
                         .foregroundStyle(Color.btText)
                     Text(hasAvailableProject
                          ? "Each chat runs its own agent in an isolated worktree, so several can work at once without stepping on each other."
-                         : "Add a git repository to begin. Agents work in their own worktrees, and you review every change before it lands.")
+                         : "Add a git repository and agents work in their own worktrees, and you review every change before it lands. Or start a standalone chat below.")
                         .font(BTFont.ui(13.5))
                         .foregroundStyle(Color.btTextSecondary)
                         .multilineTextAlignment(.center)
@@ -30,13 +30,14 @@ struct HomeView: View {
                 .padding(.top, 72)
                 .padding(.bottom, Space.xxl)
 
-                if hasAvailableProject {
-                    TaskLauncher(autofocus: true)
-                        .frame(maxWidth: 680)
-                } else {
+                if !hasAvailableProject {
                     Button { model.isAddingProject = true } label: { Label("Add a Project", systemImage: "folder.badge.plus") }
                         .buttonStyle(.bt(.primary, size: .large))
+                        .padding(.bottom, Space.xl)
                 }
+                // With no project yet, it starts a standalone chat.
+                TaskLauncher(autofocus: hasAvailableProject)
+                    .frame(maxWidth: 680)
 
                 let recent = Array(model.sessions.filter { $0.archivedAt == nil }.prefix(6))
                 if !recent.isEmpty {

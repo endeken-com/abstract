@@ -244,3 +244,22 @@ struct RealAgentTests {
         return (engine, provider, dir)
     }
 }
+
+/// Drafts an automation with the real `claude` CLI:
+///   ABSTRACT_E2E=1 swift test --filter RealDrafting
+@Suite("Real drafting", .enabled(if: ProcessInfo.processInfo.environment["ABSTRACT_E2E"] != nil))
+struct RealDraftingTests {
+    @Test(.timeLimit(.minutes(2)))
+    func claudeDraftsAScheduleProjectAndInstructions() async throws {
+        let proposal = try await AutomationDrafting.draft(
+            executor: LocalExecutor.shared, binary: nil, providerId: "claude",
+            description: "Every weekday at 9am, look at the issues opened in payments-api since yesterday, label them, and open a chat to fix each easy one.",
+            projects: ["abstract", "payments-api"], timezone: "Europe/Lisbon")
+        #expect(proposal.project == "payments-api")
+        #expect(proposal.schedules.count == 1)
+        #expect(proposal.schedules.first.map { Schedule.preset(of: $0).preset } == .weekdays)
+        #expect(proposal.continuesOwnChat, "it coordinates other chats")
+        #expect(proposal.instructions.count > 80)
+        print("drafted:", proposal.name, proposal.schedules, proposal.policy, "\n", proposal.instructions)
+    }
+}

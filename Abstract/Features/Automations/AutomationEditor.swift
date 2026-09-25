@@ -109,8 +109,8 @@ struct AutomationDraft: Equatable {
     var effort: String?
     var policy: PermissionPolicy = .autoEdits
     var workspaceMode: WorkspaceMode = .newWorktree
+    /// The chat every run continues; nil with `.pinned` is a chat of its own, made on the first run.
     var pinnedSessionId: String?
-    var continueAgentSession = false
     var catchUp = false
     /// Only read for a new automation: an existing one's switch saves at once.
     var enabled = true
@@ -139,7 +139,6 @@ struct AutomationDraft: Equatable {
         policy = a.permissionPolicy
         workspaceMode = a.workspaceMode
         pinnedSessionId = a.pinnedSessionId
-        continueAgentSession = a.continueAgentSession
         catchUp = a.catchUp
         enabled = a.enabled
     }
@@ -149,8 +148,8 @@ struct AutomationDraft: Equatable {
         return trimmed.isEmpty ? Self.untitled : trimmed
     }
 
-    var isPinned: Bool { projectId != nil && workspaceMode == .pinned }
-    var canContinueSession: Bool { isPinned && pinnedSessionId != nil }
+    /// Every run continues one chat, rather than starting a new one.
+    var isPinned: Bool { workspaceMode == .pinned }
 
     func automation(base: Automation?, now: Date = Date()) -> Automation {
         var a = base ?? Automation(name: "", prompt: "", providerId: providerId, projectId: nil, triggers: [], enabled: enabled)
@@ -162,11 +161,23 @@ struct AutomationDraft: Equatable {
         a.model = modelId
         a.effort = effort
         a.permissionPolicy = policy
-        a.workspaceMode = isPinned ? .pinned : .newWorktree
+        a.workspaceMode = workspaceMode
         a.pinnedSessionId = isPinned ? pinnedSessionId : nil
-        a.continueAgentSession = canContinueSession && continueAgentSession
+        a.continueAgentSession = isPinned
         a.catchUp = catchUp
         return a
+    }
+
+    /// Fill the page from a drafted automation. A project it didn't name
+    /// leaves the one chosen.
+    mutating func apply(_ proposal: AutomationDrafting.Proposal, projectId drafted: String?, timezone: String) {
+        if !proposal.name.isEmpty { name = proposal.name }
+        prompt = proposal.instructions
+        triggers = proposal.schedules.map { TriggerDraft(AutomationTrigger(rrule: $0, timezone: timezone)) }
+        if let drafted { projectId = drafted }
+        workspaceMode = proposal.continuesOwnChat ? .pinned : .newWorktree
+        pinnedSessionId = nil
+        policy = proposal.policy
     }
 
     /// Whether saving would change `a`. Compares what would be stored, not
@@ -176,8 +187,7 @@ struct AutomationDraft: Equatable {
         return saved.name != a.name || saved.prompt != a.prompt || saved.projectId != a.projectId
             || saved.providerId != a.providerId || saved.model != a.model || saved.effort != a.effort
             || saved.permissionPolicy != a.permissionPolicy || saved.workspaceMode != a.workspaceMode
-            || saved.pinnedSessionId != a.pinnedSessionId || saved.continueAgentSession != a.continueAgentSession
-            || saved.catchUp != a.catchUp
+            || saved.pinnedSessionId != a.pinnedSessionId || saved.catchUp != a.catchUp
             || triggers.count != a.triggers.count || zip(triggers, a.triggers).contains { !$0.matches($1) }
     }
 
@@ -185,7 +195,6 @@ struct AutomationDraft: Equatable {
     var blocker: String? {
         if prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "Instructions are empty" }
         if triggers.contains(where: { !TriggerCheck($0).isValid }) { return "A trigger needs fixing" }
-        if isPinned, pinnedSessionId == nil { return "Choose the chat to run in" }
         return nil
     }
 }
@@ -424,23 +433,26 @@ private struct AddTriggerRow: View {
 
 // MARK: Scope
 
-/// Where and how each run happens, as one sentence of choices:
-/// "In abstract on This Mac using Claude · Opus running in a new worktree
-/// with edits accepted".
+/// Which chat each run happens in, and how, as one sentence of choices:
+/// "Each run starts a new chat in abstract on This Mac using Claude · Opus
+/// with edits accepted", or "Each run continues “Weekly triage” on This Mac".
 private struct ScopeSentence: View {
     @Environment(AppModel.self) private var model
     @Binding var draft: AutomationDraft
 
-    private enum Workspace: Hashable {
-        case newWorktree
-        case pinned(String)
-    }
+    /// The chat every run continues, once there is one.
+    private var chat: Session? { draft.isPinned ? model.session(draft.pinnedSessionId) : nil }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.xs) {
             FlowRow(spacing: 1, lineSpacing: 2) {
-                SentenceWord("In")
-                projectMenu
+                SentenceWord("Each run")
+                chatMenu
+                // A chat that exists already has its project, agent and permissions.
+                if chat == nil {
+                    SentenceWord("in")
+                    projectMenu
+                }
                 SentenceWord("on")
                 SentenceMenu(title: "This Mac") {
                     Picker("Device", selection: .constant("local")) {
@@ -449,84 +461,78 @@ private struct ScopeSentence: View {
                     .pickerStyle(.inline)
                     .labelsHidden()
                 }
-                SentenceWord("using")
-                AgentChip(providerId: $draft.providerId, modelId: $draft.modelId, effort: $draft.effort)
-                if draft.projectId != nil {
-                    SentenceWord("running")
-                    workspaceMenu
+                if chat == nil {
+                    SentenceWord("using")
+                    AgentChip(providerId: $draft.providerId, modelId: $draft.modelId, effort: $draft.effort)
+                    SentenceWord("with")
+                    policyMenu
                 }
-                SentenceWord("with")
-                policyMenu
             }
             notes
         }
     }
 
+    private var chatMenu: some View {
+        SentenceMenu(title: chatTitle) {
+            item("Starts a New Chat",
+                 detail: draft.projectId == nil ? "A standalone chat each run" : "Each in its own worktree, fetched and set up fresh",
+                 selected: !draft.isPinned) {
+                draft.workspaceMode = .newWorktree
+                draft.pinnedSessionId = nil
+            }
+            item("Continues a Chat of Its Own", detail: "Made by the first run; every run after is its next message",
+                 selected: draft.isPinned && chat == nil) {
+                draft.workspaceMode = .pinned
+                draft.pinnedSessionId = nil
+            }
+            Section("Continues a Chat") {
+                if chats.isEmpty { Text("No chats yet") }
+                ForEach(chats) { s in
+                    item(s.name, detail: [model.project(s.projectId)?.name ?? "Standalone", s.branch].compactMap { $0 }.joined(separator: " · "),
+                         selected: chat?.id == s.id) {
+                        draft.workspaceMode = .pinned
+                        draft.pinnedSessionId = s.id
+                        draft.projectId = s.projectId
+                    }
+                }
+            }
+        }
+    }
+
+    private var chatTitle: String {
+        guard draft.isPinned else { return "starts a new chat" }
+        guard let chat else { return "continues a chat of its own" }
+        return "continues “\(chat.name)”"
+    }
+
+    /// Recent chats on this Mac, and the chosen one wherever it is.
+    private var chats: [Session] {
+        var recent = Array(model.recentChats.lazy.compactMap { model.session($0) }
+            .filter { !$0.id.hasPrefix(RemoteService.mirrorPrefix) }.prefix(25))
+        if let chat, !recent.contains(where: { $0.id == chat.id }) { recent.insert(chat, at: 0) }
+        return recent
+    }
+
+    /// A checkmark item with a second line (the NSMenu subtitle).
+    private func item(_ title: String, detail: String?, selected: Bool, _ choose: @escaping () -> Void) -> some View {
+        Toggle(isOn: Binding(get: { selected }, set: { _ in choose() })) {
+            Text(title)
+            if let detail { Text(detail) }
+        }
+    }
+
     private var projectMenu: some View {
-        SentenceMenu(title: model.project(draft.projectId)?.name ?? "a scratch folder") {
-            Picker("Project", selection: Binding(get: { draft.projectId }, set: { new in
-                draft.projectId = new
-                if let pinned = draft.pinnedSessionId, model.session(pinned)?.projectId != new { draft.pinnedSessionId = nil }
-            })) {
+        SentenceMenu(title: model.project(draft.projectId)?.name ?? "no project") {
+            Picker("Project", selection: $draft.projectId) {
                 ForEach(model.projects) { p in Text(p.name).tag(Optional(p.id)) }
                 Divider()
-                Text("No Project: a Scratch Folder per Run").tag(String?.none)
+                Text("No Project: Standalone Chats").tag(String?.none)
             }
             .pickerStyle(.inline)
             .labelsHidden()
             Divider()
             Button("Add Project…") { model.isAddingProject = true }
         }
-    }
-
-    private var chats: [Session] {
-        model.sessions.filter { $0.projectId == draft.projectId && $0.worktreePath != nil && $0.archivedAt == nil }
-    }
-
-    private var workspace: Workspace? {
-        guard draft.workspaceMode == .pinned else { return .newWorktree }
-        return draft.pinnedSessionId.map(Workspace.pinned)
-    }
-
-    private var workspaceMenu: some View {
-        SentenceMenu(title: workspaceTitle) {
-            item("In a New Worktree", detail: "Every run gets its own branch, so runs never collide.", .newWorktree)
-            Section("In a Chat's Worktree") {
-                if chats.isEmpty {
-                    Text("This project has no chats with a worktree yet")
-                }
-                ForEach(chats) { s in item(s.name, detail: s.branch, .pinned(s.id)) }
-            }
-            Divider()
-            Toggle(isOn: Binding(get: { draft.canContinueSession && draft.continueAgentSession },
-                                 set: { draft.continueAgentSession = $0 })) {
-                Text("Continue the Agent's Previous Session")
-                Text("Each run picks up the conversation the last one left.")
-            }
-            .disabled(!draft.canContinueSession)
-        }
-    }
-
-    /// A checkmark item with a second line (the NSMenu subtitle).
-    private func item(_ title: String, detail: String?, _ choice: Workspace) -> some View {
-        Toggle(isOn: Binding(get: { workspace == choice }, set: { _ in
-            switch choice {
-            case .newWorktree:
-                draft.workspaceMode = .newWorktree
-            case .pinned(let id):
-                draft.workspaceMode = .pinned
-                draft.pinnedSessionId = id
-            }
-        })) {
-            Text(title)
-            if let detail { Text(detail) }
-        }
-    }
-
-    private var workspaceTitle: String {
-        guard draft.isPinned else { return "in a new worktree" }
-        guard let chat = model.session(draft.pinnedSessionId) else { return "in a chat's worktree" }
-        return "in “\(chat.name)”" + (draft.canContinueSession && draft.continueAgentSession ? " · same session" : "")
     }
 
     private var policyMenu: some View {
@@ -542,23 +548,33 @@ private struct ScopeSentence: View {
 
     @ViewBuilder
     private var notes: some View {
-        if model.providerStatus[draft.providerId]?.available == false {
+        if chat == nil, model.providerStatus[draft.providerId]?.available == false {
             Label("\(ProviderRegistry.name(draft.providerId)) wasn't found on this Mac. Set its path in Settings › Agents.",
                   systemImage: "exclamationmark.triangle")
                 .font(.btCallout)
                 .foregroundStyle(Color.btWarning)
         }
-        if draft.isPinned, chats.isEmpty {
-            Text("This project has no chats with a worktree yet, so there's nothing to run in.")
-                .font(.btCallout)
-                .foregroundStyle(Color.btWarning)
+        if draft.isPinned, draft.pinnedSessionId != nil, chat == nil {
+            note("Its chat was deleted, so the next run starts a new one of its own.", warning: true)
         }
-        if draft.policy == .ask {
-            Text("Nobody is there to answer while it runs: a run stops at its first tool call until you answer in its chat.")
-                .font(.btCallout)
-                .foregroundStyle(Color.btTextTertiary)
-                .fixedSize(horizontal: false, vertical: true)
+        if let chat {
+            note("Each run arrives in “\(chat.name)” as your next message would, and its agent picks up where it left off, "
+                 + "with the chat's own agent and permissions.")
         }
+        if draft.isPinned {
+            note("Its agent can start chats of their own, each in its own worktree, with the abstract command line "
+                 + "(Settings › General › Command line).")
+        }
+        if chat == nil, draft.policy == .ask {
+            note("Nobody is there to answer while it runs: a run stops at its first tool call until you answer in its chat.")
+        }
+    }
+
+    private func note(_ text: String, warning: Bool = false) -> some View {
+        Text(text)
+            .font(.btCallout)
+            .foregroundStyle(warning ? Color.btWarning : Color.btTextTertiary)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }
 

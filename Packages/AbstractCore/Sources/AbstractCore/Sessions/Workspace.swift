@@ -73,13 +73,79 @@ public enum Workspace {
         throw AbstractError.message("Could not find a free worktree path or branch name for “\(name)”.")
     }
 
-    /// A throwaway directory for "No project" automation runs.
-    public static func scratchDirectory(runId: String) throws -> String {
-        let dir = URL(fileURLWithPath: Store.defaultPath()).deletingLastPathComponent()
-            .appendingPathComponent("scratch", isDirectory: true)
-            .appendingPathComponent(runId, isDirectory: true)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    /// Where a new worktree starts.
+    public struct Base: Sendable, Equatable {
+        /// What `git worktree add` starts from, e.g. `origin/main`.
+        public var ref: String
+        /// Why `origin` couldn't be asked, when it couldn't; the base is then
+        /// the newest copy already here.
+        public var fetchError: String?
+
+        public init(ref: String, fetchError: String? = nil) { self.ref = ref; self.fetchError = fetchError }
+    }
+
+    /// The base branch as `origin` has it now: fetched, then its `origin/`
+    /// copy, unless the local branch already holds all of that and more
+    /// (commits not pushed yet). When the fetch fails (offline, say), the
+    /// newer of the two copies already here. A base that isn't a branch
+    /// (`HEAD`, a tag, a commit), or a repository without `origin`, is used
+    /// as given; a branch only origin has is fetched first.
+    public static func freshBase(executor: any Executor, root: String, base: String) async -> Base {
+        let explicitRemote = base.hasPrefix("origin/")
+        let name = explicitRemote ? String(base.dropFirst("origin/".count)) : base
+        guard !name.isEmpty, name != "HEAD", await Git.hasOrigin(executor, root: root) else { return Base(ref: base) }
+        let local = "refs/heads/\(name)", remote = "refs/remotes/origin/\(name)"
+        let hasLocal = await Git.branchExists(executor, root: root, branch: local)
+        let hadRemote = await Git.branchExists(executor, root: root, branch: remote)
+        // A tag or commit here is used as it is; a name git doesn't know may
+        // be a branch only origin has, so it's asked for, quietly.
+        let known = explicitRemote || hasLocal || hadRemote
+        if !known, await Git.branchExists(executor, root: root, branch: base + "^{commit}") { return Base(ref: base) }
+        var fetchError: String?
+        do {
+            try await Fetches.shared.fetch(root: root, branch: name) {
+                try await Git.fetch(executor, root: root, branch: name)
+            }
+        } catch {
+            fetchError = known ? error.localizedDescription : nil
+        }
+        guard await Git.branchExists(executor, root: root, branch: remote) else { return Base(ref: base, fetchError: fetchError) }
+        // Unpushed work on the local branch: it has everything origin has.
+        if !explicitRemote, hasLocal {
+            let holdsRemote = await Git.isAncestor(executor, root: root, remote, of: local)
+            let behindRemote = await Git.isAncestor(executor, root: root, local, of: remote)
+            if holdsRemote, !behindRemote { return Base(ref: name, fetchError: fetchError) }
+        }
+        return Base(ref: "origin/\(name)", fetchError: fetchError)
+    }
+
+    /// A new standalone chat's own folder (it belongs to no project), named
+    /// for a city none of the others has, under `standaloneRoot`.
+    public static func standaloneFolder(home: String) throws -> String {
+        let root = standaloneRoot(home: home)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let used = Set((try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? [])
+        let dir = root.appendingPathComponent(WorktreeNaming.slugify(WorktreeNaming.cityName(avoiding: used)), isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: false)
         return dir.path
+    }
+
+    /// `~/.abstract/chats`, beside the worktrees; the data directory's own
+    /// when one is set (demo, tests).
+    public static func standaloneRoot(home: String) -> URL {
+        if let dir = ProcessInfo.processInfo.environment["ABSTRACT_DATA_DIR"], !dir.isEmpty {
+            return URL(fileURLWithPath: (dir as NSString).expandingTildeInPath).appendingPathComponent("chats", isDirectory: true)
+        }
+        return URL(fileURLWithPath: home).appendingPathComponent(".abstract/chats", isDirectory: true)
+    }
+
+    /// Whether `path` is a folder Abstract made for a chat with no project
+    /// (a standalone chat's, or the scratch folder an automation run had
+    /// before those), and so may delete with it. Nothing else ever is.
+    public static func isChatFolder(_ path: String, home: String) -> Bool {
+        let folder = URL(fileURLWithPath: path).standardizedFileURL
+        let roots = [standaloneRoot(home: home), URL(fileURLWithPath: Store.defaultPath()).deletingLastPathComponent().appendingPathComponent("scratch")]
+        return roots.contains { folder.deletingLastPathComponent().path == $0.standardizedFileURL.path }
     }
 
     /// First non-empty line of a prompt, trimmed to a chat title.
@@ -87,5 +153,21 @@ public enum Workspace {
         let first = prompt.split(separator: "\n").first { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
         let text = String(first ?? "New chat").trimmingCharacters(in: .whitespaces)
         return text.count > 60 ? String(text.prefix(60)).trimmingCharacters(in: .whitespaces) + "…" : text
+    }
+}
+
+/// One fetch of a branch at a time per repository: chats started together
+/// share it rather than race for git's ref locks.
+actor Fetches {
+    static let shared = Fetches()
+    private var running: [String: Task<Void, any Error>] = [:]
+
+    func fetch(root: String, branch: String, _ perform: @escaping @Sendable () async throws -> Void) async throws {
+        let key = root + "\u{0}" + branch
+        if let task = running[key] { return try await task.value }
+        let task = Task { try await perform() }
+        running[key] = task
+        defer { running[key] = nil }
+        try await task.value
     }
 }

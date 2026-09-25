@@ -131,7 +131,7 @@ private final class Sandbox {
         return Output(status: status, stdout: text, json: json)
     }
 
-    private static func runBlocking(_ args: [String], stdin: String?, environment: [String: String]) throws -> (Int32, Data) {
+    static func runBlocking(_ args: [String], stdin: String?, environment: [String: String]) throws -> (Int32, Data) {
         let process = Process()
         process.executableURL = binary
         process.arguments = args
@@ -348,6 +348,63 @@ struct CommandLineTests {
         _ = try await LocalExecutor.shared.run("git", ["tag", "release"], cwd: box.repo.path)
         #expect(try await box.create(branch: "release").status == 0)
         #expect(try await box.branches().contains("release"))
+    }
+
+    @Test func theSetupScriptRunsInTheWorktreeBeforeTheAgent() async throws {
+        let box = try await Sandbox()
+        defer { box.tearDown() }
+        var project = box.project
+        // The agent's arguments log doesn't exist yet when setup runs.
+        project.setupScript = "pwd -P > setup-ran.txt\ntest ! -e '\(box.root.path)/agents/responsive/args.log' && echo first >> setup-ran.txt"
+        try box.store.save(project)
+        let out = try await box.create()
+        #expect(out.status == 0)
+        let id = try #require(out.object["id"] as? String)
+        let path = try #require(try box.store.session(id)?.worktreePath)
+        let ran = try String(contentsOfFile: path + "/setup-ran.txt", encoding: .utf8)
+        #expect(ran.contains(URL(fileURLWithPath: path).lastPathComponent))
+        #expect(ran.contains("first"))
+    }
+
+    @Test func aFailedSetupScriptLeavesNothingBehind() async throws {
+        let box = try await Sandbox()
+        defer { box.tearDown() }
+        var project = box.project
+        project.setupScript = "echo 'npm ERR! missing script'\nexit 7"
+        try box.store.save(project)
+        let out = try await box.create(branch: "set-up")
+        #expect(out.code == "setup_failed")
+        #expect((out.object["message"] as? String)?.contains("code 7") == true)
+        #expect((out.object["message"] as? String)?.contains("npm ERR! missing script") == true)
+        try expectNothingLeft(box, branch: "set-up")
+        #expect(box.argsLog.isEmpty, "the agent never started")
+    }
+
+    @Test func interruptingTheSetupScriptLeavesNothingBehind() async throws {
+        let box = try await Sandbox()
+        defer { box.tearDown() }
+        var project = box.project
+        // The script's shell is the command's child: it says whose, then waits.
+        let pidFile = box.root.path + "/cli.pid"
+        project.setupScript = "echo $PPID > '\(pidFile)'\nsleep 30"
+        try box.store.save(project)
+        let started = Date()
+        var environment = ProcessInfo.processInfo.environment
+        environment["ABSTRACT_DATA_DIR"] = box.data.path
+        environment["SHELL"] = "/bin/sh"
+        let args = ["session", "create", "--project", box.project.id, "--name", "Interrupted", "--branch", "interrupted",
+                    "--agent", "claude", "--prompt-file", "-"]
+        let create = Task.detached { [environment] in try Sandbox.runBlocking(args, stdin: "Fix it", environment: environment) }
+        try await waitUntil { FileManager.default.fileExists(atPath: pidFile) }
+        try await waitUntil { try box.store.sessions().first?.statusDetail == "Running the setup script" }
+        let pid = try #require(Int32(try String(contentsOfFile: pidFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
+        kill(pid, SIGTERM)
+        let (_, data) = try await create.value
+        let out = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(out["code"] as? String == "setup_failed")
+        #expect((out["message"] as? String)?.contains("was stopped") == true)
+        #expect(Date().timeIntervalSince(started) < 20)
+        try expectNothingLeft(box, branch: "interrupted")
     }
 
     @Test func worktreeFailedLeavesNothingBehind() async throws {

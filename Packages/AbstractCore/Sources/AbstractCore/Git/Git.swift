@@ -55,6 +55,27 @@ public enum Git {
         (try? await git(exec, cwd: root, ["rev-parse", "--verify", "--quiet", branch]))?.ok ?? false
     }
 
+    /// Whether `ancestor` is `descendant` or one of its ancestors.
+    static func isAncestor(_ exec: any Executor, root: String, _ ancestor: String, of descendant: String) async -> Bool {
+        (try? await git(exec, cwd: root, ["merge-base", "--is-ancestor", ancestor, descendant]))?.ok ?? false
+    }
+
+    // MARK: Remotes
+
+    public static func hasOrigin(_ exec: any Executor, root: String) async -> Bool {
+        (try? await git(exec, cwd: root, ["remote", "get-url", "origin"]))?.ok ?? false
+    }
+
+    /// `git fetch origin <branch>`, which also moves `origin/<branch>`. Never
+    /// asks for credentials, and gives up after `timeout`. Throws why it failed.
+    public static func fetch(_ exec: any Executor, root: String, branch: String, timeout: Duration = .seconds(30)) async throws {
+        let spec = LaunchSpec(command: "git", args: ["fetch", "--quiet", "--no-tags", "origin", branch], cwd: root,
+                              env: ["GIT_TERMINAL_PROMPT": "0"], keepStdinOpen: false)
+        let result = try await exec.run(spec, timeout: timeout)
+        if result.timedOut { throw AbstractError.message("git fetch gave up after \(timeout.components.seconds) seconds") }
+        guard result.ok else { throw AbstractError.message(GitText.failure(result.stderr) ?? result.lastLine ?? "git fetch failed") }
+    }
+
     /// Inner repositories / submodules under `root` (relative paths), which a
     /// single worktree cannot carry.
     public static func nestedRepos(_ exec: any Executor, root: String) async throws -> [String] {
@@ -109,7 +130,8 @@ public enum Git {
 
     /// Create a worktree at `path` on a new `branch` from `baseRef`. When the
     /// branch already exists (a restarted automation), attach to it instead,
-    /// unless `attachExisting` is false.
+    /// unless `attachExisting` is false. A new branch never tracks its base:
+    /// one made from `origin/main` would otherwise pull from and push to main.
     /// With `sparse` folders, only those (plus files at the root) are checked
     /// out, in cone mode; the setting is the worktree's own.
     public static func addWorktree(_ exec: any Executor, root: String, path: String, branch: String,
@@ -120,7 +142,7 @@ public enum Git {
         let dirs = SparseCheckout.normalize(sparse)
         let noCheckout = dirs.isEmpty ? [] : ["--no-checkout"]
         var createdBranch = true
-        let out = try await git(exec, cwd: root, ["worktree", "add"] + noCheckout + ["-b", branch, path, base])
+        let out = try await git(exec, cwd: root, ["worktree", "add"] + noCheckout + ["--no-track", "-b", branch, path, base])
         if !out.ok {
             guard attachExisting else {
                 throw AbstractError.command(code: out.code, stderr: "git worktree add: \(GitText.trimmed(out.stderr))")

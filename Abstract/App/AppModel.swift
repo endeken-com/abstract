@@ -68,6 +68,8 @@ final class AppModel {
     @ObservationIgnored private var feeds: [String: ChatFeed] = [:]
     private(set) var permissions: [String: [PendingPermission]] = [:]
     private(set) var alive: Set<String> = []
+    /// New chats still being set up, or whose setup failed; see AppModel+Setup.
+    var setups: [String: ChatSetup] = [:]
     /// Chats mid-turn. An idle chat's agent is alive too, awaiting a follow-up,
     /// but stopping it loses nothing.
     var workingSessionIds: [String] {
@@ -140,6 +142,8 @@ final class AppModel {
     var collapsedProjects: Set<String> = []
     var showArchived = false
     var newChatProjectId: String?? = nil
+    /// The next New Chat starts with no project.
+    var newChatStandalone = false
     /// A worktree the next New Chat should start in, from "New Chat Here".
     var newChatWorktree: String?
     var isAddingProject = false
@@ -236,8 +240,11 @@ final class AppModel {
     func bootstrap() async {
         // A chat whose agent still runs from the command line wasn't interrupted.
         refreshCLIDriven()
+        // Chats caught setting up, before they're marked interrupted below.
+        let unfinished = ((try? store.sessions()) ?? []).filter { setupUnfinished($0) && cliDriven[$0.id] == nil }.map(\.id)
         _ = try? store.reconcileInterruptedSessions(excluding: Set(cliDriven.keys))
         reload()
+        restoreInterruptedSetups(unfinished)
         Task { await listen() }
         watchCommandLine()
         Task { await detectProviders() }
@@ -448,10 +455,19 @@ final class AppModel {
         loadTimelineIfNeeded(sessionId)
     }
 
-    func showNewChat(in projectId: String?, worktree: String? = nil) {
+    /// The New Chat sheet, for `projectId`, or for a standalone chat (one
+    /// with no project) when `standalone`.
+    func showNewChat(in projectId: String?, worktree: String? = nil, standalone: Bool = false) {
         isPaletteOpen = false
         newChatWorktree = worktree
+        newChatStandalone = standalone && projectId == nil
         newChatProjectId = .some(projectId)
+    }
+
+    /// A new chat like the one showing: in its project, or standalone too.
+    func showNewChatLikeCurrent() {
+        let current = selectedSession
+        showNewChat(in: current?.projectId, standalone: current != nil && current?.projectId == nil)
     }
 
     // MARK: - Projects
@@ -514,24 +530,35 @@ final class AppModel {
     // MARK: - Chats
 
     /// Start a chat: in a fresh worktree from `baseRef`, or in `existing`, which
-    /// it takes over from any chat using it.
+    /// it takes over from any chat using it. The chat exists at once, named
+    /// for its prompt until the model names it; a fresh worktree's chat is
+    /// set up first (see AppModel+Setup) and its agent starts after.
+    /// With no project it's a standalone chat, working in a folder of its own.
+    /// `name` and `slug`, when given, name the chat and its branch instead.
     /// `select` opens the new chat here; a chat started from another device doesn't take over this screen.
     @discardableResult
-    func startChat(projectId: String, providerId: String, prompt text: String, attachments: [PromptAttachment] = [], baseRef: String?,
+    func startChat(projectId: String?, providerId: String, prompt text: String, attachments: [PromptAttachment] = [], baseRef: String?,
                    policy: PermissionPolicy, model: String? = nil, effort: String? = nil, existing: WorktreeInfo? = nil,
+                   name: String? = nil, slug: String? = nil, automationId: String? = nil,
                    select: Bool = true) async throws -> String {
-        guard let project = project(projectId) else { throw AbstractError.notFound("project") }
+        let project = project(projectId)
+        if projectId != nil, project == nil { throw AbstractError.notFound("project") }
         let prompt = PromptAttachments.message(text, attachments)
+        let images = PromptAttachments.images(attachments)
         // Named for what was asked, or for what was attached when nothing was typed.
         let gist = text.isEmpty ? attachments.map(\.label).joined(separator: ", ") : text
-        let naming = await suggestedNaming(project, providerId: providerId, model: model ?? defaultModel(for: providerId), prompt: gist)
-        let name = naming?.title ?? Workspace.title(fromPrompt: gist)
-        let city = existing == nil ? WorktreeNaming.cityName(avoiding: Set(sessions
-            .filter { $0.projectId == projectId }
-            .compactMap { $0.worktreePath.map { URL(fileURLWithPath: $0).lastPathComponent } })) : nil
-        var session = Session(projectId: projectId, name: name, providerId: providerId, baseRef: existing == nil ? baseRef : nil,
-                              status: .provisioning, permissionPolicy: policy, prompt: prompt, model: model, effort: effort)
-        if let existing {
+        let provisional = name ?? Workspace.title(fromPrompt: gist)
+        let naming: Task<ChatNaming.Suggestion?, Never>? = name != nil ? nil : Task {
+            await suggestedNaming(instructions: project?.namingInstructions, providerId: providerId,
+                                  model: model ?? defaultModel(for: providerId), prompt: gist)
+        }
+        var session = Session(projectId: projectId, name: provisional, providerId: providerId,
+                              baseRef: existing == nil ? baseRef : nil, status: .provisioning, permissionPolicy: policy,
+                              prompt: prompt, automationId: automationId, model: model, effort: effort)
+        if project == nil {
+            session.baseRef = nil
+            session.worktreePath = try Workspace.standaloneFolder(home: executor.homeDirectory)
+        } else if let existing {
             guard FileManager.default.fileExists(atPath: existing.path) else {
                 throw AbstractError.message("That worktree's folder no longer exists.")
             }
@@ -539,25 +566,37 @@ final class AppModel {
             if let first = previous.first { flash("Took the worktree over from “\(first)”") }
             session.worktreePath = existing.path
             session.branch = existing.branch
-        } else {
-            let prefix = project.branchPrefix ?? branchPrefix
-            let workspace = try await Workspace.provision(
-                executor: executor, project: project, name: name, baseRef: baseRef,
-                template: project.worktreeTemplate ?? worktreeTemplate, prefix: prefix,
-                slug: naming?.branch, worktreeName: city
-            )
-            session.worktreePath = workspace.path
-            session.branch = workspace.branch
         }
         try store.save(session)
         reload()
         feed(session.id).reset()
         if select { open(session.id, newTab: true) }
-        // In a terminal under the chat, beside the agent, never before it.
-        if existing == nil { runSetupScript(project, in: session) }
         engine.recordInput(sessionId: session.id, text: prompt)
-        try launch(session, prompt: prompt, resume: false, images: PromptAttachments.images(attachments))
+        if let projectId, existing == nil {
+            let setup = ChatSetup(projectId: projectId, baseRef: baseRef, images: images,
+                                  worktreeName: worktreeCityName(projectId: projectId), slug: slug)
+            setup.naming = naming
+            setup.provisionalName = provisional
+            beginSetup(session.id, setup)
+            return session.id
+        }
+        do {
+            try launch(session, prompt: prompt, resume: false, images: images)
+        } catch {
+            // Saved already: it says why, rather than seem to be starting forever.
+            setStatus(session.id, .errored, detail: error.localizedDescription)
+            throw error
+        }
+        if let naming { Task { await rename(session.id, from: provisional, to: naming.value?.title) } }
         return session.id
+    }
+
+    /// The model's title for a new chat, unless it was renamed meanwhile.
+    private func rename(_ sessionId: String, from provisional: String, to title: String?) async {
+        guard let title, var s = session(sessionId), s.name == provisional else { return }
+        s.name = title
+        try? store.save(s)
+        reload()
     }
 
     // MARK: - Reusing worktrees
@@ -648,6 +687,8 @@ final class AppModel {
         if sessionId.hasPrefix(RemoteService.mirrorPrefix) { try remote.send(sessionId, text: text, attachments: attachments); return }
         if isDrivenFromCLI(sessionId) { throw Self.drivenFromCLI }
         guard let session = session(sessionId), let provider = ProviderRegistry.provider(session.providerId) else { return }
+        // Its agent starts once it's set up, with the chat's first message.
+        if setups[sessionId] != nil { throw AbstractError.message("“\(session.name)” is still being set up; its agent starts after.") }
         let message = PromptAttachments.message(text, attachments)
         let images = PromptAttachments.images(attachments)
         // The agent was switched: the new one hears what happened first.
@@ -684,7 +725,8 @@ final class AppModel {
             return
         }
         guard !isDrivenFromCLI(sessionId), var s = session(sessionId), (s.providerId, s.model, s.effort) != (providerId, model, effort) else { return }
-        if s.providerId != providerId {
+        // Before its first agent has started there's nothing to hand over.
+        if s.providerId != providerId, setups[sessionId] == nil {
             let logged = engine.logLength(sessionId: sessionId)
             // Only the agent the log last belongs to leaves a seat: one picked
             // and dropped again before a message never joined the chat.
@@ -897,6 +939,7 @@ final class AppModel {
 
     func stop(_ sessionId: String) {
         if sessionId.hasPrefix(RemoteService.mirrorPrefix) { remote.stop(sessionId); return }
+        if setups[sessionId]?.active == true { cancelSetup(sessionId); return }
         if stopCLIAgent(sessionId) { return }
         engine.stop(sessionId: sessionId)
     }
@@ -930,6 +973,8 @@ final class AppModel {
         if let (_, host) = RemoteService.split(sessionId) { remote.onlineLink(for: sessionId)?.fire(.resume(sessionId: host)); return }
         if isDrivenFromCLI(sessionId) { flash(Self.drivenFromCLI.localizedDescription, isError: true); return }
         guard let session = session(sessionId) else { return }
+        // Not set up yet: set it up, then its agent starts.
+        if setups[sessionId] != nil { runSetup(sessionId); return }
         if session.handoffFrom != nil {
             Task { await handOver(session, message: "Continue where you left off.", images: []) }
             return
@@ -975,6 +1020,7 @@ final class AppModel {
     func delete(_ sessionId: String, removeWorktree: Bool) async {
         guard let s = session(sessionId) else { return }
         stop(sessionId)
+        setups[sessionId] = nil
         if removeWorktree, let path = s.worktreePath, let project = project(s.projectId) {
             await runTeardownScript(project, worktree: path)
             do {
@@ -982,6 +1028,9 @@ final class AppModel {
             } catch {
                 flash("Worktree not removed: \(error.localizedDescription)", isError: true)
             }
+        } else if removeWorktree, s.projectId == nil, let path = s.worktreePath, Workspace.isChatFolder(path, home: executor.homeDirectory) {
+            // A standalone chat's own folder, which nothing else uses.
+            do { try executor.removeItem(path) } catch { flash("Folder not removed: \(error.localizedDescription)", isError: true) }
         }
         engine.deleteLog(sessionId: sessionId)
         discardLayout(sessionId)

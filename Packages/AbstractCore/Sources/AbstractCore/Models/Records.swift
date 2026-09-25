@@ -1,6 +1,7 @@
 import Foundation
 
-/// A git repository Abstract manages worktrees for. Every chat belongs to one.
+/// A git repository Abstract manages worktrees for. A chat belongs to one,
+/// or to none (a standalone chat, in a folder of its own).
 public struct Project: Sendable, Hashable, Identifiable, Codable {
     public var id: String
     public var name: String
@@ -73,10 +74,10 @@ public enum SessionStatus: String, Sendable, Codable, CaseIterable {
     public var isActive: Bool { self == .running || self == .provisioning || self == .waitingInput || self == .idle }
 }
 
-/// One chat: an agent working in its own worktree.
+/// One chat: an agent working in its own worktree, or a standalone chat's folder.
 public struct Session: Sendable, Hashable, Identifiable, Codable {
     public var id: String
-    /// nil only for automation runs in "No project" mode.
+    /// nil for a standalone chat, and for automation runs in "No project" mode.
     public var projectId: String?
     public var name: String
     public var providerId: String
@@ -136,10 +137,13 @@ public struct ProviderSeat: Sendable, Hashable, Codable {
     }
 }
 
+/// Which chat an automation's runs happen in.
 public enum WorkspaceMode: String, Sendable, Codable, CaseIterable {
-    /// A fresh worktree per run (superset: "new workspace per run").
+    /// A new chat per run: in its project, set up in a worktree of its own;
+    /// with no project, a standalone chat.
     case newWorktree = "new_worktree"
-    /// Reuse one session's worktree every run (superset: pinned workspace).
+    /// One chat every run, `pinnedSessionId`: each run is its next message.
+    /// With none yet, the first run makes the automation a chat of its own.
     case pinned
 }
 
@@ -169,14 +173,15 @@ public struct Automation: Sendable, Hashable, Identifiable, Codable {
     public var name: String
     public var prompt: String
     public var providerId: String
-    /// nil = "No project": each run gets a scratch directory, no worktree.
+    /// Where its new chats start; nil = "No project": standalone chats.
     public var projectId: String?
     /// When it runs. Empty means it only runs when started by hand.
     public var triggers: [AutomationTrigger]
     public var workspaceMode: WorkspaceMode
+    /// The chat every run continues, in `.pinned` mode.
     public var pinnedSessionId: String?
-    /// Deliver each run into this automation's previous agent session. Only
-    /// meaningful with a pinned worktree.
+    /// Kept for older versions, which read `.pinned` with it on as "continue
+    /// the chat"; a pinned automation always does now.
     public var continueAgentSession: Bool
     public var permissionPolicy: PermissionPolicy
     /// Fire once on launch if a scheduled time was missed while closed.

@@ -565,7 +565,7 @@ private enum ScriptKind: String, CaseIterable, Hashable {
 
     var detail: String {
         switch self {
-        case .setup: "Runs in a terminal under the chat when its new worktree is created. The agent starts alongside it."
+        case .setup: "Runs in each new chat's worktree, fresh from origin, before its agent starts. The chat shows its output while it runs."
         case .teardown: "Runs in the worktree before Abstract removes it, for at most a minute. Removal goes ahead if it fails."
         case .run: "The Run button in the chat's toolbar runs this in a terminal under the chat; pressing it again restarts it."
         }

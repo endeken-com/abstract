@@ -7,6 +7,8 @@ import AbstractCore
 struct TaskLauncher: View {
     @Environment(AppModel.self) private var model
     var initialProjectId: String?
+    /// Start with no project: a standalone chat.
+    var initialStandalone = false
     var autofocus = true
     /// Inside a sheet the sheet is the container; draw no field frame of our own.
     var embedded = false
@@ -18,6 +20,8 @@ struct TaskLauncher: View {
     /// worktree and files stay on that Mac; you work from here.
     @State private var device: String?
     @State private var projectId: String?
+    /// No project: the chat works in a folder of its own. Only on this Mac.
+    @State private var standalone = false
     @State private var providerId = "claude"
     @State private var modelId: String?
     @State private var effort: String?
@@ -58,13 +62,17 @@ struct TaskLauncher: View {
                 FlowRow(spacing: Space.xs, lineSpacing: 4) {
                     AttachUploadButton(attachments: $attachments)
                     if !onlineDevices.isEmpty { DeviceMenu(device: deviceBinding, devices: onlineDevices) }
-                    CompactMenu(title: model.project(projectId)?.name ?? "Project") {
+                    CompactMenu(title: standalone ? "No project" : model.project(projectId)?.name ?? "Project") {
                         Picker("Project", selection: projectBinding) {
                             ForEach(deviceProjects) { p in Text(p.name).tag(Optional(p.id)) }
                         }
                         .pickerStyle(.inline)
                         if device == nil {
                             Divider()
+                            Toggle(isOn: Binding(get: { standalone }, set: { if $0 { chooseStandalone() } })) {
+                                Text("No Project")
+                                Text("A standalone chat, in a folder of its own")
+                            }
                             Button("Add Project…") { model.isAddingProject = true }
                         }
                     }
@@ -93,9 +101,11 @@ struct TaskLauncher: View {
                         Divider()
                         Text(ProviderRegistry.provider(providerId)?.permissionDetail(policy) ?? policy.detail)
                     }
-                    HStack(spacing: 4) {
-                        WorktreeMenu(worktree: $worktree, worktrees: worktrees)
-                        if worktree == nil { BaseRefField(baseRef: $baseRef) }
+                    if !standalone {
+                        HStack(spacing: 4) {
+                            WorktreeMenu(worktree: $worktree, worktrees: worktrees)
+                            if worktree == nil { BaseRefField(baseRef: $baseRef) }
+                        }
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -143,6 +153,8 @@ struct TaskLauncher: View {
                 model.remote.links[device.id]?.snapshot?.projects.first { $0.archivedAt == nil }?.id
             }.first
             let initial = initialProjectId ?? model.selectedSession?.projectId ?? model.projects.first?.id ?? firstRemoteProject
+            // Asked for, or there's no project to start in.
+            if initialStandalone || initial == nil { chooseStandalone(); if autofocus { focused = true }; return }
             // A project on a paired Mac starts its chat there.
             device = initial.flatMap { id in model.projects.contains { $0.id == id } ? nil : model.remote.device(ofProject: id) }
             select(initial)
@@ -190,6 +202,7 @@ struct TaskLauncher: View {
             worktree = nil
             modelId = nil
             effort = nil
+            standalone = false
             select(deviceProjects.first?.id)
         })
     }
@@ -206,12 +219,13 @@ struct TaskLauncher: View {
     }
 
     private var canStart: Bool {
-        !starting && projectId != nil && (device == nil || deviceProviders.contains { $0.id == providerId })
+        !starting && (projectId != nil || (standalone && device == nil)) && (device == nil || deviceProviders.contains { $0.id == providerId })
             && (!prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty)
     }
 
     private func select(_ id: String?) {
         if id != projectId { worktree = nil }
+        standalone = false
         projectId = id
         guard let p = model.project(id) else { return }
         let selectedProvider = device == nil ? p.defaultProviderId
@@ -222,14 +236,20 @@ struct TaskLauncher: View {
         policy = p.defaultPermissionPolicy
     }
 
+    private func chooseStandalone() {
+        standalone = true
+        projectId = nil
+        worktree = nil
+    }
+
     private func start() {
-        guard canStart, let projectId else { return }
+        guard canStart else { return }
         starting = true
         error = nil
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         Task {
             do {
-                if let device {
+                if let device, let projectId {
                     let id = try await model.remote.startChat(on: device, RemoteStart(
                         projectId: projectId, providerId: providerId, prompt: text, attachments: attachments, baseRef: baseRef,
                         policy: policy, model: modelId, effort: effort, worktree: worktree?.path))
@@ -477,6 +497,7 @@ struct NewChatSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     let initialProjectId: String?
+    var standalone = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.lg) {
@@ -490,16 +511,7 @@ struct NewChatSheet: View {
                     .keyboardShortcut(.cancelAction)
                     .help("Close")
             }
-            if model.projects.isEmpty && model.project(initialProjectId) == nil && !model.remote.links.values.contains(where: {
-                $0.state == .online && ($0.snapshot?.projects.contains { $0.archivedAt == nil } ?? false)
-            }) {
-                VStack(alignment: .leading, spacing: Space.md) {
-                    Text("Chats live inside a project. Add a git repository first.").font(.btBody).foregroundStyle(Color.btTextSecondary)
-                    Button("Add Project…") { dismiss(); model.isAddingProject = true }.buttonStyle(.btPrimary)
-                }
-            } else {
-                TaskLauncher(initialProjectId: initialProjectId, embedded: true, onStarted: { dismiss() })
-            }
+            TaskLauncher(initialProjectId: initialProjectId, initialStandalone: standalone, embedded: true, onStarted: { dismiss() })
         }
         .padding(Space.xl)
         .frame(width: 760)

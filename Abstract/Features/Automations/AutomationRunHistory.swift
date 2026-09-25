@@ -2,7 +2,7 @@ import SwiftUI
 import AbstractCore
 
 /// Past runs of one automation, newest first: one quiet row each, and the
-/// row opens the chat the run started.
+/// row opens the chat the run happened in.
 struct AutomationRunHistory: View {
     @Environment(AppModel.self) private var model
     /// nil while the automation is still being created.
@@ -19,7 +19,7 @@ struct AutomationRunHistory: View {
             } else {
                 ForEach(runs) { RunRow(run: $0) }
             }
-            Text("A run counts as created once its workspace exists. How the agent's work went shows on its chat.")
+            Text("A run counts as started once its instructions reach its chat. How the agent's work went shows on the chat.")
                 .font(.btCaption)
                 .foregroundStyle(Color.btTextTertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -98,7 +98,7 @@ private struct RunRow: View {
     /// What became of it: the chat's state once there is one.
     private func outcome(_ session: Session?) -> String {
         switch run.status {
-        case .creating: "Creating workspace…"
+        case .creating: "Starting…"
         case .failed: "Failed"
         case .created: session?.status.label ?? "Chat deleted"
         }

@@ -42,7 +42,8 @@ struct MainTabBar: View {
                 HStack(spacing: Space.sm) {
                     // Its files are on the other Mac: no editor here opens them.
                     if !session.id.hasPrefix(RemoteService.mirrorPrefix) { OpenInEditorButton(session: session) }
-                    GitActionsButton(session: session)
+                    // A standalone chat's folder isn't a repository.
+                    if session.projectId != nil { GitActionsButton(session: session) }
                 }
                 .padding(.trailing, inTitleBand ? 0 : Space.sm)
             }
@@ -194,7 +195,7 @@ private struct NewTabMenu: View {
         let open = Set(model.mainTabs.tabs.compactMap { if case .chat(let id) = $0.kind { id } else { nil } })
         let recent = model.recentChats.filter { !open.contains($0) }.prefix(8)
         ChromeIconMenu(symbol: "plus", help: "New tab", size: 24) {
-            Button("New Chat") { model.showNewChat(in: session.projectId) }
+            Button("New Chat") { model.showNewChat(in: session.projectId, standalone: session.projectId == nil) }
             Button("Changes") { model.openDiffTab(in: session.id) }
                 .disabled(session.worktreePath == nil)
             if !recent.isEmpty {

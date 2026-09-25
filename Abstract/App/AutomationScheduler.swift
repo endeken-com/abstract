@@ -62,9 +62,9 @@ final class AutomationScheduler {
         try? model.store.save(fresh)
     }
 
-    /// Create the run and its workspace, then launch the agent. A run counts
-    /// as created once its workspace exists (superset semantics); how the
-    /// agent's work went is the session's own status.
+    /// Start a run: its instructions go to its chat, a new one or the one
+    /// it runs in. A run counts as created once they have; how the agent's
+    /// work went is the chat's own status.
     @discardableResult
     func fire(_ a: Automation, trigger: RunTrigger) async -> AutomationRun {
         firing.insert(a.id)
@@ -72,7 +72,7 @@ final class AutomationScheduler {
         var run = AutomationRun(automationId: a.id, trigger: trigger)
         try? model.store.save(run)
         do {
-            let sessionId = try await startRun(a, runId: run.id)
+            let sessionId = try await startRun(a)
             run.status = .created
             run.sessionId = sessionId
         } catch {
@@ -87,46 +87,34 @@ final class AutomationScheduler {
         return run
     }
 
-    private func startRun(_ a: Automation, runId: String) async throws -> String {
-        // Continue this automation's own previous session when asked and
-        // possible; anything unavailable falls through to a fresh launch.
-        if a.continueAgentSession, a.workspaceMode == .pinned,
-           let previousId = try model.store.lastRun(automationId: a.id)?.sessionId,
-           let previous = model.session(previousId), previous.providerId == a.providerId {
-            if model.isAlive(previous.id) {
-                try model.sendFollowUp(previous.id, text: a.prompt)
-                return previous.id
+    private func startRun(_ a: Automation) async throws -> String {
+        switch a.workspaceMode {
+        case .pinned:
+            if let chat = model.session(a.pinnedSessionId) {
+                try model.deliverAutomationRun(a.prompt, to: chat.id)
+                return chat.id
             }
-            if previous.providerSessionId != nil {
-                try model.launch(previous, prompt: a.prompt, resume: true)
-                return previous.id
+            // A chat of its own: made on the first run (and again if it was
+            // deleted), then every run continues it.
+            let id = try await newChat(a, name: a.name)
+            // Onto a fresh copy, unless it was pointed at another chat meanwhile.
+            if var fresh = try model.store.automation(a.id), fresh.workspaceMode == .pinned, fresh.pinnedSessionId == a.pinnedSessionId {
+                fresh.pinnedSessionId = id
+                try model.store.save(fresh)
             }
-        }
-
-        let project = model.project(a.projectId)
-        let stamp = Date().formatted(.dateTime.month(.abbreviated).day().hour().minute())
-        var session = Session(projectId: a.projectId, name: "\(a.name) · \(stamp)", providerId: a.providerId,
-                              status: .provisioning, permissionPolicy: a.permissionPolicy, prompt: a.prompt, automationId: a.id,
-                              model: a.model, effort: a.effort)
-
-        if a.workspaceMode == .pinned, let pinned = model.session(a.pinnedSessionId), let path = pinned.worktreePath {
-            session.worktreePath = path
-            session.branch = pinned.branch
-        } else if let project {
+            return id
+        case .newWorktree:
+            let stamp = Date().formatted(.dateTime.month(.abbreviated).day().hour().minute())
             let slug = "auto-\(WorktreeNaming.slugify(a.name))-\(Date().formatted(.iso8601.year().month().day().dateSeparator(.omitted)))"
-            let ws = try await Workspace.provision(
-                executor: model.executor, project: project, name: slug, baseRef: nil,
-                template: project.worktreeTemplate ?? model.worktreeTemplate,
-                prefix: project.branchPrefix ?? model.branchPrefix
-            )
-            session.worktreePath = ws.path
-            session.branch = ws.branch
-        } else {
-            session.worktreePath = try Workspace.scratchDirectory(runId: runId)
+            return try await newChat(a, name: "\(a.name) · \(stamp)", slug: slug)
         }
-        try model.store.save(session)
-        model.reload()
-        try model.launch(session, prompt: a.prompt, resume: false)
-        return session.id
+    }
+
+    /// In its project, set up fresh in a worktree of its own; with no
+    /// project, a standalone chat.
+    private func newChat(_ a: Automation, name: String, slug: String? = nil) async throws -> String {
+        try await model.startChat(projectId: a.projectId, providerId: a.providerId, prompt: a.prompt, baseRef: nil,
+                                  policy: a.permissionPolicy, model: a.model, effort: a.effort,
+                                  name: name, slug: a.projectId == nil ? nil : slug, automationId: a.id, select: false)
     }
 }

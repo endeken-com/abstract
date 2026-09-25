@@ -25,6 +25,8 @@ public struct CLIError: Error, Equatable, Sendable {
         case worktreeMissing = "worktree_missing"
         /// git couldn't create the worktree (a missing base ref, say).
         case worktreeFailed = "worktree_failed"
+        /// The project's setup script failed in the new worktree. `create` rolled everything back.
+        case setupFailed = "setup_failed"
         case internalError = "internal"
     }
 

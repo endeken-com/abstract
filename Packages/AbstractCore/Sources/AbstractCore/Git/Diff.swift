@@ -321,6 +321,15 @@ public enum Diff {
 /// Byte-level string helpers. Diff text is handled per UTF-8 byte so a
 /// combining mark or CRLF never shifts a prefix check or a patch.
 enum GitText {
+    /// Why git failed, from its stderr: the first `fatal:` or `error:` line,
+    /// without the word. Its later lines are advice.
+    static func failure(_ stderr: String) -> String? {
+        let lines = self.lines(stderr).map { trimmed($0) }
+        guard let line = lines.first(where: { $0.hasPrefix("fatal:") || $0.hasPrefix("error:") }) else { return nil }
+        let reason = trimmed(String(line.drop { $0 != ":" }.dropFirst()))
+        return reason.isEmpty ? nil : reason
+    }
+
     /// Split on `\n` (keeping any `\r`). A trailing newline does not produce a
     /// final empty line.
     static func lines(_ text: String) -> [String] {

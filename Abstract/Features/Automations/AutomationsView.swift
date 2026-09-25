@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 import AbstractCore
 
@@ -27,7 +26,7 @@ struct AutomationsView: View {
                 EmptyStateView(
                     symbol: "clock.arrow.2.circlepath",
                     title: "No automations yet",
-                    message: "Run an agent on a schedule — nightly dependency bumps, issue triage, recurring cleanups. Every run opens its own chat you review like any other.",
+                    message: "Run an agent on a schedule — nightly dependency bumps, issue triage, recurring cleanups. Each run starts a chat you review like any other, or continues one, whose agent can start chats of its own.",
                     action: ("New Automation", { creating = true })
                 )
             } else {
@@ -67,7 +66,7 @@ private struct AutomationList: View {
                     AutoSectionLabel(title: model.automations.count == 1 ? "1 automation" : "\(model.automations.count) automations")
                         .padding(.bottom, Space.xs)
                     ForEach(model.automations) { a in
-                        AutomationListRow(automation: a, projectName: model.project(a.projectId)?.name, now: context.date) {
+                        AutomationListRow(automation: a, place: place(of: a), now: context.date) {
                             open(a.id)
                         }
                     }
@@ -78,11 +77,17 @@ private struct AutomationList: View {
             .padding(.bottom, Space.xxl)
         }
     }
+
+    /// The chat it continues, or where its new chats start.
+    private func place(of a: Automation) -> String {
+        if a.workspaceMode == .pinned, let chat = model.session(a.pinnedSessionId) { return "in “\(chat.name)”" }
+        return model.project(a.projectId)?.name ?? "No project"
+    }
 }
 
 private struct AutomationListRow: View {
     let automation: Automation
-    let projectName: String?
+    let place: String
     let now: Date
     let action: () -> Void
 
@@ -102,7 +107,7 @@ private struct AutomationListRow: View {
                     .foregroundStyle(Color.btText)
                     .lineLimit(1)
                     .layoutPriority(1)
-                Text([AutomationText.schedule(automation), projectName ?? "No project"].joined(separator: " · "))
+                Text([AutomationText.schedule(automation), place].joined(separator: " · "))
                     .font(.btCallout)
                     .foregroundStyle(Color.btTextTertiary)
                     .lineLimit(1)
@@ -143,6 +148,7 @@ private struct AutomationPage: View {
     @State private var confirmingLeave = false
     @State private var saveError: String?
     @FocusState private var titleFocused: Bool
+    @FocusState private var describeFocused: Bool
 
     init(existing: Automation?, draft: AutomationDraft, onClose: @escaping () -> Void, onOpen: @escaping (String) -> Void) {
         self.existing = existing
@@ -159,6 +165,10 @@ private struct AutomationPage: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 header
+                if existing == nil {
+                    DescribeAutomation(draft: $draft, focused: $describeFocused) { editingInstructions = false }
+                        .padding(.top, Space.lg)
+                }
                 PageTabs(selection: $tab, items: [
                     .init(value: .settings, title: "Settings"),
                     .init(value: .history, title: "Run history"),
@@ -187,14 +197,22 @@ private struct AutomationPage: View {
         }
         .onAppear {
             reloadRuns()
-            if existing == nil { titleFocused = true }
+            // Describing it is the quickest start; the title is a click away.
+            if existing == nil { describeFocused = true }
         }
         .onChange(of: model.sessions) { _, _ in reloadRuns() }
         .onChange(of: existing) { old, new in
             reloadRuns()
             // Changed elsewhere (the scheduler, a duplicate, the switch):
             // follow it unless there are edits here to keep.
-            if let old, let new, !draft.differs(from: old) { draft = AutomationDraft(new) }
+            if let old, let new {
+                if !draft.differs(from: old) {
+                    draft = AutomationDraft(new)
+                } else if draft.pinnedSessionId == old.pinnedSessionId {
+                    // Its first run made it a chat of its own: saving the edits keeps that chat.
+                    draft.pinnedSessionId = new.pinnedSessionId
+                }
+            }
         }
         .onChange(of: draft) { _, _ in saveError = nil }
         .confirmationDialog("Delete “\(existing?.name ?? "")”?", isPresented: $confirmingDelete) {
@@ -206,7 +224,7 @@ private struct AutomationPage: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This removes the automation and its run history. Chats and worktrees its runs created stay.")
+            Text("This removes the automation and its run history. The chats its runs used stay.")
         }
         .confirmationDialog("Discard your changes?", isPresented: $confirmingLeave) {
             Button("Discard Changes", role: .destructive, action: onClose)
@@ -274,14 +292,11 @@ private struct AutomationPage: View {
                     .accessibilityLabel("Title")
                 saveControls
             }
-            HStack(spacing: Space.lg) {
-                Toggle(isOn: Binding(get: { isActive }, set: { setActive($0) })) {
-                    Text("Active").font(.btCallout).foregroundStyle(Color.btTextSecondary)
-                }
-                .toggleStyle(QuietSwitchStyle())
-                .help(isActive ? "Pause: scheduled runs stop until you turn it back on" : "Resume the schedule")
-                OwnerLabel()
+            Toggle(isOn: Binding(get: { isActive }, set: { setActive($0) })) {
+                Text("Active").font(.btCallout).foregroundStyle(Color.btTextSecondary)
             }
+            .toggleStyle(QuietSwitchStyle())
+            .help(isActive ? "Pause: scheduled runs stop until you turn it back on" : "Resume the schedule")
         }
     }
 
@@ -362,6 +377,80 @@ private struct AutomationPage: View {
     }
 }
 
+/// A new automation from a description in plain words: the agent drafts its
+/// name, schedule, where it runs and its instructions, for you to review.
+private struct DescribeAutomation: View {
+    @Environment(AppModel.self) private var model
+    @Binding var draft: AutomationDraft
+    var focused: FocusState<Bool>.Binding
+    let onDrafted: () -> Void
+    @State private var text = ""
+    @State private var drafting = false
+    @State private var error: String?
+    @State private var drafted = false
+
+    private var canDraft: Bool { !drafting && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Space.xs) {
+            HStack(alignment: .bottom, spacing: Space.sm) {
+                TextField("Describe it and AI drafts the rest, e.g. “Every weekday at 9, triage new issues in payments-api”",
+                          text: $text, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .font(.btInput)
+                    .lineLimit(1...6)
+                    .focused(focused)
+                    .returnBreaksLine(commandReturn: run)
+                    .padding(.vertical, 5)
+                Button(action: run) {
+                    HStack(spacing: 5) {
+                        if drafting { ProgressView().controlSize(.mini) } else { Image(systemName: "sparkles") }
+                        Text(drafting ? "Drafting" : drafted ? "Draft Again" : "Draft with AI")
+                    }
+                }
+                .buttonStyle(.bt(.secondary, size: .small))
+                .disabled(!canDraft)
+                .help("Draft the automation from your description (⌘↩)")
+            }
+            .padding(.leading, Field.inset)
+            .padding(.trailing, 5)
+            .padding(.vertical, 3)
+            .btFieldChrome(focused: focused.wrappedValue)
+            if let error {
+                Text(error)
+                    .font(.btCallout)
+                    .foregroundStyle(Color.btRemoved)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            } else if drafted {
+                Text("Drafted from your description. Look it over below, then save.")
+                    .font(.btCallout)
+                    .foregroundStyle(Color.btTextTertiary)
+            }
+        }
+    }
+
+    private func run() {
+        guard canDraft else { return }
+        drafting = true
+        error = nil
+        Task {
+            do {
+                let proposal = try await model.draftAutomation(text, preferring: draft.providerId)
+                let projectId = proposal.project.flatMap { name in model.projects.first { $0.name == name }?.id }
+                withAnimation(.snappy(duration: 0.2)) {
+                    draft.apply(proposal, projectId: projectId, timezone: model.defaultTimezone)
+                }
+                drafted = true
+                onDrafted()
+            } catch {
+                self.error = error.localizedDescription
+            }
+            drafting = false
+        }
+    }
+}
+
 /// "Automations" in the breadcrumb: text that brightens on hover.
 private struct BreadcrumbLink: View {
     let title: String
@@ -378,34 +467,5 @@ private struct BreadcrumbLink: View {
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
         .help("Back to all automations")
-    }
-}
-
-/// Who the automation belongs to: this Mac's user, until there are others.
-private struct OwnerLabel: View {
-    private static let name: String = {
-        let full = NSFullUserName()
-        return full.isEmpty ? NSUserName() : full
-    }()
-
-    private static var initials: String {
-        let words = name.split(separator: " ")
-        return String((words.first?.prefix(1) ?? "") + (words.count > 1 ? words.last!.prefix(1) : "")).uppercased()
-    }
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Text(Self.initials)
-                .font(BTFont.ui(8, .semibold))
-                .foregroundStyle(Color.btTextSecondary)
-                .frame(width: 16, height: 16)
-                .background(Color.btInset, in: Circle())
-            Text(Self.name)
-                .font(.btCallout)
-                .foregroundStyle(Color.btTextSecondary)
-                .lineLimit(1)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Owner: \(Self.name)")
     }
 }
