@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-import AbstractCore
+@testable import AbstractCore
 
 @Suite struct StoreTests {
     let store: Store
@@ -98,6 +98,24 @@ import AbstractCore
         session.providerSessions = [:]
         try store.save(session)
         #expect(try store.session("s1") == session)
+    }
+
+    @Test func sessionKeepsWhenItWasPinned() throws {
+        var session = Self.session("s1", projectId: nil)
+        session.pinnedAt = Self.at(45)
+        try store.save(session)
+        #expect(try store.session("s1") == session)
+
+        session.pinnedAt = nil
+        try store.save(session)
+        #expect(try store.session("s1")?.pinnedAt == nil)
+    }
+
+    @Test func chatsFromBeforePinningStartUnpinned() throws {
+        let store = try Store.inMemory(migratedTo: "v7-retire-local-agents", thenRunning: """
+            INSERT INTO sessions (id, name, provider_id, created_at) VALUES ('s1', 'Old', 'claude', '2026-09-02 00:00:00.000');
+            """)
+        #expect(try store.session("s1")?.pinnedAt == nil)
     }
 
     @Test func sessionWithoutProjectIsAllowed() throws {

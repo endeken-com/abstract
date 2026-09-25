@@ -510,6 +510,9 @@ public final class Store: Sendable {
                 """)
             try db.execute(sql: "DELETE FROM settings WHERE key IN ('localModelSources', 'shareLocalModels')")
         }
+        migrator.registerMigration("v8-pinned") { db in
+            try db.execute(sql: "ALTER TABLE sessions ADD COLUMN pinned_at DATETIME")
+        }
         return migrator
     }
 }
@@ -617,6 +620,7 @@ private struct SessionRow: FetchableRecord, PersistableRecord {
             model: try row.decode(forColumn: "model"),
             effort: try row.decode(forColumn: "effort"))
         value.handoffFrom = try row.decode(forColumn: "handoff_from")
+        value.pinnedAt = try row.decode(forColumn: "pinned_at")
         let seats: String = try row.decode(forColumn: "provider_sessions")
         value.providerSessions = (try? JSONDecoder().decode([String: ProviderSeat].self, from: Data(seats.utf8))) ?? [:]
         self.value = value
@@ -643,6 +647,7 @@ private struct SessionRow: FetchableRecord, PersistableRecord {
         container["created_at"] = value.createdAt
         container["last_event_at"] = value.lastEventAt
         container["archived_at"] = value.archivedAt
+        container["pinned_at"] = value.pinnedAt
     }
 }
 

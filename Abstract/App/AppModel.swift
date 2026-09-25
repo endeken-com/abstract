@@ -429,7 +429,7 @@ final class AppModel {
     }
 
     func sessions(in projectId: String?) -> [Session] {
-        sessions.filter { $0.projectId == projectId && (showArchived || $0.archivedAt == nil) }
+        Ordering.pinnedFirst(sessions.filter { $0.projectId == projectId && (showArchived || $0.archivedAt == nil) })
     }
 
     var needsYou: [Session] {
@@ -946,6 +946,13 @@ final class AppModel {
         if let (_, host) = RemoteService.split(sessionId) { remote.onlineLink(for: sessionId)?.fire(.rename(sessionId: host, name: name)); return }
         guard var s = session(sessionId), !name.trimmingCharacters(in: .whitespaces).isEmpty else { return }
         s.name = name.trimmingCharacters(in: .whitespaces)
+        try? store.save(s)
+        reload()
+    }
+
+    func setPinned(_ sessionId: String, _ pinned: Bool) {
+        guard var s = session(sessionId) else { return }
+        s.pinnedAt = pinned ? Date() : nil
         try? store.save(s)
         reload()
     }

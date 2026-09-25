@@ -123,18 +123,24 @@ private struct MainTabChip: View {
             model.moveTab(id, to: tab.id)
             return true
         } isTargeted: { targeted = $0 }
-        .contextMenu {
-            if tab.preview { Button("Keep Open") { model.keepTab(tab.id) } }
-            if case let .file(sessionId, path) = tab.kind {
-                Button("Copy Path") { copy(model.chatSummary(sessionId)?.worktreePath.map { FileIndex.join($0, path) } ?? path) }
-                Button("Copy Relative Path") { copy(path) }
-                Button("Show Changes") { model.showChanges(path, in: sessionId) }
-            }
-            Divider()
-            Button("Close") { model.closeTab(tab.id) }
-            Button("Close Other Tabs") { model.closeOtherTabs(tab.id) }
-                .disabled(model.mainTabs.tabs.count < 2)
+        .secondaryClickMenu(menu)
+    }
+
+    private var menu: [MenuEntry] {
+        var entries: [MenuEntry] = []
+        if tab.preview { entries.append(.action("Keep Open") { model.keepTab(tab.id) }) }
+        if case let .file(sessionId, path) = tab.kind {
+            entries += [
+                .action("Copy Path") { copy(model.chatSummary(sessionId)?.worktreePath.map { FileIndex.join($0, path) } ?? path) },
+                .action("Copy Relative Path") { copy(path) },
+                .action("Show Changes") { model.showChanges(path, in: sessionId) },
+            ]
         }
+        if !entries.isEmpty { entries.append(.divider) }
+        return entries + [
+            .action("Close") { model.closeTab(tab.id) },
+            .action("Close Other Tabs", enabled: model.mainTabs.tabs.count > 1) { model.closeOtherTabs(tab.id) },
+        ]
     }
 
     private var session: ChatSummary? { model.chatSummary(tab.kind.sessionId) }
