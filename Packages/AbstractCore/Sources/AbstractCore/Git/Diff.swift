@@ -205,9 +205,14 @@ public enum Diff {
             .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             .map { ":(exclude)" + GitText.trimTrailingSlashes($0) }
 
-        let added = try await Git.git(exec, cwd: worktree, ["add", "-N", "--", "."] + excludes)
-        if !added.ok {
-            await intentToAddIndividually(exec, worktree: worktree)
+        // Mid-conflict (a merge, rebase or cherry-pick that stopped), `add -N`
+        // would swap each conflicted file's stages for an empty new file and
+        // the conflict would be lost, so new files wait until it's resolved.
+        if await !hasConflicts(exec, repo: worktree) {
+            let added = try await Git.git(exec, cwd: worktree, ["add", "-N", "--", "."] + excludes)
+            if !added.ok {
+                await intentToAddIndividually(exec, worktree: worktree)
+            }
         }
 
         // quotePath=false keeps non-ASCII paths readable instead of octal-escaped and quoted.
@@ -225,6 +230,12 @@ public enum Diff {
               out.ok
         else { return [] }
         return out.stdout.split(separator: "\0").map(String.init).filter { $0.hasSuffix("/") }
+    }
+
+    /// Whether the repository at `repo` has files waiting on a conflict to be resolved.
+    static func hasConflicts(_ exec: any Executor, repo: String) async -> Bool {
+        guard let out = try? await Git.git(exec, cwd: repo, ["ls-files", "--unmerged"]), out.ok else { return false }
+        return !GitText.trimmed(out.stdout).isEmpty
     }
 
     /// Mark untracked files individually, skipping the ones git refuses (an
