@@ -188,6 +188,8 @@ public enum AgentEvent: Sendable, Hashable {
     case raw(line: String, stream: OutputStreamKind)
     /// What the agent predicts you'll say next, offered in the reply box.
     case promptSuggestion(String)
+    /// What the agent says it understands, typed as `/name`.
+    case commands(AgentCommandList)
     /// A subagent or shell command it runs beside the conversation started,
     /// progressed or ended.
     case task(TaskEvent)

@@ -87,3 +87,25 @@ struct TimelineTests {
 }
 
 import Foundation
+
+extension TimelineTests {
+    @Test func latestCommandsAreTheLastReportedSinceTheAgentChanged() {
+        var t = Timeline()
+        #expect(t.latestCommands == nil)
+        let first = AgentCommandList(providerId: "claude", commands: [AgentCommand(name: "review")])
+        let second = AgentCommandList(providerId: "claude", commands: [AgentCommand(name: "review", detail: "Review a pull request")])
+        t.append(.commands(first))
+        t.append(.text(role: .assistant, text: "Hi.", blockId: nil, partial: false))
+        t.append(.commands(second))
+        #expect(t.latestCommands == second)
+        t.append(.handoff(from: "claude", to: "codex", summary: nil, source: nil))
+        #expect(t.latestCommands == nil)
+        #expect(t.blocks.count == 2) // the reply and the handoff; command lists draw nothing
+    }
+
+    @Test func aListOnlyCountsForItsOwnAgent() {
+        let list = AgentCommandList(providerId: "claude", commands: [AgentCommand(name: "review")])
+        #expect(list.commands(for: "claude") == [AgentCommand(name: "review")])
+        #expect(list.commands(for: "codex").isEmpty)
+    }
+}

@@ -48,6 +48,18 @@ public struct Timeline: Sendable {
         return nil
     }
 
+    /// The commands the agent last reported, since the chat last changed agent.
+    public var latestCommands: AgentCommandList? {
+        for entry in entries.reversed() {
+            switch entry.event {
+            case .commands(let list): return list
+            case .handoff: return nil
+            default: continue
+            }
+        }
+        return nil
+    }
+
     public var last: AgentEvent? { entries.last?.event }
 }
 
@@ -182,7 +194,7 @@ extension Timeline {
                 out.append(.handoff(id: entry.id, from: from, to: to, summary: summary, source: source))
                 assistantOpen = false
             // Tasks and what subagents did are listed apart from the conversation.
-            case .status, .sessionId, .toolResult, .permissionRequest, .promptSuggestion, .task, .subagent:
+            case .status, .sessionId, .toolResult, .permissionRequest, .promptSuggestion, .commands, .task, .subagent:
                 break
             }
         }

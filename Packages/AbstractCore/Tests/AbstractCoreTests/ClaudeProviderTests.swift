@@ -403,3 +403,45 @@ struct ClaudeSyntheticMessageTests {
         #expect(parser.feed(real, stream: .stdout).count == 1)
     }
 }
+
+// MARK: - commands
+
+extension ClaudeProviderTests {
+    static func commandLists(_ events: [AgentEvent]) -> [AgentCommandList] {
+        events.compactMap { if case let .commands(list) = $0 { list } else { nil } }
+    }
+
+    @Test func initReportsTheAgentsCommandsAndSkills() {
+        let events = Self.feed([#"{"type":"system","subtype":"init","session_id":"s1","model":"m","slash_commands":["review","compact","my-skill","doctor"],"skills":["my-skill","other-skill"],"terminal_slash_commands":["doctor"]}"#])
+        #expect(Self.commandLists(events) == [AgentCommandList(providerId: "claude", commands: [
+            AgentCommand(name: "review"),
+            AgentCommand(name: "compact"),
+            AgentCommand(name: "my-skill", kind: .skill),
+            AgentCommand(name: "other-skill", kind: .skill),
+        ])])
+    }
+
+    @Test func initWithoutCommandsReportsNone() {
+        let events = Self.feed([#"{"type":"system","subtype":"init","session_id":"s1","model":"m"}"#])
+        #expect(Self.commandLists(events).isEmpty)
+    }
+
+    @Test func commandsChangedAddsDescriptionsAndKeepsInitsKinds() {
+        let events = Self.feed([
+            #"{"type":"system","subtype":"init","session_id":"s1","slash_commands":["review","my-skill"],"skills":["my-skill"],"terminal_slash_commands":["doctor"]}"#,
+            #"{"type":"system","subtype":"commands_changed","commands":[{"name":"review","description":"Review a pull request","argumentHint":"<number>"},{"name":"my-skill","description":"Does a thing","argumentHint":""},{"name":"doctor","description":"Check the install","argumentHint":""}]}"#,
+        ])
+        #expect(Self.commandLists(events).last == AgentCommandList(providerId: "claude", commands: [
+            AgentCommand(name: "review", detail: "Review a pull request", argumentHint: "<number>"),
+            AgentCommand(name: "my-skill", detail: "Does a thing", kind: .skill),
+        ]))
+    }
+
+    @Test func theRecordedStreamReportsItsCommands() throws {
+        let lists = Self.commandLists(try Self.fixtureEvents())
+        #expect(lists.count == 3) // init, then commands_changed twice
+        let last = try #require(lists.last)
+        #expect(last.commands.contains(AgentCommand(name: "example-skill", detail: "An example skill", kind: .skill)))
+        #expect(last.commands.contains(AgentCommand(name: "example-command", detail: "An example custom command", argumentHint: "<topic>")))
+    }
+}
