@@ -9,6 +9,8 @@ import Foundation
 /// stdin as a stream-json user turn, and so is every follow-up.
 public struct ClaudeProvider: ProviderDefinition {
     public var id: String { "claude" }
+    /// Its background tasks have a list in the app; `/mode` does what its `/permissions` does.
+    public var commands: ProviderCommands { ProviderCommands(extra: [.tasks], replaces: ["permissions": .mode]) }
     public var name: String { "Claude Code" }
     public var logoAsset: String { "ProviderClaude" }
     public var binary: String { "claude" }
@@ -167,6 +169,10 @@ final class ClaudeParser: OutputParser {
     /// the next `message_start` (not dropped at `content_block_stop`) because
     /// the CLI may send the complete `assistant` frame after the stop.
     private var blocks: [Int: Block] = [:]
+    /// From `init`: which commands are skills, and which only work in a
+    /// terminal. `commands_changed` repeats the list without saying.
+    private var skills: Set<String> = []
+    private var terminalOnly: Set<String> = []
 
     func feed(_ line: String, stream: OutputStreamKind) -> [AgentEvent] {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -222,7 +228,20 @@ final class ClaudeParser: OutputParser {
             if let sessionId { events.append(.sessionId(sessionId)) }
             events.append(.system(model: obj["model"]?.string, cwd: obj["cwd"]?.string,
                                   permissionMode: obj["permissionMode"]?.string, sessionId: sessionId))
+            let skillNames = (obj["skills"]?.array ?? []).compactMap(\.string)
+            skills = Set(skillNames)
+            terminalOnly = Set((obj["terminal_slash_commands"]?.array ?? []).compactMap(\.string))
+            let names = (obj["slash_commands"]?.array ?? []).compactMap(\.string)
+            if let list = commandList((names + skillNames).map { AgentCommand(name: $0) }) { events.append(list) }
             return events
+        case "commands_changed":
+            let commands = (obj["commands"]?.array ?? []).compactMap { c -> AgentCommand? in
+                guard let name = c["name"]?.string else { return nil }
+                return AgentCommand(name: name,
+                                    detail: c["description"]?.string.flatMap { $0.isEmpty ? nil : $0 },
+                                    argumentHint: c["argumentHint"]?.string.flatMap { $0.isEmpty ? nil : $0 })
+            }
+            return commandList(commands).map { [$0] } ?? []
         case "post_turn_summary":
             var events: [AgentEvent] = [
                 .turnEnd(durationMs: nil, costUsd: nil, usage: nil, summary: obj["status_detail"]?.string),
@@ -240,6 +259,19 @@ final class ClaudeParser: OutputParser {
         default:
             return []
         }
+    }
+
+    /// The commands as a chat lists them: each name once, skills marked,
+    /// terminal-only ones left out. nil when none are left.
+    private func commandList(_ commands: [AgentCommand]) -> AgentEvent? {
+        var seen = Set<String>()
+        let list = commands.compactMap { command -> AgentCommand? in
+            guard !terminalOnly.contains(command.name), seen.insert(command.name).inserted else { return nil }
+            var command = command
+            command.kind = skills.contains(command.name) ? .skill : .command
+            return command
+        }
+        return list.isEmpty ? nil : .commands(AgentCommandList(providerId: ClaudeProvider().id, commands: list))
     }
 
     private func blockId(_ index: Int) -> String { "\(messageId):\(index)" }

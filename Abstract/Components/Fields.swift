@@ -48,9 +48,9 @@ extension View {
 }
 
 extension View {
-    /// For a vertical TextField: Return breaks the line at the caret and
-    /// Command-Return runs `send`. Left alone, Return ends editing and selects
-    /// everything, so the next key typed replaces the draft.
+    /// For a multi-line box: Return breaks the line at the caret and
+    /// Command-Return runs `send`. Left alone, Return in a vertical TextField
+    /// ends editing and selects everything, so the next key typed replaces the draft.
     func returnBreaksLine(commandReturn send: @escaping () -> Void) -> some View {
         onKeyPress(.return, phases: .down) { press in
             if press.modifiers.contains(.command) { send(); return .handled }
@@ -87,6 +87,58 @@ struct BTTextField: View {
             .padding(.horizontal, compact ? 8 : Field.inset)
             .frame(height: compact ? Field.compactHeight : Field.height)
             .btFieldChrome(focused: focused)
+    }
+}
+
+/// A bare multi-line box that grows with its text (or placeholder) across `lines`,
+/// then scrolls; the caller draws the chrome. Use it for typing prompts: a
+/// vertical TextField re-measures all its text on every key (seconds for a long
+/// paste) and keeps wrapping at its old width when it narrows, cutting lines off.
+struct GrowingTextEditor: View {
+    @Binding var text: String
+    var placeholder: String
+    var font: Font
+    var lineSpacing: CGFloat = 2
+    var lines: ClosedRange<Int>
+    var focused: FocusState<Bool>.Binding
+    @State private var height: CGFloat = 20
+
+    var body: some View {
+        TextEditor(text: $text)
+            .font(font)
+            .lineSpacing(lineSpacing)
+            .scrollContentBackground(.hidden)
+            .focused(focused)
+            // Tab moves on, as it did in a text field, instead of typing a tab.
+            // Handlers the caller adds outside this one see Tab first.
+            .onKeyPress(.tab, phases: [.down, .repeat]) { press in
+                guard let window = NSApp.keyWindow else { return .ignored }
+                if press.modifiers.contains(.shift) { window.selectPreviousKeyView(nil) } else { window.selectNextKeyView(nil) }
+                return .handled
+            }
+            .background(alignment: .topLeading) {
+                label(text.isEmpty ? placeholder : text)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .hidden()
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
+            }
+            .overlay(alignment: .topLeading) {
+                if text.isEmpty {
+                    label(placeholder)
+                        .foregroundStyle(Color.btTextTertiary)
+                        .allowsHitTesting(false)
+                }
+            }
+            .frame(height: height)
+            .padding(.horizontal, -5) // TextEditor insets its text by 5pt itself
+    }
+
+    private func label(_ string: String) -> some View {
+        Text(string)
+            .font(font)
+            .lineSpacing(lineSpacing)
+            .lineLimit(lines)
+            .padding(.horizontal, 5)
     }
 }
 

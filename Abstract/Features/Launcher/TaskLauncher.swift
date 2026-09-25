@@ -36,12 +36,8 @@ struct TaskLauncher: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            TextField("Describe the task. Be as specific as you would with a colleague.", text: $prompt, axis: .vertical)
-                .textFieldStyle(.plain)
-                .font(BTFont.ui(14))
-                .lineSpacing(3)
-                .lineLimit(3...14)
-                .focused($focused)
+            GrowingTextEditor(text: $prompt, placeholder: "Describe the task. Be as specific as you would with a colleague.",
+                              font: BTFont.ui(14), lineSpacing: 3, lines: 3...14, focused: $focused)
                 .padding(.horizontal, embedded ? Field.inset : Space.lg)
                 .padding(.top, embedded ? Field.inset : 14)
                 .padding(.bottom, embedded ? Field.inset : Space.md)

@@ -394,12 +394,8 @@ private struct DescribeAutomation: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Space.xs) {
             HStack(alignment: .bottom, spacing: Space.sm) {
-                TextField("Describe it and AI drafts the rest, e.g. “Every weekday at 9, triage new issues in payments-api”",
-                          text: $text, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .font(.btInput)
-                    .lineLimit(1...6)
-                    .focused(focused)
+                GrowingTextEditor(text: $text, placeholder: "Describe it and AI drafts the rest, e.g. “Every weekday at 9, triage new issues in payments-api”",
+                                  font: .btInput, lineSpacing: 0, lines: 1...6, focused: focused)
                     .returnBreaksLine(commandReturn: run)
                     .padding(.vertical, 5)
                 Button(action: run) {

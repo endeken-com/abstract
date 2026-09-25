@@ -43,6 +43,8 @@ final class ChatFeed {
     private(set) var last: AgentEvent?
     /// The agent's suggested next message, until you send one yourself.
     private(set) var suggestion: String?
+    /// The commands the agent last reported, since the chat last changed agent.
+    private(set) var commands: AgentCommandList?
     private(set) var toolResults = 0
     /// What the agent runs beside the conversation, oldest first.
     private(set) var tasks: [AgentTask] = []
@@ -102,6 +104,7 @@ final class ChatFeed {
         if turns != self.turns { self.turns = turns }
         if timeline.last != last { last = timeline.last }
         if timeline.pendingSuggestion != suggestion { suggestion = timeline.pendingSuggestion }
+        if timeline.latestCommands != commands { commands = timeline.latestCommands }
         let results = timeline.entries.count { if case .toolResult = $0.event { true } else { false } }
         if results != toolResults { toolResults = results }
         let tasks = timeline.tasks

@@ -422,6 +422,13 @@ struct RailChatRow: View {
                 }
         }
         .simultaneousGesture(TapGesture(count: 2).onEnded { if !remote { draft = session.name; renaming = true } })
+        // `/rename` in the composer: the row that shows the chat takes it.
+        .onChange(of: model.renamingSessionId, initial: true) { _, id in
+            guard id == session.id, !remote else { return }
+            model.renamingSessionId = nil
+            draft = session.name
+            renaming = true
+        }
         .contextMenu {
             if remote {
                 Button(session.archivedAt == nil ? "Archive" : "Unarchive") {
