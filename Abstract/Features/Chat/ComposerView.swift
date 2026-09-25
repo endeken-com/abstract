@@ -14,10 +14,12 @@ struct ComposerView: View {
     private var working: Bool { session.status == .running || session.status == .provisioning }
     /// `abstract` drives the chat: nothing goes to its agent from here.
     private var readOnly: Bool { model.isDrivenFromCLI(session.id) }
+    /// Its agent starts once it's set up; its first message is already there.
+    private var settingUp: Bool { model.setups[session.id] != nil }
     private var suggestion: String? { working ? nil : model.feed(session.id).suggestion }
     /// A review or attachments can go on their own; otherwise there must be something typed.
     private var canSend: Bool {
-        !readOnly && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.comments(session.id).isEmpty || !attachments.isEmpty)
+        !readOnly && !settingUp && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.comments(session.id).isEmpty || !attachments.isEmpty)
     }
     private var attachments: [PromptAttachment] {
         get { model.draftAttachments[session.id] ?? [] }
@@ -62,10 +64,10 @@ struct ComposerView: View {
                         .frame(height: min(max(markdownHeight, 20), 180))
                         .padding(.vertical, 7)
                     } else {
-                        TextField(text: $draft, prompt: Text(readOnly ? "Driven from the command line" : suggestion ?? "Reply to \(ProviderRegistry.name(session.providerId))…"), axis: .vertical) {
+                        TextField(text: $draft, prompt: Text(settingUp ? "Setting up the chat…" : readOnly ? "Driven from the command line" : suggestion ?? "Reply to \(ProviderRegistry.name(session.providerId))…"), axis: .vertical) {
                             Text("Reply")
                         }
-                            .disabled(readOnly)
+                            .disabled(readOnly || settingUp)
                             .textFieldStyle(.plain)
                             .font(BTFont.chat(13.5))
                             .onKeyPress(.tab) {
@@ -81,7 +83,7 @@ struct ComposerView: View {
                     }
 
                     AttachmentButtons(repoRoot: repoRoot, sessionId: session.id, attachments: attachmentsBinding)
-                        .disabled(readOnly)
+                        .disabled(readOnly || settingUp)
 
                     if !draft.isEmpty {
                         Button(previewingMarkdown ? "Edit" : "Preview") {

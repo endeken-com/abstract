@@ -33,10 +33,12 @@ struct ConversationView: View {
                     PermissionCard(sessionId: session.id, request: p)
                         .transition(.opacity)
                 }
-                if working, permissions.isEmpty {
+                if let setup = model.setups[session.id] {
+                    ChatSetupCard(session: session, setup: setup)
+                } else if working, permissions.isEmpty {
                     WorkingIndicator(session: session, feed: feed)
                 }
-                if !working, feed.turns > 0 {
+                if !working, feed.turns > 0, model.setups[session.id] == nil {
                     ChatChangesSummary(session: session, turnKey: feed.turns)
                 }
             }

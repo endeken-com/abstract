@@ -62,9 +62,9 @@ final class AutomationScheduler {
         try? model.store.save(fresh)
     }
 
-    /// Create the run and its workspace, then launch the agent. A run counts
-    /// as created once its workspace exists (superset semantics); how the
-    /// agent's work went is the session's own status.
+    /// Create the run and its chat, which sets itself up and starts the
+    /// agent. A run counts as created once its chat exists; how setting it
+    /// up and the agent's work went is the chat's own status.
     @discardableResult
     func fire(_ a: Automation, trigger: RunTrigger) async -> AutomationRun {
         firing.insert(a.id)
@@ -113,14 +113,11 @@ final class AutomationScheduler {
             session.worktreePath = path
             session.branch = pinned.branch
         } else if let project {
+            // Fetched fresh and set up like any new chat, then the agent starts.
             let slug = "auto-\(WorktreeNaming.slugify(a.name))-\(Date().formatted(.iso8601.year().month().day().dateSeparator(.omitted)))"
-            let ws = try await Workspace.provision(
-                executor: model.executor, project: project, name: slug, baseRef: nil,
-                template: project.worktreeTemplate ?? model.worktreeTemplate,
-                prefix: project.branchPrefix ?? model.branchPrefix
-            )
-            session.worktreePath = ws.path
-            session.branch = ws.branch
+            return try await model.startChat(projectId: project.id, providerId: a.providerId, prompt: a.prompt, baseRef: nil,
+                                             policy: a.permissionPolicy, model: a.model, effort: a.effort,
+                                             name: session.name, slug: slug, automationId: a.id, select: false)
         } else {
             session.worktreePath = try Workspace.scratchDirectory(runId: runId)
         }

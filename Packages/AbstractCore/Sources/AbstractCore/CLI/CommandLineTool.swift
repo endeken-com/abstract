@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import Synchronization
 
 /// `abstract`: create and drive Abstract's sessions from scripts and other automations.
 ///
@@ -20,6 +21,10 @@ import Foundation
 /// for 10 minutes (`ABSTRACT_AGENT_IDLE_TIMEOUT`, in seconds). It runs under
 /// the project's default permission policy, and any approval it would ask for
 /// is denied: nobody is there to answer.
+///
+/// `session create` starts the worktree from the project's base branch as
+/// `origin` has it (fetched first), and runs the project's setup script in it
+/// before the agent starts; while it runs the session shows as setting up.
 public enum CommandLineTool {
     public static func main(_ arguments: [String]) async -> Int32 {
         let args = Array(arguments.dropFirst())
@@ -140,10 +145,11 @@ struct Commands {
         let city = WorktreeNaming.cityName(avoiding: Set(siblings.compactMap {
             $0.worktreePath.map { URL(fileURLWithPath: $0).lastPathComponent }
         }))
+        let base = await Workspace.freshBase(executor: executor, root: project.rootPath, base: project.defaultBaseRef)
         let workspace: Workspace.Provisioned
         do {
             workspace = try await Workspace.provision(
-                executor: executor, project: project, name: name, baseRef: nil,
+                executor: executor, project: project, name: name, baseRef: base.ref,
                 template: project.worktreeTemplate ?? store.setting("worktreeTemplate", as: String.self) ?? WorktreeNaming.defaultTemplate,
                 prefix: "", worktreeName: city, exactBranch: branch)
         } catch WorkspaceError.branchExists {
@@ -174,6 +180,21 @@ struct Commands {
         // Another command took the name since the check above.
         guard inserted else { await rollBack(); throw nameTaken(name) }
         StoreChanges.post(storePath: storePath)
+
+        if let script = Project.nonBlank(project.setupScript) {
+            try? store.updateSessionStatus(sessionId, .provisioning, detail: "Running the setup script")
+            StoreChanges.post(storePath: storePath)
+            let tail = Mutex<[String]>([])
+            let code = try? await SetupScript.run(script, in: workspace.path, executor: executor) { line in
+                tail.withLock { $0 = Array(($0 + [line]).suffix(5)) }
+            }
+            if code != 0 {
+                await rollBack()
+                let lines = tail.withLock { $0 }.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+                let how = code.map { "exited with code \($0)" } ?? "was stopped"
+                throw CLIError(.setupFailed, (["The project's setup script \(how)."] + lines).joined(separator: "\n"))
+            }
+        }
 
         do {
             let agent = try AgentHost.start(session, prompt: prompt, replacing: nil, lock: lock, executable: executable)

@@ -673,7 +673,7 @@ enum LoginShell {
         return NSHomeDirectory()
     }
 
-    private static func userShell(_ environment: [String: String]) -> String {
+    static func userShell(_ environment: [String: String] = ProcessInfo.processInfo.environment) -> String {
         if let shell = environment["SHELL"], !shell.isEmpty, FileManager.default.isExecutableFile(atPath: shell) {
             return shell
         }

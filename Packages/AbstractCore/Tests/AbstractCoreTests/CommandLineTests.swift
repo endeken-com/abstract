@@ -350,6 +350,36 @@ struct CommandLineTests {
         #expect(try await box.branches().contains("release"))
     }
 
+    @Test func theSetupScriptRunsInTheWorktreeBeforeTheAgent() async throws {
+        let box = try await Sandbox()
+        defer { box.tearDown() }
+        var project = box.project
+        // The agent's arguments log doesn't exist yet when setup runs.
+        project.setupScript = "pwd -P > setup-ran.txt\ntest ! -e '\(box.root.path)/agents/responsive/args.log' && echo first >> setup-ran.txt"
+        try box.store.save(project)
+        let out = try await box.create()
+        #expect(out.status == 0)
+        let id = try #require(out.object["id"] as? String)
+        let path = try #require(try box.store.session(id)?.worktreePath)
+        let ran = try String(contentsOfFile: path + "/setup-ran.txt", encoding: .utf8)
+        #expect(ran.contains(URL(fileURLWithPath: path).lastPathComponent))
+        #expect(ran.contains("first"))
+    }
+
+    @Test func aFailedSetupScriptLeavesNothingBehind() async throws {
+        let box = try await Sandbox()
+        defer { box.tearDown() }
+        var project = box.project
+        project.setupScript = "echo 'npm ERR! missing script'\nexit 7"
+        try box.store.save(project)
+        let out = try await box.create(branch: "set-up")
+        #expect(out.code == "setup_failed")
+        #expect((out.object["message"] as? String)?.contains("code 7") == true)
+        #expect((out.object["message"] as? String)?.contains("npm ERR! missing script") == true)
+        try expectNothingLeft(box, branch: "set-up")
+        #expect(box.argsLog.isEmpty, "the agent never started")
+    }
+
     @Test func worktreeFailedLeavesNothingBehind() async throws {
         let box = try await Sandbox(baseRef: "no-such-ref")
         defer { box.tearDown() }

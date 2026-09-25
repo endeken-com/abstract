@@ -100,7 +100,6 @@ extension AppModel {
 // MARK: - Naming and lifecycle scripts
 
 extension AppModel {
-    static let setupLabel = "Setup"
     static let runLabel = "Run"
 
     /// Ask the chat's provider for a short title. Project instructions can
@@ -110,16 +109,6 @@ extension AppModel {
         let binary = providerOverrides[providerId]?.path.flatMap { $0.isEmpty ? nil : $0 }
         return await ChatNaming.suggest(executor: executor, binary: binary, providerId: providerId, model: model,
                                         instructions: project.namingInstructions ?? "", task: prompt)
-    }
-
-    /// A new chat's worktree exists: run the project's setup script in a
-    /// terminal tab under the chat, so its output is there to read.
-    func runSetupScript(_ project: Project, in session: Session) {
-        guard let script = Project.nonBlank(project.setupScript), let dir = session.worktreePath else { return }
-        let paneId = UUID().uuidString
-        updateLayout(session.id) { _ = $0.add(.terminal, to: .bottom, id: paneId) }
-        TerminalRegistry.shared.host(for: paneId, directory: dir)
-            .run(ProjectScript.command(script, kind: "setup", project: project, home: executor.homeDirectory), label: Self.setupLabel)
     }
 
     /// The chat toolbar's Run: the project's run script in the chat's Run

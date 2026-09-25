@@ -50,7 +50,9 @@ struct ChatToolbarControls: View {
             .buttonStyle(ChromeIconStyle())
             .help(layout.side.isOpen ? "Hide side panel (⌥⌘B)" : "Show side panel (⌥⌘B)")
             ChromeIconMenu(symbol: "ellipsis", help: "More") {
-                if model.isAlive(session.id) {
+                if let setup = model.setups[session.id] {
+                    if setup.failure == nil { Button("Stop Setup") { model.stop(session.id) } } else { Button("Set Up Again") { model.resume(session.id) } }
+                } else if model.isAlive(session.id) {
                     Button(model.runningBackgroundTasks(session.id) > 0 ? "Stop Agent and Its Background Tasks" : "Stop Agent") { model.stop(session.id) }
                 } else {
                     Button(session.providerSessionId == nil ? "Start Agent Again" : "Resume Agent") { model.resume(session.id) }

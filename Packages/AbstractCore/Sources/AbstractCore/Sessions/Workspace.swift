@@ -73,6 +73,49 @@ public enum Workspace {
         throw AbstractError.message("Could not find a free worktree path or branch name for “\(name)”.")
     }
 
+    /// Where a new worktree starts.
+    public struct Base: Sendable, Equatable {
+        /// What `git worktree add` starts from, e.g. `origin/main`.
+        public var ref: String
+        /// Why `origin` couldn't be asked, when it couldn't; the base is then
+        /// the newest copy already here.
+        public var fetchError: String?
+
+        public init(ref: String, fetchError: String? = nil) { self.ref = ref; self.fetchError = fetchError }
+    }
+
+    /// The base branch as `origin` has it now: fetched, then its `origin/`
+    /// copy, unless the local branch already holds all of that and more
+    /// (commits not pushed yet). When the fetch fails (offline, say), the
+    /// newer of the two copies already here. A base that isn't a branch
+    /// (`HEAD`, a tag, a commit), or a repository without `origin`, is used
+    /// as given.
+    public static func freshBase(executor: any Executor, root: String, base: String) async -> Base {
+        let explicitRemote = base.hasPrefix("origin/")
+        let name = explicitRemote ? String(base.dropFirst("origin/".count)) : base
+        guard !name.isEmpty, name != "HEAD", await Git.hasOrigin(executor, root: root) else { return Base(ref: base) }
+        let local = "refs/heads/\(name)", remote = "refs/remotes/origin/\(name)"
+        let hasLocal = await Git.branchExists(executor, root: root, branch: local)
+        let hadRemote = await Git.branchExists(executor, root: root, branch: remote)
+        guard explicitRemote || hasLocal || hadRemote else { return Base(ref: base) }
+        var fetchError: String?
+        do {
+            try await Fetches.shared.fetch(root: root, branch: name) {
+                try await Git.fetch(executor, root: root, branch: name)
+            }
+        } catch {
+            fetchError = error.localizedDescription
+        }
+        guard await Git.branchExists(executor, root: root, branch: remote) else { return Base(ref: base, fetchError: fetchError) }
+        // Unpushed work on the local branch: it has everything origin has.
+        if !explicitRemote, hasLocal {
+            let holdsRemote = await Git.isAncestor(executor, root: root, remote, of: local)
+            let behindRemote = await Git.isAncestor(executor, root: root, local, of: remote)
+            if holdsRemote, !behindRemote { return Base(ref: name, fetchError: fetchError) }
+        }
+        return Base(ref: "origin/\(name)", fetchError: fetchError)
+    }
+
     /// A throwaway directory for "No project" automation runs.
     public static func scratchDirectory(runId: String) throws -> String {
         let dir = URL(fileURLWithPath: Store.defaultPath()).deletingLastPathComponent()
@@ -87,5 +130,21 @@ public enum Workspace {
         let first = prompt.split(separator: "\n").first { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
         let text = String(first ?? "New chat").trimmingCharacters(in: .whitespaces)
         return text.count > 60 ? String(text.prefix(60)).trimmingCharacters(in: .whitespaces) + "…" : text
+    }
+}
+
+/// One fetch of a branch at a time per repository: chats started together
+/// share it rather than race for git's ref locks.
+actor Fetches {
+    static let shared = Fetches()
+    private var running: [String: Task<Void, any Error>] = [:]
+
+    func fetch(root: String, branch: String, _ perform: @escaping @Sendable () async throws -> Void) async throws {
+        let key = root + "\u{0}" + branch
+        if let task = running[key] { return try await task.value }
+        let task = Task { try await perform() }
+        running[key] = task
+        defer { running[key] = nil }
+        try await task.value
     }
 }
