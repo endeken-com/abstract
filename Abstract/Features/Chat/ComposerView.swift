@@ -17,6 +17,10 @@ struct ComposerView: View {
     /// Its agent starts once it's set up; its first message is already there.
     private var settingUp: Bool { model.setups[session.id] != nil }
     private var suggestion: String? { working ? nil : model.feed(session.id).suggestion }
+    /// The agent's guess at your next message, or what the box is for.
+    private var placeholder: String {
+        settingUp ? "Setting up the chat…" : readOnly ? "Driven from the command line" : suggestion ?? "Type / for commands"
+    }
     /// A review or attachments can go on their own; otherwise there must be something typed.
     private var canSend: Bool {
         !readOnly && !settingUp && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.comments(session.id).isEmpty || !attachments.isEmpty)
@@ -64,21 +68,14 @@ struct ComposerView: View {
                         .frame(height: min(max(markdownHeight, 20), 180))
                         .padding(.vertical, 7)
                     } else {
-                        TextField(text: $draft, prompt: Text(settingUp ? "Setting up the chat…" : readOnly ? "Driven from the command line" : suggestion ?? "Reply to \(ProviderRegistry.name(session.providerId))…"), axis: .vertical) {
-                            Text("Reply")
-                        }
+                        GrowingTextEditor(text: $draft, placeholder: placeholder, font: BTFont.chat(13.5), lines: 1...10, focused: $focused)
                             .disabled(readOnly || settingUp)
-                            .textFieldStyle(.plain)
-                            .font(BTFont.chat(13.5))
                             .onKeyPress(.tab) {
                                 guard draft.isEmpty, let suggestion else { return .ignored }
                                 draft = suggestion
                                 return .handled
                             }
                             .returnBreaksLine(commandReturn: send)
-                            .lineSpacing(2)
-                            .lineLimit(1...10)
-                            .focused($focused)
                             .padding(.vertical, 7)
                     }
 
