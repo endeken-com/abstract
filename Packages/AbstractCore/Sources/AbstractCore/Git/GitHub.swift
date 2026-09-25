@@ -133,6 +133,20 @@ public enum MergeMethod: String, Sendable, CaseIterable {
     case squash, merge, rebase
 }
 
+/// What the signed-in user may do with a repository on GitHub.
+public enum RepoAccess: String, Sendable, Hashable {
+    case push, readOnly, unknown
+
+    /// From GitHub's `viewerPermission`: ADMIN, MAINTAIN and WRITE can push.
+    public init(viewerPermission: String?) {
+        switch viewerPermission?.uppercased() {
+        case "ADMIN", "MAINTAIN", "WRITE": self = .push
+        case "READ", "TRIAGE": self = .readOnly
+        default: self = .unknown
+        }
+    }
+}
+
 /// Pull requests through the GitHub CLI, over an `Executor`.
 public enum GitHub {
     static let summaryFields = "number,title,state,isDraft,url,headRefName,baseRefName,author,reviewDecision,updatedAt,statusCheckRollup,additions,deletions"
@@ -389,5 +403,14 @@ public extension GitHub {
 
     static func decodeItems(_ data: Data, isPullRequest: Bool) -> [ForgeItem] {
         ((try? JSONDecoder().decode(JSONValue.self, from: data))?.array ?? []).compactMap { ForgeItem(json: $0, isPullRequest: isPullRequest) }
+    }
+}
+
+public extension GitHub {
+    /// Whether the signed-in user can push to `owner/name`; `.unknown` when `gh` can't say.
+    static func permission(_ exec: any Executor, repo slug: String) async -> RepoAccess {
+        guard let out = try? await exec.run("gh", ["repo", "view", slug, "--json", "viewerPermission", "--jq", ".viewerPermission"], cwd: nil),
+              out.ok else { return .unknown }
+        return RepoAccess(viewerPermission: GitText.trimmed(out.stdout))
     }
 }
