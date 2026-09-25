@@ -183,6 +183,7 @@ struct PullRequestPane: View {
     @State private var phase: Phase = .loading
     @State private var working: String?
     @State private var error: String?
+    @State private var loadedAt: ContinuousClock.Instant?
 
     private enum Phase: Equatable { case loading, ready, unavailable(String, String) }
 
@@ -218,9 +219,12 @@ struct PullRequestPane: View {
                             .menuStyle(.button)
                             .disabled(working != nil)
                         }
-                        if let pr = model.pullRequests[session.id] {
+                        let pr = model.pullRequests[session.id]
+                        if let pr {
                             PullRequestDetail(session: session, pr: pr, working: $working, run: { run($0, $1) })
-                        } else {
+                        }
+                        // A closed pull request can be followed by a new one.
+                        if pr == nil || pr?.state == .closed {
                             CreatePullRequestForm(session: session, working: $working, run: { run($0, $1) })
                         }
                     }
@@ -235,16 +239,33 @@ struct PullRequestPane: View {
         .environment(\.proseStyle, ProseStyle(font: chatFont, size: .small))
         .task(id: session.id) {
             await load()
-            // While the tab is open, keep checks and reviews current.
+            // While the tab is open, keep checks and reviews current; more
+            // often while checks run, to catch them finishing.
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(30))
+                try? await Task.sleep(for: checksRunning ? .seconds(10) : .seconds(30))
                 if !Task.isCancelled { await load() }
             }
         }
         .onChange(of: session.status) { Task { await load() } }
+        // Pushed from here, a terminal or the git actions button: the pull
+        // request has new commits, and its checks start over.
+        .onChange(of: model.branchStates[session.id]?.ahead ?? 0) { old, new in
+            if new < old { Task { await load() } }
+        }
+        // Back from GitHub in the browser, unless it was only just loaded.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            guard loadedAt.map({ ContinuousClock.now - $0 > .seconds(15) }) ?? true else { return }
+            Task { await load() }
+        }
+    }
+
+    private var checksRunning: Bool {
+        guard let pr = model.pullRequests[session.id], pr.state == .open else { return false }
+        return pr.checksSummary.pending > 0
     }
 
     private func load() async {
+        loadedAt = .now
         guard model.isDemo || session.branch != nil, let project = model.project(session.projectId) else {
             phase = .unavailable("No branch", "This chat has no worktree branch to open a pull request from.")
             return
@@ -322,10 +343,14 @@ private struct PullRequestDetail: View {
             if !pr.reviews.isEmpty || !pr.comments.isEmpty || !pr.threads.isEmpty || pr.reviewDecision != nil { conversation }
             actions
         }
-        .task(id: "\(pr.number)-\(pr.updatedAt?.timeIntervalSince1970 ?? 0)-\(session.status.rawValue)") {
-            guard let worktree = session.worktreePath, let branch = session.branch, !model.isDemo else { return }
-            publish = await Git.publishState(model.executor(for: session.id), worktree: worktree, branch: branch)
-        }
+        .task(id: "\(pr.number)-\(pr.updatedAt?.timeIntervalSince1970 ?? 0)-\(session.status.rawValue)") { await readPublish() }
+        // Committed or pushed elsewhere: the Push button follows.
+        .onChange(of: model.branchStates[session.id]) { Task { await readPublish() } }
+    }
+
+    private func readPublish() async {
+        guard let worktree = session.worktreePath, let branch = session.branch, !model.isDemo else { return }
+        publish = await Git.publishState(model.executor(for: session.id), worktree: worktree, branch: branch)
     }
 
     private var header: some View {
@@ -765,7 +790,7 @@ private struct CreatePullRequestForm: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Space.md) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("No pull request yet").font(BTFont.ui(15, .medium)).foregroundStyle(Color.btText)
+                Text(model.pullRequests[session.id] == nil ? "No pull request yet" : "Open a new pull request").font(BTFont.ui(15, .medium)).foregroundStyle(Color.btText)
                 Text(state).font(.btCallout).foregroundStyle(Color.btTextSecondary).fixedSize(horizontal: false, vertical: true)
             }
             BTTextField("Title", text: $title, prompt: "Title")
@@ -797,10 +822,13 @@ private struct CreatePullRequestForm: View {
             if title.isEmpty { title = session.name }
             if base.isEmpty { base = Self.branchName(session.baseRef) ?? model.project(session.projectId).flatMap { Self.branchName($0.defaultBaseRef) } ?? "" }
         }
-        .task(id: session.status) {
-            guard let worktree = session.worktreePath, let branch = session.branch, !model.isDemo else { return }
-            publish = await Git.publishState(model.executor(for: session.id), worktree: worktree, branch: branch)
-        }
+        .task(id: session.status) { await readPublish() }
+        .onChange(of: model.branchStates[session.id]) { Task { await readPublish() } }
+    }
+
+    private func readPublish() async {
+        guard let worktree = session.worktreePath, let branch = session.branch, !model.isDemo else { return }
+        publish = await Git.publishState(model.executor(for: session.id), worktree: worktree, branch: branch)
     }
 
     private var state: String {

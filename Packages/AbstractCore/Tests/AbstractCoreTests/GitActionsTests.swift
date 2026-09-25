@@ -69,4 +69,72 @@ struct GitActionsTests {
         #expect(try String(contentsOfFile: wt + "/a.txt", encoding: .utf8) == "work side\n")
         #expect(await !Diff.isDirty(exec, worktree: wt))
     }
+
+    // MARK: Suggestion
+
+    private func branch(_ edit: (inout BranchState) -> Void) -> BranchState {
+        var state = BranchState()
+        state.hasOrigin = true
+        state.hasUpstream = true
+        state.base = "origin/main"
+        edit(&state)
+        return state
+    }
+
+    @Test func uncommittedWorkComesFirst() {
+        let state = branch { $0.dirty = true; $0.behind = 2; $0.ahead = 1 }
+        #expect(GitActions.suggestion(state, pullRequest: .open, onGitHub: true) == .commit)
+    }
+
+    @Test func aBranchThatMovedBothWaysSyncs() {
+        #expect(GitActions.suggestion(branch { $0.behind = 1 }, pullRequest: nil, onGitHub: true) == .pull)
+        #expect(GitActions.suggestion(branch { $0.behind = 1; $0.ahead = 2 }, pullRequest: nil, onGitHub: true) == .pullAndPush)
+    }
+
+    @Test func aMergedPullRequestSuggestsArchiving() {
+        // Squash merges leave the branch's commits unknown to origin.
+        let state = branch { $0.hasUpstream = false; $0.ahead = 3; $0.aheadOfBase = 3 }
+        #expect(GitActions.suggestion(state, pullRequest: .merged, onGitHub: true) == .archive)
+    }
+
+    @Test func anOpenPullRequestTakesNewCommitsThenShowsItself() {
+        let ahead = branch { $0.ahead = 1; $0.aheadOfBase = 4 }
+        #expect(GitActions.suggestion(ahead, pullRequest: .open, onGitHub: true) == .push)
+        let sent = branch { $0.aheadOfBase = 4; $0.behindBase = 2 }
+        #expect(GitActions.suggestion(sent, pullRequest: .open, onGitHub: true) == .viewPR)
+        #expect(GitActions.suggestion(sent, pullRequest: .conflicting, onGitHub: true) == .updateFromBase)
+    }
+
+    @Test func newWorkOnGitHubOpensAPullRequestWhichPushesIt() {
+        let unpushed = branch { $0.hasUpstream = false; $0.ahead = 2; $0.aheadOfBase = 2 }
+        #expect(GitActions.suggestion(unpushed, pullRequest: nil, onGitHub: true) == .createPR)
+        #expect(GitActions.suggestion(unpushed, pullRequest: .closed, onGitHub: true) == .createPR)
+    }
+
+    @Test func withoutGitHubWorkIsPushedThenMergedLocally() {
+        let unpushed = branch { $0.ahead = 2; $0.aheadOfBase = 2 }
+        #expect(GitActions.suggestion(unpushed, pullRequest: nil, onGitHub: false) == .push)
+        let behind = branch { $0.aheadOfBase = 2; $0.behindBase = 1 }
+        #expect(GitActions.suggestion(behind, pullRequest: nil, onGitHub: false) == .updateFromBase)
+        #expect(GitActions.suggestion(branch { $0.aheadOfBase = 2 }, pullRequest: nil, onGitHub: false) == .mergeLocally)
+    }
+
+    @Test func aBranchWithNothingOfItsOwnCatchesUpWithItsBase() {
+        #expect(GitActions.suggestion(branch { $0.behindBase = 3 }, pullRequest: nil, onGitHub: true) == .updateFromBase)
+        #expect(GitActions.suggestion(branch { _ in }, pullRequest: nil, onGitHub: true) == .commit)
+    }
+
+    @Test func stateSeesABranchDeletedOnOrigin() async throws {
+        let (root, wt) = try await makeRepo()
+        defer { try? FileManager.default.removeItem(atPath: (root as NSString).deletingLastPathComponent) }
+        let remote = (root as NSString).deletingLastPathComponent + "/origin.git"
+        try await git(root, ["init", "-q", "--bare", remote])
+        try await git(wt, ["remote", "add", "origin", remote])
+        try await git(wt, ["push", "-q", "-u", "origin", "work"])
+        var state = await GitActions.state(exec, worktree: wt, preferredBase: "main")
+        #expect(state.hasUpstream && !state.upstreamGone)
+        try await git(wt, ["push", "-q", "origin", "--delete", "work"])
+        state = await GitActions.state(exec, worktree: wt, preferredBase: "main")
+        #expect(!state.hasUpstream && state.upstreamGone)
+    }
 }
