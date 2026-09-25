@@ -110,10 +110,15 @@ struct ComposerView: View {
                         .help("Stop the agent (⌘.)")
                     } else {
                         Button(action: send) {
-                            Image(systemName: "arrow.up")
-                                .font(.system(size: 12, weight: .regular))
+                            // The shortcut that sends, as the button's face: ⌘↩.
+                            HStack(spacing: 1) {
+                                Image(systemName: "command")
+                                Image(systemName: "return")
+                            }
+                                .font(.system(size: 11, weight: .regular))
                                 .foregroundStyle(canSend ? Color.btText : Color.btTextTertiary)
-                                .frame(width: 26, height: 26)
+                                .padding(.horizontal, 4)
+                                .frame(minWidth: 26, minHeight: 26)
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)

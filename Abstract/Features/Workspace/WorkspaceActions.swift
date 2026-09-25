@@ -117,17 +117,20 @@ private struct EditorIcon: View {
 struct GitActionsButton: View {
     @Environment(AppModel.self) private var model
     let session: Session
-    @State private var state: BranchState?
     @State private var running: GitAction?
     @State private var onGitHub = false
+    @State private var watcher: AnyObject?
+    @State private var pendingRead: Task<Void, Never>?
 
-    enum GitAction: Hashable {
-        case commit, pull, push, pullAndPush, updateFromBase, mergeLocally, createPR, viewPR, archive
-    }
+    typealias GitAction = GitActions.Step
+
+    /// Shared with the Pull Request tab, which reads it too.
+    private var state: BranchState? { model.branchStates[session.id] }
+    private var pr: PullRequest? { model.pullRequests[session.id] }
 
     var body: some View {
         let primary = primaryAction
-        SplitButton(help: reason(primary) ?? title(primary), muted: reason(primary) != nil) {
+        SplitButton(help: reason(primary) ?? why(primary) ?? title(primary), muted: reason(primary) != nil) {
             perform(primary)
         } label: {
             HStack(spacing: 5) {
@@ -145,7 +148,7 @@ struct GitActionsButton: View {
             Divider()
             item(.updateFromBase)
             item(.mergeLocally)
-            item(model.pullRequests[session.id] == nil ? .createPR : .viewPR)
+            item(pr == nil || pr?.state == .closed ? .createPR : .viewPR)
             Divider()
             Button { model.requestArchive = session.id } label: {
                 Label { Text("Archive Chat") } icon: { Image(nsImage: Octicon.archive) }
@@ -154,11 +157,24 @@ struct GitActionsButton: View {
         }
         .disabled(running != nil)
         .task(id: "\(session.id)|\(session.status.rawValue)") {
-            await refresh()
+            await refresh(fetch: .ifStale)
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(30))
-                if !Task.isCancelled { await refresh() }
+                if !Task.isCancelled { await refresh(fetch: .ifStale) }
             }
+        }
+        .task(id: session.worktreePath) { await watch() }
+        // Back from the terminal or the browser: see what happened there.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task {
+                await model.refreshPullRequestsIfStale(projectId: session.projectId)
+                await refresh(fetch: .ifStale)
+            }
+        }
+        // Merged or closed on GitHub: the base (or the branch) moved there.
+        .onChange(of: pr.map { GitActions.PullRequestStanding($0) }) { old, new in
+            guard old != nil, new == .merged || new == .closed else { return }
+            Task { await refresh(fetch: .now) }
         }
     }
 
@@ -177,21 +193,33 @@ struct GitActionsButton: View {
     }
 
     /// Open, draft, merged or closed: the chat's pull request as it stands.
-    private var prKind: PullRequestGlyph.Kind { model.pullRequests[session.id]?.glyph ?? .open }
+    private var prKind: PullRequestGlyph.Kind { pr?.glyph ?? .open }
 
     // MARK: Policy
 
-    /// Paseo's order: commit what's uncommitted; take what's new upstream;
-    /// send what's new here; then the pull request, or merging it yourself.
     private var primaryAction: GitAction {
         guard let s = state else { return .commit }
-        if s.dirty { return .commit }
-        if s.behind > 0 { return .pull }
-        if s.hasOrigin, s.ahead > 0 { return .push }
-        if s.behindBase > 0 { return .updateFromBase }
-        if model.pullRequests[session.id] != nil { return .viewPR }
-        if s.aheadOfBase > 0 { return onGitHub ? .createPR : .mergeLocally }
-        return .commit
+        return GitActions.suggestion(s, pullRequest: pr.map { GitActions.PullRequestStanding($0) }, onGitHub: onGitHub)
+    }
+
+    /// Why the button suggests an action, for its tooltip.
+    private func why(_ action: GitAction) -> String? {
+        guard let s = state else { return nil }
+        let base = s.baseName ?? "the base branch"
+        func commits(_ n: Int) -> String { "\(n) commit\(n == 1 ? "" : "s")" }
+        switch action {
+        case .commit: return s.dirty ? "Commit the changes in the worktree" : nil
+        case .pull: return "Pull \(commits(s.behind)) new on origin"
+        case .push: return "Push \(commits(s.ahead)) origin doesn't have yet"
+        case .pullAndPush: return "Pull \(commits(s.behind)) from origin, then push \(commits(s.ahead))"
+        case .updateFromBase:
+            let conflicts = pr.flatMap { $0.hasConflicts ? ", which \($0.label) conflicts with" : nil } ?? ""
+            return "Merge \(commits(s.behindBase)) from \(base)\(conflicts)"
+        case .mergeLocally: return "Merge \(commits(s.aheadOfBase)) into \(base)"
+        case .createPR: return "Push and open a pull request for \(commits(s.aheadOfBase))"
+        case .viewPR: return pr?.summary
+        case .archive: return pr.map { "\($0.label) was merged. Archive this chat" }
+        }
     }
 
     /// Why an action can't run now; nil when it can.
@@ -201,12 +229,14 @@ struct GitActionsButton: View {
         switch action {
         case .commit: return s.dirty ? nil : "Nothing to commit"
         case .pull:
+            if s.upstreamGone { return "Its branch on origin was deleted" }
             if !s.hasUpstream { return "This branch isn't on origin yet" }
             return s.behind > 0 ? nil : "Already up to date"
         case .push:
             if !s.hasOrigin { return "This repository has no origin" }
             return s.ahead > 0 ? nil : "Nothing new to send"
         case .pullAndPush:
+            if s.upstreamGone { return "Its branch on origin was deleted" }
             if !s.hasUpstream { return "This branch isn't on origin yet" }
             return s.ahead > 0 || s.behind > 0 ? nil : "Already in step with origin"
         case .updateFromBase:
@@ -232,7 +262,7 @@ struct GitActionsButton: View {
         case .updateFromBase: "Update from \(base)"
         case .mergeLocally: "Merge into \(base)"
         case .createPR: "Create PR"
-        case .viewPR: model.pullRequests[session.id].map { "View \($0.label)" } ?? "View PR"
+        case .viewPR: pr.map { "View \($0.label)" } ?? "View PR"
         case .archive: "Archive Chat"
         }
     }
@@ -264,7 +294,7 @@ struct GitActionsButton: View {
 
     private func glyph(_ action: GitAction) -> some View {
         let tint = (action == .createPR || action == .viewPR)
-            ? model.pullRequests[session.id]?.tint ?? Color.btTextSecondary
+            ? pr?.tint ?? Color.btTextSecondary
             : Color.btTextSecondary
         return Image(nsImage: icon(action)).renderingMode(.template).resizable()
             .frame(width: 13, height: 13).foregroundStyle(tint)
@@ -272,13 +302,33 @@ struct GitActionsButton: View {
 
     // MARK: Running
 
-    private func refresh() async {
+    /// The base comparison needs fresh remote refs when main moves elsewhere,
+    /// so this fetches too; `.ifStale` keeps it to once a minute.
+    private func refresh(fetch: AppModel.OriginFetch = .never) async {
+        if let project = model.project(session.projectId) { onGitHub = await model.isOnGitHub(project) }
+        await model.refreshBranch(session.id, fetch: fetch)
+    }
+
+    /// Re-read as soon as files change or the branch moves, from here or a
+    /// terminal: the worktree, its git folder, and the shared refs (pushes).
+    private func watch() async {
         guard let worktree = session.worktreePath else { return }
         let exec = model.executor(for: session.id)
-        // The base comparison needs fresh remote refs when main moves elsewhere.
-        _ = try? await exec.run("git", ["fetch", "--quiet", "origin"], cwd: worktree)
-        state = await GitActions.state(exec, worktree: worktree, preferredBase: session.baseRef)
-        if let project = model.project(session.projectId) { onGitHub = await model.isOnGitHub(project) }
+        func dir(_ flag: String) async -> String? {
+            guard let out = try? await exec.run("git", ["rev-parse", flag], cwd: worktree), out.ok else { return nil }
+            return out.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let gitDir = await dir("--absolute-git-dir")
+        let refs = await dir("--git-common-dir").map { (($0 as NSString).isAbsolutePath ? $0 : worktree + "/" + $0) + "/refs" }
+        watcher = model.watch([worktree] + [gitDir, refs].compactMap { $0 }, for: session.id) {
+            // An agent writing files calls this often: one read per half second.
+            guard pendingRead == nil else { return }
+            pendingRead = Task {
+                try? await Task.sleep(for: .milliseconds(500))
+                await model.refreshBranch(session.id)
+                pendingRead = nil
+            }
+        }
     }
 
     private func perform(_ action: GitAction) {
@@ -333,6 +383,11 @@ struct GitActionsButton: View {
                 model.flash(error.localizedDescription, isError: true)
             }
             await refresh()
+            // New commits on the branch restart its pull request's checks.
+            if pr != nil, [.push, .pullAndPush].contains(action) {
+                await model.refreshPullRequests(projectId: session.projectId)
+                _ = try? await model.refreshPullRequest(session.id)
+            }
         }
     }
 }

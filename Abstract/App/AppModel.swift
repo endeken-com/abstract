@@ -126,6 +126,16 @@ final class AppModel {
     var githubViewer: String?
     /// Whether each project's origin is on GitHub, by project id.
     @ObservationIgnored var githubProjects: [String: Bool] = [:]
+    /// When each project's pull requests were last listed, by project id.
+    @ObservationIgnored var pullRequestsListedAt: [String: ContinuousClock.Instant] = [:]
+    /// A pull request picked by hand for a chat, which a newer one won't replace.
+    @ObservationIgnored var pinnedPullRequests: [String: Int] = [:]
+    /// Where each chat's branch stands, by chat id: for its git actions and its Pull Request tab.
+    var branchStates: [String: BranchState] = [:]
+    /// When each project last fetched from origin, by project id.
+    @ObservationIgnored var originFetchedAt: [String: ContinuousClock.Instant] = [:]
+    /// Bumped per chat at each branch read, so a slow read can't overwrite a newer one.
+    @ObservationIgnored var branchReads: [String: Int] = [:]
 
     // Navigation & transient UI
     var destination: Destination = .home { didSet { if destination != oldValue { syncLocks(); followCLIChat() } } }
