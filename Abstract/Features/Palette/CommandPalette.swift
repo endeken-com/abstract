@@ -121,24 +121,10 @@ struct CommandPalette: View {
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
         guard !q.isEmpty else { return all }
         return all
-            .map { ($0, Self.score($0.title.lowercased() + " " + ($0.subtitle ?? "").lowercased(), q)) }
+            .map { ($0, FuzzyScore.score($0.title.lowercased() + " " + ($0.subtitle ?? "").lowercased(), q)) }
             .filter { $0.1 > 0 }
             .sorted { $0.1 > $1.1 }
             .map(\.0)
-    }
-
-    /// Subsequence match, rewarding contiguous runs and word starts.
-    static func score(_ text: String, _ query: String) -> Int {
-        var score = 0, run = 0
-        var ti = text.startIndex
-        for qc in query {
-            guard let found = text[ti...].firstIndex(of: qc) else { return 0 }
-            run = found == ti ? run + 1 : 1
-            let wordStart = found == text.startIndex || text[text.index(before: found)] == " "
-            score += run * 2 + (wordStart ? 3 : 0)
-            ti = text.index(after: found)
-        }
-        return score
     }
 
     private var all: [Item] {

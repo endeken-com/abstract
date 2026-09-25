@@ -9,6 +9,8 @@ import Foundation
 /// stdin as a stream-json user turn, and so is every follow-up.
 public struct ClaudeProvider: ProviderDefinition {
     public var id: String { "claude" }
+    /// Its background tasks have a list in the app; `/mode` does what its `/permissions` does.
+    public var commands: ProviderCommands { ProviderCommands(extra: [.tasks], replaces: ["permissions": .mode]) }
     public var name: String { "Claude Code" }
     public var logoAsset: String { "ProviderClaude" }
     public var binary: String { "claude" }

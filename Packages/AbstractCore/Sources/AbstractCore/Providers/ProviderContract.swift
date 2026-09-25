@@ -293,6 +293,9 @@ public protocol ProviderDefinition: Sendable {
     func configuredDefaultEffort(home: String) -> String?
     /// What `policy` means for this agent, shown under the permissions menu.
     func permissionDetail(_ policy: PermissionPolicy) -> String
+    /// App commands only this agent gets in the `/` menu, and its own
+    /// commands they take over.
+    var commands: ProviderCommands { get }
 }
 
 public extension ProviderDefinition {
@@ -303,4 +306,5 @@ public extension ProviderDefinition {
     func buildStopTask(_ taskId: String, requestId: String) -> String? { nil }
     func buildBackground(toolUseId: String?, requestId: String) -> String? { nil }
     func permissionDetail(_ policy: PermissionPolicy) -> String { policy.detail }
+    var commands: ProviderCommands { .none }
 }
