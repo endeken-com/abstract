@@ -5,10 +5,10 @@
     <link>https://endeken-com.github.io/abstract/appcast.xml</link>
     <language>en</language>
     <item>
-      <title>Abstract 0.10.0-nightly.5</title>
-      <pubDate>Fri, 25 Sep 2026 10:58:20 GMT</pubDate>
-      <sparkle:version>0.10.0.5</sparkle:version>
-      <sparkle:shortVersionString>0.10.0-nightly.5</sparkle:shortVersionString>
+      <title>Abstract 0.10.0-nightly.6</title>
+      <pubDate>Sat, 26 Sep 2026 10:41:26 GMT</pubDate>
+      <sparkle:version>0.10.0.6</sparkle:version>
+      <sparkle:shortVersionString>0.10.0-nightly.6</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
       <sparkle:channel>nightly</sparkle:channel>
       <sparkle:fullReleaseNotesLink>https://github.com/endeken-com/abstract/releases/tag/nightly</sparkle:fullReleaseNotesLink>
@@ -19,9 +19,11 @@
 &lt;li&gt;feat: smarter git actions and PR pane, ⌘↩ send button, narrower side tabs by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/wesguirra/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/wesguirra"&gt;@wesguirra&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5577009270" data-permission-text="Title is private" data-url="https://github.com/endeken-com/abstract/issues/5" data-hovercard-type="pull_request" data-hovercard-url="/endeken-com/abstract/pull/5/hovercard" href="https://github.com/endeken-com/abstract/pull/5"&gt;#5&lt;/a&gt;&lt;/li&gt;
 &lt;li&gt;feat: pin chats to the top of their project, fix right-click on tabs by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/wesguirra/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/wesguirra"&gt;@wesguirra&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5577134084" data-permission-text="Title is private" data-url="https://github.com/endeken-com/abstract/issues/6" data-hovercard-type="pull_request" data-hovercard-url="/endeken-com/abstract/pull/6/hovercard" href="https://github.com/endeken-com/abstract/pull/6"&gt;#6&lt;/a&gt;&lt;/li&gt;
 &lt;li&gt;Automations run in chats; standalone chats; set up chats before their agent by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/wesguirra/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/wesguirra"&gt;@wesguirra&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5577307311" data-permission-text="Title is private" data-url="https://github.com/endeken-com/abstract/issues/7" data-hovercard-type="pull_request" data-hovercard-url="/endeken-com/abstract/pull/7/hovercard" href="https://github.com/endeken-com/abstract/pull/7"&gt;#7&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;Make chats that abstract creates usable in the app right away by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/wesguirra/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/wesguirra"&gt;@wesguirra&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5584184370" data-permission-text="Title is private" data-url="https://github.com/endeken-com/abstract/issues/8" data-hovercard-type="pull_request" data-hovercard-url="/endeken-com/abstract/pull/8/hovercard" href="https://github.com/endeken-com/abstract/pull/8"&gt;#8&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;Fast, uncut text boxes and a / command menu in the composer by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/wesguirra/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/wesguirra"&gt;@wesguirra&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5585622380" data-permission-text="Title is private" data-url="https://github.com/endeken-com/abstract/issues/9" data-hovercard-type="pull_request" data-hovercard-url="/endeken-com/abstract/pull/9/hovercard" href="https://github.com/endeken-com/abstract/pull/9"&gt;#9&lt;/a&gt;&lt;/li&gt;
 &lt;/ul&gt;
-&lt;p dir="auto"&gt;&lt;strong&gt;Full Changelog&lt;/strong&gt;: &lt;a class="commit-link" href="https://github.com/endeken-com/abstract/compare/v0.9.0...c331fadd285852616b64332cef37f04548e34457"&gt;&lt;tt&gt;v0.9.0...c331fad&lt;/tt&gt;&lt;/a&gt;&lt;/p&gt;</description>
-      <enclosure url="https://github.com/endeken-com/abstract/releases/download/nightly/Abstract-0.10.0-nightly.5.dmg" length="30812858" type="application/octet-stream" sparkle:edSignature="ykIUUIzuwFL2Wo6CS/uALcoPnJlhDLV2QoiGxNPXB6KpCn8mbPCmHf+LVlhegfZRxgBTBr0KmhUI8IG3+4p8DA==" />
+&lt;p dir="auto"&gt;&lt;strong&gt;Full Changelog&lt;/strong&gt;: &lt;a class="commit-link" href="https://github.com/endeken-com/abstract/compare/v0.9.0...41d7f2b14de1ff6c0ae29727938520a5df7526e1"&gt;&lt;tt&gt;v0.9.0...41d7f2b&lt;/tt&gt;&lt;/a&gt;&lt;/p&gt;</description>
+      <enclosure url="https://github.com/endeken-com/abstract/releases/download/nightly/Abstract-0.10.0-nightly.6.dmg" length="31071130" type="application/octet-stream" sparkle:edSignature="AVE+Mh5+m6hgFKKQF7TdQ1qVnXiTJotM+83p6G/Yy7Y9LfFaSOL8iCM/oqQ/ALnfh8b0PBHWFPQE1N91r/VXCA==" />
     </item>
     <item>
       <title>Abstract 0.9.0</title>
