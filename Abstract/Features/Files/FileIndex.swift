@@ -34,6 +34,8 @@ nonisolated struct FileIndex: Sendable {
     let changedDirectories: Set<String>
     /// The walk stopped at `walkLimit` files.
     let truncated: Bool
+    /// Submodules' folders, checked out or not.
+    let submodules: Set<String>
 
     func entries(in directory: String) -> [FileEntry] { children[directory] ?? [] }
     func isDirectory(_ path: String) -> Bool { children[path] != nil }
@@ -42,8 +44,9 @@ nonisolated struct FileIndex: Sendable {
     private let filePaths: Set<String>
 
     init(isGit: Bool, children: [String: [FileEntry]], files: [String], changes: [String: FileDiff.FileStatus],
-         truncated: Bool) {
+         truncated: Bool, submodules: Set<String> = []) {
         self.isGit = isGit
+        self.submodules = submodules
         self.children = children
         self.files = files
         self.lowercasedFiles = files.map { $0.lowercased() }
@@ -96,18 +99,33 @@ nonisolated extension FileIndex {
             throw AbstractError.message("The folder \(root) no longer exists.")
         }
         if let prefix = try? await exec.run("git", ["rev-parse", "--show-prefix"], cwd: root), prefix.ok {
-            async let listing = exec.run("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], cwd: root)
-            async let status = exec.run("git", ["status", "--porcelain=v1", "-z", "--untracked-files=all"], cwd: root)
-            let listed = try? await listing
-            let changed = try? await status
-            if let listed, listed.ok {
-                let changes = changed.flatMap { $0.ok ? parseStatus($0.stdout, prefix: prefix.stdout) : nil } ?? [:]
-                var paths = splitNUL(listed.stdout)
+            if prefix.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               let listing = await Submodules.files(exec, worktree: root) {
+                // The worktree's top: each submodule is a folder listing its
+                // own files, marked from its own status.
+                var changes: [String: FileDiff.FileStatus] = [:]
+                for (repo, status) in listing.statuses {
+                    for (path, change) in parseStatus(status, prefix: "") { changes[repo.isEmpty ? path : repo + "/" + path] = change }
+                }
+                var paths = listing.paths
                 // A removal the agent staged is gone from the listing; keep it visible.
                 paths += changes.compactMap { $0.value == .deleted ? $0.key : nil }
                 // A folder git ignores entirely lists nothing; show what is on disk instead.
                 if !paths.isEmpty {
-                    return build(paths, changes: changes, isGit: true, truncated: false)
+                    return build(paths, changes: changes, isGit: true, truncated: false, submodules: listing.submodules)
+                }
+            } else {
+                async let listing = exec.run("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], cwd: root)
+                async let status = exec.run("git", ["status", "--porcelain=v1", "-z", "--untracked-files=all"], cwd: root)
+                let listed = try? await listing
+                let changed = try? await status
+                if let listed, listed.ok {
+                    let changes = changed.flatMap { $0.ok ? parseStatus($0.stdout, prefix: prefix.stdout) : nil } ?? [:]
+                    var paths = splitNUL(listed.stdout)
+                    paths += changes.compactMap { $0.value == .deleted ? $0.key : nil }
+                    if !paths.isEmpty {
+                        return build(paths, changes: changes, isGit: true, truncated: false)
+                    }
                 }
             }
         }
@@ -174,7 +192,8 @@ nonisolated extension FileIndex {
 
     /// Folders come from the file paths themselves; a path ending in "/" is a
     /// folder git won't look inside (a nested repository).
-    static func build(_ raw: [String], changes: [String: FileDiff.FileStatus], isGit: Bool, truncated: Bool) -> FileIndex {
+    static func build(_ raw: [String], changes: [String: FileDiff.FileStatus], isGit: Bool, truncated: Bool,
+                      submodules: Set<String> = []) -> FileIndex {
         var children: [String: [FileEntry]] = ["": []]
         var files: [String] = []
         var seenFiles: Set<String> = []
@@ -215,7 +234,8 @@ nonisolated extension FileIndex {
             }
         }
         files.sort()
-        return FileIndex(isGit: isGit, children: children, files: files, changes: changes, truncated: truncated)
+        return FileIndex(isGit: isGit, children: children, files: files, changes: changes, truncated: truncated,
+                         submodules: submodules)
     }
 }
 

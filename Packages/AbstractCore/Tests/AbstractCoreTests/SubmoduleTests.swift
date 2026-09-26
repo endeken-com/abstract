@@ -381,4 +381,36 @@ struct SubmoduleTests {
         let sub = CommitSummary(sha: "a1b2c3", shortSha: "a1b2c3", author: "", date: nil, subject: "", repo: "libs/core")
         #expect(top.id != sub.id, "two submodules cloned from one upstream share their commits")
     }
+
+    // MARK: Files pane
+
+    @Test func theFilesPaneListsWhatsInsideSubmodules() async throws {
+        let f = try await SubmoduleFixture.make()
+        defer { f.remove() }
+        try f.write(f.worktree + "/libs/core/new.txt", "new\n")
+        try f.write(f.worktree + "/libs/core/a.txt", "core\nchanged\n")
+
+        let listing = try #require(await Submodules.files(exec, worktree: f.worktree))
+        let paths = Set(listing.paths)
+        #expect(paths.isSuperset(of: ["a.txt", ".gitmodules", "libs/core/a.txt", "libs/core/new.txt",
+                                      "libs/core/vendor/deep/a.txt", "libs/other lib/a.txt"]))
+        #expect(paths.isSuperset(of: ["libs/core/", "libs/core/vendor/deep/", "libs/other lib/", "libs/unused/"]),
+                "each submodule is a folder, even one that isn't checked out")
+        #expect(paths.isDisjoint(with: ["libs/core", "libs/unused", "libs/core/vendor/deep"]), "never a file")
+        #expect(listing.submodules == ["libs/core", "libs/core/vendor/deep", "libs/other lib", "libs/unused"])
+        #expect(listing.statuses["libs/core"]?.contains("new.txt") == true, "badges come from the submodule's own status")
+        #expect(listing.statuses["libs/core"]?.contains("a.txt") == true)
+        #expect(listing.statuses[""] != nil)
+    }
+
+    @Test func aRepositoryWithoutSubmodulesListsAsBefore() async throws {
+        let f = try await SubmoduleFixture.make()
+        defer { f.remove() }
+        let plain = f.repo("deep")
+        try f.write(plain + "/b.txt", "b\n")
+        let listing = try #require(await Submodules.files(exec, worktree: plain))
+        #expect(listing.paths.sorted() == ["a.txt", "b.txt"])
+        #expect(listing.submodules.isEmpty)
+        #expect(await Submodules.files(exec, worktree: f.dir) == nil, "not a repository")
+    }
 }

@@ -34,6 +34,19 @@ public struct ChatRepo: Sendable, Hashable, Identifiable {
     }
 }
 
+/// What the Files pane shows of a chat's worktree (see `Submodules.files`).
+public struct WorktreeFiles: Sendable, Hashable {
+    /// Paths from the worktree; a folder's ends in "/".
+    public var paths: [String] = []
+    /// Every submodule, checked out or not, by path from the worktree.
+    public var submodules: Set<String> = []
+    /// Each repository's `git status --porcelain=v1 -z` (new files
+    /// included), by its path; "" is the worktree's own.
+    public var statuses: [String: String] = [:]
+
+    public init() {}
+}
+
 /// The repositories in a chat's worktree, read with git alone so it works the
 /// same for a worktree on another Mac.
 public enum Submodules {
@@ -101,6 +114,48 @@ public enum Submodules {
     public static func isCheckedOut(_ exec: any Executor, directory: String) async -> Bool {
         guard let out = try? await Git.git(exec, cwd: directory, ["rev-parse", "--show-prefix"]), out.ok else { return false }
         return GitText.trimmed(out.stdout).isEmpty
+    }
+
+    /// What the Files pane lists: every file git knows in the worktree and in
+    /// each checked-out submodule, by path from the worktree, with each
+    /// repository's own status for the change marks. To its parent a
+    /// submodule is a single entry, so it's listed as a folder ("path/")
+    /// instead, holding nothing when it isn't checked out. Nil when the
+    /// worktree isn't a repository.
+    public static func files(_ exec: any Executor, worktree: String) async -> WorktreeFiles? {
+        var result = WorktreeFiles()
+        for repo in await list(exec, worktree: worktree) {
+            let dir = repo.directory(in: worktree)
+            async let staged = Git.git(exec, cwd: dir, ["ls-files", "-z", "--stage"])
+            async let others = Git.git(exec, cwd: dir, ["ls-files", "-z", "--others", "--exclude-standard"])
+            // Its own changes: the ones inside its submodules are theirs to report.
+            async let status = Git.git(exec, cwd: dir, ["--no-optional-locks", "status", "--porcelain=v1", "-z",
+                                                        "--untracked-files=all", "--ignore-submodules=all"])
+            guard let staged = try? await staged, staged.ok else {
+                if repo.isSubmodule { continue }
+                return nil
+            }
+            let prefix = repo.isSubmodule ? repo.path + "/" : ""
+            for entry in nulFields(staged.stdout) {
+                // "<mode> <sha> <stage>\t<path>"; mode 160000 is a submodule.
+                guard let tab = entry.utf8.firstIndex(of: UInt8(ascii: "\t")) else { continue }
+                let path = prefix + String(decoding: entry.utf8[entry.utf8.index(after: tab)...], as: UTF8.self)
+                if GitText.hasPrefix(entry, "160000 ") {
+                    result.submodules.insert(path)
+                    result.paths.append(path + "/")
+                } else {
+                    result.paths.append(path)
+                }
+            }
+            if let others = try? await others, others.ok { result.paths += nulFields(others.stdout).map { prefix + $0 } }
+            if let status = try? await status, status.ok { result.statuses[repo.path] = status.stdout }
+        }
+        return result
+    }
+
+    /// NUL-separated fields, split on bytes so a path can't fuse with its separator.
+    private static func nulFields(_ output: String) -> [String] {
+        output.utf8.split(separator: 0).map { String(decoding: $0, as: UTF8.self) }
     }
 
     /// Where each repository stood when the chat's branch left `base`: the
