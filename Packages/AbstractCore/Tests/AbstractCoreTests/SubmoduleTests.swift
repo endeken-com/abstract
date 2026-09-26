@@ -248,6 +248,8 @@ struct SubmoduleTests {
         #expect(moved.pointerUncommitted)
         #expect(moved.ahead == 1)
         #expect(moved.files.isEmpty, "chat.txt is committed in libs/core")
+        #expect(moved.unrecorded.map(\.subject) == ["Chat work"], "what expanding the heading lists")
+        #expect(moved.unrecorded.allSatisfy { $0.repo == "libs/core" }, "so picking one shows it from its own repository")
         #expect(before.first { $0.repo.path == "libs/other lib" }?.pointerUncommitted == false)
 
         try await f.git(f.worktree, ["add", "libs/core"])
@@ -259,6 +261,7 @@ struct SubmoduleTests {
         #expect(recorded.files.map(\.path) == ["libs/core/more.txt"])
         #expect(!recorded.pointerUncommitted)
         #expect(recorded.ahead == 0, "app has committed the pointer: nothing left to count")
+        #expect(recorded.unrecorded.isEmpty)
 
         // A nested submodule's pointer is its own parent's to commit.
         try f.write(core + "/vendor/deep/chat.txt", "chat\n")

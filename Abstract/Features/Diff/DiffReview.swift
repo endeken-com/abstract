@@ -324,6 +324,8 @@ final class DiffReview {
         focusPath = path
         focusToken += 1
         if let file = files.first(where: { $0.path == path }) { collapsedRepos.remove(file.diff.repo) }
+        // A submodule's heading, from the tree's row for one with no files.
+        if repos.contains(where: { $0.repo.path == path }) { collapsedRepos.remove(path) }
         if let file = files.first(where: { $0.path == path }), !isExpanded(file) { toggle(file) }
     }
 

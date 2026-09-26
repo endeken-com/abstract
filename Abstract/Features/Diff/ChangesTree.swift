@@ -11,7 +11,8 @@ struct ChangesTree: View {
     @State private var collapsed: Set<String> = []
 
     var body: some View {
-        let rows = ChangesTreeRow.flatten(ChangesTreeRow.build(review.files, repos: Set(review.repos.map(\.repo.path).filter { !$0.isEmpty })), collapsed: collapsed)
+        let rows = ChangesTreeRow.notes(review.sections)
+            + ChangesTreeRow.flatten(ChangesTreeRow.build(review.files, repos: Set(review.repos.map(\.repo.path).filter { !$0.isEmpty })), collapsed: collapsed)
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 ForEach(rows) { row in
@@ -19,7 +20,7 @@ struct ChangesTree: View {
                         switch row.kind {
                         case .folder:
                             if collapsed.contains(row.id) { collapsed.remove(row.id) } else { collapsed.insert(row.id) }
-                        case .file:
+                        case .file, .note:
                             onOpen(row.path)
                         }
                     }
@@ -32,7 +33,9 @@ struct ChangesTree: View {
 }
 
 struct ChangesTreeRow: Identifiable {
-    enum Kind { case folder, file(FileDiff.FileStatus) }
+    /// A note is a submodule with nothing but its heading to show (a pointer
+    /// its parent hasn't committed, say), which opens the review at it.
+    enum Kind { case folder, file(FileDiff.FileStatus), note(String) }
     let kind: Kind
     /// For a file its path; for a folder its path with a trailing slash.
     let id: String
@@ -44,6 +47,17 @@ struct ChangesTreeRow: Identifiable {
     var children: [ChangesTreeRow] = []
     /// A submodule's folder.
     var isRepo = false
+
+    /// Submodules with no files to list but something to say, first.
+    static func notes(_ sections: [DiffReview.RepoSection]) -> [ChangesTreeRow] {
+        sections.compactMap { section in
+            let diff = section.diff
+            guard diff.repo.isSubmodule, section.files.isEmpty,
+                  let note = diff.note(committedIn: nil) ?? (diff.error != nil ? "couldn't be read" : nil) else { return nil }
+            return ChangesTreeRow(kind: .note(note), id: diff.repo.path + "/", path: diff.repo.path, name: diff.repo.path,
+                                  depth: 0, additions: 0, deletions: 0, isRepo: true)
+        }
+    }
 
     /// Folders before files, each in plain character order.
     static func build(_ files: [ReviewFile], repos: Set<String> = []) -> [ChangesTreeRow] {
@@ -121,6 +135,11 @@ private struct TreeRowView: View {
                         FileIcon(path: row.path, isDirectory: true, open: !collapsed)
                     }
                     Text(row.name).font(BTFont.ui(12.5)).foregroundStyle(Color.btTextSecondary).lineLimit(1).truncationMode(.middle)
+                case .note(let note):
+                    Color.clear.frame(width: 10)
+                    Image(systemName: "shippingbox").font(.system(size: 11)).foregroundStyle(Color.btTextSecondary).frame(width: 16)
+                    Text(row.name).font(BTFont.ui(12.5)).foregroundStyle(Color.btTextSecondary).lineLimit(1).truncationMode(.middle)
+                    Text(note).font(.btCaption).foregroundStyle(Color.btTextTertiary).lineLimit(1)
                 case .file:
                     Color.clear.frame(width: 10)
                     FileIcon(path: row.path)

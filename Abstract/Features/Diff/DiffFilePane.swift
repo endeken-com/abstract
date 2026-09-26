@@ -22,11 +22,14 @@ struct DiffFileSections: View {
             ScrollView(.vertical) {
                 LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
                     ForEach(sections) { section in
+                        let parent = section.diff.repo.parentPath.map { $0.isEmpty ? context.projectName : $0 } ?? ""
                         if showsRepos {
                             RepoHeader(section: section,
                                        title: section.diff.repo.isSubmodule ? section.diff.repo.path : context.projectName,
-                                       parent: section.diff.repo.parentPath.map { $0.isEmpty ? context.projectName : $0 } ?? "",
+                                       parent: parent,
                                        collapsed: review.collapsedRepos.contains(section.id)) { review.toggleRepo(section.id) }
+                                // The tree's row for a submodule with nothing but a heading scrolls here.
+                                .id(section.id)
                         }
                         if !review.collapsedRepos.contains(section.id) {
                             ForEach(section.files) { file in
@@ -39,6 +42,9 @@ struct DiffFileSections: View {
                                     DiffFileHeader(review: review, file: file, context: context, onDiscard: { onDiscard(file) })
                                 }
                                 .id(file.path)
+                            }
+                            if !section.diff.unrecorded.isEmpty {
+                                UnrecordedCommits(commits: section.diff.unrecorded, parent: parent, review: review, context: context)
                             }
                         }
                     }
@@ -521,28 +527,62 @@ private struct ReviewCommits: View {
             .buttonStyle(.plain)
             if open {
                 ForEach(review.commits) { commit in
-                    Button { Task { await review.show(.commit(commit), context) } } label: {
-                        HStack(spacing: Space.sm) {
-                            Text(commit.subject).font(BTFont.ui(12.5)).foregroundStyle(Color.btProse).lineLimit(1)
-                            Spacer(minLength: Space.sm)
-                            Text(commit.repo.isEmpty ? commit.shortSha : "\(commit.repo) · \(commit.shortSha)")
-                                .font(.btMonoSmall).foregroundStyle(Color.btTextTertiary).fixedSize()
-                            if let date = commit.date {
-                                Text(RelativeTime.short(date)).font(.btCaption).foregroundStyle(Color.btTextTertiary).monospacedDigit().fixedSize()
-                            }
-                        }
-                        .padding(.leading, Space.md + 10 + Space.sm)
-                        .padding(.trailing, Space.md)
-                        .frame(height: 26)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .help(commit.author)
+                    ReviewCommitRow(commit: commit, review: review, context: context)
                 }
             }
         }
         .padding(.top, Space.md)
         .overlay(alignment: .top) { Hairline() }
+    }
+}
+
+/// Under a submodule's heading: its commits the parent hasn't recorded yet.
+/// Committed in the submodule, so they're commits to open, not files to discard.
+private struct UnrecordedCommits: View {
+    let commits: [CommitSummary]
+    let parent: String
+    let review: DiffReview
+    let context: DiffContext
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Not committed in \(parent) yet")
+                .font(.btCaption)
+                .foregroundStyle(Color.btTextTertiary)
+                .padding(.leading, Space.md + 10 + Space.sm)
+                .frame(height: 24)
+            ForEach(commits) { commit in
+                ReviewCommitRow(commit: commit, review: review, context: context)
+            }
+        }
+        .padding(.bottom, Space.sm)
+    }
+}
+
+/// One commit in a list; clicking shows its changes.
+private struct ReviewCommitRow: View {
+    let commit: CommitSummary
+    let review: DiffReview
+    let context: DiffContext
+
+    var body: some View {
+        Button { Task { await review.show(.commit(commit), context) } } label: {
+            HStack(spacing: Space.sm) {
+                Text(commit.subject).font(BTFont.ui(12.5)).foregroundStyle(Color.btProse).lineLimit(1)
+                Spacer(minLength: Space.sm)
+                Text(commit.repo.isEmpty ? commit.shortSha : "\(commit.repo) · \(commit.shortSha)")
+                    .font(.btMonoSmall).foregroundStyle(Color.btTextTertiary).fixedSize()
+                if let date = commit.date {
+                    Text(RelativeTime.short(date)).font(.btCaption).foregroundStyle(Color.btTextTertiary).monospacedDigit().fixedSize()
+                }
+            }
+            .padding(.leading, Space.md + 10 + Space.sm)
+            .padding(.trailing, Space.md)
+            .frame(height: 26)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(commit.author)
     }
 }
 

@@ -17,13 +17,17 @@ public struct RepoDiff: Sendable, Hashable, Identifiable {
     /// HEAD records, so the parent still has a pointer to commit (Uncommitted
     /// only). Its own files can all be committed, leaving nothing else to show.
     public var pointerUncommitted: Bool
+    /// With `pointerUncommitted`: the submodule's commits its parent hasn't
+    /// recorded yet, newest first. Committed there, so they aren't files to
+    /// discard; each opens as one commit instead.
+    public var unrecorded: [CommitSummary]
 
     public var id: String { repo.id }
 
     public init(repo: ChatRepo, files: [FileDiff] = [], ahead: Int = 0, isNew: Bool = false, error: String? = nil,
-                pointerUncommitted: Bool = false) {
+                pointerUncommitted: Bool = false, unrecorded: [CommitSummary] = []) {
         self.repo = repo; self.files = files; self.ahead = ahead; self.isNew = isNew; self.error = error
-        self.pointerUncommitted = pointerUncommitted
+        self.pointerUncommitted = pointerUncommitted; self.unrecorded = unrecorded
     }
 }
 
@@ -92,11 +96,7 @@ public extension Diff {
         var all: [CommitSummary] = []
         for repo in repos {
             guard let from = repo.isSubmodule ? baselines[repo.path] : base else { continue }
-            all += await commits(exec, worktree: repo.directory(in: worktree), base: from, limit: limit).map { commit in
-                var commit = commit
-                commit.repo = repo.path
-                return commit
-            }
+            all += await commits(exec, worktree: repo.directory(in: worktree), base: from, limit: limit).map { $0.inRepo(repo.path) }
         }
         guard repos.count > 1 else { return all }
         // Newest first; commits from the same second keep their own order.
@@ -123,6 +123,7 @@ public extension Diff {
                let head = await head(exec, cwd: dir), head != recorded {
                 result.pointerUncommitted = true
                 result.ahead = await commitCount(exec, cwd: dir, "\(recorded)..HEAD")
+                result.unrecorded = await commits(exec, worktree: dir, base: recorded).map { $0.inRepo(repo.path) }
             }
         case .committed(let base):
             guard repo.isSubmodule else { own = .committed(base: base); break }
@@ -167,5 +168,14 @@ public extension Diff {
     private static func commitCount(_ exec: any Executor, cwd: String, _ range: String) async -> Int {
         guard let out = try? await Git.git(exec, cwd: cwd, ["rev-list", "--count", range]), out.ok else { return 0 }
         return Int(GitText.trimmed(out.stdout)) ?? 0
+    }
+}
+
+extension CommitSummary {
+    /// The same commit, named as the submodule at `repo`'s.
+    func inRepo(_ repo: String) -> CommitSummary {
+        var commit = self
+        commit.repo = repo
+        return commit
     }
 }

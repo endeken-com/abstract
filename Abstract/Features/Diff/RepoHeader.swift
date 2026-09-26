@@ -22,11 +22,16 @@ struct RepoHeader: View {
         VStack(alignment: .leading, spacing: 0) {
             Button(action: onToggle) {
                 HStack(spacing: Space.sm) {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(Color.btTextTertiary)
-                        .rotationEffect(.degrees(collapsed ? 0 : 90))
-                        .frame(width: 10)
+                    // Nothing under it to fold, so no arrow.
+                    if section.files.isEmpty && section.diff.unrecorded.isEmpty {
+                        Color.clear.frame(width: 10)
+                    } else {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(Color.btTextTertiary)
+                            .rotationEffect(.degrees(collapsed ? 0 : 90))
+                            .frame(width: 10)
+                    }
                     Text(title).font(BTFont.ui(13, .medium)).foregroundStyle(Color.btText).lineLimit(1).truncationMode(.middle)
                     if access == .readOnly {
                         Text("read-only").font(.btCaption).foregroundStyle(Color.btTextSecondary)
@@ -34,14 +39,8 @@ struct RepoHeader: View {
                             .background(Color.btHover, in: Capsule())
                     }
                     Text(repo.branch ?? "detached").font(.btMonoSmall).foregroundStyle(Color.btTextTertiary).lineLimit(1)
-                    if section.diff.isNew {
-                        Text("new submodule").font(.btCaption).foregroundStyle(Color.btTextTertiary)
-                    } else if section.diff.pointerUncommitted {
-                        Text("\(section.diff.ahead > 0 ? "pointer +\(section.diff.ahead)" : "pointer moved"), not committed in \(parent)")
-                            .font(.btCaption).foregroundStyle(Color.btTextTertiary).lineLimit(1)
-                    } else if section.diff.ahead > 0 {
-                        Text("pointer +\(section.diff.ahead) commit\(section.diff.ahead == 1 ? "" : "s")")
-                            .font(.btCaption).foregroundStyle(Color.btTextTertiary)
+                    if let note = section.diff.note(committedIn: parent) {
+                        Text(note).font(.btCaption).foregroundStyle(Color.btTextTertiary).lineLimit(1)
                     }
                     Spacer(minLength: Space.sm)
                     DiffCounts(additions: section.files.reduce(0) { $0 + $1.diff.additions },
@@ -74,5 +73,17 @@ struct RepoHeader: View {
             .foregroundStyle(Color.btTextSecondary)
             .padding(.horizontal, Space.md)
             .padding(.bottom, Space.sm)
+    }
+}
+
+extension RepoDiff {
+    /// What a submodule's heading says besides its files: new, or how far
+    /// its pointer moved and whether `parent` has committed that yet.
+    func note(committedIn parent: String?) -> String? {
+        if isNew { return "new submodule" }
+        if pointerUncommitted {
+            return (ahead > 0 ? "pointer +\(ahead)" : "pointer moved") + ", not committed" + (parent.map { " in \($0)" } ?? "")
+        }
+        return ahead > 0 ? "pointer +\(ahead) commit\(ahead == 1 ? "" : "s")" : nil
     }
 }

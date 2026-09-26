@@ -75,7 +75,10 @@ struct DiffView: View {
     private func takePendingSelection() {
         guard presentation == .document, review.phase == .loaded, let path = model.pendingChangeSelection[sessionId] else { return }
         model.pendingChangeSelection[sessionId] = nil
-        if review.files.contains(where: { $0.path == path }) { showTree = false; review.focus(path) }
+        if review.files.contains(where: { $0.path == path }) || review.sections.contains(where: { $0.id == path }) {
+            showTree = false
+            review.focus(path)
+        }
     }
 
     @ViewBuilder
