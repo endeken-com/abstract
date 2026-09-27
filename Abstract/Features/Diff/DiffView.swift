@@ -111,20 +111,24 @@ struct DiffView: View {
                     RevundStrip(sessionId: sessionId, review: review)
                     if review.sections.isEmpty {
                         ReviewEmptyState(review: review, context: context)
+                    } else if presentation == .list {
+                        // Paseo's Changes list, whatever the mode: a file opens the diff in
+                        // the main pane; a submodule's unrecorded commit shows here.
+                        ChangesTree(review: review, onOpen: { model.openDiffTab(in: sessionId, focus: $0) },
+                                    onCommit: { commit in Task { await review.show(.commit(commit), context) } })
                     } else if review.files.isEmpty {
                         // Only headings (a submodule that couldn't be read, or a pointer
-                        // not committed yet), which the tree has no rows for.
+                        // not committed yet), with its unrecorded commits under each.
                         DiffFileSections(review: review, context: context, layout: .unified, width: geo.size.width,
                                          onDiscard: { discarding = [$0] })
-                    } else if presentation == .list {
-                        // Paseo's Changes list: a file opens the diff in the main pane.
-                        ChangesTree(review: review) { model.openDiffTab(in: sessionId, focus: $0) }
                     } else if showTree, !rail {
-                        ChangesTree(review: review) { path in showTree = false; review.focus(path) }
+                        ChangesTree(review: review, onOpen: { path in showTree = false; review.focus(path) },
+                                    onCommit: { commit in Task { await review.show(.commit(commit), context) } })
                     } else {
                         HStack(spacing: 0) {
                             if rail {
-                                ChangesTree(review: review) { review.focus($0) }
+                                ChangesTree(review: review, onOpen: { review.focus($0) },
+                                            onCommit: { commit in Task { await review.show(.commit(commit), context) } })
                                     .frame(width: 220)
                                 Rectangle().fill(Color.btBorder).frame(width: 1)
                             }
