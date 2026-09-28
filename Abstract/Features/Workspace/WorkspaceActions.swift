@@ -124,13 +124,22 @@ struct GitActionsButton: View {
 
     typealias GitAction = GitActions.Step
 
-    /// Shared with the Pull Request tab, which reads it too.
-    private var state: BranchState? { model.branchStates[session.id] }
-    private var pr: PullRequest? { model.pullRequests[session.id] }
+    /// The repository it acts on: "" for the worktree's own, else a submodule.
+    private var repoPath: String { model.currentRepoPath(session.id) }
+    private var isSubmodule: Bool { !repoPath.isEmpty }
+    /// The worktree's own state is shared with the Pull Request tab. A
+    /// submodule's is shown only once it's been read for that submodule.
+    private var state: BranchState? {
+        guard isSubmodule else { return model.branchStates[session.id] }
+        return model.currentRepoStates[session.id].flatMap { $0.path == repoPath ? $0.state : nil }
+    }
+    /// The worktree's own pull request; a submodule's aren't read yet.
+    private var pr: PullRequest? { isSubmodule ? nil : model.pullRequests[session.id] }
+    private var projectName: String { model.project(session.projectId)?.name ?? "the project" }
 
     var body: some View {
         let primary = primaryAction
-        SplitButton(help: reason(primary) ?? why(primary) ?? title(primary), muted: reason(primary) != nil) {
+        SplitButton(help: named(reason(primary) ?? why(primary) ?? title(primary)), muted: reason(primary) != nil) {
             perform(primary)
         } label: {
             HStack(spacing: 5) {
@@ -139,7 +148,8 @@ struct GitActionsButton: View {
                 } else {
                     glyph(primary)
                 }
-                Text(running.map(pendingTitle) ?? title(primary)).font(BTFont.ui(13)).foregroundStyle(Color.btText)
+                Text(named(running.map(pendingTitle) ?? title(primary))).font(BTFont.ui(13)).foregroundStyle(Color.btText)
+                    .lineLimit(1).truncationMode(.middle)
             }
         } items: {
             item(.pull)
@@ -192,6 +202,9 @@ struct GitActionsButton: View {
         Image(nsImage: icon(action))
     }
 
+    /// A step's title, with the submodule it acts on in front.
+    private func named(_ title: String) -> String { isSubmodule ? "\(repoPath) · \(title)" : title }
+
     /// Open, draft, merged or closed: the chat's pull request as it stands.
     private var prKind: PullRequestGlyph.Kind { pr?.glyph ?? .open }
 
@@ -199,7 +212,9 @@ struct GitActionsButton: View {
 
     private var primaryAction: GitAction {
         guard let s = state else { return .commit }
-        return GitActions.suggestion(s, pullRequest: pr.map { GitActions.PullRequestStanding($0) }, onGitHub: onGitHub)
+        let step = GitActions.suggestion(s, pullRequest: pr.map { GitActions.PullRequestStanding($0) }, onGitHub: onGitHub && !isSubmodule)
+        // A submodule reaches your checkout through its parent: nothing to merge from here.
+        return isSubmodule && step == .mergeLocally ? .commit : step
     }
 
     /// Why the button suggests an action, for its tooltip.
@@ -208,7 +223,7 @@ struct GitActionsButton: View {
         let base = s.baseName ?? "the base branch"
         func commits(_ n: Int) -> String { "\(n) commit\(n == 1 ? "" : "s")" }
         switch action {
-        case .commit: return s.dirty ? "Commit the changes in the worktree" : nil
+        case .commit: return s.dirty ? (isSubmodule ? "Commit the changes in \(repoPath)" : "Commit the changes in the worktree") : nil
         case .pull: return "Pull \(commits(s.behind)) new on origin"
         case .push: return "Push \(commits(s.ahead)) origin doesn't have yet"
         case .pullAndPush: return "Pull \(commits(s.behind)) from origin, then push \(commits(s.ahead))"
@@ -243,12 +258,16 @@ struct GitActionsButton: View {
             if s.dirty { return "Commit first" }
             return s.behindBase > 0 ? nil : "Already has everything from \(base)"
         case .mergeLocally:
+            if isSubmodule { return "Merge from \(projectName)" }
             if s.dirty { return "Commit first" }
             return s.aheadOfBase > 0 ? nil : "No commits to merge into \(base)"
         case .createPR:
+            if isSubmodule { return "Pull requests for \(repoPath) aren't in Abstract yet" }
             if !onGitHub { return "This project isn't on GitHub" }
             return s.aheadOfBase > 0 || s.dirty ? nil : "This branch has no new commits yet"
-        case .viewPR, .archive: return nil
+        case .viewPR:
+            return isSubmodule ? "Pull requests for \(repoPath) aren't in Abstract yet" : nil
+        case .archive: return nil
         }
     }
 
@@ -345,6 +364,9 @@ struct GitActionsButton: View {
         }
         guard let worktree = session.worktreePath else { return }
         let exec = model.executor(for: session.id)
+        let path = repoPath
+        let dir = path.isEmpty ? worktree : worktree + "/" + path
+        func done(_ what: String) -> String { path.isEmpty ? what : "\(what) \(path)" }
         running = action
         Task {
             defer { running = nil }
@@ -353,22 +375,22 @@ struct GitActionsButton: View {
                 case .commit:
                     // The chat's name already says what it did, in a few words.
                     let message = String(session.name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(72))
-                    try await model.commitEverything(session.id, in: "", message: message.isEmpty ? "Update files" : message)
-                    model.flash("Committed")
+                    try await model.commitEverything(session.id, in: path, message: message.isEmpty ? "Update files" : message)
+                    model.flash(done("Committed"))
                 case .pull:
-                    try await GitActions.pull(exec, worktree: worktree)
-                    model.flash("Pulled")
+                    try await GitActions.pull(exec, worktree: dir)
+                    model.flash(done("Pulled"))
                 case .push:
-                    try await model.pushEverything(session.id, in: "")
-                    model.flash("Pushed")
+                    try await model.pushEverything(session.id, in: path)
+                    model.flash(done("Pushed"))
                 case .pullAndPush:
-                    try await GitActions.pull(exec, worktree: worktree)
-                    try await model.pushEverything(session.id, in: "")
-                    model.flash("Pulled and pushed")
+                    try await GitActions.pull(exec, worktree: dir)
+                    try await model.pushEverything(session.id, in: path)
+                    model.flash(done("Pulled and pushed"))
                 case .updateFromBase:
                     guard let base = state?.base else { return }
-                    try await GitActions.updateFromBase(exec, worktree: worktree, base: base)
-                    model.flash("Updated from \(state?.baseName ?? base)")
+                    try await GitActions.updateFromBase(exec, worktree: dir, base: base)
+                    model.flash(path.isEmpty ? "Updated from \(state?.baseName ?? base)" : "Updated \(path) from \(state?.baseName ?? base)")
                 case .mergeLocally:
                     guard let base = state?.base, let branch = session.branch,
                           let root = model.project(session.projectId)?.rootPath else { return }
@@ -378,7 +400,8 @@ struct GitActionsButton: View {
                     break
                 }
             } catch {
-                model.flash(error.localizedDescription, isError: true)
+                // A submodule's errors name what's inside it as seen from it.
+                model.flash(path.isEmpty ? error.localizedDescription : "\(path): \(error.localizedDescription)", isError: true)
             }
             await refresh()
             // New commits on the branch restart its pull request's checks.

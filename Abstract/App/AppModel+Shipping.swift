@@ -26,7 +26,7 @@ extension AppModel {
         let exec = executor(for: sessionId)
         guard let branch = session.branch else {
             // A submodule's commits would land on no branch at all.
-            guard path.isEmpty else { throw AbstractError.message("This chat has no branch to commit \(path) on.") }
+            guard path.isEmpty else { throw AbstractError.message("This chat has no branch to commit it on.") }
             try await Git.commitAll(exec, worktree: worktree, message: message)
             return
         }
@@ -77,11 +77,11 @@ extension AppModel {
     private func shippingRoot(_ exec: any Executor, worktree: String, path: String) async throws -> ShippingRoot {
         let all = await Submodules.list(exec, worktree: worktree)
         guard let repo = all.first(where: { $0.path == path }) else {
-            throw AbstractError.message("\(path) isn't checked out in this worktree.")
+            throw AbstractError.message("It isn't checked out in this worktree.")
         }
         let readOnly = await readOnlySubmodules(all)
         if readOnly.contains(repo.path) {
-            throw AbstractError.message("You can't push to \(repo.github ?? repo.path), so Abstract doesn't commit or push in \(repo.path).")
+            throw AbstractError.message("You can't push to \(repo.github ?? repo.path), so Abstract doesn't commit or push in it.")
         }
         return ShippingRoot(repo: repo, dir: repo.directory(in: worktree), repos: Submodules.subtree(all, at: repo),
                             readOnly: Set(readOnly.compactMap(repo.inside)))
