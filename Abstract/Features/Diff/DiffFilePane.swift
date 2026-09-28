@@ -6,6 +6,7 @@ import AbstractCore
 /// while its lines scroll by) and opens or closes the file's diff. Lines are
 /// syntax coloured, and any line takes a comment for the agent.
 struct DiffFileSections: View {
+    @Environment(AppModel.self) private var model
     let review: DiffReview
     let context: DiffContext
     let layout: DiffLayout
@@ -24,7 +25,7 @@ struct DiffFileSections: View {
                         VStack(alignment: .leading, spacing: 0) {
                             ForEach(review.pointers) { pointer in
                                 PointerRow(pointer: pointer, canOpen: review.repoList.contains { $0.path == pointer.repo.path }) {
-                                    Task { await review.select(pointer.repo.path, context) }
+                                    model.selectRepo(context.sessionId, pointer.repo.path)
                                 }
                             }
                         }

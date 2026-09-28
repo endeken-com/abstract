@@ -140,6 +140,13 @@ final class AppModel {
     @ObservationIgnored var originFetchedAt: [String: ContinuousClock.Instant] = [:]
     /// Bumped per chat at each branch read, so a slow read can't overwrite a newer one.
     @ObservationIgnored var branchReads: [String: Int] = [:]
+    /// The repository each chat is working in, by chat id: a submodule's
+    /// path, or absent for the worktree's own. The review and the git actions
+    /// button act on it.
+    var currentRepo: [String: String] = [:]
+    /// Where the current submodule's branch stands, by chat id (absent while
+    /// the worktree's own is current). `branchStates` stays the worktree's own.
+    var currentRepoStates: [String: RepoBranchState] = [:]
 
     // Navigation & transient UI
     var destination: Destination = .home { didSet { if destination != oldValue { syncLocks(); followCLIChat() } } }

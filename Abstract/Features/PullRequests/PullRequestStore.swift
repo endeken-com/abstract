@@ -109,8 +109,9 @@ extension AppModel {
         let read = (branchReads[sessionId] ?? 0) + 1
         branchReads[sessionId] = read
         let state = await GitActions.state(exec, worktree: worktree, preferredBase: session.baseRef)
-        guard branchReads[sessionId] == read, branchStates[sessionId] != state else { return }
-        branchStates[sessionId] = state
+        guard branchReads[sessionId] == read else { return }
+        if branchStates[sessionId] != state { branchStates[sessionId] = state }
+        await refreshCurrentSubmodule(sessionId, worktree: worktree, exec: exec, fetch: fetch, read: read)
     }
 
     func isOnGitHub(_ project: Project) async -> Bool {
