@@ -27,6 +27,13 @@ extension AppModel {
         if [.running, .provisioning, .waitingInput].contains(session.status) {
             throw AbstractError.message("Wait for the agent to finish its turn, then compact.")
         }
+        // A side channel also waits out the exit after the turn (Codex reports
+        // `finished` before its exec ends), which would overwrite "Compacting…".
+        if case .sideChannel = compaction, alive.contains(id) {
+            throw AbstractError.message("Wait for the agent to finish its turn, then compact.")
+        }
+        // The conversation is still the outgoing agent's until a message hands it over.
+        if session.handoffFrom != nil { throw AbstractError.message("Send a message first to hand the chat over, then compact.") }
         guard let conversation = session.providerSessionId else {
             throw AbstractError.message("There's no conversation to compact yet.")
         }
@@ -41,6 +48,7 @@ extension AppModel {
 
         switch compaction {
         case .inStream(let prompt):
+            manualCompactionTurns.insert(id)
             do {
                 if provider.followUpMode == .stdin, isAlive(id), let line = provider.buildUserMessage(prompt) {
                     try engine.write(sessionId: id, line)
@@ -50,6 +58,7 @@ extension AppModel {
                     setStatus(id, .running, detail: Self.compactingDetail)
                 }
             } catch {
+                manualCompactionTurns.remove(id)
                 finishCompaction(id, CompactionMarker.failed(error.localizedDescription))
                 throw error
             }
@@ -71,6 +80,23 @@ extension AppModel {
                 }
                 self?.finishCompaction(id, marker)
             }
+        }
+    }
+
+    /// A side channel compacting: no agent runs, but Stop cancels it.
+    func isCompactingAside(_ id: String) -> Bool { compacting.contains(id) && compactions[id] != nil }
+
+    /// Quitting: cancels every side-channel compaction and waits, briefly, for
+    /// each to stop its helpers (`opencode serve` runs in its own session, so
+    /// Abstract exiting doesn't hang it up).
+    func stopAllCompactions() async {
+        let tasks = Array(compactions.values)
+        for task in tasks { task.cancel() }
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { for task in tasks { await task.value } }
+            group.addTask { try? await Task.sleep(for: .seconds(2)) }
+            await group.next()
+            group.cancelAll()
         }
     }
 

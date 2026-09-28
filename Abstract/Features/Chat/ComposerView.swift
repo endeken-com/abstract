@@ -204,9 +204,10 @@ struct ComposerView: View {
     }
 
     private func send() {
-        // A whole app command (`/model`) runs here instead of going to the agent.
+        // A whole app command (`/model`) runs here instead of going to the agent;
+        // `/compact` even when it can't, so `compact` says why instead.
         if !readOnly, !settingUp,
-           let command = SlashCommands.appCommand(forDraft: draft, provider: providerCommands, excluding: unavailable) {
+           let command = SlashCommands.appCommand(forDraft: draft, provider: providerCommands, excluding: unavailable.subtracting([.compact])) {
             run(command)
             return
         }
