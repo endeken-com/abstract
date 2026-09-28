@@ -30,13 +30,15 @@ struct SubmoduleGitActionsTests {
         try await f.git(core, ["switch", "-q", "-c", "chat"])
         try f.write(core + "/chat.txt", "chat\n")
         try await f.commitAll(core, "Chat work")
-        // Its main moves on after the chat started.
+        // Its default branch, dev (the parent's is main), moves on after the chat started.
+        try await f.git(f.repo("core"), ["switch", "-q", "-c", "dev"])
         try f.write(f.repo("core") + "/upstream.txt", "upstream\n")
         try await f.commitAll(f.repo("core"), "Upstream work")
         try await f.git(core, ["fetch", "-q", "origin"])
+        try await f.git(core, ["remote", "set-head", "origin", "dev"])
 
         let before = await GitActions.state(exec, worktree: core, preferredBase: nil)
-        #expect(before.base == "origin/main", "its own remote's default branch, not the parent's")
+        #expect(before.base == "origin/dev", "its own remote's default branch, not the parent's")
         #expect(before.behindBase == 1)
         #expect(before.aheadOfBase == 1)
         try await GitActions.updateFromBase(exec, worktree: core, base: try #require(before.base))
@@ -96,5 +98,23 @@ struct SubmoduleGitActionsTests {
         #expect(GitText.trimmed(try await f.git(f.worktree, ["rev-parse", "HEAD"])) == parentHead, "the parent isn't committed")
         let status = try await f.git(f.worktree, ["status", "--porcelain"])
         #expect(status.contains("top.txt") && status.contains("libs/core"), "its own work and the moved pointer wait for it")
+    }
+
+    @Test func theGuardRootedAtASubmoduleStopsANestedPointerItsOriginLacks() async throws {
+        let f = try await SubmoduleFixture.make()
+        defer { f.remove() }
+        let core = f.worktree + "/libs/core"
+        let deep = core + "/vendor/deep"
+        try await f.git(core, ["switch", "-q", "-c", "chat"])
+        // A commit in its own submodule, never pushed, and core's pointer moved to it.
+        try f.write(deep + "/d.txt", "d\n")
+        try await f.commitAll(deep, "Deep work")
+        try await f.commitAll(core, "Move deep")
+        let repos = await Submodules.list(exec, worktree: f.worktree)
+        let seen = Submodules.subtree(repos, at: try #require(repos.first { $0.path == "libs/core" }))
+
+        let blocked = try #require(await Shipping.unpublishedPointers(exec, worktree: core, repos: seen).first)
+        #expect(blocked.repo.path == "vendor/deep", "named as seen from core")
+        #expect(blocked.reason == .notOnOrigin)
     }
 }

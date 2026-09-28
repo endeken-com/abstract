@@ -238,7 +238,8 @@ struct GitActionsButton: View {
         let base = s.baseName ?? "the base branch"
         func commits(_ n: Int) -> String { "\(n) commit\(n == 1 ? "" : "s")" }
         switch action {
-        case .commit: return s.dirty ? (isSubmodule ? "Commit the changes in \(repoPath)" : "Commit the changes in the worktree") : nil
+        // The help already names a submodule in front (see `named`).
+        case .commit: return s.dirty ? (isSubmodule ? "Commit the changes" : "Commit the changes in the worktree") : nil
         case .pull: return "Pull \(commits(s.behind)) new on origin"
         case .push: return "Push \(commits(s.ahead)) origin doesn't have yet"
         case .pullAndPush: return "Pull \(commits(s.behind)) from origin, then push \(commits(s.ahead))"
@@ -394,6 +395,7 @@ struct GitActionsButton: View {
         // can change before the awaits below finish.
         let base = state?.base
         let baseName = state?.baseName
+        let hadPR = pr != nil
         running = action
         runningPath = path
         Task {
@@ -417,6 +419,8 @@ struct GitActionsButton: View {
                     model.flash(done("Pulled and pushed"))
                 case .updateFromBase:
                     guard let base else { return }
+                    // Merged onto the chat's branch, not a detached commit.
+                    if !path.isEmpty { try await model.putSubmoduleOnBranch(session.id, in: path) }
                     try await GitActions.updateFromBase(exec, worktree: dir, base: base)
                     model.flash(path.isEmpty ? "Updated from \(baseName ?? base)" : "Updated \(path) from \(baseName ?? base)")
                 case .mergeLocally:
@@ -433,7 +437,7 @@ struct GitActionsButton: View {
             }
             await refresh()
             // New commits on the branch restart its pull request's checks.
-            if pr != nil, [.push, .pullAndPush].contains(action) {
+            if hadPR, [.push, .pullAndPush].contains(action) {
                 await model.refreshPullRequests(projectId: session.projectId)
                 _ = try? await model.refreshPullRequest(session.id)
             }

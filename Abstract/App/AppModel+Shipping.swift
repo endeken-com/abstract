@@ -61,6 +61,15 @@ extension AppModel {
         try await Git.push(exec, worktree: root.dir, branch: target)
     }
 
+    /// Puts the submodule at `path` on the chat's branch, so what's merged
+    /// into it lands on a branch that can be pushed.
+    func putSubmoduleOnBranch(_ sessionId: String, in path: String) async throws {
+        guard !path.isEmpty, let session = session(sessionId), let worktree = session.worktreePath else { return }
+        guard let branch = session.branch else { throw AbstractError.message("This chat has no branch to update it on.") }
+        let exec = executor(for: sessionId)
+        try await putOnBranch(exec, try await shippingRoot(exec, worktree: worktree, path: path), branch)
+    }
+
     /// A repository shipped on its own: the one acted on, its folder, the
     /// repositories seen from it (itself as the worktree's own, see
     /// `Submodules.subtree`), and the ones among them you can't push to.

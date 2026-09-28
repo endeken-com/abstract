@@ -96,12 +96,15 @@ extension AppModel {
 
     /// Fetches `directory`'s origin: `.ifStale` at most once a minute per
     /// `key`, `.now` regardless. Offline (or any other failure) never blocks
-    /// reading the branch state, so a failed fetch is silently skipped.
+    /// reading the branch state, so a failed fetch is silently skipped. Never
+    /// asks for credentials, gives up after 30 seconds.
     func fetchOriginIfDue(_ exec: any Executor, key: String, directory: String, fetch: OriginFetch) async {
         let stale = originFetchedAt[key].map { ContinuousClock.now - $0 >= .seconds(60) } ?? true
         guard fetch == .now || (fetch == .ifStale && stale) else { return }
         originFetchedAt[key] = .now
-        _ = try? await exec.run("git", ["fetch", "--quiet", "--prune", "origin"], cwd: directory)
+        let spec = LaunchSpec(command: "git", args: ["fetch", "--quiet", "--prune", "origin"], cwd: directory,
+                              env: ["GIT_TERMINAL_PROMPT": "0"], keepStdinOpen: false)
+        _ = try? await exec.run(spec, timeout: .seconds(30))
     }
 
     /// Re-reads where a chat's branch stands, fetching from origin first:
