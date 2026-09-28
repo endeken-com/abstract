@@ -44,6 +44,39 @@ Last planned: 2026-09-28. Current stable: v0.9.0. Next cut: v0.10.0.
 Sizes: **S** fits in a day for one agent, **M** two to three days, **L** a week, and an
 L item always has a spike (a `spike` item) the week before.
 
+## Tickets in Linear
+
+New ideas do not go straight into this file. They are filed as tickets in Linear
+(workspace `abstract-ade`, team `ABS`) and reviewed by a person first. The roadmap
+holds what was accepted and when it ships.
+
+**Who files tickets.** The *product owner* automation researches once a week and files
+at most three tickets in **Triage**, each with Problem, Evidence, Proposal, Done when,
+Size and Not this. Anyone can file one by hand the same way.
+
+**Triage is the review.** Nothing leaves Triage without a person moving it:
+
+| Move it to | Meaning | Who acts next |
+|---|---|---|
+| **Todo** | Accepted. Ready for an agent, highest priority first. | the developer automation |
+| **Backlog** | Good idea, not now. Agents never take it. | nobody, until it is moved to Todo |
+| **Canceled** / **Duplicate** | No. | nobody |
+
+Set the priority while you are there: Urgent and High get taken before Normal.
+
+**From Todo to Done.**
+
+1. The developer automation takes the highest-priority unassigned Todo ticket once the
+   week's roadmap items are done, sets it to **In Progress** and assigns itself.
+2. It opens the PR with `Fixes ABS-n` in the body and sets the ticket to **In Review**.
+   The Linear GitHub integration keeps the two in step from here.
+3. Merging the PR moves the ticket to **Done**. The Monday re-plan double-checks.
+4. The Monday re-plan also turns every Todo ticket into a roadmap item (`Linear: ABS-n`
+   on the item) so it appears in a week, with a PR title written as a release-note line.
+
+An item with a `Linear:` line is only eligible while its ticket is in Todo or In Progress.
+Moving the ticket back to Backlog pauses the item without editing this file.
+
 ## Product rules
 
 These come from how Abstract has been built so far and decisions already taken.
