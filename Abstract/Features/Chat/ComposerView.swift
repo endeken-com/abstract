@@ -48,6 +48,9 @@ struct ComposerView: View {
     private var unavailable: Set<AppCommand> {
         var out = AppCommand.unavailable(working: working || model.compacting.contains(session.id), remote: remote,
                                          hasConversation: session.providerSessionId != nil)
+        // A pending permission or question isn't "working", but compacting then
+        // would race the turn it's blocked on.
+        if session.status == .waitingInput { out.insert(.compact) }
         if model.efforts(providerId: session.providerId, model: session.model, on: device).levels.isEmpty { out.insert(.effort) }
         return out
     }

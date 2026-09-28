@@ -108,8 +108,11 @@ final class AppModel {
     private(set) var compacting: Set<String> = []
     /// A side channel's compaction, cancelled by Stop.
     @ObservationIgnored var compactions: [String: Task<Void, Never>] = [:]
+    /// The status and detail to restore once a compaction ends, captured
+    /// before it's overwritten with "Compacting…".
+    @ObservationIgnored var compactionReturnStatus: [String: (SessionStatus, String?)] = [:]
     func beginCompacting(_ id: String) { compacting.insert(id) }
-    func endCompacting(_ id: String) { compacting.remove(id); compactions[id] = nil }
+    func endCompacting(_ id: String) { compacting.remove(id); compactions[id] = nil; compactionReturnStatus[id] = nil }
     /// Tool names to approve without asking, per chat.
     var autoContinueTools: [String: Set<String>] = [:]
     /// A file the Changes pane should select next time it loads, per chat.
@@ -1111,8 +1114,13 @@ final class AppModel {
             remote.forward(sessionId: sessionId, seq: seq, line: line)
         case let .exit(sessionId, code):
             alive.remove(sessionId)
-            // An in-stream compaction whose process died without a status still frees the chat.
-            if compactions[sessionId] == nil { compacting.remove(sessionId) }
+            // An in-stream compaction whose process died without a status: log it
+            // (a stale-compaction check at reload would otherwise blame the quit)
+            // and free the chat.
+            if compacting.contains(sessionId), compactions[sessionId] == nil {
+                engine.record(sessionId: sessionId, CompactionMarker.failed(CompactionState.stoppedEarly).line)
+                endCompacting(sessionId)
+            }
             // Only once its last status is written may `abstract` take the chat.
             defer {
                 publishAgent(sessionId, providerId: nil)
@@ -1169,7 +1177,7 @@ final class AppModel {
                 replaceSession(s)
             }
         case let .status(status, detail):
-            if status != .running, compactions[sessionId] == nil { compacting.remove(sessionId) }
+            if status != .running, compactions[sessionId] == nil { endCompacting(sessionId) }
             setStatus(sessionId, status, detail: detail)
             if status == .idle {
                 // Still at work in the background: not done yet. The agent
@@ -1199,7 +1207,7 @@ final class AppModel {
                                           usage: totals, costUsd: cost ?? 0, durationMs: duration ?? 0, turns: turns ?? 1))
         case .compaction(.finished), .compaction(.failed):
             // Claude's own report ends an in-stream compaction; a side channel ends its own.
-            if compactions[sessionId] == nil { compacting.remove(sessionId) }
+            if compactions[sessionId] == nil { endCompacting(sessionId) }
         default:
             break
         }

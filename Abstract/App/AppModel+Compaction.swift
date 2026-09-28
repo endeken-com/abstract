@@ -22,7 +22,11 @@ extension AppModel {
         if setups[id] != nil { throw AbstractError.message("“\(session.name)” is still being set up.") }
         if handingOff.contains(id) { throw AbstractError.message("Still handing this chat over; compact in a moment.") }
         if compacting.contains(id) { throw AbstractError.message("Already compacting.") }
-        if session.status == .running { throw AbstractError.message("Wait for the agent to finish its turn, then compact.") }
+        // Mid-turn, or blocked on a permission or question: its own next status would
+        // race a manual compaction, or Claude's queued auto-compact would double up.
+        if [.running, .provisioning, .waitingInput].contains(session.status) {
+            throw AbstractError.message("Wait for the agent to finish its turn, then compact.")
+        }
         guard let conversation = session.providerSessionId else {
             throw AbstractError.message("There's no conversation to compact yet.")
         }
@@ -30,6 +34,9 @@ extension AppModel {
         beginCompacting(id)
         engine.record(sessionId: id, CompactionMarker.started(.manual).line)
         markTurnStarted(id)
+        // Restored once the compaction ends, instead of leaving the chat `.idle`
+        // (alive, awaiting a follow-up) when it wasn't.
+        compactionReturnStatus[id] = (session.status, session.statusDetail)
         setStatus(id, .running, detail: Self.compactingDetail)
 
         switch compaction {
@@ -67,10 +74,13 @@ extension AppModel {
         }
     }
 
-    /// Logs how a compaction ended, when Abstract ran it, and frees the chat.
+    /// Logs how a compaction ended, when Abstract ran it, and frees the chat,
+    /// back to the status it had before compacting started (its agent may
+    /// not be running any more, so never `.idle`, which means alive and waiting).
     func finishCompaction(_ id: String, _ marker: CompactionMarker) {
         engine.record(sessionId: id, marker.line)
+        let restore = compactionReturnStatus[id]
         endCompacting(id)
-        setStatus(id, .idle)
+        setStatus(id, restore?.0 ?? .finished, detail: restore?.1)
     }
 }
