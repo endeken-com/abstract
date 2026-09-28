@@ -2,7 +2,10 @@ import Foundation
 import Testing
 @testable import AbstractCore
 
-@Suite("Shipping")
+// One at a time: each test builds a project with submodules from dozens of
+// git processes, and running them all at once starves the timing-sensitive
+// process tests on a small CI machine.
+@Suite("Shipping", .serialized)
 struct ShippingTests {
     let exec = LocalExecutor.shared
 
