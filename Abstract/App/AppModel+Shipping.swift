@@ -17,9 +17,15 @@ extension AppModel {
 
     /// Commits the chat's work in every repository with some, its submodules
     /// first, with one message. Submodules you can't push to are left alone.
+    /// Without a branch (an agent's own worktree not yet on one), commits the
+    /// worktree's own repository only, as it always did.
     func commitEverything(_ sessionId: String, message: String) async throws {
-        guard let session = session(sessionId), let worktree = session.worktreePath, let branch = session.branch else { return }
+        guard let session = session(sessionId), let worktree = session.worktreePath else { return }
         let exec = executor(for: sessionId)
+        guard let branch = session.branch else {
+            try await Git.commitAll(exec, worktree: worktree, message: message)
+            return
+        }
         let repos = await Submodules.list(exec, worktree: worktree)
         try await Shipping.commit(exec, worktree: worktree, repos: repos, branch: branch,
                                   readOnly: await readOnlySubmodules(repos), message: message)
@@ -28,9 +34,10 @@ extension AppModel {
     /// Before the chat's branch is pushed: pushes its submodules that have
     /// commits no remote has, then makes sure every pointer the branch
     /// publishes is on its submodule's origin. Throws, naming the submodule,
-    /// when the branch can't go yet.
+    /// when the branch can't go yet, or saying so when there's no branch at all.
     func prepareParentPush(_ sessionId: String) async throws {
-        guard let session = session(sessionId), let worktree = session.worktreePath, let branch = session.branch else { return }
+        guard let session = session(sessionId), let worktree = session.worktreePath else { return }
+        guard let branch = session.branch else { throw AbstractError.message("This chat has no branch to push.") }
         let exec = executor(for: sessionId)
         let repos = await Submodules.list(exec, worktree: worktree)
         // Without submodules, pushing is what it always was.
@@ -44,7 +51,8 @@ extension AppModel {
 
     /// Pushes the chat's branch, its submodules first.
     func pushEverything(_ sessionId: String) async throws {
-        guard let session = session(sessionId), let worktree = session.worktreePath, let branch = session.branch else { return }
+        guard let session = session(sessionId), let worktree = session.worktreePath else { return }
+        guard let branch = session.branch else { throw AbstractError.message("This chat has no branch to push.") }
         try await prepareParentPush(sessionId)
         try await Git.push(executor(for: sessionId), worktree: worktree, branch: branch)
     }
