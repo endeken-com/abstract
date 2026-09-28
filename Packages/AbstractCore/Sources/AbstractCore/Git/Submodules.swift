@@ -91,7 +91,7 @@ public enum Submodules {
     /// Every path the worktree's status lists, a submodule's own path when
     /// anything in it (or in one inside it) changed; nil when git can't say.
     /// The review reads a submodule only when it's here.
-    static func changedPaths(_ exec: any Executor, worktree: String) async -> Set<String>? {
+    public static func changedPaths(_ exec: any Executor, worktree: String) async -> Set<String>? {
         // A submodule's own status.showUntrackedFiles=no would hide one whose
         // only change is a new file; -c reaches the status git runs inside it.
         await statusPaths(exec, cwd: worktree, ["-c", "status.showUntrackedFiles=normal", "--no-optional-locks", "status",
@@ -158,27 +158,7 @@ public enum Submodules {
     }
 
     /// NUL-separated fields, split on bytes so a path can't fuse with its separator.
-    private static func nulFields(_ output: String) -> [String] {
+    static func nulFields(_ output: String) -> [String] {
         output.utf8.split(separator: 0).map { String(decoding: $0, as: UTF8.self) }
-    }
-
-    /// Where each repository stood when the chat's branch left `base`: the
-    /// worktree's own at its merge base with `base` (key ""), each submodule
-    /// at the commit its parent recorded for it there. A submodule with no
-    /// entry didn't exist yet. Empty without a base.
-    public static func baselines(_ exec: any Executor, worktree: String, repos: [ChatRepo], base: String?) async -> [String: String] {
-        guard let base else { return [:] }
-        let top = await Diff.mergeBase(exec, worktree: worktree, base: base) ?? base
-        var found = ["": top]
-        // Parents first, so each submodule finds its parent's baseline.
-        for repo in repos.sorted(by: { $0.depth < $1.depth }) where repo.isSubmodule {
-            guard let parentPath = repo.parentPath, let parent = repos.first(where: { $0.path == parentPath }),
-                  let from = found[parentPath], let inside = parent.inside(repo.path),
-                  let out = try? await Git.git(exec, cwd: parent.directory(in: worktree), ["rev-parse", "\(from):\(inside)"]),
-                  out.ok else { continue }
-            let sha = GitText.trimmed(out.stdout)
-            if !sha.isEmpty { found[repo.path] = sha }
-        }
-        return found
     }
 }

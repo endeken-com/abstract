@@ -4,30 +4,30 @@ import AbstractCore
 /// The changed files as a tree, after Paseo's (Apache-2.0, Copyright (c)
 /// 2025-present Mohamed Boudra): folders first, a folder holding only one
 /// folder merged into it (`Sources/App/Chat`), each folder with its files'
-/// totals. Choosing a file shows it in the diff. A submodule's folder starts
-/// with its pointer, which opens to the commits it moves over; choosing one
-/// shows that commit.
+/// totals. Choosing a file shows it in the diff. First come the submodules
+/// whose pointers the changes move; choosing one shows that submodule.
 struct ChangesTree: View {
     let review: DiffReview
     let onOpen: (String) -> Void
-    let onCommit: (CommitSummary) -> Void
+    let onOpenRepo: (String) -> Void
     @State private var collapsed: Set<String> = []
 
     var body: some View {
-        let submodules = Dictionary(uniqueKeysWithValues: review.repos.filter(\.repo.isSubmodule).map { ($0.repo.path, $0) })
-        let rows = ChangesTreeRow.flatten(ChangesTreeRow.standalone(review.sections)
-                                          + ChangesTreeRow.build(review.files, repos: submodules), collapsed: collapsed)
+        let rows = ChangesTreeRow.flatten(ChangesTreeRow.build(review.files), collapsed: collapsed)
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach(review.pointers) { pointer in
+                    PointerRow(pointer: pointer, canOpen: review.repoList.contains { $0.path == pointer.repo.path }) {
+                        onOpenRepo(pointer.repo.path)
+                    }
+                }
                 ForEach(rows) { row in
-                    TreeRowView(row: row, collapsed: collapsed.contains(row.id), selected: isSelected(row)) {
+                    TreeRowView(row: row, collapsed: collapsed.contains(row.id), selected: row.path == review.focusPath) {
                         switch row.kind {
-                        case .folder where row.foldable, .pointer where row.foldable:
+                        case .folder:
                             if collapsed.contains(row.id) { collapsed.remove(row.id) } else { collapsed.insert(row.id) }
-                        case .folder, .pointer, .file:
+                        case .file:
                             onOpen(row.path)
-                        case .commit(let commit):
-                            onCommit(commit)
                         }
                     }
                 }
@@ -36,22 +36,10 @@ struct ChangesTree: View {
         }
         .background(Color.btCanvas)
     }
-
-    private func isSelected(_ row: ChangesTreeRow) -> Bool {
-        switch row.kind {
-        case .commit(let commit):
-            if case .commit(let shown) = review.mode { return shown.id == commit.id }
-            return false
-        case .pointer: return false
-        case .folder, .file: return row.path == review.focusPath
-        }
-    }
 }
 
 struct ChangesTreeRow: Identifiable {
-    /// A pointer is a submodule's pointer, one change to its parent; its
-    /// children are the commits it moves over.
-    enum Kind { case folder, file(FileDiff.FileStatus), pointer, commit(CommitSummary) }
+    enum Kind { case folder, file(FileDiff.FileStatus) }
     let kind: Kind
     /// For a file its path; for a folder its path with a trailing slash.
     let id: String
@@ -61,43 +49,9 @@ struct ChangesTreeRow: Identifiable {
     let additions: Int
     let deletions: Int
     var children: [ChangesTreeRow] = []
-    /// A submodule's folder.
-    var isRepo = false
-    /// What a submodule's folder says besides its files ("pointer +2, not committed").
-    var note: String?
-    /// Has rows under it to show or hide; kept once `flatten` drops `children`.
-    var foldable = false
 
-    /// Submodules with no files to list but a pointer that moved, or
-    /// something to say (new, couldn't be read), first.
-    static func standalone(_ sections: [DiffReview.RepoSection]) -> [ChangesTreeRow] {
-        sections.compactMap { section in
-            let diff = section.diff
-            guard diff.repo.isSubmodule, section.files.isEmpty else { return nil }
-            let pointer = pointerRows(diff, depth: 1)
-            let note = diff.isNew ? "new submodule" : diff.error != nil ? "couldn't be read" : nil
-            guard !pointer.isEmpty || note != nil else { return nil }
-            return ChangesTreeRow(kind: .folder, id: diff.repo.path + "/", path: diff.repo.path, name: diff.repo.path,
-                                  depth: 0, additions: 0, deletions: 0, children: pointer, isRepo: true, note: note,
-                                  foldable: !pointer.isEmpty)
-        }
-    }
-
-    /// A submodule's pointer entry, holding the commits it moves over; none
-    /// when the pointer hasn't moved.
-    static func pointerRows(_ diff: RepoDiff, depth: Int) -> [ChangesTreeRow] {
-        guard let label = diff.pointerLabel(committedIn: nil) else { return [] }
-        let commits = diff.pointerCommits.map { commit in
-            ChangesTreeRow(kind: .commit(commit), id: "commit:" + commit.id, path: diff.repo.path, name: commit.subject,
-                           depth: depth + 1, additions: 0, deletions: 0)
-        }
-        return [ChangesTreeRow(kind: .pointer, id: "pointer:" + diff.repo.path, path: diff.repo.path, name: label,
-                               depth: depth, additions: 0, deletions: 0, children: commits, foldable: !commits.isEmpty)]
-    }
-
-    /// Folders before files, each in plain character order; `repos` are the
-    /// submodules, by path.
-    static func build(_ files: [ReviewFile], repos: [String: RepoDiff] = [:]) -> [ChangesTreeRow] {
+    /// Folders before files, each in plain character order.
+    static func build(_ files: [ReviewFile]) -> [ChangesTreeRow] {
         final class Folder {
             var folders: [String: Folder] = [:]
             var files: [ReviewFile] = []
@@ -118,8 +72,7 @@ struct ChangesTreeRow: Identifiable {
                 var label = name
                 var path = prefix + name
                 // A folder whose only content is one folder reads as one row.
-                // …but never through a submodule, whose folder is its own row.
-                while repos[path] == nil, child.files.isEmpty, child.folders.count == 1, let (next, grandchild) = child.folders.first {
+                while child.files.isEmpty, child.folders.count == 1, let (next, grandchild) = child.folders.first {
                     label += "/" + next
                     path += "/" + next
                     child = grandchild
@@ -127,11 +80,8 @@ struct ChangesTreeRow: Identifiable {
                 let inner = rows(child, prefix: path + "/", depth: depth + 1)
                 let adds = inner.reduce(0) { $0 + $1.additions }
                 let dels = inner.reduce(0) { $0 + $1.deletions }
-                let repo = repos[path]
-                let children = (repo.map { pointerRows($0, depth: depth + 1) } ?? []) + inner
                 out.append(ChangesTreeRow(kind: .folder, id: path + "/", path: path, name: label, depth: depth,
-                                          additions: adds, deletions: dels, children: children, isRepo: repo != nil,
-                                          note: repo?.isNew == true ? "new submodule" : nil, foldable: !children.isEmpty))
+                                          additions: adds, deletions: dels, children: inner))
             }
             for file in folder.files.sorted(by: { $0.name < $1.name }) {
                 out.append(ChangesTreeRow(kind: .file(file.diff.status), id: file.path, path: file.path, name: file.name, depth: depth,
@@ -146,7 +96,7 @@ struct ChangesTreeRow: Identifiable {
         rows.flatMap { row -> [ChangesTreeRow] in
             var own = row
             own.children = []
-            guard row.foldable, !collapsed.contains(row.id) else { return [own] }
+            guard case .folder = row.kind, !collapsed.contains(row.id) else { return [own] }
             return [own] + flatten(row.children, collapsed: collapsed)
         }
     }
@@ -164,42 +114,13 @@ private struct TreeRowView: View {
             HStack(spacing: 6) {
                 switch row.kind {
                 case .folder:
-                    if row.foldable {
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 8, weight: .bold))
-                            .foregroundStyle(Color.btTextTertiary)
-                            .rotationEffect(.degrees(collapsed ? 0 : 90))
-                            .frame(width: 10)
-                    } else {
-                        Color.clear.frame(width: 10)
-                    }
-                    if row.isRepo {
-                        Image(systemName: "shippingbox").font(.system(size: 11)).foregroundStyle(Color.btTextSecondary).frame(width: 16)
-                    } else {
-                        FileIcon(path: row.path, isDirectory: true, open: !collapsed)
-                    }
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(Color.btTextTertiary)
+                        .rotationEffect(.degrees(collapsed ? 0 : 90))
+                        .frame(width: 10)
+                    FileIcon(path: row.path, isDirectory: true, open: !collapsed)
                     Text(row.name).font(BTFont.ui(12.5)).foregroundStyle(Color.btTextSecondary).lineLimit(1).truncationMode(.middle)
-                    if let note = row.note {
-                        Text(note).font(.btCaption).foregroundStyle(Color.btTextTertiary).lineLimit(1)
-                    }
-                case .pointer:
-                    if row.foldable {
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 8, weight: .bold))
-                            .foregroundStyle(Color.btTextTertiary)
-                            .rotationEffect(.degrees(collapsed ? 0 : 90))
-                            .frame(width: 10)
-                    } else {
-                        Color.clear.frame(width: 10)
-                    }
-                    Image(nsImage: Octicon.gitCommit).renderingMode(.template).resizable().frame(width: 12, height: 12)
-                        .foregroundStyle(Color.btTextSecondary).frame(width: 16)
-                    Text(row.name).font(BTFont.ui(12.5)).foregroundStyle(Color.btTextSecondary).lineLimit(1).truncationMode(.tail)
-                case .commit:
-                    Color.clear.frame(width: 10)
-                    Color.clear.frame(width: 16)
-                    Text(row.name).font(BTFont.ui(12.5)).foregroundStyle(selected || hovering ? Color.btText : Color.btProse)
-                        .lineLimit(1).truncationMode(.tail)
                 case .file:
                     Color.clear.frame(width: 10)
                     FileIcon(path: row.path)
@@ -207,15 +128,8 @@ private struct TreeRowView: View {
                         .lineLimit(1).truncationMode(.middle)
                 }
                 Spacer(minLength: 6)
-                switch row.kind {
-                case .commit(let commit):
-                    Text(commit.shortSha).font(.btMonoSmall).foregroundStyle(Color.btTextTertiary).fixedSize()
-                case .file(let status):
-                    DiffCounts(additions: row.additions, deletions: row.deletions, hideZeros: true, compact: true).fixedSize()
-                    DiffStatusIcon(status: status)
-                case .folder, .pointer:
-                    DiffCounts(additions: row.additions, deletions: row.deletions, hideZeros: true, compact: true).fixedSize()
-                }
+                DiffCounts(additions: row.additions, deletions: row.deletions, hideZeros: true, compact: true).fixedSize()
+                if case .file(let status) = row.kind { DiffStatusIcon(status: status) }
             }
             .padding(.leading, 8 + CGFloat(row.depth) * 12)
             .padding(.trailing, Space.sm)
@@ -227,14 +141,6 @@ private struct TreeRowView: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .help(help)
-    }
-
-    private var help: String {
-        switch row.kind {
-        case .commit(let commit): "\(commit.shortSha) · \(commit.author) · show this commit"
-        case .pointer: "The commit \(row.path) points at: one change to its parent"
-        case .folder, .file: row.isRepo ? "Submodule \(row.path)" : row.path
-        }
+        .help(row.path)
     }
 }

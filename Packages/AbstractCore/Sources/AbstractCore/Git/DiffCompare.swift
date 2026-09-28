@@ -8,9 +8,6 @@ public enum DiffCompare: Sendable, Hashable {
     case uncommitted
     /// HEAD against where it left `base` (their merge base).
     case committed(base: String)
-    /// HEAD against `sha` itself, with no merge base: a submodule against the
-    /// commit its parent recorded, which HEAD may have moved back or sideways from.
-    case since(sha: String)
     /// One commit against its first parent, in the repository at `repo`
     /// (relative to the worktree; empty for its own).
     case commit(sha: String, repo: String = "")
@@ -48,9 +45,7 @@ extension Diff {
                                                                     "--no-ext-diff", "--ignore-submodules=all", "-M", "-w", "--", "."] + excludes))
         case .committed(let base):
             let from = await mergeBase(exec, worktree: worktree, base: base) ?? base
-            return try await collect(exec, worktree: worktree, exclude: exclude, compare: .since(sha: from), ignoreWhitespace: ignoreWhitespace)
-        case .since(let sha):
-            return parse(try await Git.gitOK(exec, cwd: worktree, ["-c", "core.quotePath=false", "--no-pager", "diff", sha, "HEAD", "--no-color",
+            return parse(try await Git.gitOK(exec, cwd: worktree, ["-c", "core.quotePath=false", "--no-pager", "diff", from, "HEAD", "--no-color",
                                                                     "--no-ext-diff", "--ignore-submodules=all", "-M"] + space + ["--", "."] + excludes))
         case .commit(let sha, _):
             return parse(try await Git.gitOK(exec, cwd: worktree, ["-c", "core.quotePath=false", "--no-pager", "show", sha, "--format=",

@@ -16,36 +16,30 @@ struct DiffFileSections: View {
 
     var body: some View {
         let metrics = DiffMetrics(files: review.files, width: width, layout: layout)
-        let sections = review.sections
-        let showsRepos = DiffReview.showsRepos(sections)
         ScrollViewReader { proxy in
             ScrollView(.vertical) {
                 LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
-                    ForEach(sections) { section in
-                        let parent = section.diff.repo.parentPath.map { $0.isEmpty ? context.projectName : $0 } ?? ""
-                        if showsRepos {
-                            RepoHeader(section: section,
-                                       title: section.diff.repo.isSubmodule ? section.diff.repo.path : context.projectName,
-                                       collapsed: review.collapsedRepos.contains(section.id)) { review.toggleRepo(section.id) }
-                                // The tree's row for a submodule with nothing but a heading scrolls here.
-                                .id(section.id)
-                        }
-                        if !review.collapsedRepos.contains(section.id) {
-                            if let label = section.diff.pointerLabel(committedIn: parent) {
-                                PointerCommits(label: label, commits: section.diff.pointerCommits, review: review, context: context)
-                            }
-                            ForEach(section.files) { file in
-                                Section {
-                                    if review.isExpanded(file) {
-                                        DiffFileBody(review: review, file: file, layout: layout, context: context,
-                                                     metrics: metrics, highlights: highlights)
-                                    }
-                                } header: {
-                                    DiffFileHeader(review: review, file: file, context: context, onDiscard: { onDiscard(file) })
+                    // The submodules whose pointers these changes move, before the files.
+                    if !review.pointers.isEmpty {
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(review.pointers) { pointer in
+                                PointerRow(pointer: pointer, canOpen: review.repoList.contains { $0.path == pointer.repo.path }) {
+                                    Task { await review.select(pointer.repo.path, context) }
                                 }
-                                .id(file.path)
                             }
                         }
+                        .padding(.vertical, Space.xs)
+                    }
+                    ForEach(review.orderedFiles) { file in
+                        Section {
+                            if review.isExpanded(file) {
+                                DiffFileBody(review: review, file: file, layout: layout, context: context,
+                                             metrics: metrics, highlights: highlights)
+                            }
+                        } header: {
+                            DiffFileHeader(review: review, file: file, context: context, onDiscard: { onDiscard(file) })
+                        }
+                        .id(file.path)
                     }
                     if !review.commits.isEmpty { ReviewCommits(review: review, context: context) }
                 }
@@ -535,31 +529,6 @@ private struct ReviewCommits: View {
     }
 }
 
-/// Under a submodule's heading, before its files: its pointer, which is one
-/// change to its parent, and the commits the pointer moves over.
-private struct PointerCommits: View {
-    let label: String
-    let commits: [CommitSummary]
-    let review: DiffReview
-    let context: DiffContext
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: Space.sm) {
-                Image(nsImage: Octicon.gitCommit).renderingMode(.template).resizable()
-                    .frame(width: 12, height: 12).foregroundStyle(Color.btTextTertiary)
-                Text(label).font(BTFont.ui(12.5)).foregroundStyle(Color.btTextSecondary).lineLimit(1)
-            }
-            .padding(.leading, Space.md + 10 + Space.sm)
-            .frame(height: 26)
-            ForEach(commits) { commit in
-                ReviewCommitRow(commit: commit, review: review, context: context)
-            }
-        }
-        .padding(.bottom, Space.sm)
-    }
-}
-
 /// One commit in a list; clicking shows its changes.
 private struct ReviewCommitRow: View {
     let commit: CommitSummary
@@ -571,8 +540,7 @@ private struct ReviewCommitRow: View {
             HStack(spacing: Space.sm) {
                 Text(commit.subject).font(BTFont.ui(12.5)).foregroundStyle(Color.btProse).lineLimit(1)
                 Spacer(minLength: Space.sm)
-                Text(commit.repo.isEmpty ? commit.shortSha : "\(commit.repo) · \(commit.shortSha)")
-                    .font(.btMonoSmall).foregroundStyle(Color.btTextTertiary).fixedSize()
+                Text(commit.shortSha).font(.btMonoSmall).foregroundStyle(Color.btTextTertiary).fixedSize()
                 if let date = commit.date {
                     Text(RelativeTime.short(date)).font(.btCaption).foregroundStyle(Color.btTextTertiary).monospacedDigit().fixedSize()
                 }

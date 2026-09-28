@@ -55,7 +55,8 @@ nonisolated struct ReviewFile: Identifiable, Sendable {
     var id: String { diff.path }
     var path: String { diff.path }
     var name: String { (diff.path as NSString).lastPathComponent }
-    var directory: String { (diff.path as NSString).deletingLastPathComponent }
+    /// Its folder in its own repository: the review shows one repository at a time.
+    var directory: String { (diff.repoPath as NSString).deletingLastPathComponent }
     var lineCount: Int { unified.count - hunks.count }
     /// Hunk-level accept/reject only makes sense for in-place modifications;
     /// additions, deletions and renames are handled as a whole.
@@ -173,8 +174,6 @@ nonisolated struct ReviewFile: Identifiable, Sendable {
 
 /// Files grouped under their directory, in display order.
 struct ReviewGroup: Identifiable {
-    /// The repository the files are in (see `FileDiff.repo`).
-    let repo: String
     let directory: String
     let files: [ReviewFile]
     var id: String { directory }
@@ -240,7 +239,7 @@ enum ReviewMode: Hashable {
         switch self {
         case .uncommitted: "Uncommitted"
         case .committed: "Committed"
-        case .commit(let c): c.repo.isEmpty ? c.shortSha : "\((c.repo as NSString).lastPathComponent) · \(c.shortSha)"
+        case .commit(let c): c.shortSha
         }
     }
 }
@@ -276,35 +275,40 @@ final class DiffReview {
     /// Files opened or closed by hand; the rest open unless they're long.
     var expansion: [String: Bool] = [:]
 
-    /// Each repository's part of the changes, the worktree's own first.
-    private(set) var repos: [RepoDiff] = []
-    /// Repositories whose files are folded away under their heading.
-    var collapsedRepos: Set<String> = []
+    /// The worktree's repository and its checked-out submodules, the
+    /// worktree's own first. The review shows one of them at a time.
+    private(set) var repoList: [ChatRepo] = []
+    /// The repository shown, by path; "" is the worktree's own.
+    private(set) var selectedRepo = ""
+    /// Repositories with uncommitted work, marked in the selector.
+    private(set) var changedRepos: Set<String> = []
+    /// The shown repository's submodules whose pointers the shown changes move.
+    private(set) var pointers: [PointerChange] = []
+    /// A file asked for in another repository, focused once that one has loaded.
+    @ObservationIgnored private var focusAfterLoad: String?
 
-    /// One repository's part of the review, under its own heading.
-    struct RepoSection: Identifiable {
-        let diff: RepoDiff
-        let files: [ReviewFile]
-        var id: String { diff.id }
+    var selected: ChatRepo { repoList.first { $0.path == selectedRepo } ?? ChatRepo(path: "") }
+    /// Something to show: files, or a submodule pointer that moved.
+    var hasChanges: Bool { !files.isEmpty || !pointers.isEmpty }
+
+    /// The checked-out repository a worktree path is in.
+    func repo(containing path: String) -> ChatRepo? {
+        repoList.filter { $0.path.isEmpty || $0.inside(path) != nil }.max { $0.path.count < $1.path.count }
     }
 
-    /// Every repository with something to show, the worktree's own first. A
-    /// submodule with no files still has its heading to show when it's new,
-    /// couldn't be read, or has a pointer its parent hasn't committed.
-    var sections: [RepoSection] {
-        let files = orderedFiles
-        return repos.compactMap { diff in
-            let own = files.filter { $0.diff.repo == diff.repo.path }
-            let noted = diff.isNew || diff.pointerLabel(committedIn: nil) != nil || diff.error != nil
-            return own.isEmpty && !noted ? nil : RepoSection(diff: diff, files: own)
+    /// Show another repository, starting from its own uncommitted work (or
+    /// its commits, when it has none), and `path` in it once it's loaded.
+    func select(_ repo: String, _ context: DiffContext, focus path: String? = nil) async {
+        guard repo != selectedRepo else {
+            if let path { focus(path) }
+            return
         }
-    }
-
-    /// Whether the changes reach into a submodule, so each repository gets a heading.
-    static func showsRepos(_ sections: [RepoSection]) -> Bool { sections.contains { $0.diff.repo.isSubmodule } }
-
-    func toggleRepo(_ path: String) {
-        if collapsedRepos.contains(path) { collapsedRepos.remove(path) } else { collapsedRepos.insert(path) }
+        selectedRepo = repo
+        mode = .uncommitted
+        pickedWhileDirty = nil
+        expansion = [:]
+        focusAfterLoad = path
+        await load(context)
     }
 
     /// Files in the order they're listed: top-level first, then by folder.
@@ -323,9 +327,6 @@ final class DiffReview {
     func focus(_ path: String) {
         focusPath = path
         focusToken += 1
-        if let file = files.first(where: { $0.path == path }) { collapsedRepos.remove(file.diff.repo) }
-        // A submodule's heading, from the tree's row for one with no files.
-        if repos.contains(where: { $0.repo.path == path }) { collapsedRepos.remove(path) }
         if let file = files.first(where: { $0.path == path }), !isExpanded(file) { toggle(file) }
     }
 
@@ -354,16 +355,26 @@ final class DiffReview {
         defer { if current == generation { isRefreshing = false } }
         let exec = context.executor
         let repoList = await Submodules.list(exec, worktree: context.worktree)
-        // The worktree's status counts a submodule's uncommitted work too.
-        let dirty = await Diff.isDirty(exec, worktree: context.worktree)
-        let base = await Diff.resolveBase(exec, worktree: context.worktree, preferred: context.baseRef)
-        let baselines = await Submodules.baselines(exec, worktree: context.worktree, repos: repoList, base: base)
-        let commits = base == nil ? [] : await Diff.commitsAll(exec, worktree: context.worktree, repos: repoList,
-                                                                base: base!, baselines: baselines)
+        // A submodule that's gone (removed, or no longer checked out) gives way to the worktree's own.
+        if !repoList.contains(where: { $0.path == selectedRepo }) {
+            selectedRepo = ""
+            mode = .uncommitted
+            pickedWhileDirty = nil
+        }
+        let repo = repoList.first { $0.path == selectedRepo } ?? ChatRepo(path: "")
+        // A submodule is measured from its own base branch, as its own pull request would be.
+        let state = await RepoReview.state(exec, worktree: context.worktree, repo: repo,
+                                           preferredBase: repo.isSubmodule ? nil : context.baseRef)
+        let changed = repoList.count > 1 ? await Submodules.changedPaths(exec, worktree: context.worktree) : nil
         guard current == generation else { return }
-        self.dirty = dirty
-        self.base = base
-        self.commits = commits
+        self.repoList = repoList
+        let submodulePaths = Set(repoList.filter(\.isSubmodule).map(\.path))
+        var marks = Set((changed ?? []).filter(submodulePaths.contains))
+        if (changed ?? []).contains(where: { !submodulePaths.contains($0) }) || (repo.path.isEmpty && state.dirty) { marks.insert("") }
+        changedRepos = marks
+        dirty = state.dirty
+        base = state.base
+        commits = state.commits
         // Uncommitted work while there is some, the branch's commits once it's all committed.
         if case .commit = mode {} else if pickedWhileDirty != dirty {
             pickedWhileDirty = nil
@@ -375,18 +386,23 @@ final class DiffReview {
         case .commit(let c): .commit(sha: c.sha, repo: c.repo)
         }
         do {
-            let collected = try await Diff.collectAll(exec, worktree: context.worktree, repos: repoList, exclude: context.exclude,
-                                                      compare: compare, baselines: baselines, ignoreWhitespace: ignoreWhitespace)
-            let prepared = await ReviewFile.prepare(collected.flatMap(\.files))
+            let changes = try await RepoReview.changes(exec, worktree: context.worktree, repo: repo, repos: repoList,
+                                                       exclude: context.exclude, compare: compare, ignoreWhitespace: ignoreWhitespace)
+            let prepared = await ReviewFile.prepare(changes.files)
             guard current == generation else { return }
-            repos = collected
+            pointers = changes.pointers
             apply(prepared)
+            let nothing = prepared.isEmpty && changes.pointers.isEmpty
             otherModeHasChanges = switch mode {
-            case .uncommitted: prepared.isEmpty && !commits.isEmpty
-            case .committed: prepared.isEmpty && dirty
+            case .uncommitted: nothing && !commits.isEmpty
+            case .committed: nothing && dirty
             case .commit: false
             }
             phase = .loaded
+            if let path = focusAfterLoad {
+                focusAfterLoad = nil
+                if files.contains(where: { $0.path == path }) { focus(path) }
+            }
         } catch {
             guard current == generation else { return }
             if phase == .loaded {
@@ -399,18 +415,12 @@ final class DiffReview {
 
     private func apply(_ prepared: [ReviewFile]) {
         let previousIndex = selectedPath.flatMap { orderedPaths.firstIndex(of: $0) }
-        // Each repository's files together, in the order the repositories are
-        // listed; within one, its top-level files first, then its folders.
-        let order = Dictionary(uniqueKeysWithValues: repos.enumerated().map { ($1.repo.path, $0) })
         let grouped = Dictionary(grouping: prepared, by: \.directory)
         groups = grouped.keys.sorted { a, b in
-            let (ra, rb) = (grouped[a]![0].diff.repo, grouped[b]![0].diff.repo)
-            if ra != rb { return (order[ra] ?? .max) < (order[rb] ?? .max) }
-            let (topA, topB) = (a == ra, b == rb)
-            return topA != topB ? topA : a.localizedStandardCompare(b) == .orderedAscending
+            // Top-level files first, then directories alphabetically.
+            a.isEmpty != b.isEmpty ? a.isEmpty : a.localizedStandardCompare(b) == .orderedAscending
         }.map { dir in
-            ReviewGroup(repo: grouped[dir]![0].diff.repo, directory: dir,
-                        files: grouped[dir]!.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending })
+            ReviewGroup(directory: dir, files: grouped[dir]!.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending })
         }
         files = prepared
         orderedPaths = groups.flatMap { $0.files.map(\.path) }

@@ -75,9 +75,14 @@ struct DiffView: View {
     private func takePendingSelection() {
         guard presentation == .document, review.phase == .loaded, let path = model.pendingChangeSelection[sessionId] else { return }
         model.pendingChangeSelection[sessionId] = nil
-        if review.files.contains(where: { $0.path == path }) || review.sections.contains(where: { $0.id == path }) {
+        if review.files.contains(where: { $0.path == path }) {
             showTree = false
             review.focus(path)
+        } else if let repo = review.repo(containing: path), repo.path != review.selectedRepo,
+                  case .ready(let context) = model.diffAvailability(sessionId) {
+            // A file in another of the worktree's repositories: show that one first.
+            showTree = false
+            Task { await review.select(repo.path, context, focus: path) }
         }
     }
 
@@ -108,25 +113,22 @@ struct DiffView: View {
                     if let error = review.actionError {
                         DiffErrorBanner(message: error) { review.actionError = nil }
                     }
+                    if review.selected.isSubmodule { RepoAccessNotice(repo: review.selected) }
                     RevundStrip(sessionId: sessionId, review: review)
-                    if review.sections.isEmpty {
+                    if !review.hasChanges {
                         ReviewEmptyState(review: review, context: context)
                     } else if presentation == .list {
-                        // Paseo's Changes list, whatever the mode: a file opens the diff in the main pane.
+                        // Paseo's Changes list: a file opens the diff in the main pane.
                         ChangesTree(review: review, onOpen: { model.openDiffTab(in: sessionId, focus: $0) },
-                                    onCommit: { commit in Task { await review.show(.commit(commit), context) } })
-                    } else if review.files.isEmpty {
-                        // Only headings: a submodule's pointer and its commits, say.
-                        DiffFileSections(review: review, context: context, layout: .unified, width: geo.size.width,
-                                         onDiscard: { discarding = [$0] })
+                                    onOpenRepo: { path in Task { await review.select(path, context) } })
                     } else if showTree, !rail {
                         ChangesTree(review: review, onOpen: { path in showTree = false; review.focus(path) },
-                                    onCommit: { commit in Task { await review.show(.commit(commit), context) } })
+                                    onOpenRepo: { path in Task { await review.select(path, context) } })
                     } else {
                         HStack(spacing: 0) {
                             if rail {
                                 ChangesTree(review: review, onOpen: { review.focus($0) },
-                                            onCommit: { commit in Task { await review.show(.commit(commit), context) } })
+                                            onOpenRepo: { path in Task { await review.select(path, context) } })
                                     .frame(width: 220)
                                 Rectangle().fill(Color.btBorder).frame(width: 1)
                             }
@@ -195,6 +197,10 @@ private struct ReviewToolbar: View {
     var body: some View {
         let count = review.files.count
         HStack(spacing: Space.sm) {
+            if review.repoList.count > 1 {
+                RepoMenu(review: review, context: context)
+                Text("/").font(BTFont.ui(13)).foregroundStyle(Color.btTextTertiary)
+            }
             ModeMenu(review: review, context: context)
             if count > 0 {
                 DiffCounts(additions: review.totalAdditions, deletions: review.totalDeletions, compact: true)
@@ -272,7 +278,7 @@ private struct ModeMenu: View {
                     ForEach(review.commits) { commit in
                         Button { Task { await review.show(.commit(commit), context) } } label: {
                             Text(commit.subject)
-                            Text([commit.repo.isEmpty ? nil : commit.repo, commit.shortSha, commit.author,
+                            Text([commit.shortSha, commit.author,
                                   commit.date.map { RelativeTime.short($0) }].compactMap { $0 }.joined(separator: " · "))
                         }
                     }
