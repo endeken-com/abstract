@@ -24,6 +24,8 @@ public struct UnpublishedPointer: Sendable, Hashable {
         case notOnOrigin
         /// Its origin couldn't be asked (offline, say), and why.
         case unreachable(String)
+        /// Which pointers the branch moves couldn't be read, and why.
+        case unreadable(String)
     }
     public var repo: ChatRepo
     public var sha: String
@@ -151,8 +153,16 @@ public enum Shipping {
             // Nothing on origin at all: every pointer at HEAD is new to it.
             from = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
         }
-        guard let out = try? await Git.git(exec, cwd: worktree, ["diff", "--raw", "-z", "--no-abbrev", "--no-renames", from, "HEAD"]),
-              out.ok else { return [] }
+        let out: ExecResult
+        do {
+            out = try await Git.git(exec, cwd: worktree, ["diff", "--raw", "-z", "--no-abbrev", "--no-renames", from, "HEAD"])
+        } catch {
+            return [unreadable(repos, error.localizedDescription)]
+        }
+        guard out.ok else {
+            let trimmed = GitText.trimmed(out.stderr)
+            return [unreadable(repos, GitText.failure(out.stderr) ?? (trimmed.isEmpty ? nil : trimmed) ?? "git diff failed")]
+        }
         var found: [UnpublishedPointer] = []
         var fields = Submodules.nulFields(out.stdout)[...]
         // ":<old mode> <new mode> <old sha> <new sha> <status>", then the path.
@@ -172,6 +182,13 @@ public enum Shipping {
             }
         }
         return found
+    }
+
+    /// Blocking the worktree's own repository, since its pointers couldn't be
+    /// read: blocking by mistake beats letting a bad one through.
+    private static func unreadable(_ repos: [ChatRepo], _ why: String) -> UnpublishedPointer {
+        let top = repos.first(where: \.path.isEmpty) ?? ChatRepo(path: "")
+        return UnpublishedPointer(repo: top, sha: "", reason: .unreadable(why))
     }
 
     /// `git fetch --prune origin` in the repository at `directory`, never

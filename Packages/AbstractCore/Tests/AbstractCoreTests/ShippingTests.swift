@@ -249,4 +249,19 @@ struct ShippingTests {
         #expect(await Shipping.unpublishedPointers(recording, worktree: plain, repos: repos).isEmpty)
         #expect(!recording.calls(in: plain).contains { $0.first == "fetch" }, "no network for a project without submodules")
     }
+
+    @Test func aBranchWhosePointersCantBeReadIsHeldBack() async throws {
+        let f = try await SubmoduleFixture.make()
+        defer { f.remove() }
+        try await f.addOrigin()
+        // An unborn HEAD: `git diff ... HEAD` can't resolve it.
+        try await f.git(f.worktree, ["symbolic-ref", "HEAD", "refs/heads/nothing-here"])
+        let repos = await Submodules.list(exec, worktree: f.worktree)
+        let blocked = await Shipping.unpublishedPointers(exec, worktree: f.worktree, repos: repos)
+        #expect(blocked.map(\.repo.path) == [""], "can't tell, so it blocks the parent itself")
+        guard case .unreadable = blocked.first?.reason else {
+            Issue.record("expected unreadable, got \(String(describing: blocked.first?.reason))")
+            return
+        }
+    }
 }
