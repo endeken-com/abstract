@@ -98,6 +98,8 @@ public final class ChatStream {
             // handoff never got logged.
             isSummarizing = false
             return [.text(role: .user, text: line.line, blockId: nil, partial: false)]
+        case .compaction:
+            return CompactionMarker(line).map { [$0.event] } ?? []
         case .stdout, .stderr:
             let events = parser?.feed(line.line, stream: line.stream) ?? [.raw(line: line.line, stream: line.stream)]
             return isSummarizing ? summarizing(events) : events
@@ -184,7 +186,7 @@ public enum HandoffTranscript {
                 agent = name(to)
                 speaker = nil
                 out += "\n---\n\n_Handed over from \(name(from)) to \(agent)._\n"
-            case .thinking, .system, .turn, .raw:
+            case .thinking, .system, .turn, .raw, .compaction:
                 continue
             }
         }

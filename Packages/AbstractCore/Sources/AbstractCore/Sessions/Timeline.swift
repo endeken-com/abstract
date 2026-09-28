@@ -103,14 +103,25 @@ public enum TimelineBlock: Sendable, Identifiable, Hashable {
     case raw(id: Int, lines: [OutputLine])
     /// The chat passed to another agent here.
     case handoff(id: Int, from: String, to: String, summary: String?, source: HandoffSource?)
+    /// The agent's context was compacted here, or is being.
+    case compaction(id: Int, trigger: CompactionTrigger, state: CompactionState)
 
     public var id: Int {
         switch self {
         case .user(let id, _), .assistant(let id, _, _, _), .thinking(let id, _), .tools(let id, _),
              .system(let id, _, _), .turn(let id, _, _, _, _), .error(let id, _), .raw(let id, _),
-             .handoff(let id, _, _, _, _): id
+             .handoff(let id, _, _, _, _), .compaction(let id, _, _): id
         }
     }
+}
+
+public enum CompactionState: Sendable, Hashable {
+    case running
+    case done(CompactionResult, durationMs: Int?)
+    case failed(String)
+
+    /// A compaction the turn ended, or an error cut short.
+    public static let stoppedEarly = "The agent stopped before compacting finished."
 }
 
 public struct ToolCall: Sendable, Hashable, Identifiable {
@@ -141,8 +152,39 @@ extension Timeline {
         var out: [TimelineBlock] = []
         var assistantOpen = false
         var pendingTurn: Int?
+        var runningCompaction: Int?
+        var afterCompaction = false
+
+        /// Ends the compaction under way, or adds one that ended unseen.
+        func closeCompaction(_ state: CompactionState, trigger: CompactionTrigger?, entryId: Int) {
+            if let i = runningCompaction, case let .compaction(id, started, _) = out[i] {
+                out[i] = .compaction(id: id, trigger: trigger ?? started, state: state)
+            } else {
+                out.append(.compaction(id: entryId, trigger: trigger ?? .manual, state: state))
+            }
+            runningCompaction = nil
+            afterCompaction = true
+        }
 
         for entry in entries {
+            // Claude ends a compaction with an empty turn: no rule under the compaction's.
+            if afterCompaction {
+                switch entry.event {
+                case .turnEnd, .usage: continue
+                case .system, .status, .sessionId, .commands, .promptSuggestion, .task, .subagent, .toolResult, .permissionRequest: break
+                default: afterCompaction = false
+                }
+            }
+            // A turn that ends, or an error, mid-compaction ended it too.
+            switch entry.event {
+            case .turnEnd, .usage, .error:
+                if runningCompaction != nil { closeCompaction(.failed(CompactionState.stoppedEarly), trigger: nil, entryId: entry.id) }
+                afterCompaction = false
+            case .text(.user, _, _, _):
+                if runningCompaction != nil { closeCompaction(.failed(CompactionState.stoppedEarly), trigger: nil, entryId: entry.id) }
+                afterCompaction = false
+            default: break
+            }
             switch entry.event {
             case let .text(role, text, _, partial):
                 if role == .user {
@@ -193,11 +235,29 @@ extension Timeline {
             case let .handoff(from, to, summary, source):
                 out.append(.handoff(id: entry.id, from: from, to: to, summary: summary, source: source))
                 assistantOpen = false
+            case let .compaction(event):
+                switch event {
+                case let .started(trigger):
+                    if runningCompaction == nil {
+                        out.append(.compaction(id: entry.id, trigger: trigger ?? .auto, state: .running))
+                        runningCompaction = out.count - 1
+                    }
+                case let .finished(result, trigger, durationMs):
+                    closeCompaction(.done(result, durationMs: durationMs), trigger: trigger, entryId: entry.id)
+                case let .failed(message):
+                    closeCompaction(.failed(message), trigger: nil, entryId: entry.id)
+                }
+                assistantOpen = false
             // Tasks and what subagents did are listed apart from the conversation.
             case .status, .sessionId, .toolResult, .permissionRequest, .promptSuggestion, .commands, .task, .subagent:
                 break
             }
         }
         return out
+    }
+
+    /// A compaction started and hasn't ended, e.g. the app quit during it.
+    public var hasRunningCompaction: Bool {
+        blocks.contains { if case .compaction(_, _, .running) = $0 { true } else { false } }
     }
 }

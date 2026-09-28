@@ -167,6 +167,8 @@ struct BlockView: View, Equatable {
             if UserDefaults.standard.bool(forKey: "showRawAgentOutput") { RawLinesView(lines: lines) }
         case let .handoff(_, from, to, summary, source):
             HandoffRow(from: from, to: to, summary: summary, source: source)
+        case .compaction:
+            EmptyView()
         }
     }
 }

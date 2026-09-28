@@ -125,6 +125,8 @@ public enum OutputStreamKind: String, Sendable, Codable {
     /// A chat passing from one agent to another (`HandoffMarker`): the
     /// replay switches parsers here.
     case handoff
+    /// A compaction Abstract ran or started (`CompactionMarker`).
+    case compaction
 }
 
 public struct UsageTotals: Sendable, Hashable, Codable {
@@ -198,6 +200,31 @@ public enum AgentEvent: Sendable, Hashable {
     indirect case subagent(parentToolUseId: String, AgentEvent)
     /// The chat passed from one agent to another, with what it was told.
     case handoff(from: String, to: String, summary: String?, source: HandoffSource?)
+    /// The agent's context was, or is being, compacted.
+    case compaction(CompactionEvent)
+}
+
+/// Who started a compaction: you, or the agent when its context filled.
+public enum CompactionTrigger: String, Sendable, Codable, Hashable { case manual, auto }
+
+/// What a compaction left behind. Whatever the agent doesn't report is nil.
+public struct CompactionResult: Sendable, Hashable, Codable {
+    public var tokensBefore: Int?
+    public var tokensAfter: Int?
+    public var contextWindow: Int?
+    public var summary: String?
+
+    public init(tokensBefore: Int? = nil, tokensAfter: Int? = nil, contextWindow: Int? = nil, summary: String? = nil) {
+        self.tokensBefore = tokensBefore; self.tokensAfter = tokensAfter
+        self.contextWindow = contextWindow; self.summary = summary
+    }
+}
+
+public enum CompactionEvent: Sendable, Hashable {
+    /// nil: the agent didn't say who started it.
+    case started(CompactionTrigger?)
+    case finished(CompactionResult, trigger: CompactionTrigger?, durationMs: Int?)
+    case failed(String)
 }
 
 public protocol OutputParser: AnyObject {
