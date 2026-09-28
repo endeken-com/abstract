@@ -9,8 +9,10 @@ enum SideStep<Result: Sendable>: Sendable {
     case fail(String)
 }
 
-/// An agent's short-lived helper (a server it runs beside the chat), spoken
-/// to line by line until it answers. Its stderr only explains a failure.
+/// An agent's short-lived helper (a server it runs beside the chat). Both
+/// stdout and stderr reach `reply` line by line — a ready signal (like
+/// OpenCode's listening line) can land on either — and stderr's last lines
+/// also explain a failure.
 enum SideProcess {
     /// Spawns `spec`, writes `opening`, and hands each output line to `reply`
     /// until it finishes or fails. The process is stopped however it ends:
@@ -79,6 +81,10 @@ private final class SideGate<R: Sendable>: Sendable {
         var pending: [String] = []
         var stderr: [String] = []
         var outcome: Outcome?
+        /// A `keepRunning` `finish` that arrived before `attach` (the reader
+        /// can see the ready line before `spawn` hands back the process):
+        /// resolved once `attach` supplies the process to keep.
+        var pendingFinish: R?
     }
 
     let name: String
@@ -99,15 +105,30 @@ private final class SideGate<R: Sendable>: Sendable {
         return false
     }
 
+    private enum Landing {
+        case alreadyEnded
+        case resolves(CheckedContinuation<(R, (any RunningProcess)?), any Error>?, Outcome)
+        case none
+    }
+
     func attach(_ process: any RunningProcess, opening: [String]) {
-        let ended = state.withLock { s -> Bool in
-            if s.outcome != nil { return true }
+        let landing = state.withLock { s -> Landing in
+            if s.outcome != nil { return .alreadyEnded }
             s.process = process
             for line in opening + s.pending { try? process.write(line) }
             s.pending = []
-            return false
+            guard let value = s.pendingFinish else { return .none }
+            s.pendingFinish = nil
+            let result: Outcome = .success((value, process))
+            s.outcome = result
+            defer { s.continuation = nil }
+            return .resolves(s.continuation, result)
         }
-        if ended { process.terminate() }
+        switch landing {
+        case .alreadyEnded: process.terminate()
+        case .resolves(let continuation, let result): continuation?.resume(with: result)
+        case .none: break
+        }
     }
 
     func write(_ lines: [String]) {
@@ -121,7 +142,19 @@ private final class SideGate<R: Sendable>: Sendable {
         state.withLock { s in s.stderr = Array((s.stderr + [line]).suffix(5)) }
     }
 
-    func finish(_ value: R) { end { .success((value, $0)) } }
+    func finish(_ value: R) {
+        // The reader can see a ready line before `spawn` returns and `attach`
+        // runs: hold it rather than resolving with no process to keep.
+        if keepRunning {
+            let deferred = state.withLock { s -> Bool in
+                guard s.outcome == nil, s.process == nil else { return false }
+                s.pendingFinish = value
+                return true
+            }
+            if deferred { return }
+        }
+        end { .success((value, $0)) }
+    }
     func fail(_ message: String) { fail(AbstractError.message(message)) }
     func fail(_ error: any Error) { end { _ in .failure(error) } }
 

@@ -49,7 +49,15 @@ struct SideProcessTests {
         let task = Task {
             let _: Int = try await SideProcess.converse(executor, sh("echo $$ > \(marker); sleep 30"), timeout: .seconds(60)) { _ in .wait }
         }
-        try await Task.sleep(for: .milliseconds(500))
+        // The first spawn in the process can block for seconds inside
+        // LoginShell's PATH resolution, so wait for the child to actually
+        // exist rather than a fixed delay: this tests "cancel after attach"
+        // deterministically. Cancelling mid-spawn is a separate, already-
+        // correct code path (the process is terminated once attach() runs).
+        let deadline = Date().addingTimeInterval(15)
+        while !FileManager.default.fileExists(atPath: marker), Date() < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
         task.cancel()
         await #expect(throws: CancellationError.self) { try await task.value }
         let pid = try #require(Int32(String(contentsOfFile: marker, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
@@ -63,5 +71,18 @@ struct SideProcessTests {
         #expect(line.hasSuffix("4096"))
         #expect(kill(process.pid, 0) == 0)
         process.terminate()
+    }
+
+    @Test func startResolvesEvenWhenTheReadyLineBeatsAttach() async throws {
+        // LocalExecutor.spawn starts the readers before returning, so onLine
+        // for the ready line can fire before `attach` hands the gate its
+        // process. Looping catches that race, which a single run can miss.
+        for _ in 0..<20 {
+            let (line, process) = try await SideProcess.start(executor, sh("echo 'listening on http://127.0.0.1:4096'; sleep 30"),
+                                                              timeout: .seconds(10)) { $0.contains("listening") }
+            #expect(line.hasSuffix("4096"))
+            #expect(kill(process.pid, 0) == 0)
+            process.terminate()
+        }
     }
 }
