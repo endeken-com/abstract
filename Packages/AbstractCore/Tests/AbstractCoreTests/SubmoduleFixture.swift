@@ -88,6 +88,29 @@ struct SubmoduleFixture {
         try await f.git(f.app, ["commit", "-qm", "Add submodules"])
         try await f.git(f.app, ["worktree", "add", "-q", "-b", "chat", f.worktree, "main"])
         try await f.git(f.worktree, ["submodule", "update", "-q", "--init", "--recursive", "--", "libs/core", "libs/other lib"])
+        // Commits made by the code under test (not through `git` above) need
+        // an identity in every clone, and `Git.addWorktree` clones local-path
+        // submodules itself.
+        try await f.git(f.app, ["config", "protocol.file.allow", "always"])
+        for dir in [f.app, f.worktree + "/libs/core", f.worktree + "/libs/core/vendor/deep", f.worktree + "/libs/other lib"] {
+            try await f.identify(dir)
+        }
         return f
+    }
+
+    /// A test identity, and no signing, in the repository at `dir`.
+    func identify(_ dir: String) async throws {
+        try await git(dir, ["config", "user.email", "test@abstract.local"])
+        try await git(dir, ["config", "user.name", "Abstract Test"])
+        try await git(dir, ["config", "commit.gpgsign", "false"])
+    }
+
+    /// A bare origin for app with main pushed, as a project on GitHub has;
+    /// the worktree fetches it.
+    func addOrigin() async throws {
+        try await git(dir, ["init", "-q", "--bare", "app.git"])
+        try await git(app, ["remote", "add", "origin", dir + "/app.git"])
+        try await git(app, ["push", "-q", "origin", "main"])
+        try await git(worktree, ["fetch", "-q", "origin"])
     }
 }

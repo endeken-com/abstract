@@ -167,6 +167,11 @@ public enum Git {
         // Submodules, when present; otherwise the worktree is missing their content.
         if exec.fileExists(GitText.trimTrailingSlashes(root) + "/.gitmodules") {
             _ = try? await git(exec, cwd: path, ["submodule", "update", "--init", "--recursive"])
+            // Each on the chat's branch, so the agent's commits there land
+            // somewhere that can be pushed; local until something is.
+            for repo in await Submodules.list(exec, worktree: path) where repo.isSubmodule {
+                await Shipping.ensureBranch(exec, directory: repo.directory(in: path), name: branch)
+            }
         }
     }
 
