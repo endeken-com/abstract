@@ -16,6 +16,20 @@ public struct UnpushedWork: Sendable, Hashable {
     public var commits: Int
 }
 
+/// A submodule pointer the worktree's commits would publish that its
+/// submodule's origin doesn't have.
+public struct UnpublishedPointer: Sendable, Hashable {
+    public enum Reason: Sendable, Hashable {
+        /// The commit isn't on its origin: the submodule has to be pushed first.
+        case notOnOrigin
+        /// Its origin couldn't be asked (offline, say), and why.
+        case unreachable(String)
+    }
+    public var repo: ChatRepo
+    public var sha: String
+    public var reason: Reason
+}
+
 /// Shipping a chat's work when its worktree holds submodules: each submodule
 /// on a branch, committed and pushed before the parent that points at it.
 public enum Shipping {
@@ -116,5 +130,57 @@ public enum Shipping {
         guard let out = try? await Git.git(exec, cwd: directory, ["rev-list", "--count"] + from + ["--not", "--remotes"]), out.ok
         else { return 0 }
         return Int(GitText.trimmed(out.stdout)) ?? 0
+    }
+
+    /// The pointers the worktree's commits would publish that their
+    /// submodules' origins don't have. Only pointers moved by commits origin
+    /// doesn't have yet are checked, each after fetching its submodule's
+    /// origin; one that can't be fetched counts, since letting a bad pointer
+    /// through can't be taken back. A submodule that isn't checked out can't
+    /// hold commits of its own, so it isn't asked.
+    public static func unpublishedPointers(_ exec: any Executor, worktree: String, repos: [ChatRepo]) async -> [UnpublishedPointer] {
+        guard repos.contains(where: \.isSubmodule) else { return [] }
+        // What origin has of the branch: its upstream, else where it left origin's default branch.
+        let from: String
+        if await revision(exec, worktree, "@{upstream}") != nil {
+            from = "@{upstream}"
+        } else if let base = await Diff.resolveBase(exec, worktree: worktree, preferred: nil),
+                  let fork = await Diff.mergeBase(exec, worktree: worktree, base: base) {
+            from = fork
+        } else {
+            // Nothing on origin at all: every pointer at HEAD is new to it.
+            from = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+        }
+        guard let out = try? await Git.git(exec, cwd: worktree, ["diff", "--raw", "-z", "--no-abbrev", "--no-renames", from, "HEAD"]),
+              out.ok else { return [] }
+        var found: [UnpublishedPointer] = []
+        var fields = Submodules.nulFields(out.stdout)[...]
+        // ":<old mode> <new mode> <old sha> <new sha> <status>", then the path.
+        while let header = fields.popFirst(), let path = fields.popFirst() {
+            let parts = header.dropFirst().split(separator: " ").map(String.init)
+            guard parts.count >= 4, parts[1] == "160000", let repo = repos.first(where: { $0.path == path }) else { continue }
+            let sha = parts[3], dir = repo.directory(in: worktree)
+            do {
+                try await fetchOrigin(exec, dir)
+            } catch {
+                found.append(UnpublishedPointer(repo: repo, sha: sha, reason: .unreachable(error.localizedDescription)))
+                continue
+            }
+            let missing = try? await Git.git(exec, cwd: dir, ["rev-list", sha, "--not", "--remotes=origin"])
+            if missing?.ok != true || !GitText.trimmed(missing?.stdout ?? "").isEmpty {
+                found.append(UnpublishedPointer(repo: repo, sha: sha, reason: .notOnOrigin))
+            }
+        }
+        return found
+    }
+
+    /// `git fetch --prune origin` in the repository at `directory`, never
+    /// asking for credentials, giving up after 30 seconds.
+    private static func fetchOrigin(_ exec: any Executor, _ directory: String) async throws {
+        let spec = LaunchSpec(command: "git", args: ["fetch", "--quiet", "--prune", "--no-tags", "origin"], cwd: directory,
+                              env: ["GIT_TERMINAL_PROMPT": "0"], keepStdinOpen: false)
+        let result = try await exec.run(spec, timeout: .seconds(30))
+        if result.timedOut { throw AbstractError.message("its origin didn't answer within 30 seconds") }
+        guard result.ok else { throw AbstractError.message(GitText.failure(result.stderr) ?? result.lastLine ?? "git fetch failed") }
     }
 }

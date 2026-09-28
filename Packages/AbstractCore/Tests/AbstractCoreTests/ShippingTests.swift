@@ -169,4 +169,84 @@ struct ShippingTests {
         #expect(try await Shipping.pushSubmodules(exec, worktree: plain, repos: repos, branch: "chat") == [])
         #expect(await Shipping.unpushedWork(exec, worktree: plain, repos: repos).isEmpty, "a repository's own branch is kept on delete")
     }
+
+    // MARK: The guard
+
+    /// libs/core gets a commit of its own and app's branch records it, unpushed.
+    private func moveCore(_ f: SubmoduleFixture) async throws {
+        let core = f.worktree + "/libs/core"
+        try f.write(core + "/c.txt", "c\n")
+        try await f.commitAll(core, "Chat work")
+        try await f.git(f.worktree, ["add", "libs/core"])
+        try await f.git(f.worktree, ["commit", "-qm", "Move core"])
+    }
+
+    @Test func aPointerToAnUnpushedCommitHoldsTheParentBack() async throws {
+        let f = try await SubmoduleFixture.make()
+        defer { f.remove() }
+        try await f.addOrigin()
+        try await moveCore(f)
+        let repos = await Submodules.list(exec, worktree: f.worktree)
+
+        let blocked = await Shipping.unpublishedPointers(exec, worktree: f.worktree, repos: repos)
+        #expect(blocked.map(\.repo.path) == ["libs/core"])
+        #expect(blocked.first?.reason == .notOnOrigin)
+        #expect(blocked.first?.sha == GitText.trimmed(try await f.git(f.worktree + "/libs/core", ["rev-parse", "HEAD"])))
+
+        try await Shipping.pushSubmodules(exec, worktree: f.worktree, repos: repos, branch: "chat")
+        #expect(await Shipping.unpublishedPointers(exec, worktree: f.worktree, repos: repos).isEmpty, "pushed: the parent can go")
+    }
+
+    @Test func onlyPointersTheBranchMovesAreChecked() async throws {
+        let f = try await SubmoduleFixture.make()
+        defer { f.remove() }
+        try await f.addOrigin()
+        // Its origin can't be reached, but the branch never moved its pointer.
+        try await f.git(f.worktree + "/libs/other lib", ["remote", "set-url", "origin", f.dir + "/missing"])
+        try f.write(f.worktree + "/top.txt", "top\n")
+        try await f.git(f.worktree, ["add", "top.txt"])
+        try await f.git(f.worktree, ["commit", "-qm", "Top"])
+        let repos = await Submodules.list(exec, worktree: f.worktree)
+        #expect(await Shipping.unpublishedPointers(exec, worktree: f.worktree, repos: repos).isEmpty)
+    }
+
+    @Test func anOriginThatCantBeAskedBlocks() async throws {
+        let f = try await SubmoduleFixture.make()
+        defer { f.remove() }
+        try await f.addOrigin()
+        try await moveCore(f)
+        try await f.git(f.worktree + "/libs/core", ["remote", "set-url", "origin", f.dir + "/missing"])
+        let repos = await Submodules.list(exec, worktree: f.worktree)
+        let blocked = await Shipping.unpublishedPointers(exec, worktree: f.worktree, repos: repos)
+        #expect(blocked.map(\.repo.path) == ["libs/core"])
+        guard case .unreachable = blocked.first?.reason else {
+            Issue.record("expected unreachable, got \(String(describing: blocked.first?.reason))")
+            return
+        }
+    }
+
+    @Test func aSubmoduleNotCheckedOutIsntAsked() async throws {
+        let f = try await SubmoduleFixture.make()
+        defer { f.remove() }
+        try await f.addOrigin()
+        // The branch moves libs/unused's pointer without it being checked out.
+        try f.write(f.repo("unused") + "/n.txt", "n\n")
+        try await f.commitAll(f.repo("unused"), "New")
+        let sha = GitText.trimmed(try await f.git(f.repo("unused"), ["rev-parse", "HEAD"]))
+        try await f.git(f.worktree, ["update-index", "--cacheinfo", "160000,\(sha),libs/unused"])
+        try await f.git(f.worktree, ["commit", "-qm", "Move unused"])
+        let repos = await Submodules.list(exec, worktree: f.worktree)
+        #expect(await Shipping.unpublishedPointers(exec, worktree: f.worktree, repos: repos).isEmpty,
+                "not checked out here, so it can't hold commits of its own")
+    }
+
+    @Test func withoutSubmodulesNothingIsAsked() async throws {
+        let f = try await SubmoduleFixture.make()
+        defer { f.remove() }
+        let plain = f.repo("deep")
+        let repos = await Submodules.list(exec, worktree: plain)
+        let recording = RecordingExecutor()
+        #expect(await Shipping.unpublishedPointers(recording, worktree: plain, repos: repos).isEmpty)
+        #expect(!recording.calls(in: plain).contains { $0.first == "fetch" }, "no network for a project without submodules")
+    }
 }
