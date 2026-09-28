@@ -118,6 +118,9 @@ struct GitActionsButton: View {
     @Environment(AppModel.self) private var model
     let session: Session
     @State private var running: GitAction?
+    /// The repository `running` started against, frozen for its duration:
+    /// the current repository can change while it's still running.
+    @State private var runningPath = ""
     @State private var onGitHub = false
     @State private var watcher: AnyObject?
     @State private var pendingRead: Task<Void, Never>?
@@ -148,7 +151,8 @@ struct GitActionsButton: View {
                 } else {
                     glyph(primary)
                 }
-                Text(named(running.map(pendingTitle) ?? title(primary))).font(BTFont.ui(13)).foregroundStyle(Color.btText)
+                Text(running.map { named(pendingTitle($0), in: runningPath) } ?? named(title(primary)))
+                    .font(BTFont.ui(13)).foregroundStyle(Color.btText)
                     .lineLimit(1).truncationMode(.middle)
             }
         } items: {
@@ -202,8 +206,13 @@ struct GitActionsButton: View {
         Image(nsImage: icon(action))
     }
 
-    /// A step's title, with the submodule it acts on in front.
-    private func named(_ title: String) -> String { isSubmodule ? "\(repoPath) · \(title)" : title }
+    /// A step's title, with the submodule it acts on in front: `path` when
+    /// given (a running step, frozen against later switches), else the
+    /// current repository.
+    private func named(_ title: String, in path: String? = nil) -> String {
+        let path = path ?? repoPath
+        return path.isEmpty ? title : "\(path) · \(title)"
+    }
 
     /// Open, draft, merged or closed: the chat's pull request as it stands.
     private var prKind: PullRequestGlyph.Kind { pr?.glyph ?? .open }
@@ -365,9 +374,14 @@ struct GitActionsButton: View {
         guard let worktree = session.worktreePath else { return }
         let exec = model.executor(for: session.id)
         let path = repoPath
-        let dir = path.isEmpty ? worktree : worktree + "/" + path
+        let dir = ChatRepo(path: path).directory(in: worktree)
         func done(_ what: String) -> String { path.isEmpty ? what : "\(what) \(path)" }
+        // Frozen now: `state` is read live from the current repository, which
+        // can change before the awaits below finish.
+        let base = state?.base
+        let baseName = state?.baseName
         running = action
+        runningPath = path
         Task {
             defer { running = nil }
             do {
@@ -388,14 +402,14 @@ struct GitActionsButton: View {
                     try await model.pushEverything(session.id, in: path)
                     model.flash(done("Pulled and pushed"))
                 case .updateFromBase:
-                    guard let base = state?.base else { return }
+                    guard let base else { return }
                     try await GitActions.updateFromBase(exec, worktree: dir, base: base)
-                    model.flash(path.isEmpty ? "Updated from \(state?.baseName ?? base)" : "Updated \(path) from \(state?.baseName ?? base)")
+                    model.flash(path.isEmpty ? "Updated from \(baseName ?? base)" : "Updated \(path) from \(baseName ?? base)")
                 case .mergeLocally:
-                    guard let base = state?.base, let branch = session.branch,
+                    guard let base, let branch = session.branch,
                           let root = model.project(session.projectId)?.rootPath else { return }
                     try await GitActions.mergeLocally(exec, root: root, branch: branch, base: base)
-                    model.flash("Merged into \(state?.baseName ?? base)")
+                    model.flash("Merged into \(baseName ?? base)")
                 case .createPR, .viewPR, .archive:
                     break
                 }
