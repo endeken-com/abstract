@@ -10,6 +10,9 @@ public struct OpenCodeProvider: ProviderDefinition {
     public var binary: String { "opencode" }
     public var detectArgs: [String] { ["--version"] }
     public var followUpMode: FollowUpMode { .respawn }
+    /// `run` sends `/compact` to the model as text; its server really compacts.
+    public var commands: ProviderCommands { ProviderCommands(extra: [.compact]) }
+    public var compaction: Compaction? { .sideChannel(OpenCodeCompactor()) }
 
     public init() {}
 

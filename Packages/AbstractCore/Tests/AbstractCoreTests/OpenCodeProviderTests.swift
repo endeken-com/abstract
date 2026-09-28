@@ -77,3 +77,77 @@ import Testing
         #expect(catalog.models[1].efforts.isEmpty)
     }
 }
+
+@Suite("OpenCode compaction")
+struct OpenCodeCompactionTests {
+    /// `GET /session/{id}/message` after a compaction, from OpenCode 1.18.18, trimmed.
+    static let messages = #"""
+    [{"info":{"role":"user"},"parts":[{"type":"text","text":"Reply with just: ok"}]},
+     {"info":{"role":"assistant","mode":"build","tokens":{"total":16151}},"parts":[{"type":"step-start"},{"type":"text","text":"ok"}]},
+     {"info":{"role":"user"},"parts":[{"type":"compaction"}]},
+     {"info":{"role":"assistant","mode":"compaction","summary":true,"tokens":{"total":785}},"parts":[{"type":"reasoning","text":"thinking"},{"type":"text","text":"## Objective\n- Reply ok."}]}]
+    """#
+
+    static func json(_ text: String) -> JSONValue { (try? JSONDecoder().decode(JSONValue.self, from: Data(text.utf8))) ?? .null }
+
+    @Test func readsThePortItListensOn() {
+        #expect(OpenCodeServer.port(fromLine: "opencode server listening on http://127.0.0.1:61070") == 61070)
+        #expect(OpenCodeServer.port(fromLine: "Warning: OPENCODE_SERVER_PASSWORD is not set") == nil)
+    }
+
+    @Test func splitsTheModelAtItsFirstSlash() {
+        #expect(OpenCodeServer.model("opencode/big-pickle")?.provider == "opencode")
+        #expect(OpenCodeServer.model("opencode/big-pickle")?.model == "big-pickle")
+        #expect(OpenCodeServer.model("openrouter/anthropic/claude-sonnet-5")?.provider == "openrouter")
+        #expect(OpenCodeServer.model("openrouter/anthropic/claude-sonnet-5")?.model == "anthropic/claude-sonnet-5")
+        #expect(OpenCodeServer.model("big-pickle") == nil)
+        #expect(OpenCodeServer.model("/x") == nil)
+    }
+
+    @Test func theContextBeforeIsTheLastReplysTokens() {
+        let before = Self.json(Self.messages).array.map { JSONValue.array(Array($0.prefix(2))) } ?? .null
+        #expect(OpenCodeServer.contextTokens(messages: before) == 16151)
+        #expect(OpenCodeServer.contextTokens(messages: Self.json(Self.messages)) == 16151, "the compaction's own reply doesn't count")
+    }
+
+    @Test func theSummaryIsTheCompactionReplysText() {
+        #expect(OpenCodeServer.summary(messages: Self.json(Self.messages)) == "## Objective\n- Reply ok.")
+        #expect(OpenCodeServer.summary(messages: Self.json("[]")) == nil)
+    }
+
+    @Test func readsErrorsAndStatus() {
+        #expect(OpenCodeServer.errorMessage(#"{"name":"NotFoundError","data":{"message":"Session not found: ses_x"}}"#) == "Session not found: ses_x")
+        #expect(OpenCodeServer.errorMessage("gateway down") == nil)
+        #expect(OpenCodeServer.split("true\n200") == ("true", 200))
+        #expect(OpenCodeServer.split("{\"a\":1}\nmore\n404") == ("{\"a\":1}\nmore", 404))
+    }
+
+    @Test func noModelAnywhereSaysSo() async {
+        let home = NSTemporaryDirectory() + "oc-\(UUID().uuidString)"
+        let request = CompactionRequest(sessionId: "ses_x", cwd: NSTemporaryDirectory())
+        await #expect(throws: AbstractError.message("OpenCode needs a model to compact with; choose one for this chat.")) {
+            try await OpenCodeCompactor().compact(request, executor: HomeOnly(home: home))
+        }
+    }
+
+    @Test func openCodeCompactsThroughItsServer() {
+        #expect(OpenCodeProvider().commands.extra.contains(.compact))
+        guard case .sideChannel(let compactor)? = OpenCodeProvider().compaction else { Issue.record("no side channel"); return }
+        #expect(compactor is OpenCodeCompactor)
+    }
+}
+
+/// LocalExecutor with another home, so no real OpenCode config is read.
+private struct HomeOnly: Executor {
+    let home: String
+    var homeDirectory: String { home }
+    let base = LocalExecutor.shared
+    func run(_ command: String, _ args: [String], cwd: String?) async throws -> ExecResult { try await base.run(command, args, cwd: cwd) }
+    func spawn(_ spec: LaunchSpec, onLine: @escaping @Sendable (OutputLine) -> Void,
+               onExit: @escaping @Sendable (Int32?) -> Void) throws -> RunningProcess { try base.spawn(spec, onLine: onLine, onExit: onExit) }
+    func fileExists(_ path: String) -> Bool { base.fileExists(path) }
+    func readFile(_ path: String) throws -> String { try base.readFile(path) }
+    func createDirectory(_ path: String) throws { try base.createDirectory(path) }
+    func removeItem(_ path: String) throws { try base.removeItem(path) }
+    func which(_ binary: String) async -> String? { await base.which(binary) }
+}
