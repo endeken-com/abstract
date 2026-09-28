@@ -1114,13 +1114,11 @@ final class AppModel {
             remote.forward(sessionId: sessionId, seq: seq, line: line)
         case let .exit(sessionId, code):
             alive.remove(sessionId)
-            // An in-stream compaction whose process died without a status: log it
-            // (a stale-compaction check at reload would otherwise blame the quit)
-            // and free the chat.
-            if compacting.contains(sessionId), compactions[sessionId] == nil {
-                engine.record(sessionId: sessionId, CompactionMarker.failed(CompactionState.stoppedEarly).line)
-                endCompacting(sessionId)
-            }
+            // An in-stream compaction whose process died without a status: freed
+            // here so the chat never stays stuck; what actually happened to it is
+            // logged below, from the same `onExit` the rest of this exit reads.
+            let wasCompacting = compacting.contains(sessionId) && compactions[sessionId] == nil
+            if wasCompacting { endCompacting(sessionId) }
             // Only once its last status is written may `abstract` take the chat.
             defer {
                 publishAgent(sessionId, providerId: nil)
@@ -1145,7 +1143,12 @@ final class AppModel {
                 return
             }
             if let stream = streams[sessionId] {
-                for e in stream.onExit(code: code) { apply(e, to: sessionId) }
+                let exitEvents = stream.onExit(code: code)
+                if wasCompacting {
+                    closeCompactionOnExit(exitEvents, sessionId: sessionId)
+                } else {
+                    for e in exitEvents { apply(e, to: sessionId) }
+                }
             }
             remote.forwardExit(sessionId: sessionId, code: code)
             if let s = session(sessionId), s.status.isActive {
@@ -1156,6 +1159,29 @@ final class AppModel {
                 }
             }
             permissions[sessionId] = nil
+        }
+    }
+
+    /// Closes an in-stream compaction whose process just exited, from the same
+    /// exit events the rest of the exit handling reads: Claude may have finished
+    /// (a compaction boundary flushed with no summary turn after it) rather than
+    /// failed, and either way this must be the only place that closes it — a
+    /// second, independent guess (e.g. from the exit's own `.error`) would double
+    /// up or contradict what's recorded here.
+    private func closeCompactionOnExit(_ exitEvents: [AgentEvent], sessionId: String) {
+        let finished = exitEvents.compactMap { event -> CompactionMarker? in
+            guard case let .compaction(.finished(result, trigger, durationMs)) = event else { return nil }
+            return .finished(result, trigger: trigger, durationMs: durationMs)
+        }.first
+        let marker = finished ?? .failed(CompactionState.stoppedEarly)
+        // Recorded, then marked already-seen: its own async echo off `engine.events`
+        // must not re-apply it, since it's applied here, in order with the rest.
+        let seq = engine.record(sessionId: sessionId, marker.line)
+        seenSeq[sessionId] = max(seenSeq[sessionId] ?? 0, seq)
+        apply(marker.event, to: sessionId)
+        for e in exitEvents {
+            if case .compaction = e { continue }
+            apply(e, to: sessionId)
         }
     }
 
