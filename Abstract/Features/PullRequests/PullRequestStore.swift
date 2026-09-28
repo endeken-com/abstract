@@ -136,9 +136,11 @@ extension AppModel {
     func createPullRequest(_ sessionId: String, title: String, body: String, base: String?, draft: Bool, commitFirst: Bool) async throws {
         guard let session = session(sessionId), let branch = session.branch, let worktree = session.worktreePath,
               let project = project(session.projectId) else { return }
+        // Its submodules committed and pushed first, and its pointers checked, before the branch goes.
+        if commitFirst { try await commitEverything(sessionId, message: title) }
+        try await prepareParentPush(sessionId)
         pullRequests[sessionId] = try await GitHub.create(executor(for: sessionId), repo: project.rootPath, worktree: worktree, branch: branch,
-                                                          base: base, title: title, body: body, draft: draft,
-                                                          commitMessage: commitFirst ? title : nil)
+                                                          base: base, title: title, body: body, draft: draft, commitMessage: nil)
         pinnedPullRequests[sessionId] = nil
         await refreshPullRequests(projectId: project.id)
         await refreshBranch(sessionId)
@@ -146,9 +148,9 @@ extension AppModel {
 
     /// Commits what's in the worktree (if anything) and pushes, updating an open pull request.
     func pushChanges(_ sessionId: String, message: String) async throws {
-        guard let session = session(sessionId), let branch = session.branch, let worktree = session.worktreePath else { return }
-        try await Git.commitAll(executor(for: sessionId), worktree: worktree, message: message)
-        try await Git.push(executor(for: sessionId), worktree: worktree, branch: branch)
+        guard session(sessionId)?.worktreePath != nil else { return }
+        try await commitEverything(sessionId, message: message)
+        try await pushEverything(sessionId)
         await refreshBranch(sessionId)
         try await refreshPullRequest(sessionId)
     }

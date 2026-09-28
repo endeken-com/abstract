@@ -353,19 +353,17 @@ struct GitActionsButton: View {
                 case .commit:
                     // The chat's name already says what it did, in a few words.
                     let message = String(session.name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(72))
-                    try await Git.commitAll(exec, worktree: worktree, message: message.isEmpty ? "Update files" : message)
+                    try await model.commitEverything(session.id, message: message.isEmpty ? "Update files" : message)
                     model.flash("Committed")
                 case .pull:
                     try await GitActions.pull(exec, worktree: worktree)
                     model.flash("Pulled")
                 case .push:
-                    guard let branch = session.branch else { return }
-                    try await Git.push(exec, worktree: worktree, branch: branch)
+                    try await model.pushEverything(session.id)
                     model.flash("Pushed")
                 case .pullAndPush:
-                    guard let branch = session.branch else { return }
                     try await GitActions.pull(exec, worktree: worktree)
-                    try await Git.push(exec, worktree: worktree, branch: branch)
+                    try await model.pushEverything(session.id)
                     model.flash("Pulled and pushed")
                 case .updateFromBase:
                     guard let base = state?.base else { return }
