@@ -4,16 +4,23 @@ import AbstractCore
 /// The changed files as a tree, after Paseo's (Apache-2.0, Copyright (c)
 /// 2025-present Mohamed Boudra): folders first, a folder holding only one
 /// folder merged into it (`Sources/App/Chat`), each folder with its files'
-/// totals. Choosing a file shows it in the diff.
+/// totals. Choosing a file shows it in the diff. First come the submodules
+/// whose pointers the changes move; choosing one shows that submodule.
 struct ChangesTree: View {
     let review: DiffReview
     let onOpen: (String) -> Void
+    let onOpenRepo: (String) -> Void
     @State private var collapsed: Set<String> = []
 
     var body: some View {
         let rows = ChangesTreeRow.flatten(ChangesTreeRow.build(review.files), collapsed: collapsed)
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach(review.pointers) { pointer in
+                    PointerRow(pointer: pointer, canOpen: review.repoList.contains { $0.path == pointer.repo.path }) {
+                        onOpenRepo(pointer.repo.path)
+                    }
+                }
                 ForEach(rows) { row in
                     TreeRowView(row: row, collapsed: collapsed.contains(row.id), selected: row.path == review.focusPath) {
                         switch row.kind {

@@ -1,0 +1,164 @@
+import Foundation
+
+/// One repository a chat's worktree holds: the worktree's own, or a
+/// submodule checked out inside it, at any depth.
+public struct ChatRepo: Sendable, Hashable, Identifiable {
+    /// Relative to the worktree; empty for the worktree's own repository.
+    public var path: String
+    /// 0 for the worktree's own, 1 for its submodules, 2 for theirs.
+    public var depth: Int
+    /// The repository this one is a submodule of; nil for the worktree's own.
+    public var parentPath: String?
+    /// What's checked out; nil when HEAD is detached.
+    public var branch: String?
+    /// `owner/name` when origin is on GitHub.
+    public var github: String?
+
+    public var id: String { path }
+    public var isSubmodule: Bool { !path.isEmpty }
+
+    public init(path: String, depth: Int = 0, parentPath: String? = nil, branch: String? = nil, github: String? = nil) {
+        self.path = path; self.depth = depth; self.parentPath = parentPath; self.branch = branch; self.github = github
+    }
+
+    /// Its folder, given the worktree's (or the project checkout's) path.
+    public func directory(in worktree: String) -> String {
+        path.isEmpty ? worktree : GitText.trimTrailingSlashes(worktree) + "/" + path
+    }
+
+    /// `other`, a path relative to the worktree, as this repository sees it;
+    /// nil when it's somewhere else.
+    public func inside(_ other: String) -> String? {
+        if path.isEmpty { return other }
+        return GitText.hasPrefix(other, path + "/") ? GitText.dropPrefix(other, path + "/") : nil
+    }
+}
+
+/// What the Files pane shows of a chat's worktree (see `Submodules.files`).
+public struct WorktreeFiles: Sendable, Hashable {
+    /// Paths from the worktree; a folder's ends in "/".
+    public var paths: [String] = []
+    /// Every submodule, checked out or not, by path from the worktree.
+    public var submodules: Set<String> = []
+    /// Each repository's `git status --porcelain=v1 -z` (new files
+    /// included), by its path; "" is the worktree's own.
+    public var statuses: [String: String] = [:]
+
+    public init() {}
+}
+
+/// The repositories in a chat's worktree, read with git alone so it works the
+/// same for a worktree on another Mac.
+public enum Submodules {
+    /// The worktree's own repository, then every checked-out submodule in the
+    /// order git visits them (each before its own submodules). Ones that
+    /// aren't checked out aren't listed.
+    public static func list(_ exec: any Executor, worktree: String) async -> [ChatRepo] {
+        let branch = (try? await Git.currentBranch(exec, root: worktree)) ?? nil
+        let top = ChatRepo(path: "", branch: branch, github: await Git.originURL(exec, root: worktree).flatMap(GitRemote.githubSlug))
+        guard let out = try? await Git.git(exec, cwd: worktree, ["submodule", "foreach", "--quiet", "--recursive", listing]),
+              out.ok else { return [top] }
+        return [top] + parse(out.stdout)
+    }
+
+    /// Run in each submodule: its path from the worktree, branch and origin, tab-separated.
+    static let listing = #"printf '%s\t%s\t%s\n' "$displaypath" "$(git symbolic-ref --quiet --short HEAD)" "$(git remote get-url origin 2>/dev/null)""#
+
+    static func parse(_ output: String) -> [ChatRepo] {
+        var repos: [ChatRepo] = []
+        for line in GitText.lines(output) {
+            let fields = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+            guard fields.count == 3, !fields[0].isEmpty else { continue }
+            // git lists a submodule's parent before it, so the nearest listed
+            // repository containing it is its parent.
+            let parent = repos.last { $0.inside(fields[0]) != nil }
+            repos.append(ChatRepo(path: fields[0], depth: (parent?.depth ?? 0) + 1, parentPath: parent?.path ?? "",
+                                  branch: fields[1].isEmpty ? nil : fields[1], github: GitRemote.githubSlug(fields[2])))
+        }
+        return repos
+    }
+
+    /// The submodule paths `.gitmodules` registers in `root`, checked out or not.
+    public static func registered(_ exec: any Executor, root: String) async -> [String] {
+        guard let out = try? await Git.git(exec, cwd: root, ["config", "-z", "-f", ".gitmodules", "--get-regexp", #"^submodule\..*\.path$"#]),
+              out.ok else { return [] }
+        // With -z each entry is "key\nvalue\0"; a name may hold spaces, so no splitting on them.
+        return out.stdout.split(separator: "\0").compactMap { entry in
+            entry.split(separator: "\n", maxSplits: 1).dropFirst().first.map(String.init)
+        }
+    }
+
+    /// Every path the worktree's status lists, a submodule's own path when
+    /// anything in it (or in one inside it) changed; nil when git can't say.
+    /// The review reads a submodule only when it's here.
+    public static func changedPaths(_ exec: any Executor, worktree: String) async -> Set<String>? {
+        // A submodule's own status.showUntrackedFiles=no would hide one whose
+        // only change is a new file; -c reaches the status git runs inside it.
+        await statusPaths(exec, cwd: worktree, ["-c", "status.showUntrackedFiles=normal", "--no-optional-locks", "status",
+                                                "--porcelain=v1", "-z", "--ignore-submodules=none"])
+    }
+
+    /// The paths a `status --porcelain=v1 -z` run names, a rename's both.
+    private static func statusPaths(_ exec: any Executor, cwd: String, _ args: [String]) async -> Set<String>? {
+        guard let out = try? await Git.git(exec, cwd: cwd, args), out.ok else { return nil }
+        var paths: Set<String> = []
+        var entries = out.stdout.split(separator: "\0").map(String.init)[...]
+        while let entry = entries.popFirst(), entry.utf8.count > 3 {
+            // "XY path", by bytes so a path starting with a combining mark stays whole.
+            paths.insert(String(decoding: entry.utf8.dropFirst(3), as: UTF8.self))
+            // A rename's entry is followed by its old path.
+            let code = entry.utf8.prefix(2)
+            if code.contains(UInt8(ascii: "R")) || code.contains(UInt8(ascii: "C")), let old = entries.popFirst() { paths.insert(old) }
+        }
+        return paths
+    }
+
+    /// Whether `directory` is the top of a repository of its own (a
+    /// submodule that's checked out) rather than a folder of its parent's.
+    public static func isCheckedOut(_ exec: any Executor, directory: String) async -> Bool {
+        guard let out = try? await Git.git(exec, cwd: directory, ["rev-parse", "--show-prefix"]), out.ok else { return false }
+        return GitText.trimmed(out.stdout).isEmpty
+    }
+
+    /// What the Files pane lists: every file git knows in the worktree and in
+    /// each checked-out submodule, by path from the worktree, with each
+    /// repository's own status for the change marks. To its parent a
+    /// submodule is a single entry, so it's listed as a folder ("path/")
+    /// instead, holding nothing when it isn't checked out. Nil when the
+    /// worktree isn't a repository.
+    public static func files(_ exec: any Executor, worktree: String) async -> WorktreeFiles? {
+        var result = WorktreeFiles()
+        for repo in await list(exec, worktree: worktree) {
+            let dir = repo.directory(in: worktree)
+            async let staged = Git.git(exec, cwd: dir, ["ls-files", "-z", "--stage"])
+            async let others = Git.git(exec, cwd: dir, ["ls-files", "-z", "--others", "--exclude-standard"])
+            // Its own changes: the ones inside its submodules are theirs to report.
+            async let status = Git.git(exec, cwd: dir, ["--no-optional-locks", "status", "--porcelain=v1", "-z",
+                                                        "--untracked-files=all", "--ignore-submodules=all"])
+            guard let staged = try? await staged, staged.ok else {
+                if repo.isSubmodule { continue }
+                return nil
+            }
+            let prefix = repo.isSubmodule ? repo.path + "/" : ""
+            for entry in nulFields(staged.stdout) {
+                // "<mode> <sha> <stage>\t<path>"; mode 160000 is a submodule.
+                guard let tab = entry.utf8.firstIndex(of: UInt8(ascii: "\t")) else { continue }
+                let path = prefix + String(decoding: entry.utf8[entry.utf8.index(after: tab)...], as: UTF8.self)
+                if GitText.hasPrefix(entry, "160000 ") {
+                    result.submodules.insert(path)
+                    result.paths.append(path + "/")
+                } else {
+                    result.paths.append(path)
+                }
+            }
+            if let others = try? await others, others.ok { result.paths += nulFields(others.stdout).map { prefix + $0 } }
+            if let status = try? await status, status.ok { result.statuses[repo.path] = status.stdout }
+        }
+        return result
+    }
+
+    /// NUL-separated fields, split on bytes so a path can't fuse with its separator.
+    static func nulFields(_ output: String) -> [String] {
+        output.utf8.split(separator: 0).map { String(decoding: $0, as: UTF8.self) }
+    }
+}

@@ -67,4 +67,22 @@ struct DiffCompareTests {
         #expect(!FileManager.default.fileExists(atPath: dir + "/b.txt"))
         #expect(await !Diff.isDirty(exec, worktree: dir))
     }
+
+    @Test func readingTheChangesMidMergeKeepsTheConflicts() async throws {
+        let dir = try await makeRepo()
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        // `work` changed a.txt; main changes the same line differently, then merges work.
+        _ = try await git(dir, ["checkout", "-q", "main"])
+        try "one\ntwo\nfour\n".write(toFile: dir + "/a.txt", atomically: true, encoding: .utf8)
+        _ = try await git(dir, ["commit", "-qam", "Add four"])
+        let merge = try await exec.run("git", ["merge", "-q", "work"], cwd: dir)
+        try #require(!merge.ok, "the merge conflicts")
+        try "new\n".write(toFile: dir + "/new.txt", atomically: true, encoding: .utf8)
+
+        _ = try await Diff.collect(exec, worktree: dir)
+
+        let unmerged = try await git(dir, ["ls-files", "-u"])
+        #expect(!unmerged.isEmpty, "a.txt is still unmerged, for you to resolve")
+        #expect(await Diff.hasConflicts(exec, repo: dir))
+    }
 }

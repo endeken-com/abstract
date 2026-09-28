@@ -1,0 +1,88 @@
+import Foundation
+import AbstractCore
+
+/// Shipping a chat whose worktree holds submodules (see `Shipping`), for the
+/// git actions, the Pull Request tab and the delete confirmations.
+extension AppModel {
+    /// What deleting `worktree` loses beyond its uncommitted work: commits in
+    /// its submodules that no remote has. They live in the worktree's own
+    /// clone of each and go with it. Nil when there are none.
+    func unpushedSubmoduleWarning(_ exec: any Executor, worktree: String) async -> String? {
+        let repos = await Submodules.list(exec, worktree: worktree)
+        let lost = await Shipping.unpushedWork(exec, worktree: worktree, repos: repos)
+        guard !lost.isEmpty else { return nil }
+        let list = lost.map { "\($0.repo.path) (\($0.commits) commit\($0.commits == 1 ? "" : "s"))" }.joined(separator: ", ")
+        return "\(list) \(lost.count == 1 ? "has" : "have") commits no remote has. They're only in this worktree and are lost with it."
+    }
+
+    /// Commits the chat's work in every repository with some, its submodules
+    /// first, with one message. Submodules you can't push to are left alone.
+    /// Without a branch (an agent's own worktree not yet on one), commits the
+    /// worktree's own repository only, as it always did.
+    func commitEverything(_ sessionId: String, message: String) async throws {
+        guard let session = session(sessionId), let worktree = session.worktreePath else { return }
+        let exec = executor(for: sessionId)
+        guard let branch = session.branch else {
+            try await Git.commitAll(exec, worktree: worktree, message: message)
+            return
+        }
+        let repos = await Submodules.list(exec, worktree: worktree)
+        try await Shipping.commit(exec, worktree: worktree, repos: repos, branch: branch,
+                                  readOnly: await readOnlySubmodules(repos), message: message)
+    }
+
+    /// Before the chat's branch is pushed: pushes its submodules that have
+    /// commits no remote has, then makes sure every pointer the branch
+    /// publishes is on its submodule's origin. Throws, naming the submodule
+    /// and what was pushed already, when the branch can't go yet, or saying
+    /// so when there's no branch at all.
+    func prepareParentPush(_ sessionId: String) async throws {
+        guard let session = session(sessionId), let worktree = session.worktreePath else { return }
+        guard let branch = session.branch else { throw AbstractError.message("This chat has no branch to push.") }
+        let exec = executor(for: sessionId)
+        // Guarded even when only the worktree's own is listed: listing its
+        // submodules may have failed. Without any, nothing is pushed first and
+        // the guard reads the branch's commits alone, asking no origin.
+        let repos = await Submodules.list(exec, worktree: worktree)
+        let readOnly = await readOnlySubmodules(repos)
+        let pushed = try await Shipping.pushSubmodules(exec, worktree: worktree, repos: repos, branch: branch, readOnly: readOnly)
+        if let blocked = await Shipping.unpublishedPointers(exec, worktree: worktree, repos: repos, base: session.baseRef).first {
+            let went = pushed.isEmpty ? "" : "Pushed \(pushed.joined(separator: ", ")). "
+            throw AbstractError.message(went + Self.explain(blocked, readOnly: readOnly.contains(blocked.repo.path)))
+        }
+    }
+
+    /// Pushes the chat's branch, its submodules first.
+    func pushEverything(_ sessionId: String) async throws {
+        guard let session = session(sessionId), let worktree = session.worktreePath else { return }
+        guard let branch = session.branch else { throw AbstractError.message("This chat has no branch to push.") }
+        try await prepareParentPush(sessionId)
+        try await Git.push(executor(for: sessionId), worktree: worktree, branch: branch)
+    }
+
+    /// Submodules on GitHub you can't push to, by path.
+    private func readOnlySubmodules(_ repos: [ChatRepo]) async -> Set<String> {
+        var paths: Set<String> = []
+        for repo in repos where repo.isSubmodule {
+            if let slug = repo.github, await access(to: slug) == .readOnly { paths.insert(repo.path) }
+        }
+        return paths
+    }
+
+    private static func explain(_ pointer: UnpublishedPointer, readOnly: Bool) -> String {
+        let short = String(pointer.sha.prefix(7)), path = pointer.repo.path
+        switch pointer.reason {
+        case .unreachable(let why):
+            return "Didn't push: couldn't check \(path) against its origin (\(why))."
+        case .unreadable(let why):
+            return "Didn't push: couldn't read which submodule pointers the branch moves (\(why))."
+        case .notOnOrigin where readOnly:
+            return "Didn't push: \(path) points at \(short), which isn't on its origin, and you can't push to "
+                + "\(pointer.repo.github ?? path). Keep its pointer where it was."
+        case .notOnOrigin:
+            // Its branch was just pushed, if it had anything to push.
+            return "Didn't push: \(path) points at \(short), which isn't on its origin even after pushing \(path)'s branch. "
+                + "Check which commit \(path) is on."
+        }
+    }
+}

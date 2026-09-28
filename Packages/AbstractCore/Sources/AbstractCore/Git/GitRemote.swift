@@ -18,6 +18,13 @@ public enum GitRemote {
         return owner.isEmpty ? nil : owner
     }
 
+    /// `owner/name` for a GitHub remote, else nil.
+    public static func githubSlug(_ remote: String) -> String? {
+        guard let (host, path) = hostAndPath(remote), host.lowercased() == "github.com" else { return nil }
+        let parts = path.split(separator: "/")
+        return parts.count == 2 ? parts.joined(separator: "/") : nil
+    }
+
     /// The owner's avatar GitHub serves at a fixed size.
     public static func githubAvatarURL(owner: String, size: Int = 96) -> URL? {
         URL(string: "https://github.com/\(owner).png?size=\(size)")

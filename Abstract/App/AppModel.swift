@@ -128,6 +128,8 @@ final class AppModel {
     var githubViewer: String?
     /// Whether each project's origin is on GitHub, by project id.
     @ObservationIgnored var githubProjects: [String: Bool] = [:]
+    /// Whether you can push to each GitHub repository, by `owner/name`, once asked.
+    @ObservationIgnored var repoAccess: [String: RepoAccess] = [:]
     /// When each project's pull requests were last listed, by project id.
     @ObservationIgnored var pullRequestsListedAt: [String: ContinuousClock.Instant] = [:]
     /// A pull request picked by hand for a chat, which a newer one won't replace.
@@ -495,17 +497,20 @@ final class AppModel {
         var name: String
         var isRoot: Bool
         var nestedRepos: [String]
+        /// What `.gitmodules` registers; the rest of `nestedRepos` git doesn't know about.
+        var submodules: [String]
         var defaultBranch: String
     }
 
     func probe(directory: String) async throws -> Probe {
         let root = try await Git.repoRoot(executor, dir: directory)
         let nested = (try? await Git.nestedRepos(executor, root: root)) ?? []
+        let submodules = await Submodules.registered(executor, root: root)
         let branch = ((try? await Git.currentBranch(executor, root: root)) ?? nil) ?? "HEAD"
         let rootURL = URL(fileURLWithPath: root).standardizedFileURL
         let dirURL = URL(fileURLWithPath: directory).standardizedFileURL
         return Probe(rootPath: root, name: rootURL.lastPathComponent, isRoot: rootURL.path == dirURL.path,
-                     nestedRepos: nested, defaultBranch: branch)
+                     nestedRepos: nested, submodules: submodules, defaultBranch: branch)
     }
 
     func addProject(_ probe: Probe, name: String, baseRef: String, providerId: String, policy: PermissionPolicy) throws {

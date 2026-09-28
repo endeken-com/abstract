@@ -75,7 +75,15 @@ struct DiffView: View {
     private func takePendingSelection() {
         guard presentation == .document, review.phase == .loaded, let path = model.pendingChangeSelection[sessionId] else { return }
         model.pendingChangeSelection[sessionId] = nil
-        if review.files.contains(where: { $0.path == path }) { showTree = false; review.focus(path) }
+        if review.files.contains(where: { $0.path == path }) {
+            showTree = false
+            review.focus(path)
+        } else if let repo = review.repo(containing: path), repo.path != review.selectedRepo,
+                  case .ready(let context) = model.diffAvailability(sessionId) {
+            // A file in another of the worktree's repositories: show that one first.
+            showTree = false
+            Task { await review.select(repo.path, context, focus: path) }
+        }
     }
 
     @ViewBuilder
@@ -105,18 +113,22 @@ struct DiffView: View {
                     if let error = review.actionError {
                         DiffErrorBanner(message: error) { review.actionError = nil }
                     }
+                    if review.selected.isSubmodule { RepoAccessNotice(repo: review.selected) }
                     RevundStrip(sessionId: sessionId, review: review)
-                    if review.files.isEmpty {
+                    if !review.hasChanges {
                         ReviewEmptyState(review: review, context: context)
                     } else if presentation == .list {
                         // Paseo's Changes list: a file opens the diff in the main pane.
-                        ChangesTree(review: review) { model.openDiffTab(in: sessionId, focus: $0) }
+                        ChangesTree(review: review, onOpen: { model.openDiffTab(in: sessionId, focus: $0) },
+                                    onOpenRepo: { path in Task { await review.select(path, context) } })
                     } else if showTree, !rail {
-                        ChangesTree(review: review) { path in showTree = false; review.focus(path) }
+                        ChangesTree(review: review, onOpen: { path in showTree = false; review.focus(path) },
+                                    onOpenRepo: { path in Task { await review.select(path, context) } })
                     } else {
                         HStack(spacing: 0) {
                             if rail {
-                                ChangesTree(review: review) { review.focus($0) }
+                                ChangesTree(review: review, onOpen: { review.focus($0) },
+                                            onOpenRepo: { path in Task { await review.select(path, context) } })
                                     .frame(width: 220)
                                 Rectangle().fill(Color.btBorder).frame(width: 1)
                             }
@@ -185,6 +197,10 @@ private struct ReviewToolbar: View {
     var body: some View {
         let count = review.files.count
         HStack(spacing: Space.sm) {
+            if review.repoList.count > 1 {
+                RepoMenu(review: review, context: context)
+                Text("/").font(BTFont.ui(13)).foregroundStyle(Color.btTextTertiary)
+            }
             ModeMenu(review: review, context: context)
             if count > 0 {
                 DiffCounts(additions: review.totalAdditions, deletions: review.totalDeletions, compact: true)
@@ -262,7 +278,8 @@ private struct ModeMenu: View {
                     ForEach(review.commits) { commit in
                         Button { Task { await review.show(.commit(commit), context) } } label: {
                             Text(commit.subject)
-                            Text([commit.shortSha, commit.author, commit.date.map { RelativeTime.short($0) }].compactMap { $0 }.joined(separator: " · "))
+                            Text([commit.shortSha, commit.author,
+                                  commit.date.map { RelativeTime.short($0) }].compactMap { $0 }.joined(separator: " · "))
                         }
                     }
                 }
@@ -306,7 +323,7 @@ private struct ReviewEmptyState: View {
         VStack(spacing: Space.md) {
             Image(systemName: "checkmark.circle").font(.system(size: 22, weight: .regular)).foregroundStyle(Color.btTextTertiary)
             Text("No changes to display").font(BTFont.ui(14, .medium)).foregroundStyle(Color.btText)
-            Text(review.mode == .uncommitted ? "Everything in the worktree is committed." : "This branch has no commits of its own yet.")
+            Text(message)
                 .font(.btCallout).foregroundStyle(Color.btTextSecondary).multilineTextAlignment(.center)
             if review.otherModeHasChanges {
                 Button(review.mode == .uncommitted ? "See committed changes" : "See uncommitted changes") {
@@ -317,6 +334,18 @@ private struct ReviewEmptyState: View {
         }
         .padding(Space.xl)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var message: String {
+        switch review.mode {
+        // Dirty with nothing to show: only whitespace changed while it's hidden,
+        // say, or only inner repositories git doesn't know about.
+        case .uncommitted: review.dirty ? "The worktree has uncommitted changes, but none that show here."
+                                        : "Everything in the worktree is committed."
+        case .committed: "This branch has no commits of its own yet."
+        // One that only moved a submodule's pointer, say.
+        case .commit: "Nothing this commit changed shows here."
+        }
     }
 }
 

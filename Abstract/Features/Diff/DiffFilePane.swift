@@ -19,6 +19,17 @@ struct DiffFileSections: View {
         ScrollViewReader { proxy in
             ScrollView(.vertical) {
                 LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
+                    // The submodules whose pointers these changes move, before the files.
+                    if !review.pointers.isEmpty {
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(review.pointers) { pointer in
+                                PointerRow(pointer: pointer, canOpen: review.repoList.contains { $0.path == pointer.repo.path }) {
+                                    Task { await review.select(pointer.repo.path, context) }
+                                }
+                            }
+                        }
+                        .padding(.vertical, Space.xs)
+                    }
                     ForEach(review.orderedFiles) { file in
                         Section {
                             if review.isExpanded(file) {
@@ -509,27 +520,38 @@ private struct ReviewCommits: View {
             .buttonStyle(.plain)
             if open {
                 ForEach(review.commits) { commit in
-                    Button { Task { await review.show(.commit(commit), context) } } label: {
-                        HStack(spacing: Space.sm) {
-                            Text(commit.subject).font(BTFont.ui(12.5)).foregroundStyle(Color.btProse).lineLimit(1)
-                            Spacer(minLength: Space.sm)
-                            Text(commit.shortSha).font(.btMonoSmall).foregroundStyle(Color.btTextTertiary).fixedSize()
-                            if let date = commit.date {
-                                Text(RelativeTime.short(date)).font(.btCaption).foregroundStyle(Color.btTextTertiary).monospacedDigit().fixedSize()
-                            }
-                        }
-                        .padding(.leading, Space.md + 10 + Space.sm)
-                        .padding(.trailing, Space.md)
-                        .frame(height: 26)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .help(commit.author)
+                    ReviewCommitRow(commit: commit, review: review, context: context)
                 }
             }
         }
         .padding(.top, Space.md)
         .overlay(alignment: .top) { Hairline() }
+    }
+}
+
+/// One commit in a list; clicking shows its changes.
+private struct ReviewCommitRow: View {
+    let commit: CommitSummary
+    let review: DiffReview
+    let context: DiffContext
+
+    var body: some View {
+        Button { Task { await review.show(.commit(commit), context) } } label: {
+            HStack(spacing: Space.sm) {
+                Text(commit.subject).font(BTFont.ui(12.5)).foregroundStyle(Color.btProse).lineLimit(1)
+                Spacer(minLength: Space.sm)
+                Text(commit.shortSha).font(.btMonoSmall).foregroundStyle(Color.btTextTertiary).fixedSize()
+                if let date = commit.date {
+                    Text(RelativeTime.short(date)).font(.btCaption).foregroundStyle(Color.btTextTertiary).monospacedDigit().fixedSize()
+                }
+            }
+            .padding(.leading, Space.md + 10 + Space.sm)
+            .padding(.trailing, Space.md)
+            .frame(height: 26)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(commit.author)
     }
 }
 
@@ -539,7 +561,7 @@ extension ReviewMode {
         switch self {
         case .uncommitted: "uncommitted"
         case .committed: "committed"
-        case .commit(let c): "commit \(c.shortSha)"
+        case .commit(let c): "commit \(c.shortSha)" + (c.repo.isEmpty ? "" : " in \(c.repo)")
         }
     }
 }

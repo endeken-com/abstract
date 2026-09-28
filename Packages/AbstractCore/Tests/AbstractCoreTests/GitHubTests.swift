@@ -87,6 +87,16 @@ struct GitHubTests {
         #expect(threads[1].isResolved)
     }
 
+    @Test func viewerPermissionSaysWhoCanPush() {
+        #expect(RepoAccess(viewerPermission: "ADMIN") == .push)
+        #expect(RepoAccess(viewerPermission: "MAINTAIN") == .push)
+        #expect(RepoAccess(viewerPermission: "write") == .push)
+        #expect(RepoAccess(viewerPermission: "TRIAGE") == .readOnly)
+        #expect(RepoAccess(viewerPermission: "READ") == .readOnly)
+        #expect(RepoAccess(viewerPermission: "") == .unknown)
+        #expect(RepoAccess(viewerPermission: nil) == .unknown)
+    }
+
     @Test func publishingCommitsAndPushesTheBranch() async throws {
         let exec = LocalExecutor.shared
         let base = FileManager.default.temporaryDirectory.appendingPathComponent("abstract-gh-\(UUID().uuidString)").path

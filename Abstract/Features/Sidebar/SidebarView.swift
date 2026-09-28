@@ -463,15 +463,23 @@ struct RailChatRow: View {
     }
 
     private func confirmDelete() {
-        let alert = NSAlert()
-        alert.messageText = "Delete “\(session.name)”?"
-        alert.informativeText = standalone
-            ? "The agent is stopped and the chat's folder is removed with everything in it."
-            : "The agent is stopped and its worktree is removed. Uncommitted work in the worktree is lost; the branch is kept."
-        alert.addButton(withTitle: "Delete")
-        alert.addButton(withTitle: "Cancel")
-        alert.buttons.first?.hasDestructiveAction = true
-        if alert.runModal() == .alertFirstButtonReturn { Task { await model.delete(session.id, removeWorktree: true) } }
+        Task {
+            // Commits in its submodules that no remote has go with the worktree.
+            var lost: String?
+            if !standalone, let path = session.worktreePath {
+                lost = await model.unpushedSubmoduleWarning(model.executor(for: session.id), worktree: path)
+            }
+            let alert = NSAlert()
+            alert.messageText = "Delete “\(session.name)”?"
+            alert.informativeText = (standalone
+                ? "The agent is stopped and the chat's folder is removed with everything in it."
+                : "The agent is stopped and its worktree is removed. Uncommitted work in the worktree is lost; the branch is kept.")
+                + (lost.map { "\n\n" + $0 } ?? "")
+            alert.addButton(withTitle: lost == nil ? "Delete" : "Delete Anyway")
+            alert.addButton(withTitle: "Cancel")
+            alert.buttons.first?.hasDestructiveAction = true
+            if alert.runModal() == .alertFirstButtonReturn { await model.delete(session.id, removeWorktree: true) }
+        }
     }
 }
 

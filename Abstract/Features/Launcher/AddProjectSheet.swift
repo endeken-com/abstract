@@ -46,8 +46,16 @@ struct AddProjectSheet: View {
             if let probe, !probe.isRoot {
                 Notice(text: "That folder sits inside a larger repository, so Abstract uses its root. Worktrees then carry the whole project.")
             }
-            if let probe, !probe.nestedRepos.isEmpty {
-                Notice(text: "Found \(probe.nestedRepos.count) nested repositor\(probe.nestedRepos.count == 1 ? "y" : "ies") (\(probe.nestedRepos.prefix(3).joined(separator: ", "))). A worktree can't carry them, so changes inside them stay out of review.")
+            if let probe, !probe.submodules.isEmpty {
+                Notice(text: "Found \(probe.submodules.count) submodule\(probe.submodules.count == 1 ? "" : "s") (\(probe.submodules.prefix(3).joined(separator: ", "))). Changes inside them show in review under their own heading.")
+            }
+            if let probe {
+                // Inner repositories git doesn't know about. One inside a submodule is the
+                // submodule's (its own submodules, say), so it isn't listed here.
+                let unknown = probe.nestedRepos.filter { path in !probe.submodules.contains { path == $0 || path.hasPrefix($0 + "/") } }
+                if !unknown.isEmpty {
+                    Notice(text: "Found \(unknown.count) nested repositor\(unknown.count == 1 ? "y" : "ies") (\(unknown.prefix(3).joined(separator: ", "))) that aren't submodules. A worktree can't carry them, so changes inside them stay out of review.")
+                }
             }
 
             if probe != nil {

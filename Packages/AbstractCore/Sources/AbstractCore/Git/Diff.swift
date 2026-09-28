@@ -53,8 +53,27 @@ public struct FileDiff: Sendable, Hashable, Identifiable {
     public var hunks: [Hunk]
     /// Verbatim `diff --git` preamble through the `+++` line.
     public var rawHeader: String
+    /// The repository it's in, relative to the worktree: empty for the
+    /// worktree's own, else a submodule's path. `path` and `oldPath` include
+    /// it; the raw text, and so any patch built from it, stays relative to
+    /// that repository.
+    public var repo: String = ""
 
     public var id: String { path }
+
+    /// `path` as its own repository names it.
+    public var repoPath: String { repo.isEmpty ? path : GitText.dropPrefix(path, repo + "/") }
+    public var repoOldPath: String? { oldPath.map { repo.isEmpty ? $0 : GitText.dropPrefix($0, repo + "/") } }
+
+    /// The same file, placed in the submodule at `repo`.
+    public func inRepo(_ repo: String) -> FileDiff {
+        guard !repo.isEmpty else { return self }
+        var file = self
+        file.repo = repo
+        file.path = repo + "/" + path
+        file.oldPath = oldPath.map { repo + "/" + $0 }
+        return file
+    }
 
     public init(path: String, oldPath: String? = nil, status: FileStatus = .modified, isBinary: Bool = false,
                 additions: Int = 0, deletions: Int = 0, hunks: [Hunk] = [], rawHeader: String) {
@@ -205,14 +224,20 @@ public enum Diff {
             .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             .map { ":(exclude)" + GitText.trimTrailingSlashes($0) }
 
-        let added = try await Git.git(exec, cwd: worktree, ["add", "-N", "--", "."] + excludes)
-        if !added.ok {
-            await intentToAddIndividually(exec, worktree: worktree)
+        // Mid-conflict (a merge, rebase or cherry-pick that stopped), `add -N`
+        // would swap each conflicted file's stages for an empty new file and
+        // the conflict would be lost, so new files wait until it's resolved.
+        if await !hasConflicts(exec, repo: worktree) {
+            let added = try await Git.git(exec, cwd: worktree, ["add", "-N", "--", "."] + excludes)
+            if !added.ok {
+                await intentToAddIndividually(exec, worktree: worktree)
+            }
         }
 
         // quotePath=false keeps non-ASCII paths readable instead of octal-escaped and quoted.
-        let args = ["-c", "core.quotePath=false", "--no-pager", "diff", "HEAD", "--no-color", "--no-ext-diff", "-M",
-                    "--", "."] + excludes
+        // No submodule pointers: a submodule's changes are read inside it.
+        let args = ["-c", "core.quotePath=false", "--no-pager", "diff", "HEAD", "--no-color", "--no-ext-diff",
+                    "--ignore-submodules=all", "-M", "--", "."] + excludes
         return parse(try await Git.gitOK(exec, cwd: worktree, args))
     }
 
@@ -225,6 +250,12 @@ public enum Diff {
               out.ok
         else { return [] }
         return out.stdout.split(separator: "\0").map(String.init).filter { $0.hasSuffix("/") }
+    }
+
+    /// Whether the repository at `repo` has files waiting on a conflict to be resolved.
+    static func hasConflicts(_ exec: any Executor, repo: String) async -> Bool {
+        guard let out = try? await Git.git(exec, cwd: repo, ["ls-files", "--unmerged"]), out.ok else { return false }
+        return !GitText.trimmed(out.stdout).isEmpty
     }
 
     /// Mark untracked files individually, skipping the ones git refuses (an

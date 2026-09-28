@@ -55,7 +55,8 @@ nonisolated struct ReviewFile: Identifiable, Sendable {
     var id: String { diff.path }
     var path: String { diff.path }
     var name: String { (diff.path as NSString).lastPathComponent }
-    var directory: String { (diff.path as NSString).deletingLastPathComponent }
+    /// Its folder in its own repository: the review shows one repository at a time.
+    var directory: String { (diff.repoPath as NSString).deletingLastPathComponent }
     var lineCount: Int { unified.count - hunks.count }
     /// Hunk-level accept/reject only makes sense for in-place modifications;
     /// additions, deletions and renames are handled as a whole.
@@ -274,6 +275,42 @@ final class DiffReview {
     /// Files opened or closed by hand; the rest open unless they're long.
     var expansion: [String: Bool] = [:]
 
+    /// The worktree's repository and its checked-out submodules, the
+    /// worktree's own first. The review shows one of them at a time.
+    private(set) var repoList: [ChatRepo] = []
+    /// The repository shown, by path; "" is the worktree's own.
+    private(set) var selectedRepo = ""
+    /// Repositories with uncommitted work, marked in the selector.
+    private(set) var changedRepos: Set<String> = []
+    /// The shown repository's submodules whose pointers the shown changes move.
+    private(set) var pointers: [PointerChange] = []
+    /// A file asked for in another repository, focused once that one has loaded.
+    @ObservationIgnored private var focusAfterLoad: String?
+
+    var selected: ChatRepo { repoList.first { $0.path == selectedRepo } ?? ChatRepo(path: "") }
+    /// Something to show: files, or a submodule pointer that moved.
+    var hasChanges: Bool { !files.isEmpty || !pointers.isEmpty }
+
+    /// The checked-out repository a worktree path is in.
+    func repo(containing path: String) -> ChatRepo? {
+        repoList.filter { $0.path.isEmpty || $0.inside(path) != nil }.max { $0.path.count < $1.path.count }
+    }
+
+    /// Show another repository, starting from its own uncommitted work (or
+    /// its commits, when it has none), and `path` in it once it's loaded.
+    func select(_ repo: String, _ context: DiffContext, focus path: String? = nil) async {
+        guard repo != selectedRepo else {
+            if let path { focus(path) }
+            return
+        }
+        selectedRepo = repo
+        mode = .uncommitted
+        pickedWhileDirty = nil
+        expansion = [:]
+        focusAfterLoad = path
+        await load(context)
+    }
+
     /// Files in the order they're listed: top-level first, then by folder.
     var orderedFiles: [ReviewFile] { groups.flatMap(\.files) }
 
@@ -317,13 +354,27 @@ final class DiffReview {
         if phase == .loaded { isRefreshing = true } else { phase = .loading }
         defer { if current == generation { isRefreshing = false } }
         let exec = context.executor
-        let dirty = await Diff.isDirty(exec, worktree: context.worktree)
-        let base = await Diff.resolveBase(exec, worktree: context.worktree, preferred: context.baseRef)
-        let commits = base == nil ? [] : await Diff.commits(exec, worktree: context.worktree, base: base!)
+        let repoList = await Submodules.list(exec, worktree: context.worktree)
+        // A submodule that's gone (removed, or no longer checked out) gives way to the worktree's own.
+        if !repoList.contains(where: { $0.path == selectedRepo }) {
+            selectedRepo = ""
+            mode = .uncommitted
+            pickedWhileDirty = nil
+        }
+        let repo = repoList.first { $0.path == selectedRepo } ?? ChatRepo(path: "")
+        // A submodule is measured from its own base branch, as its own pull request would be.
+        let state = await RepoReview.state(exec, worktree: context.worktree, repo: repo,
+                                           preferredBase: repo.isSubmodule ? nil : context.baseRef)
+        let changed = repoList.count > 1 ? await Submodules.changedPaths(exec, worktree: context.worktree) : nil
         guard current == generation else { return }
-        self.dirty = dirty
-        self.base = base
-        self.commits = commits
+        self.repoList = repoList
+        let submodulePaths = Set(repoList.filter(\.isSubmodule).map(\.path))
+        var marks = Set((changed ?? []).filter(submodulePaths.contains))
+        if (changed ?? []).contains(where: { !submodulePaths.contains($0) }) || (repo.path.isEmpty && state.dirty) { marks.insert("") }
+        changedRepos = marks
+        dirty = state.dirty
+        base = state.base
+        commits = state.commits
         // Uncommitted work while there is some, the branch's commits once it's all committed.
         if case .commit = mode {} else if pickedWhileDirty != dirty {
             pickedWhileDirty = nil
@@ -332,20 +383,26 @@ final class DiffReview {
         let compare: DiffCompare = switch mode {
         case .uncommitted: .uncommitted
         case .committed: base.map { .committed(base: $0) } ?? .uncommitted
-        case .commit(let c): .commit(sha: c.sha)
+        case .commit(let c): .commit(sha: c.sha, repo: c.repo)
         }
         do {
-            let raw = try await Diff.collect(exec, worktree: context.worktree, exclude: context.exclude,
-                                             compare: compare, ignoreWhitespace: ignoreWhitespace)
-            let prepared = await ReviewFile.prepare(raw)
+            let changes = try await RepoReview.changes(exec, worktree: context.worktree, repo: repo, repos: repoList,
+                                                       exclude: context.exclude, compare: compare, ignoreWhitespace: ignoreWhitespace)
+            let prepared = await ReviewFile.prepare(changes.files)
             guard current == generation else { return }
+            pointers = changes.pointers
             apply(prepared)
+            let nothing = prepared.isEmpty && changes.pointers.isEmpty
             otherModeHasChanges = switch mode {
-            case .uncommitted: prepared.isEmpty && !commits.isEmpty
-            case .committed: prepared.isEmpty && dirty
+            case .uncommitted: nothing && !commits.isEmpty
+            case .committed: nothing && dirty
             case .commit: false
             }
             phase = .loaded
+            if let path = focusAfterLoad {
+                focusAfterLoad = nil
+                if files.contains(where: { $0.path == path }) { focus(path) }
+            }
         } catch {
             guard current == generation else { return }
             if phase == .loaded {
@@ -432,8 +489,10 @@ final class DiffReview {
     func discard(_ files: [ReviewFile], _ context: DiffContext, model: AppModel) async {
         guard let first = files.first else { return }
         await perform(files.count == 1 ? "file:\(first.path)" : "all", context, model: model) {
-            let paths = files.flatMap { [$0.path] + ($0.diff.oldPath.map { [$0] } ?? []) }
-            try await Diff.discard(context.executor, worktree: context.worktree, paths: paths)
+            for (repo, inRepo) in Dictionary(grouping: files, by: \.diff.repo) {
+                let paths = inRepo.flatMap { [$0.diff.repoPath] + ($0.diff.repoOldPath.map { [$0] } ?? []) }
+                try await Diff.discard(context.executor, worktree: Self.repoDirectory(context.worktree, repo), paths: paths)
+            }
             for file in files {
                 self.unmarkAccepted(file.hunks.map(\.fingerprint) + [file.fileFingerprint], session: context.sessionId)
             }
@@ -503,12 +562,18 @@ final class DiffReview {
 
     @discardableResult
     private static func accept(_ file: ReviewFile, _ context: DiffContext) async throws -> Diff.AcceptOutcome {
+        let repo = file.diff.repo
+        let root = repoDirectory(context.root, repo)
+        // Applied from an empty submodule folder, git would patch the parent instead.
+        if !repo.isEmpty, !(await Submodules.isCheckedOut(context.executor, directory: root)) {
+            throw AbstractError.message("\(repo) isn't checked out in \(context.projectName). Run `git submodule update --init` there.")
+        }
         if file.diff.isBinary {
             try copyBinary(file, from: context.worktree, to: context.root)
             return .applied
         }
         let patch = Diff.buildPatch(file.diff, hunks: [])
-        return try await Diff.accept(context.executor, root: context.root, patch: patch)
+        return try await Diff.accept(context.executor, root: root, patch: patch)
     }
 
     /// Plain words for the rare cases where git had to merge.
@@ -552,5 +617,10 @@ final class DiffReview {
         var base = base
         while base.hasSuffix("/") { base.removeLast() }
         return base + "/" + path
+    }
+
+    /// A repository's folder under `base`, the worktree or the project's checkout.
+    static func repoDirectory(_ base: String, _ repo: String) -> String {
+        repo.isEmpty ? base : join(base, repo)
     }
 }

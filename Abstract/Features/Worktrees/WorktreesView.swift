@@ -391,6 +391,9 @@ private struct RemoveWorktreeSheet: View {
     let onCancel: () -> Void
     let onRemove: (Bool) -> Void
     @State private var deleteBranch = false
+    @Environment(AppModel.self) private var model
+    /// Commits in its submodules that no remote has, which go with it.
+    @State private var lost: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.lg) {
@@ -424,6 +427,8 @@ private struct RemoveWorktreeSheet: View {
                        : "The chat “\(s.name)” stays in the sidebar, but it can't run again without a worktree.")
             }
 
+            if let lost { Notice(text: lost) }
+
             if let branch = entry.info.branch {
                 VStack(alignment: .leading, spacing: 4) {
                     Toggle(isOn: $deleteBranch) {
@@ -454,5 +459,6 @@ private struct RemoveWorktreeSheet: View {
         .padding(Space.xl)
         .frame(width: 480)
         .background(Color.btCanvas)
+        .task { lost = await model.unpushedSubmoduleWarning(model.executor, worktree: entry.path) }
     }
 }

@@ -167,14 +167,25 @@ public enum Git {
         // Submodules, when present; otherwise the worktree is missing their content.
         if exec.fileExists(GitText.trimTrailingSlashes(root) + "/.gitmodules") {
             _ = try? await git(exec, cwd: path, ["submodule", "update", "--init", "--recursive"])
+            // Each on the chat's branch, so the agent's commits there land
+            // somewhere that can be pushed; local until something is.
+            for repo in await Submodules.list(exec, worktree: path) where repo.isSubmodule {
+                await Shipping.ensureBranch(exec, directory: repo.directory(in: path), name: branch)
+            }
         }
     }
 
     // MARK: Publishing
 
-    /// Stages and commits everything in the worktree. Nothing to commit is not an error.
-    public static func commitAll(_ exec: any Executor, worktree: String, message: String) async throws {
-        _ = try await gitOK(exec, cwd: worktree, ["add", "-A"])
+    /// Stages and commits everything in the worktree but `exclude` (paths in
+    /// it: a submodule whose pointer mustn't move), unstaging those if they
+    /// were staged already. Nothing to commit is not an error.
+    public static func commitAll(_ exec: any Executor, worktree: String, message: String, exclude: [String] = []) async throws {
+        if !exclude.isEmpty {
+            _ = try await gitOK(exec, cwd: worktree, ["--literal-pathspecs", "reset", "-q", "--"] + exclude)
+        }
+        let pathspec = exclude.isEmpty ? [] : ["--", "."] + exclude.map { ":(exclude,literal)" + $0 }
+        _ = try await gitOK(exec, cwd: worktree, ["add", "-A"] + pathspec)
         let staged = try await git(exec, cwd: worktree, ["diff", "--cached", "--quiet"])
         guard !staged.ok else { return }
         _ = try await gitOK(exec, cwd: worktree, ["commit", "-m", message])

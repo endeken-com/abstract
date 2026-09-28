@@ -89,7 +89,7 @@ enum RemoteProbe {
 
         // Its worktree is on the host: review, files, editor and a shell work from here.
         if case .ready(let context) = model.diffAvailability(mirror) {
-            let files = (try? await Diff.collect(context.executor, worktree: context.worktree, exclude: context.exclude)) ?? []
+            let files = (try? await Diff.collectUncommitted(context.executor, worktree: context.worktree, exclude: context.exclude)) ?? []
             log("remote: review over the link, \(files.count) changed files")
             let git = await GitActions.state(context.executor, worktree: context.worktree, preferredBase: nil)
             log("remote: git over the link, dirty \(git.dirty), ahead of base \(git.aheadOfBase)")

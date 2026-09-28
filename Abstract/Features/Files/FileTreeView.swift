@@ -60,6 +60,7 @@ struct FileTreeView: View {
                             opened: state.openPath == path,
                             change: index?.changes[path],
                             containsChanges: row.entry.isDirectory && index?.changedDirectories.contains(path) == true,
+                            isSubmodule: index?.submodules.contains(path) == true,
                             onActivate: { state.activate(row.entry); focused = true }
                         )
                         .id(path)
@@ -163,6 +164,7 @@ private struct FileTreeRowView: View {
     let opened: Bool
     let change: FileDiff.FileStatus?
     let containsChanges: Bool
+    let isSubmodule: Bool
     let onActivate: () -> Void
 
     var body: some View {
@@ -178,9 +180,15 @@ private struct FileTreeRowView: View {
                     }
                 }
                 .frame(width: 16)
-                FileIcon(path: entry.path, isDirectory: entry.isDirectory, open: expanded)
-                    .frame(width: 18)
-                    .padding(.trailing, 5)
+                Group {
+                    if isSubmodule {
+                        Image(systemName: "shippingbox").font(.system(size: 11)).foregroundStyle(Color.btTextSecondary)
+                    } else {
+                        FileIcon(path: entry.path, isDirectory: entry.isDirectory, open: expanded)
+                    }
+                }
+                .frame(width: 18)
+                .padding(.trailing, 5)
                 FileName(entry: entry, change: change, emphasized: opened)
                     .layoutPriority(1)
                 Spacer(minLength: Space.sm)
@@ -193,7 +201,7 @@ private struct FileTreeRowView: View {
         }
         .buttonStyle(RowButtonStyle(selected: selected, cornerRadius: 6))
         .animation(.snappy(duration: 0.14), value: expanded)
-        .help(entry.path)
+        .help(isSubmodule ? "Submodule \(entry.path)" : entry.path)
         .contextMenu { FileContextMenu(root: root, path: entry.path, isDirectory: entry.isDirectory) }
     }
 }
