@@ -146,6 +146,29 @@ struct OpenCodeCompactionTests {
         }
     }
 
+    @Test func stoppingDuringSummarizeKillsCurlAndTheServer() async throws {
+        let dir = NSTemporaryDirectory() + "oc-\(UUID().uuidString)/"
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        let server = dir + "opencode"
+        try "#!/bin/sh\necho $$ > \(dir)server.pid\necho 'opencode server listening on http://127.0.0.1:4096'\nexec sleep 30\n"
+            .write(toFile: server, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: server)
+        let request = CompactionRequest(sessionId: "ses_x", cwd: dir, model: "opencode/x", binaryOverride: server)
+        let task = Task { try await OpenCodeCompactor().compact(request, executor: FakeCurl(dir: dir)) }
+        let deadline = Date().addingTimeInterval(15)
+        while !FileManager.default.fileExists(atPath: dir + "curl.pid"), Date() < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        task.cancel()
+        await #expect(throws: CancellationError.self) { try await task.value }
+        try await Task.sleep(for: .seconds(4)) // SIGTERM, then SIGKILL after the grace period.
+        for name in ["curl.pid", "server.pid"] {
+            let pid = try #require(Int32(String(contentsOfFile: dir + name, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
+            #expect(kill(pid, 0) != 0, "\(name) is gone")
+        }
+    }
+
     @Test func openCodeCompactsThroughItsServer() {
         #expect(OpenCodeProvider().commands.extra.contains(.compact))
         guard case .sideChannel(let compactor)? = OpenCodeProvider().compaction else { Issue.record("no side channel"); return }
@@ -161,6 +184,27 @@ private struct HomeOnly: Executor {
     func run(_ command: String, _ args: [String], cwd: String?) async throws -> ExecResult { try await base.run(command, args, cwd: cwd) }
     func spawn(_ spec: LaunchSpec, onLine: @escaping @Sendable (OutputLine) -> Void,
                onExit: @escaping @Sendable (Int32?) -> Void) throws -> RunningProcess { try base.spawn(spec, onLine: onLine, onExit: onExit) }
+    func fileExists(_ path: String) -> Bool { base.fileExists(path) }
+    func readFile(_ path: String) throws -> String { try base.readFile(path) }
+    func createDirectory(_ path: String) throws { try base.createDirectory(path) }
+    func removeItem(_ path: String) throws { try base.removeItem(path) }
+    func which(_ binary: String) async -> String? { await base.which(binary) }
+}
+
+/// LocalExecutor whose `curl` answers the message list at once and blocks on
+/// `summarize`, noting its pid, as OpenCode's does for minutes.
+private struct FakeCurl: Executor {
+    let dir: String
+    var homeDirectory: String { dir }
+    let base = LocalExecutor.shared
+    func run(_ command: String, _ args: [String], cwd: String?) async throws -> ExecResult { try await base.run(command, args, cwd: cwd) }
+    func spawn(_ spec: LaunchSpec, onLine: @escaping @Sendable (OutputLine) -> Void,
+               onExit: @escaping @Sendable (Int32?) -> Void) throws -> RunningProcess {
+        guard spec.command == "curl" else { return try base.spawn(spec, onLine: onLine, onExit: onExit) }
+        let script = "for a; do last=$a; done; case $last in *summarize*) echo $$ > \(dir)curl.pid; exec sleep 30;; *) printf '[]\\n200';; esac"
+        let fake = LaunchSpec(command: "/bin/sh", args: ["-c", script, "curl"] + spec.args, cwd: spec.cwd, keepStdinOpen: false)
+        return try base.spawn(fake, onLine: onLine, onExit: onExit)
+    }
     func fileExists(_ path: String) -> Bool { base.fileExists(path) }
     func readFile(_ path: String) throws -> String { try base.readFile(path) }
     func createDirectory(_ path: String) throws { try base.createDirectory(path) }

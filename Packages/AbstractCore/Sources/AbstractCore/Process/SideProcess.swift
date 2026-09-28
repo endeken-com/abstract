@@ -123,6 +123,7 @@ private final class SideGate<R: Sendable>: Sendable {
             s.pendingFinish = nil
             let result: Outcome = .success((value, process))
             s.outcome = result
+            s.process = nil // the caller's now; see `end`
             defer { s.continuation = nil }
             return .resolves(s.continuation, result)
         }
@@ -170,8 +171,12 @@ private final class SideGate<R: Sendable>: Sendable {
             guard s.outcome == nil else { return nil }
             let result = outcome(keepRunning ? s.process : nil)
             s.outcome = result
+            let process = s.process
+            // The process's callbacks hold the gate: dropping it here breaks the
+            // cycle. A kept process is the caller's now, via `result`.
+            s.process = nil
             defer { s.continuation = nil }
-            return (s.continuation, result, s.process)
+            return (s.continuation, result, process)
         }
         guard let (continuation, result, process) = ended else { return }
         if case .success = result, keepRunning {} else { process?.terminate() }

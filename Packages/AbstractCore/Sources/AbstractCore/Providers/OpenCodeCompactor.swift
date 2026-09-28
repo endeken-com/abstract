@@ -126,9 +126,16 @@ public struct OpenCodeCompactor: Compactor {
             guard let address = OpenCodeServer.url(base: base, path: path, directory: directory) else {
                 throw AbstractError.message("Bad OpenCode address: \(path)")
             }
-            let result = try await executor.run("curl", ["-sS", "--max-time", maxTime, "-u", "opencode:" + password,
-                                                         "-w", "\n%{http_code}"] + extra + [address], cwd: nil)
+            // Spawned, not `run`, so Stop kills curl mid-request (`summarize` can
+            // block for minutes); curl's own `--max-time` is the real limit.
+            let spec = LaunchSpec(command: "curl", args: ["-sS", "--max-time", maxTime, "-u", "opencode:" + password,
+                                                          "-w", "\n%{http_code}"] + extra + [address],
+                                  cwd: directory, keepStdinOpen: false)
+            let result = try await executor.run(spec, timeout: .seconds((Int(maxTime) ?? 1) + 5))
+            // Killed by Stop: a cancelled compaction must not go on to report success.
+            try Task.checkCancellation()
             guard result.ok else {
+                if result.timedOut { throw AbstractError.message("opencode didn't answer in time.") }
                 throw AbstractError.message("Couldn't reach OpenCode's server: " + result.stderr.trimmingCharacters(in: .whitespacesAndNewlines))
             }
             let (body, status) = OpenCodeServer.split(result.stdout)
