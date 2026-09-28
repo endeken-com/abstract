@@ -12,6 +12,10 @@ struct CodexCompaction: Sendable {
     private var after: Int?
     private var window: Int?
     private var compacting = false
+    /// Which request is currently pending, so a duplicate reply (the same id
+    /// arriving twice) is ignored rather than re-sent.
+    private enum Phase: Sendable { case awaitingInitialize, awaitingResume, awaitingCompactStart }
+    private var phase: Phase = .awaitingInitialize
 
     private static let initializeId = 1, resumeId = 2, compactId = 3
 
@@ -29,10 +33,12 @@ struct CodexCompaction: Sendable {
         }
         let thread: [String: JSONValue] = ["threadId": .string(threadId)]
         switch (obj["id"]?.int, obj["method"]?.string) {
-        case (Self.initializeId?, _):
+        case (Self.initializeId?, _) where phase == .awaitingInitialize:
+            phase = .awaitingResume
             return .send([Self.message(method: "initialized"),
                           Self.message(id: Self.resumeId, method: "thread/resume", params: thread.merging(["excludeTurns": .bool(true)]) { a, _ in a })])
-        case (Self.resumeId?, _):
+        case (Self.resumeId?, _) where phase == .awaitingResume:
+            phase = .awaitingCompactStart
             return .send([Self.message(id: Self.compactId, method: "thread/compact/start", params: thread)])
         case (_, "thread/tokenUsage/updated"):
             let usage = obj["params"]?["tokenUsage"]
@@ -45,6 +51,16 @@ struct CodexCompaction: Sendable {
             return .wait
         case (_, "item/completed") where Self.isCompaction(obj):
             return .finish(CompactionResult(tokensBefore: before, tokensAfter: after, contextWindow: window))
+        // The turn ended some other way (rejected, interrupted, erroed) before
+        // its compaction item completed: fail instead of waiting out the timeout.
+        case (_, "turn/failed"):
+            return .fail(Self.turnFailureMessage(obj))
+        case (_, "turn/completed") where obj["params"]?["turn"]?["status"]?.string != "completed":
+            return .fail(Self.turnFailureMessage(obj))
+        // Compacting finished but its item/completed didn't arrive (or was
+        // missed): finish with whatever tokens were seen rather than hang.
+        case (_, "turn/completed") where compacting:
+            return .finish(CompactionResult(tokensBefore: before, tokensAfter: after, contextWindow: window))
         default:
             return .wait
         }
@@ -52,6 +68,14 @@ struct CodexCompaction: Sendable {
 
     private static func isCompaction(_ obj: JSONValue) -> Bool {
         obj["params"]?["item"]?["type"]?.string == "contextCompaction"
+    }
+
+    /// `params.turn.error.message`, then `params.error.message`, then a
+    /// generic reason: codex-cli 0.156.1's exact error shape for a failed or
+    /// non-completed turn isn't pinned by the fixture.
+    private static func turnFailureMessage(_ obj: JSONValue) -> String {
+        let message = obj["params"]?["turn"]?["error"]?["message"]?.string ?? obj["params"]?["error"]?["message"]?.string
+        return "Codex: " + (message ?? "compacting ended without finishing.")
     }
 
     /// One JSON-RPC line; no `id` makes it a notification.

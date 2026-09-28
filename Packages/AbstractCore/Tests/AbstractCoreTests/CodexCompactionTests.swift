@@ -52,4 +52,43 @@ struct CodexCompactionTests {
         guard case .sideChannel(let compactor)? = CodexProvider().compaction else { Issue.record("no side channel"); return }
         #expect(compactor is CodexCompactor)
     }
+
+    // MARK: - fix round 1
+
+    /// A duplicate reply (the same id arriving twice, e.g. a retransmit) must
+    /// not re-send the next request, and the conversation still finishes.
+    @Test func duplicateRepliesAreIgnoredNotResent() throws {
+        var c = CodexCompaction(threadId: "t-1")
+        let lines = try Self.fixture()
+        guard case .send = c.receive(lines[0]) else { Issue.record("no reply to initialize"); return }
+        #expect(c.receive(lines[0]) == .wait, "a duplicate initialize reply is ignored, not re-sent")
+        #expect(c.receive(lines[1]) == .wait)
+        guard case .send = c.receive(lines[2]) else { Issue.record("no compact request"); return }
+        #expect(c.receive(lines[2]) == .wait, "a duplicate resume reply is ignored, not re-sent")
+        var result: CompactionResult?
+        for line in lines[3...] { if case let .finish(r) = c.receive(line) { result = r } }
+        #expect(result == CompactionResult(tokensBefore: 17251, tokensAfter: 5546, contextWindow: 258_400))
+    }
+
+    @Test func turnFailedFailsWithItsMessage() {
+        var c = CodexCompaction(threadId: "t-1")
+        let line = #"{"method":"turn/failed","params":{"threadId":"t-1","turn":{"id":"u-1","error":{"message":"boom"}}}}"#
+        #expect(c.receive(line) == .fail("Codex: boom"))
+    }
+
+    @Test func turnCompletedWithoutSucceedingFailsWithItsMessage() {
+        var c = CodexCompaction(threadId: "t-1")
+        let line = #"{"method":"turn/completed","params":{"threadId":"t-1","turn":{"id":"u-1","status":"failed","error":{"message":"boom"}}}}"#
+        #expect(c.receive(line) == .fail("Codex: boom"))
+    }
+
+    /// A turn that finishes without ever reporting `item/completed` for the
+    /// compaction (missed, or the server just doesn't send it) used to hang
+    /// until the side-channel timeout; it now finishes with what's known.
+    @Test func turnCompletesWithoutTheCompactionItemFinishesWithKnownTokens() {
+        var c = CodexCompaction(threadId: "t-1")
+        _ = c.receive(#"{"method":"item/started","params":{"item":{"type":"contextCompaction","id":"i-1"},"threadId":"t-1","turnId":"u-1"}}"#)
+        let line = #"{"method":"turn/completed","params":{"threadId":"t-1","turn":{"id":"u-1","status":"completed","durationMs":10}}}"#
+        #expect(c.receive(line) == .finish(CompactionResult(tokensBefore: nil, tokensAfter: nil, contextWindow: nil)))
+    }
 }
