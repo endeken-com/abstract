@@ -9,6 +9,8 @@ enum SideStep<Result: Sendable>: Sendable {
     case fail(String)
 }
 
+extension SideStep: Equatable where Result: Equatable {}
+
 /// An agent's short-lived helper (a server it runs beside the chat). Both
 /// stdout and stderr reach `reply` line by line — a ready signal (like
 /// OpenCode's listening line) can land on either — and stderr's last lines

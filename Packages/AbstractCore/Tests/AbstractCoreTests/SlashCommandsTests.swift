@@ -83,7 +83,7 @@ struct SlashCommandsTests {
 
     @Test func claudeAddsTasksAndTakesOverPermissions() {
         #expect(ClaudeProvider().commands == ProviderCommands(extra: [.tasks, .compact], replaces: ["permissions": .mode]))
-        #expect(CodexProvider().commands == .none)
+        #expect(CodexProvider().commands == ProviderCommands(extra: [.compact]))
     }
 
     @Test func compactIsTheAppsForAgentsThatCanCompact() {

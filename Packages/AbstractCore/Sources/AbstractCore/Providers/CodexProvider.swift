@@ -16,6 +16,9 @@ public struct CodexProvider: ProviderDefinition {
     public var binary: String { "codex" }
     public var detectArgs: [String] { ["--version"] }
     public var followUpMode: FollowUpMode { .respawn }
+    /// `exec` can't compact (it sends `/compact` to the model); its app server can.
+    public var commands: ProviderCommands { ProviderCommands(extra: [.compact]) }
+    public var compaction: Compaction? { .sideChannel(CodexCompactor()) }
 
     public init() {}
 
