@@ -4,7 +4,8 @@ import Testing
 @testable import AbstractCore
 
 /// The real executor, noting every command it runs and where, so a test can
-/// tell which repositories were read.
+/// tell which repositories were read. Spawned ones too: a timed `git fetch`
+/// is spawned.
 final class RecordingExecutor: Executor {
     let base = LocalExecutor.shared
     private let log = Mutex<[(cwd: String?, args: [String])]>([])
@@ -21,7 +22,8 @@ final class RecordingExecutor: Executor {
     }
     func spawn(_ spec: LaunchSpec, onLine: @escaping @Sendable (OutputLine) -> Void,
                onExit: @escaping @Sendable (Int32?) -> Void) throws -> RunningProcess {
-        try base.spawn(spec, onLine: onLine, onExit: onExit)
+        log.withLock { $0.append((spec.cwd, spec.args)) }
+        return try base.spawn(spec, onLine: onLine, onExit: onExit)
     }
     func fileExists(_ path: String) -> Bool { base.fileExists(path) }
     func readFile(_ path: String) throws -> String { try base.readFile(path) }
