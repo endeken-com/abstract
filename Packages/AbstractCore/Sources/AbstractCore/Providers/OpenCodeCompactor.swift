@@ -46,6 +46,26 @@ enum OpenCodeServer {
         guard let newline = output.lastIndex(of: "\n") else { return (output, 0) }
         return (String(output[..<newline]), Int(output[output.index(after: newline)...].trimmingCharacters(in: .whitespaces)) ?? 0)
     }
+
+    /// `base + path`, with `directory` as its query value, percent-encoded by
+    /// hand: `URLComponents.queryItems` leaves `+` unescaped, and OpenCode's
+    /// query parser reads a literal `+` as a space. Space and `&`/`#` stay
+    /// encoded too, since a directory can contain any of them.
+    static func url(base: String, path: String, directory: String) -> String? {
+        var allowed = CharacterSet.urlQueryAllowed
+        allowed.remove(charactersIn: "+&=#")
+        guard let encoded = directory.addingPercentEncoding(withAllowedCharacters: allowed) else { return nil }
+        return base + path + "?directory=" + encoded
+    }
+
+    /// `curl --max-time`'s value: whole seconds left until `deadline`, at
+    /// least 1; nil once `now` is at or past it. The compaction's one
+    /// timeout bounds every call together, not each on its own.
+    static func maxTime(until deadline: Date, from now: Date) -> String? {
+        let remaining = deadline.timeIntervalSince(now)
+        guard remaining > 0 else { return nil }
+        return String(max(1, Int(remaining)))
+    }
 }
 
 /// Starts `opencode serve` on the chat's host, asks it to compact the
@@ -61,6 +81,9 @@ public struct OpenCodeCompactor: Compactor {
         guard let id = request.model ?? OpenCodeProvider().configuredDefaultModel(home: executor.homeDirectory),
               let model = OpenCodeServer.model(id)
         else { throw AbstractError.message("OpenCode needs a model to compact with; choose one for this chat.") }
+        // One deadline for the whole compaction, not a fresh 300s per call.
+        let seconds = Double(Self.timeout.components.seconds) + Double(Self.timeout.components.attoseconds) / 1e18
+        let deadline = Date().addingTimeInterval(seconds)
         let password = UUID().uuidString
         let spec = LaunchSpec(command: request.binaryOverride ?? OpenCodeProvider().binary,
                               args: ["serve", "--hostname", "127.0.0.1", "--port", "0"], cwd: request.cwd,
@@ -68,7 +91,7 @@ public struct OpenCodeCompactor: Compactor {
         let (line, server) = try await SideProcess.start(executor, spec, timeout: Self.startTimeout) { OpenCodeServer.port(fromLine: $0) != nil }
         defer { server.terminate() }
         guard let port = OpenCodeServer.port(fromLine: line) else { throw AbstractError.message("OpenCode's server didn't say where it listens.") }
-        let http = HTTP(executor: executor, base: "http://127.0.0.1:\(port)", password: password, directory: request.cwd)
+        let http = HTTP(executor: executor, base: "http://127.0.0.1:\(port)", password: password, directory: request.cwd, deadline: deadline)
         let messages = "/session/\(request.sessionId)/message"
         let before = OpenCodeServer.contextTokens(messages: try await http.json(messages))
         try Task.checkCancellation()
@@ -89,6 +112,7 @@ public struct OpenCodeCompactor: Compactor {
         let base: String
         let password: String
         let directory: String
+        let deadline: Date
 
         func json(_ path: String) async throws -> JSONValue {
             let body = try await call(path, extra: [])
@@ -96,10 +120,13 @@ public struct OpenCodeCompactor: Compactor {
         }
 
         func call(_ path: String, extra: [String]) async throws -> String {
-            var url = URLComponents(string: base + path)
-            url?.queryItems = [URLQueryItem(name: "directory", value: directory)]
-            guard let address = url?.url?.absoluteString else { throw AbstractError.message("Bad OpenCode address: \(path)") }
-            let result = try await executor.run("curl", ["-sS", "--max-time", "300", "-u", "opencode:" + password,
+            guard let maxTime = OpenCodeServer.maxTime(until: deadline, from: Date()) else {
+                throw AbstractError.message("opencode didn't answer in time.")
+            }
+            guard let address = OpenCodeServer.url(base: base, path: path, directory: directory) else {
+                throw AbstractError.message("Bad OpenCode address: \(path)")
+            }
+            let result = try await executor.run("curl", ["-sS", "--max-time", maxTime, "-u", "opencode:" + password,
                                                          "-w", "\n%{http_code}"] + extra + [address], cwd: nil)
             guard result.ok else {
                 throw AbstractError.message("Couldn't reach OpenCode's server: " + result.stderr.trimmingCharacters(in: .whitespacesAndNewlines))

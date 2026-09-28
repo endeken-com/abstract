@@ -122,6 +122,22 @@ struct OpenCodeCompactionTests {
         #expect(OpenCodeServer.split("{\"a\":1}\nmore\n404") == ("{\"a\":1}\nmore", 404))
     }
 
+    @Test func percentEncodesTheDirectoryQueryValueByHand() {
+        // URLComponents.queryItems leaves `+` unescaped, and OpenCode reads a
+        // literal `+` as a space; space, `&` and `#` must stay encoded too.
+        #expect(OpenCodeServer.url(base: "http://127.0.0.1:4096", path: "/session/x/message",
+                                   directory: "/Users/dev/a b/libc++&x#y")
+                == "http://127.0.0.1:4096/session/x/message?directory=/Users/dev/a%20b/libc%2B%2B%26x%23y")
+    }
+
+    @Test func maxTimeIsWholeSecondsUntilTheDeadlineAtLeastOne() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        #expect(OpenCodeServer.maxTime(until: now.addingTimeInterval(120.4), from: now) == "120")
+        #expect(OpenCodeServer.maxTime(until: now.addingTimeInterval(0.4), from: now) == "1", "clamped to at least 1")
+        #expect(OpenCodeServer.maxTime(until: now, from: now) == nil, "at the deadline")
+        #expect(OpenCodeServer.maxTime(until: now.addingTimeInterval(-5), from: now) == nil, "past the deadline")
+    }
+
     @Test func noModelAnywhereSaysSo() async {
         let home = NSTemporaryDirectory() + "oc-\(UUID().uuidString)"
         let request = CompactionRequest(sessionId: "ses_x", cwd: NSTemporaryDirectory())
