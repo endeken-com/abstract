@@ -56,9 +56,8 @@ struct ClaudeCompactionTests {
         #expect(ClaudeParser.compactSummary("  ") == nil)
     }
 
-    // Task 3 adds `compaction` to the provider contract; uncomment there.
-    // @Test func claudeCompactsInStream() {
-    //     guard case let .inStream(prompt)? = ClaudeProvider().compaction else { Issue.record("not in-stream"); return }
-    //     #expect(prompt == "/compact")
-    // }
+    @Test func claudeCompactsInStream() {
+        guard case let .inStream(prompt)? = ClaudeProvider().compaction else { Issue.record("not in-stream"); return }
+        #expect(prompt == "/compact")
+    }
 }

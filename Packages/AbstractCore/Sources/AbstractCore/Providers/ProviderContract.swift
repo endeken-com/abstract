@@ -279,6 +279,32 @@ public enum FollowUpMode: Sendable {
     case respawn
 }
 
+/// How an agent compacts its conversation's context.
+public enum Compaction: Sendable {
+    /// Sent to the agent as a turn; its own output reports progress.
+    case inStream(prompt: String)
+    /// Run beside the chat by a short-lived process of the agent's.
+    case sideChannel(any Compactor)
+}
+
+/// Compacts one agent conversation outside the chat's own process.
+public protocol Compactor: Sendable {
+    /// Runs on the executor's host. Throws with a reason fit to show.
+    func compact(_ request: CompactionRequest, executor: any Executor) async throws -> CompactionResult
+}
+
+public struct CompactionRequest: Sendable, Hashable {
+    /// The agent's own id for the conversation.
+    public var sessionId: String
+    public var cwd: String
+    public var model: String?
+    public var binaryOverride: String?
+
+    public init(sessionId: String, cwd: String, model: String? = nil, binaryOverride: String? = nil) {
+        self.sessionId = sessionId; self.cwd = cwd; self.model = model; self.binaryOverride = binaryOverride
+    }
+}
+
 /// Everything agent-specific. Adding an agent = one conforming type plus one
 /// line in `ProviderRegistry`. The rest of the app never names a provider.
 public protocol ProviderDefinition: Sendable {
@@ -323,6 +349,8 @@ public protocol ProviderDefinition: Sendable {
     /// App commands only this agent gets in the `/` menu, and its own
     /// commands they take over.
     var commands: ProviderCommands { get }
+    /// How it compacts; nil: it can't, and `/compact` isn't offered.
+    var compaction: Compaction? { get }
 }
 
 public extension ProviderDefinition {
@@ -334,4 +362,5 @@ public extension ProviderDefinition {
     func buildBackground(toolUseId: String?, requestId: String) -> String? { nil }
     func permissionDetail(_ policy: PermissionPolicy) -> String { policy.detail }
     var commands: ProviderCommands { .none }
+    var compaction: Compaction? { nil }
 }

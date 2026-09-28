@@ -260,6 +260,7 @@ struct ComposerView: View {
         case .tasks:
             if model.backgroundTasks(session.id).isEmpty { model.flash("No background tasks") }
             else { model.tasksOpen = TasksFocus(sessionId: session.id) }
+        case .compact: model.compact(session.id)
         }
         draft = ""
     }
@@ -312,7 +313,7 @@ struct ComposerView: View {
                        detail: ProviderRegistry.provider(session.providerId)?.permissionDetail(policy) ?? policy.detail,
                        checked: session.permissionPolicy == policy) { model.setPolicy(session.id, policy) }
             }
-        case .stop, .diff, .rename, .attach, .tasks:
+        case .stop, .diff, .rename, .attach, .tasks, .compact:
             return []
         }
     }

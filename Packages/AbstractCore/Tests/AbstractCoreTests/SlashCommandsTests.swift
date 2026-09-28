@@ -3,7 +3,7 @@ import AbstractCore
 
 @Suite("Slash commands")
 struct SlashCommandsTests {
-    let claude = ProviderCommands(extra: [.tasks], replaces: ["permissions": .mode])
+    let claude = ProviderCommands(extra: [.tasks, .compact], replaces: ["permissions": .mode])
 
     func names(_ entries: [SlashEntry]) -> [String] { entries.map(\.name) }
 
@@ -44,8 +44,8 @@ struct SlashCommandsTests {
 
     @Test func unavailableCommandsAreLeftOut() {
         #expect(AppCommand.unavailable(working: false, remote: false) == [.stop])
-        #expect(AppCommand.unavailable(working: true, remote: false).isEmpty)
-        #expect(AppCommand.unavailable(working: true, remote: true) == [.rename])
+        #expect(AppCommand.unavailable(working: true, remote: false) == [.compact])
+        #expect(AppCommand.unavailable(working: true, remote: true) == [.rename, .compact])
         let entries = SlashCommands.entries(query: "", agentCommands: [AgentCommand(name: "stop")], provider: .none, excluding: [.stop])
         #expect(!names(entries).contains("stop")) // neither the app's nor the agent's
     }
@@ -82,8 +82,30 @@ struct SlashCommandsTests {
     }
 
     @Test func claudeAddsTasksAndTakesOverPermissions() {
-        #expect(ClaudeProvider().commands == ProviderCommands(extra: [.tasks], replaces: ["permissions": .mode]))
+        #expect(ClaudeProvider().commands == ProviderCommands(extra: [.tasks, .compact], replaces: ["permissions": .mode]))
         #expect(CodexProvider().commands == .none)
+    }
+
+    @Test func compactIsTheAppsForAgentsThatCanCompact() {
+        let entries = SlashCommands.entries(query: "", agentCommands: [AgentCommand(name: "compact", detail: "Claude's own")],
+                                            provider: claude, excluding: [])
+        #expect(entries.contains(.app(.compact)))
+        #expect(names(entries).filter { $0 == "compact" }.count == 1, "Claude's own is listed once, as the app's")
+        #expect(SlashCommands.appCommand(forDraft: "/compact", provider: claude, excluding: []) == .compact)
+        #expect(SlashCommands.appCommand(forDraft: "/compact", provider: .none, excluding: []) == nil)
+    }
+
+    @Test func compactOnlyBetweenTurnsHereWithAConversation() {
+        #expect(AppCommand.unavailable(working: true, remote: false).contains(.compact))
+        #expect(AppCommand.unavailable(working: false, remote: true).contains(.compact))
+        #expect(AppCommand.unavailable(working: false, remote: false, hasConversation: false).contains(.compact))
+        #expect(!AppCommand.unavailable(working: false, remote: false, hasConversation: true).contains(.compact))
+    }
+
+    @Test func everyAgentOffersCompactExactlyWhenItCanCompact() {
+        for provider in ProviderRegistry.all {
+            #expect(provider.commands.extra.contains(.compact) == (provider.compaction != nil), "\(provider.id)")
+        }
     }
 
     @Test func fuzzyScoreRewardsRunsAndWordStarts() {

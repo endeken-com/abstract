@@ -705,6 +705,9 @@ final class AppModel {
         setStatus(session.id, .running)
     }
 
+    // TODO(Task 7): runs the provider's `Compaction`, in-stream or side-channel.
+    func compact(_ sessionId: String) {}
+
     func sendFollowUp(_ sessionId: String, text: String, attachments: [PromptAttachment] = []) throws {
         // On another Mac, your message comes back with its output.
         if sessionId.hasPrefix(RemoteService.mirrorPrefix) { try remote.send(sessionId, text: text, attachments: attachments); return }
