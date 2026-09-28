@@ -15,19 +15,20 @@ public struct RepoDiff: Sendable, Hashable, Identifiable {
     public var error: String?
     /// A submodule checked out somewhere other than the commit its parent's
     /// HEAD records, so the parent still has a pointer to commit (Uncommitted
-    /// only). Its own files can all be committed, leaving nothing else to show.
+    /// only). Its files then run from that recorded commit, taking in the
+    /// submodule's own commits the parent hasn't recorded.
     public var pointerUncommitted: Bool
-    /// With `pointerUncommitted`: the submodule's commits its parent hasn't
-    /// recorded yet, newest first. Committed there, so they aren't files to
-    /// discard; each opens as one commit instead.
-    public var unrecorded: [CommitSummary]
+    /// With `pointerUncommitted`: its files (paths from the worktree) whose
+    /// changes are all committed in the submodule, so there's nothing of
+    /// them to discard; only the parent hasn't recorded them.
+    public var committedFiles: Set<String>
 
     public var id: String { repo.id }
 
     public init(repo: ChatRepo, files: [FileDiff] = [], ahead: Int = 0, isNew: Bool = false, error: String? = nil,
-                pointerUncommitted: Bool = false, unrecorded: [CommitSummary] = []) {
+                pointerUncommitted: Bool = false, committedFiles: Set<String> = []) {
         self.repo = repo; self.files = files; self.ahead = ahead; self.isNew = isNew; self.error = error
-        self.pointerUncommitted = pointerUncommitted; self.unrecorded = unrecorded
+        self.pointerUncommitted = pointerUncommitted; self.committedFiles = committedFiles
     }
 }
 
@@ -118,12 +119,13 @@ public extension Diff {
         let own: DiffCompare
         switch compare {
         case .uncommitted:
-            own = .uncommitted
             if repo.isSubmodule, let recorded = await recordedCommit(exec, worktree: worktree, of: repo, repos: repos),
                let head = await head(exec, cwd: dir), head != recorded {
                 result.pointerUncommitted = true
                 result.ahead = await commitCount(exec, cwd: dir, "\(recorded)..HEAD")
-                result.unrecorded = await commits(exec, worktree: dir, base: recorded).map { $0.inRepo(repo.path) }
+                own = .uncommittedSince(sha: recorded)
+            } else {
+                own = .uncommitted
             }
         case .committed(let base):
             guard repo.isSubmodule else { own = .committed(base: base); break }
@@ -136,8 +138,8 @@ public extension Diff {
             // Straight from the recorded commit: a pointer moved back or
             // sideways has no merge base to measure from.
             own = .since(sha: baseline)
-        case .since:
-            // Not a mode of the review's: the worktree's own alone.
+        case .since, .uncommittedSince:
+            // Not modes of the review's: the worktree's own alone.
             guard !repo.isSubmodule else { return result }
             own = compare
         case .commit(let sha, let inRepo):
@@ -147,6 +149,11 @@ public extension Diff {
         }
         result.files = try await collect(exec, worktree: dir, exclude: excluded, compare: own, ignoreWhitespace: ignoreWhitespace)
             .map { $0.inRepo(repo.path) }
+        if result.pointerUncommitted, let uncommitted = await Submodules.uncommittedPaths(exec, repo: dir) {
+            result.committedFiles = Set(result.files.filter { file in
+                !uncommitted.contains(file.repoPath) && !(file.repoOldPath.map(uncommitted.contains) ?? false)
+            }.map(\.path))
+        }
         return result
     }
 

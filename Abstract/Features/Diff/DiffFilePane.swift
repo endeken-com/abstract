@@ -43,9 +43,6 @@ struct DiffFileSections: View {
                                 }
                                 .id(file.path)
                             }
-                            if !section.diff.unrecorded.isEmpty {
-                                UnrecordedCommits(commits: section.diff.unrecorded, parent: parent, review: review, context: context)
-                            }
                         }
                     }
                     if !review.commits.isEmpty { ReviewCommits(review: review, context: context) }
@@ -127,8 +124,13 @@ private struct DiffFileHeader: View {
             Button("Apply to \(context.projectName)") { Task { await review.acceptFile(file, context, model: model) } }
                 .disabled(review.isAccepted(file) || review.isWorking)
             if review.mode == .uncommitted {
-                Button("Discard Changes…", role: .destructive, action: onDiscard)
-                    .disabled(review.isWorking)
+                if review.isCommittedOnly(file) {
+                    Button {} label: { Text("Discard Changes…"); Text("Committed in \(file.diff.repo)") }
+                        .disabled(true)
+                } else {
+                    Button("Discard Changes…", role: .destructive, action: onDiscard)
+                        .disabled(review.isWorking)
+                }
             }
         }
     }
@@ -533,29 +535,6 @@ private struct ReviewCommits: View {
         }
         .padding(.top, Space.md)
         .overlay(alignment: .top) { Hairline() }
-    }
-}
-
-/// Under a submodule's heading: its commits the parent hasn't recorded yet.
-/// Committed in the submodule, so they're commits to open, not files to discard.
-private struct UnrecordedCommits: View {
-    let commits: [CommitSummary]
-    let parent: String
-    let review: DiffReview
-    let context: DiffContext
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("Not committed in \(parent) yet")
-                .font(.btCaption)
-                .foregroundStyle(Color.btTextTertiary)
-                .padding(.leading, Space.md + 10 + Space.sm)
-                .frame(height: 24)
-            ForEach(commits) { commit in
-                ReviewCommitRow(commit: commit, review: review, context: context)
-            }
-        }
-        .padding(.bottom, Space.sm)
     }
 }
 

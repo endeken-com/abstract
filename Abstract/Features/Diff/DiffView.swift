@@ -104,7 +104,7 @@ struct DiffView: View {
                                   showTree: $showTree, narrow: narrow, showsTreeToggle: presentation == .document,
                                   onRefresh: { Task { await reload() } },
                                   onApplyAll: { confirmingApplyAll = true },
-                                  onDiscardAll: { discarding = review.files })
+                                  onDiscardAll: { discarding = review.discardableFiles })
                     if let error = review.actionError {
                         DiffErrorBanner(message: error) { review.actionError = nil }
                     }
@@ -112,23 +112,18 @@ struct DiffView: View {
                     if review.sections.isEmpty {
                         ReviewEmptyState(review: review, context: context)
                     } else if presentation == .list {
-                        // Paseo's Changes list, whatever the mode: a file opens the diff in
-                        // the main pane; a submodule's unrecorded commit shows here.
-                        ChangesTree(review: review, onOpen: { model.openDiffTab(in: sessionId, focus: $0) },
-                                    onCommit: { commit in Task { await review.show(.commit(commit), context) } })
+                        // Paseo's Changes list, whatever the mode: a file opens the diff in the main pane.
+                        ChangesTree(review: review) { model.openDiffTab(in: sessionId, focus: $0) }
                     } else if review.files.isEmpty {
-                        // Only headings (a submodule that couldn't be read, or a pointer
-                        // not committed yet), with its unrecorded commits under each.
+                        // Only headings: a submodule that couldn't be read, say.
                         DiffFileSections(review: review, context: context, layout: .unified, width: geo.size.width,
                                          onDiscard: { discarding = [$0] })
                     } else if showTree, !rail {
-                        ChangesTree(review: review, onOpen: { path in showTree = false; review.focus(path) },
-                                    onCommit: { commit in Task { await review.show(.commit(commit), context) } })
+                        ChangesTree(review: review) { path in showTree = false; review.focus(path) }
                     } else {
                         HStack(spacing: 0) {
                             if rail {
-                                ChangesTree(review: review, onOpen: { review.focus($0) },
-                                            onCommit: { commit in Task { await review.show(.commit(commit), context) } })
+                                ChangesTree(review: review) { review.focus($0) }
                                     .frame(width: 220)
                                 Rectangle().fill(Color.btBorder).frame(width: 1)
                             }
@@ -233,7 +228,7 @@ private struct ReviewToolbar: View {
                     .disabled(count == 0 || review.isWorking)
                 if review.mode == .uncommitted {
                     Button("Discard All Changes…", role: .destructive, action: onDiscardAll)
-                        .disabled(count == 0 || review.isWorking)
+                        .disabled(review.discardableFiles.isEmpty || review.isWorking)
                 }
             } label: {
                 Image(systemName: "ellipsis")

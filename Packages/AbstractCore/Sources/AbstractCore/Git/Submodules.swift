@@ -94,9 +94,20 @@ public enum Submodules {
     static func changedPaths(_ exec: any Executor, worktree: String) async -> Set<String>? {
         // A submodule's own status.showUntrackedFiles=no would hide one whose
         // only change is a new file; -c reaches the status git runs inside it.
-        guard let out = try? await Git.git(exec, cwd: worktree, ["-c", "status.showUntrackedFiles=normal", "--no-optional-locks", "status",
-                                                                 "--porcelain=v1", "-z", "--ignore-submodules=none"]),
-              out.ok else { return nil }
+        await statusPaths(exec, cwd: worktree, ["-c", "status.showUntrackedFiles=normal", "--no-optional-locks", "status",
+                                                "--porcelain=v1", "-z", "--ignore-submodules=none"])
+    }
+
+    /// The files in the repository at `repo` with work not committed there,
+    /// new ones each by name; nil when git can't say.
+    static func uncommittedPaths(_ exec: any Executor, repo: String) async -> Set<String>? {
+        await statusPaths(exec, cwd: repo, ["--no-optional-locks", "status", "--porcelain=v1", "-z", "--untracked-files=all",
+                                            "--ignore-submodules=all"])
+    }
+
+    /// The paths a `status --porcelain=v1 -z` run names, a rename's both.
+    private static func statusPaths(_ exec: any Executor, cwd: String, _ args: [String]) async -> Set<String>? {
+        guard let out = try? await Git.git(exec, cwd: cwd, args), out.ok else { return nil }
         var paths: Set<String> = []
         var entries = out.stdout.split(separator: "\0").map(String.init)[...]
         while let entry = entries.popFirst(), entry.utf8.count > 3 {

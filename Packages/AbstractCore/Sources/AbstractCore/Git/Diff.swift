@@ -213,8 +213,10 @@ public enum Diff {
 
     // MARK: Git
 
-    /// Everything the agent changed in its worktree, including untracked files.
-    public static func collect(_ exec: any Executor, worktree: String, exclude: [String] = []) async throws -> [FileDiff] {
+    /// Everything the agent changed in its worktree, including untracked
+    /// files, measured from `against` (HEAD unless a submodule's recorded commit).
+    public static func collect(_ exec: any Executor, worktree: String, exclude: [String] = [],
+                               against: String = "HEAD") async throws -> [FileDiff] {
         // `add -N` makes untracked files visible to `git diff` as additions.
         // A nested repository makes a whole-tree `add` fail outright ("does not
         // have a commit checked out"), which would silently drop every new file
@@ -236,7 +238,7 @@ public enum Diff {
 
         // quotePath=false keeps non-ASCII paths readable instead of octal-escaped and quoted.
         // No submodule pointers: a submodule's changes are read inside it.
-        let args = ["-c", "core.quotePath=false", "--no-pager", "diff", "HEAD", "--no-color", "--no-ext-diff",
+        let args = ["-c", "core.quotePath=false", "--no-pager", "diff", against, "--no-color", "--no-ext-diff",
                     "--ignore-submodules=all", "-M", "--", "."] + excludes
         return parse(try await Git.gitOK(exec, cwd: worktree, args))
     }

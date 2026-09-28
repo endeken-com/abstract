@@ -303,6 +303,15 @@ final class DiffReview {
     /// Whether the changes reach into a submodule, so each repository gets a heading.
     static func showsRepos(_ sections: [RepoSection]) -> Bool { sections.contains { $0.diff.repo.isSubmodule } }
 
+    /// A submodule file whose changes are all committed there (only its
+    /// parent hasn't recorded them): nothing of it to discard.
+    func isCommittedOnly(_ file: ReviewFile) -> Bool {
+        repos.first { $0.repo.path == file.diff.repo }?.committedFiles.contains(file.path) ?? false
+    }
+
+    /// The files Discard can act on.
+    var discardableFiles: [ReviewFile] { files.filter { !isCommittedOnly($0) } }
+
     func toggleRepo(_ path: String) {
         if collapsedRepos.contains(path) { collapsedRepos.remove(path) } else { collapsedRepos.insert(path) }
     }
@@ -477,6 +486,7 @@ final class DiffReview {
 
     /// Throw away the uncommitted changes to `files` in the worktree.
     func discard(_ files: [ReviewFile], _ context: DiffContext, model: AppModel) async {
+        let files = files.filter { !isCommittedOnly($0) }
         guard let first = files.first else { return }
         await perform(files.count == 1 ? "file:\(first.path)" : "all", context, model: model) {
             for (repo, inRepo) in Dictionary(grouping: files, by: \.diff.repo) {

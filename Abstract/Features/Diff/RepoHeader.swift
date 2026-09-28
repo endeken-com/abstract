@@ -23,7 +23,7 @@ struct RepoHeader: View {
             Button(action: onToggle) {
                 HStack(spacing: Space.sm) {
                     // Nothing under it to fold, so no arrow.
-                    if section.files.isEmpty && section.diff.unrecorded.isEmpty {
+                    if section.files.isEmpty {
                         Color.clear.frame(width: 10)
                     } else {
                         Image(systemName: "chevron.right")
