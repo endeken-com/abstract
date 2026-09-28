@@ -77,6 +77,7 @@ final class AppModel {
     }
     /// When each session's current turn started, for the "working for 12s" label.
     private(set) var turnStartedAt: [String: Date] = [:]
+    func markTurnStarted(_ id: String) { turnStartedAt[id] = Date() }
     /// Panel layouts by chat id; see AppModel+Panes.
     var layouts: [String: PanelLayout] = [:]
     /// A chat waiting on "Archive?" (⇧⌘⌫, or the git actions menu).
@@ -103,6 +104,12 @@ final class AppModel {
     /// Chats passing to another agent: the outgoing one's summary turn is
     /// running, and its exit is not an ending.
     private(set) var handingOff: Set<String> = []
+    /// Chats whose agent is compacting its context; a message waits for it.
+    private(set) var compacting: Set<String> = []
+    /// A side channel's compaction, cancelled by Stop.
+    @ObservationIgnored var compactions: [String: Task<Void, Never>] = [:]
+    func beginCompacting(_ id: String) { compacting.insert(id) }
+    func endCompacting(_ id: String) { compacting.remove(id); compactions[id] = nil }
     /// Tool names to approve without asking, per chat.
     var autoContinueTools: [String: Set<String>] = [:]
     /// A file the Changes pane should select next time it loads, per chat.
@@ -705,9 +712,6 @@ final class AppModel {
         setStatus(session.id, .running)
     }
 
-    // TODO(Task 7): runs the provider's `Compaction`, in-stream or side-channel.
-    func compact(_ sessionId: String) {}
-
     func sendFollowUp(_ sessionId: String, text: String, attachments: [PromptAttachment] = []) throws {
         // On another Mac, your message comes back with its output.
         if sessionId.hasPrefix(RemoteService.mirrorPrefix) { try remote.send(sessionId, text: text, attachments: attachments); return }
@@ -715,6 +719,7 @@ final class AppModel {
         guard let session = session(sessionId), let provider = ProviderRegistry.provider(session.providerId) else { return }
         // Its agent starts once it's set up, with the chat's first message.
         if setups[sessionId] != nil { throw AbstractError.message("“\(session.name)” is still being set up; its agent starts after.") }
+        if compacting.contains(sessionId) { throw AbstractError.message("Still compacting; send again in a moment.") }
         let message = PromptAttachments.message(text, attachments)
         let images = PromptAttachments.images(attachments)
         // The agent was switched: the new one hears what happened first.
@@ -964,6 +969,7 @@ final class AppModel {
     }
 
     func stop(_ sessionId: String) {
+        if let task = compactions[sessionId] { task.cancel(); return }
         if sessionId.hasPrefix(RemoteService.mirrorPrefix) { remote.stop(sessionId); return }
         if setups[sessionId]?.active == true { cancelSetup(sessionId); return }
         if stopCLIAgent(sessionId) { return }
@@ -1105,6 +1111,8 @@ final class AppModel {
             remote.forward(sessionId: sessionId, seq: seq, line: line)
         case let .exit(sessionId, code):
             alive.remove(sessionId)
+            // An in-stream compaction whose process died without a status still frees the chat.
+            if compactions[sessionId] == nil { compacting.remove(sessionId) }
             // Only once its last status is written may `abstract` take the chat.
             defer {
                 publishAgent(sessionId, providerId: nil)
@@ -1161,6 +1169,7 @@ final class AppModel {
                 replaceSession(s)
             }
         case let .status(status, detail):
+            if status != .running, compactions[sessionId] == nil { compacting.remove(sessionId) }
             setStatus(sessionId, status, detail: detail)
             if status == .idle {
                 // Still at work in the background: not done yet. The agent
@@ -1188,6 +1197,9 @@ final class AppModel {
             let s = session(sessionId)
             try? store.record(UsageRecord(sessionId: sessionId, projectId: s?.projectId, providerId: s?.providerId ?? "unknown",
                                           usage: totals, costUsd: cost ?? 0, durationMs: duration ?? 0, turns: turns ?? 1))
+        case .compaction(.finished), .compaction(.failed):
+            // Claude's own report ends an in-stream compaction; a side channel ends its own.
+            if compactions[sessionId] == nil { compacting.remove(sessionId) }
         default:
             break
         }
@@ -1222,6 +1234,10 @@ final class AppModel {
         // Each agent's part of the log is read by its own parser.
         let stream = ChatStream(providerId: ChatStream.firstProvider(in: lines, current: s.handoffFrom ?? s.providerId))
         feed(sessionId).reset(stream.replay(lines))
+        // Abstract quit mid-compaction: that one will never report back.
+        if !compacting.contains(sessionId), !isAlive(sessionId), feed(sessionId).timeline.hasRunningCompaction {
+            engine.record(sessionId: sessionId, CompactionMarker.failed("Abstract closed before compacting finished.").line)
+        }
         seenSeq[sessionId] = max(seenSeq[sessionId] ?? 0, replay.last?.seq ?? 0)
         streams[sessionId] = streams[sessionId] ?? stream
     }

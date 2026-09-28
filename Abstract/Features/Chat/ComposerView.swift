@@ -46,7 +46,8 @@ struct ComposerView: View {
     private var providerCommands: ProviderCommands { ProviderRegistry.provider(session.providerId)?.commands ?? .none }
     /// App commands that make no sense right now.
     private var unavailable: Set<AppCommand> {
-        var out = AppCommand.unavailable(working: working, remote: remote)
+        var out = AppCommand.unavailable(working: working || model.compacting.contains(session.id), remote: remote,
+                                         hasConversation: session.providerSessionId != nil)
         if model.efforts(providerId: session.providerId, model: session.model, on: device).levels.isEmpty { out.insert(.effort) }
         return out
     }
