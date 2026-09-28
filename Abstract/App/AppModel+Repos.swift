@@ -6,6 +6,9 @@ import AbstractCore
 struct RepoBranchState: Equatable {
     let path: String
     let state: BranchState
+    /// `owner/name` when you can't push to it: nothing is committed or pushed
+    /// in it, and what's pulled into it moves a pointer its parent can't commit.
+    let readOnly: String?
 }
 
 /// The repository a chat is working in (see `AppModel.currentRepo`).
@@ -72,8 +75,8 @@ extension AppModel {
 
     /// With a submodule current, where its branch stands: fetched in its own
     /// folder (at most once a minute, `.ifStale`) and measured against its own
-    /// default branch. Dropped while the worktree's own is current, or while
-    /// its folder can't be asked.
+    /// default branch, and whether you can push to it. Dropped while the
+    /// worktree's own is current, or while its folder can't be asked.
     func refreshCurrentSubmodule(_ sessionId: String, worktree: String, exec: any Executor, fetch: OriginFetch, read: Int) async {
         guard let repo = await currentSubmodule(sessionId, worktree: worktree, exec: exec) else {
             // A newer read clears (or fills) it itself.
@@ -84,8 +87,18 @@ extension AppModel {
         // Each worktree has its own clone of a submodule, so its fetches are its own.
         await fetchOriginIfDue(exec, key: dir, directory: dir, fetch: fetch)
         let state = await GitActions.state(exec, worktree: dir, preferredBase: nil)
+        let readOnly = await readOnlySlug(exec, directory: dir)
         guard branchReads[sessionId] == read, currentRepoPath(sessionId) == repo.path else { return }
-        let next = RepoBranchState(path: repo.path, state: state)
+        let next = RepoBranchState(path: repo.path, state: state, readOnly: readOnly)
         if currentRepoStates[sessionId] != next { currentRepoStates[sessionId] = next }
+    }
+
+    /// `owner/name` of the repository at `directory` when you can't push to
+    /// it; nil when you can, when it isn't on GitHub, or while that isn't
+    /// known yet (`gh` not ready).
+    private func readOnlySlug(_ exec: any Executor, directory: String) async -> String? {
+        guard let out = try? await exec.run("git", ["remote", "get-url", "origin"], cwd: directory), out.ok,
+              let slug = GitRemote.githubSlug(out.stdout.trimmingCharacters(in: .whitespacesAndNewlines)) else { return nil }
+        return await access(to: slug) == .readOnly ? slug : nil
     }
 }

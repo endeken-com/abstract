@@ -136,6 +136,12 @@ struct GitActionsButton: View {
         guard isSubmodule else { return model.branchStates[session.id] }
         return model.currentRepoStates[session.id].flatMap { $0.path == repoPath ? $0.state : nil }
     }
+    /// `owner/name` when the current submodule is one you can't push to, as
+    /// read for that submodule.
+    private var readOnlySlug: String? {
+        guard isSubmodule, let current = model.currentRepoStates[session.id], current.path == repoPath else { return nil }
+        return current.readOnly
+    }
     /// The worktree's own pull request; a submodule's aren't read yet.
     private var pr: PullRequest? { isSubmodule ? nil : model.pullRequests[session.id] }
     private var projectName: String { model.project(session.projectId)?.name ?? "the project" }
@@ -249,6 +255,14 @@ struct GitActionsButton: View {
     /// Why an action can't run now; nil when it can.
     private func reason(_ action: GitAction) -> String? {
         guard let s = state else { return "Checking the branch…" }
+        if let slug = readOnlySlug {
+            switch action {
+            case .commit, .push, .pullAndPush: return "You can't push to \(slug)"
+            // What they bring in moves its pointer, which the parent leaves out of its commits.
+            case .pull, .updateFromBase: return "You can't push to \(slug), so its pointer can't be committed"
+            default: break
+            }
+        }
         let base = s.baseName ?? "the base branch"
         switch action {
         case .commit: return s.dirty ? nil : "Nothing to commit"
