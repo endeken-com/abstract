@@ -33,19 +33,22 @@ extension AppModel {
 
     /// Before the chat's branch is pushed: pushes its submodules that have
     /// commits no remote has, then makes sure every pointer the branch
-    /// publishes is on its submodule's origin. Throws, naming the submodule,
-    /// when the branch can't go yet, or saying so when there's no branch at all.
+    /// publishes is on its submodule's origin. Throws, naming the submodule
+    /// and what was pushed already, when the branch can't go yet, or saying
+    /// so when there's no branch at all.
     func prepareParentPush(_ sessionId: String) async throws {
         guard let session = session(sessionId), let worktree = session.worktreePath else { return }
         guard let branch = session.branch else { throw AbstractError.message("This chat has no branch to push.") }
         let exec = executor(for: sessionId)
+        // Guarded even when only the worktree's own is listed: listing its
+        // submodules may have failed. Without any, nothing is pushed first and
+        // the guard reads the branch's commits alone, asking no origin.
         let repos = await Submodules.list(exec, worktree: worktree)
-        // Without submodules, pushing is what it always was.
-        guard repos.count > 1 else { return }
         let readOnly = await readOnlySubmodules(repos)
-        try await Shipping.pushSubmodules(exec, worktree: worktree, repos: repos, branch: branch, readOnly: readOnly)
-        if let blocked = await Shipping.unpublishedPointers(exec, worktree: worktree, repos: repos).first {
-            throw AbstractError.message(Self.explain(blocked, readOnly: readOnly.contains(blocked.repo.path)))
+        let pushed = try await Shipping.pushSubmodules(exec, worktree: worktree, repos: repos, branch: branch, readOnly: readOnly)
+        if let blocked = await Shipping.unpublishedPointers(exec, worktree: worktree, repos: repos, base: session.baseRef).first {
+            let went = pushed.isEmpty ? "" : "Pushed \(pushed.joined(separator: ", ")). "
+            throw AbstractError.message(went + Self.explain(blocked, readOnly: readOnly.contains(blocked.repo.path)))
         }
     }
 
@@ -77,7 +80,9 @@ extension AppModel {
             return "Didn't push: \(path) points at \(short), which isn't on its origin, and you can't push to "
                 + "\(pointer.repo.github ?? path). Keep its pointer where it was."
         case .notOnOrigin:
-            return "Didn't push: \(path) points at \(short), which isn't on its origin. Push \(path) first."
+            // Its branch was just pushed, if it had anything to push.
+            return "Didn't push: \(path) points at \(short), which isn't on its origin even after pushing \(path)'s branch. "
+                + "Check which commit \(path) is on."
         }
     }
 }
