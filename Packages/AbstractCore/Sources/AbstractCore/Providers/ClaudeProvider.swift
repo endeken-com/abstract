@@ -174,6 +174,25 @@ final class ClaudeParser: OutputParser {
     private var skills: Set<String> = []
     private var terminalOnly: Set<String> = []
 
+    /// A `compact_boundary` whose summary turn hasn't arrived yet.
+    private var boundary: (trigger: CompactionTrigger?, result: CompactionResult, durationMs: Int?)?
+
+    /// The compaction the last boundary described, with `summary`.
+    private func finishCompaction(summary: String? = nil) -> [AgentEvent] {
+        guard var pending = boundary else { return [] }
+        boundary = nil
+        pending.result.summary = summary
+        return [.compaction(.finished(pending.result, trigger: pending.trigger, durationMs: pending.durationMs))]
+    }
+
+    /// The summary Claude Code resumes from, minus its fixed opening.
+    static func compactSummary(_ text: String) -> String? {
+        var body = Substring(text)
+        if body.hasPrefix("This session is being continued"), let r = body.range(of: "Summary:\n") { body = body[r.upperBound...] }
+        let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
     func feed(_ line: String, stream: OutputStreamKind) -> [AgentEvent] {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty { return [] }
@@ -186,8 +205,9 @@ final class ClaudeParser: OutputParser {
     }
 
     func onExit(code: Int32?) -> [AgentEvent] {
-        if code == 0 { return [.status(.finished, detail: nil)] }
-        return [
+        let pending = finishCompaction()
+        if code == 0 { return pending + [.status(.finished, detail: nil)] }
+        return pending + [
             .error("claude exited with code \(code.map { String($0) } ?? "null")"),
             .status(.errored, detail: nil),
         ]
@@ -252,10 +272,21 @@ final class ClaudeParser: OutputParser {
             return events
         case "task_started", "task_progress", "task_updated", "task_notification":
             return ClaudeWire.task(obj).map { [.task($0)] } ?? []
-        // Every other system frame is the CLI's own bookkeeping (status,
-        // hooks, thinking_tokens, task_summary, background_tasks_changed,
-        // permission_denied…). New ones appear between releases; none of
-        // them belong in the conversation.
+        // Claude Code 2.1.282: `status` says `compacting` as it starts; the
+        // boundary follows with what it did, then the summary as a synthetic turn.
+        case "status":
+            return obj["status"]?.string == "compacting" ? [.compaction(.started(nil))] : []
+        case "compact_boundary":
+            let meta = obj["compact_metadata"]
+            boundary = (trigger: meta?["trigger"]?.string.flatMap(CompactionTrigger.init(rawValue:)),
+                        result: CompactionResult(tokensBefore: ClaudeWire.int(meta?["pre_tokens"]),
+                                                 tokensAfter: ClaudeWire.int(meta?["post_tokens"])),
+                        durationMs: ClaudeWire.int(meta?["duration_ms"]))
+            return []
+        // Every other system frame is the CLI's own bookkeeping (hooks,
+        // thinking_tokens, task_summary, background_tasks_changed,
+        // permission_denied, compaction…). New ones appear between releases;
+        // none of them belong in the conversation.
         default:
             return []
         }
@@ -361,6 +392,9 @@ final class ClaudeParser: OutputParser {
 
     private func onUser(_ obj: JSONValue) -> [AgentEvent]? {
         guard let message = obj["message"], message.object != nil else { return [] }
+        if boundary != nil, obj["isSynthetic"]?.bool == true {
+            return finishCompaction(summary: Self.compactSummary(ClaudeWire.flatten(message["content"])))
+        }
         let edit = ClaudeWire.editPreview(toolUseResult: obj["tool_use_result"])
         var events: [AgentEvent] = []
         for block in message["content"]?.array ?? [] {
@@ -383,7 +417,7 @@ final class ClaudeParser: OutputParser {
 
     private func onResult(_ obj: JSONValue) -> [AgentEvent]? {
         let usage = obj["usage"]
-        var events: [AgentEvent] = [
+        var events: [AgentEvent] = finishCompaction() + [
             .usage(
                 UsageTotals(
                     inputTokens: ClaudeWire.int(usage?["input_tokens"]) ?? 0,
