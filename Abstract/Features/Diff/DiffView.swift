@@ -135,15 +135,15 @@ struct DiffView: View {
                     } else if presentation == .list {
                         // Paseo's Changes list: a file opens the diff in the main pane.
                         ChangesTree(review: review, onOpen: { model.openDiffTab(in: sessionId, focus: $0) },
-                                    onOpenRepo: { path in model.selectRepo(sessionId, path) })
+                                    onOpenRepo: { path in model.showRepo(path, in: review, context) })
                     } else if showTree, !rail {
                         ChangesTree(review: review, onOpen: { path in showTree = false; review.focus(path) },
-                                    onOpenRepo: { path in model.selectRepo(sessionId, path) })
+                                    onOpenRepo: { path in model.showRepo(path, in: review, context) })
                     } else {
                         HStack(spacing: 0) {
                             if rail {
                                 ChangesTree(review: review, onOpen: { review.focus($0) },
-                                            onOpenRepo: { path in model.selectRepo(sessionId, path) })
+                                            onOpenRepo: { path in model.showRepo(path, in: review, context) })
                                     .frame(width: 220)
                                 Rectangle().fill(Color.btBorder).frame(width: 1)
                             }

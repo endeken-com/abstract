@@ -23,7 +23,7 @@ struct RepoMenu: View {
     var body: some View {
         Menu {
             ForEach(review.repoList) { repo in
-                Button { model.selectRepo(context.sessionId, repo.path) } label: {
+                Button { model.showRepo(repo.path, in: review, context) } label: {
                     Image(systemName: repo.isSubmodule ? "shippingbox" : "folder")
                     Text(name(repo))
                     let notes = [repo.path == review.selectedRepo ? "Showing" : nil,

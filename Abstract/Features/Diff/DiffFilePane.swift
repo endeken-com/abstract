@@ -25,7 +25,7 @@ struct DiffFileSections: View {
                         VStack(alignment: .leading, spacing: 0) {
                             ForEach(review.pointers) { pointer in
                                 PointerRow(pointer: pointer, canOpen: review.repoList.contains { $0.path == pointer.repo.path }) {
-                                    model.selectRepo(context.sessionId, pointer.repo.path)
+                                    model.showRepo(pointer.repo.path, in: review, context)
                                 }
                             }
                         }
