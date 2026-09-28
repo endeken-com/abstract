@@ -130,6 +130,25 @@ struct ShippingTests {
         #expect(!later.ok, "nothing after it was pushed")
     }
 
+    @Test func aDetachedSubmoduleWhoseBranchIsElsewhereIsntPushed() async throws {
+        let f = try await SubmoduleFixture.make()
+        defer { f.remove() }
+        let wt = f.worktree, core = wt + "/libs/core"
+        // A branch "chat" at the current commit, then move HEAD past it while detached.
+        try await f.git(core, ["branch", "chat"])
+        try f.write(core + "/c.txt", "c\n")
+        try await f.commitAll(core, "Chat work")
+        let repos = await Submodules.list(exec, worktree: wt)
+        do {
+            try await Shipping.pushSubmodules(exec, worktree: wt, repos: repos, branch: "chat")
+            Issue.record("the push should have failed")
+        } catch {
+            #expect(error.localizedDescription.contains("libs/core"))
+        }
+        let out = try await exec.run("git", ["rev-parse", "--verify", "-q", "chat"], cwd: f.repo("core"))
+        #expect(!out.ok, "the remote never got the branch")
+    }
+
     @Test func aReadOnlySubmoduleIsntPushed() async throws {
         let f = try await SubmoduleFixture.make()
         defer { f.remove() }

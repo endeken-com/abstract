@@ -84,7 +84,11 @@ public enum Shipping {
         for repo in order(repos) where repo.isSubmodule && !readOnly.contains(repo.path) {
             let dir = repo.directory(in: worktree)
             guard await commitsNoRemoteHas(exec, dir, ["HEAD"]) > 0 else { continue }
-            await ensureBranch(exec, directory: dir, name: branch)
+            if await ensureBranch(exec, directory: dir, name: branch) == .leftDetached {
+                throw AbstractError.message(
+                    "\(repo.path) is on a detached commit while its branch \(branch) is somewhere else, so nothing was pushed. "
+                    + "Put \(repo.path) on a branch first.")
+            }
             let target = ((try? await Git.currentBranch(exec, root: dir)) ?? nil) ?? branch
             do {
                 try await Git.push(exec, worktree: dir, branch: target)
