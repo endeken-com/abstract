@@ -44,4 +44,25 @@ public enum Shipping {
         let sha = GitText.trimmed(out.stdout)
         return sha.isEmpty ? nil : sha
     }
+
+    /// Commits in every repository with something to commit, `order`ed, with
+    /// one message: each parent's commit then takes in the pointers its
+    /// submodules' just moved. Submodules you can't push to (`readOnly`, by
+    /// path) are left as they are, and no commit moves their pointer.
+    /// Returns the paths of the repositories committed.
+    @discardableResult
+    public static func commit(_ exec: any Executor, worktree: String, repos: [ChatRepo], branch: String,
+                              readOnly: Set<String> = [], message: String) async throws -> [String] {
+        var committed: [String] = []
+        for repo in order(repos) where !readOnly.contains(repo.path) {
+            let dir = repo.directory(in: worktree)
+            guard await Diff.isDirty(exec, worktree: dir) else { continue }
+            if repo.isSubmodule { await ensureBranch(exec, directory: dir, name: branch) }
+            let keep = repos.filter { $0.parentPath == repo.path && readOnly.contains($0.path) }.compactMap { repo.inside($0.path) }
+            let before = await revision(exec, dir, "HEAD")
+            try await Git.commitAll(exec, worktree: dir, message: message, exclude: keep)
+            if await revision(exec, dir, "HEAD") != before { committed.append(repo.path) }
+        }
+        return committed
+    }
 }

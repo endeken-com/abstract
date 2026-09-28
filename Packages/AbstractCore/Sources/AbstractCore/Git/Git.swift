@@ -177,9 +177,11 @@ public enum Git {
 
     // MARK: Publishing
 
-    /// Stages and commits everything in the worktree. Nothing to commit is not an error.
-    public static func commitAll(_ exec: any Executor, worktree: String, message: String) async throws {
-        _ = try await gitOK(exec, cwd: worktree, ["add", "-A"])
+    /// Stages and commits everything in the worktree but `exclude` (paths in
+    /// it: a submodule whose pointer mustn't move). Nothing to commit is not an error.
+    public static func commitAll(_ exec: any Executor, worktree: String, message: String, exclude: [String] = []) async throws {
+        let pathspec = exclude.isEmpty ? [] : ["--", "."] + exclude.map { ":(exclude)" + $0 }
+        _ = try await gitOK(exec, cwd: worktree, ["add", "-A"] + pathspec)
         let staged = try await git(exec, cwd: worktree, ["diff", "--cached", "--quiet"])
         guard !staged.ok else { return }
         _ = try await gitOK(exec, cwd: worktree, ["commit", "-m", message])

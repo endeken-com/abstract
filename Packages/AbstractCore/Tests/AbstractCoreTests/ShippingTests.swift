@@ -45,4 +45,46 @@ struct ShippingTests {
             #expect(try await Git.currentBranch(exec, root: path + "/" + sub) == "chat2", "\(sub)")
         }
     }
+
+    // MARK: Committing
+
+    @Test func commitsGoInnermostFirstAndEachParentTakesTheirPointers() async throws {
+        let f = try await SubmoduleFixture.make()
+        defer { f.remove() }
+        let wt = f.worktree
+        try f.write(wt + "/libs/core/vendor/deep/d.txt", "d\n")
+        try f.write(wt + "/libs/core/c.txt", "c\n")
+        try f.write(wt + "/top.txt", "top\n")
+        let repos = await Submodules.list(exec, worktree: wt)
+
+        let committed = try await Shipping.commit(exec, worktree: wt, repos: repos, branch: "chat", message: "Ship")
+        #expect(committed == ["libs/core/vendor/deep", "libs/core", ""], "libs/other lib had nothing")
+        #expect(try await Git.currentBranch(exec, root: wt + "/libs/core") == "chat", "committed on a branch that can be pushed")
+        let core = try await f.git(wt + "/libs/core", ["show", "--name-only", "--format=%s", "HEAD"])
+        #expect(core.contains("Ship") && core.contains("c.txt") && core.contains("vendor/deep"))
+        let parent = try await f.git(wt, ["show", "--name-only", "--format=%s", "HEAD"])
+        #expect(parent.contains("Ship") && parent.contains("libs/core") && parent.contains("top.txt"))
+        #expect(await !Diff.isDirty(exec, worktree: wt))
+        #expect(try await Shipping.commit(exec, worktree: wt, repos: repos, branch: "chat", message: "Again") == [])
+    }
+
+    @Test func aReadOnlySubmoduleIsNeitherCommittedNorMoved() async throws {
+        let f = try await SubmoduleFixture.make()
+        defer { f.remove() }
+        let wt = f.worktree, other = wt + "/libs/other lib"
+        // The agent committed in it anyway, and left more.
+        try f.write(other + "/o.txt", "o\n")
+        try await f.commitAll(other, "Agent's own")
+        try f.write(other + "/p.txt", "p\n")
+        try f.write(wt + "/top.txt", "top\n")
+        let repos = await Submodules.list(exec, worktree: wt)
+
+        let committed = try await Shipping.commit(exec, worktree: wt, repos: repos, branch: "chat",
+                                                  readOnly: ["libs/other lib"], message: "Ship")
+        #expect(committed == [""])
+        #expect(try await f.git(other, ["status", "--porcelain"]).contains("p.txt"), "its work stays uncommitted")
+        let parent = try await f.git(wt, ["show", "--name-only", "--format=", "HEAD"])
+        #expect(parent.contains("top.txt"))
+        #expect(!parent.contains("libs/other lib"), "its pointer stays where app had it")
+    }
 }
