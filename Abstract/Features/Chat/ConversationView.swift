@@ -296,7 +296,6 @@ private struct CompactionRow: View {
             .font(.btChatCaption)
             .foregroundStyle(failed ? Color.btRemoved : Color.btTextTertiary)
             .disabled(summary == nil)
-            .help(Self.details(state))
             if isOpen, let summary {
                 SelectableText(TextClip.block(summary)).font(.btChatBody).foregroundStyle(Color.btTextSecondary).lineSpacing(2)
                     .btLeadingRule(Color.btTextTertiary.opacity(0.4))
@@ -304,15 +303,19 @@ private struct CompactionRow: View {
         }
         .padding(.vertical, Space.xs)
         .frame(maxWidth: .infinity, alignment: .leading)
+        // On the outer view, not the (sometimes disabled) button: a disabled
+        // control suppresses its own tooltip on macOS.
+        .help(Self.details(state))
     }
 
     /// "Compacted · 23k → 3.8k tokens · 18s", leaving out what the agent didn't say.
+    /// The failure reason is clipped; the tooltip carries it in full.
     static func caption(trigger: CompactionTrigger, state: CompactionState) -> String {
         switch state {
         case .running:
             return "Compacting conversation…"
         case let .failed(message):
-            return "Couldn't compact: \(message)"
+            return "Couldn't compact: \(TextClip.line(message, max: 120))"
         case let .done(result, durationMs):
             let tokens: String? = switch (result.tokensBefore, result.tokensAfter) {
             case let (before?, after?): "\(RelativeTime.tokens(before)) → \(RelativeTime.tokens(after)) tokens"
@@ -324,9 +327,18 @@ private struct CompactionRow: View {
         }
     }
 
+    /// The tooltip: the context window for a finished compaction, or the
+    /// failure reason in full, since the caption above clips it.
     private static func details(_ state: CompactionState) -> String {
-        guard case let .done(result, _) = state, let window = result.contextWindow else { return "" }
-        return "Of a \(RelativeTime.tokens(window))-token context window"
+        switch state {
+        case let .done(result, _):
+            guard let window = result.contextWindow else { return "" }
+            return "Of a \(RelativeTime.tokens(window))-token context window"
+        case let .failed(message):
+            return message
+        case .running:
+            return ""
+        }
     }
 }
 
