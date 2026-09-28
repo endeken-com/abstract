@@ -94,18 +94,23 @@ extension AppModel {
 
     enum OriginFetch { case never, ifStale, now }
 
+    /// Fetches `directory`'s origin: `.ifStale` at most once a minute per
+    /// `key`, `.now` regardless. Offline (or any other failure) never blocks
+    /// reading the branch state, so a failed fetch is silently skipped.
+    func fetchOriginIfDue(_ exec: any Executor, key: String, directory: String, fetch: OriginFetch) async {
+        let stale = originFetchedAt[key].map { ContinuousClock.now - $0 >= .seconds(60) } ?? true
+        guard fetch == .now || (fetch == .ifStale && stale) else { return }
+        originFetchedAt[key] = .now
+        _ = try? await exec.run("git", ["fetch", "--quiet", "--prune", "origin"], cwd: directory)
+    }
+
     /// Re-reads where a chat's branch stands, fetching from origin first:
     /// `.ifStale` at most once a minute per project, `.now` regardless.
     /// Pruned, so a branch deleted on origin (a merged PR's) shows as gone.
     func refreshBranch(_ sessionId: String, fetch: OriginFetch = .never) async {
         guard let session = session(sessionId), let worktree = session.worktreePath else { return }
         let exec = executor(for: sessionId)
-        let key = session.projectId ?? sessionId
-        let stale = originFetchedAt[key].map { ContinuousClock.now - $0 >= .seconds(60) } ?? true
-        if fetch == .now || (fetch == .ifStale && stale) {
-            originFetchedAt[key] = .now
-            _ = try? await exec.run("git", ["fetch", "--quiet", "--prune", "origin"], cwd: worktree)
-        }
+        await fetchOriginIfDue(exec, key: session.projectId ?? sessionId, directory: worktree, fetch: fetch)
         let read = (branchReads[sessionId] ?? 0) + 1
         branchReads[sessionId] = read
         let state = await GitActions.state(exec, worktree: worktree, preferredBase: session.baseRef)

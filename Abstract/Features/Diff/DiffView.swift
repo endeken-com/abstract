@@ -67,9 +67,11 @@ struct DiffView: View {
             await review.load(context)
         }
         // Gone since it was picked: the review fell back to the worktree's
-        // own. Only while it's still the one wanted, so a newer pick stands.
+        // own. Only while it's still the one wanted, so a newer pick stands,
+        // and only once git confirms it isn't a checkout any more — a failed
+        // listing alone must not move the chat off it.
         if !wanted.isEmpty, review.selectedRepo.isEmpty, model.currentRepoPath(sessionId) == wanted {
-            model.selectRepo(sessionId, "")
+            await model.dropRepoIfGone(sessionId, wanted, worktree: context.worktree, exec: context.executor)
         }
         takePendingSelection()
     }
@@ -86,17 +88,16 @@ struct DiffView: View {
     /// Select the file another pane asked for, once it's in the list.
     private func takePendingSelection() {
         guard presentation == .document, review.phase == .loaded, let path = model.pendingChangeSelection[sessionId] else { return }
+        model.pendingChangeSelection[sessionId] = nil
         if review.files.contains(where: { $0.path == path }) {
-            model.pendingChangeSelection[sessionId] = nil
             showTree = false
             review.focus(path)
-        } else if let repo = review.repo(containing: path), repo.path != review.selectedRepo {
-            // A file in another of the worktree's repositories: show that one
-            // first; its reload selects the file.
+        } else if let repo = review.repo(containing: path), repo.path != review.selectedRepo,
+                  case .ready(let context) = model.diffAvailability(sessionId) {
+            // A file in another of the worktree's repositories: show that one first.
             showTree = false
             model.selectRepo(sessionId, repo.path)
-        } else {
-            model.pendingChangeSelection[sessionId] = nil
+            Task { await review.select(repo.path, context, focus: path) }
         }
     }
 
