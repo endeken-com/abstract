@@ -9,6 +9,13 @@ public enum BranchOutcome: Sendable, Hashable {
     case leftDetached
 }
 
+/// A submodule's commits that no remote has: they live only in the
+/// worktree's own clone of it, and go if the worktree is deleted.
+public struct UnpushedWork: Sendable, Hashable {
+    public var repo: ChatRepo
+    public var commits: Int
+}
+
 /// Shipping a chat's work when its worktree holds submodules: each submodule
 /// on a branch, committed and pushed before the parent that points at it.
 public enum Shipping {
@@ -64,5 +71,46 @@ public enum Shipping {
             if await revision(exec, dir, "HEAD") != before { committed.append(repo.path) }
         }
         return committed
+    }
+
+    /// Pushes every submodule, `order`ed, whose HEAD has commits no remote
+    /// has, onto its branch: the chat's, unless the agent chose another. Stops
+    /// at the first that fails, naming it: nothing may point at what didn't go.
+    /// Returns the paths pushed.
+    @discardableResult
+    public static func pushSubmodules(_ exec: any Executor, worktree: String, repos: [ChatRepo], branch: String,
+                                      readOnly: Set<String> = []) async throws -> [String] {
+        var pushed: [String] = []
+        for repo in order(repos) where repo.isSubmodule && !readOnly.contains(repo.path) {
+            let dir = repo.directory(in: worktree)
+            guard await commitsNoRemoteHas(exec, dir, ["HEAD"]) > 0 else { continue }
+            await ensureBranch(exec, directory: dir, name: branch)
+            let target = ((try? await Git.currentBranch(exec, root: dir)) ?? nil) ?? branch
+            do {
+                try await Git.push(exec, worktree: dir, branch: target)
+            } catch {
+                throw AbstractError.message("\(repo.path) didn't push, so nothing that points at it was: \(error.localizedDescription)")
+            }
+            pushed.append(repo.path)
+        }
+        return pushed
+    }
+
+    /// What deleting the worktree would lose besides uncommitted work: each
+    /// submodule's commits, on its HEAD or its branches, that no remote has.
+    /// The worktree's own branch is kept on delete, so it isn't counted.
+    public static func unpushedWork(_ exec: any Executor, worktree: String, repos: [ChatRepo]) async -> [UnpushedWork] {
+        var found: [UnpushedWork] = []
+        for repo in order(repos) where repo.isSubmodule {
+            let count = await commitsNoRemoteHas(exec, repo.directory(in: worktree), ["HEAD", "--branches"])
+            if count > 0 { found.append(UnpushedWork(repo: repo, commits: count)) }
+        }
+        return found
+    }
+
+    private static func commitsNoRemoteHas(_ exec: any Executor, _ directory: String, _ from: [String]) async -> Int {
+        guard let out = try? await Git.git(exec, cwd: directory, ["rev-list", "--count"] + from + ["--not", "--remotes"]), out.ok
+        else { return 0 }
+        return Int(GitText.trimmed(out.stdout)) ?? 0
     }
 }

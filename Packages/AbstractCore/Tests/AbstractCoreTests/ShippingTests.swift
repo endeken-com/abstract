@@ -87,4 +87,67 @@ struct ShippingTests {
         #expect(parent.contains("top.txt"))
         #expect(!parent.contains("libs/other lib"), "its pointer stays where app had it")
     }
+
+    // MARK: Pushing
+
+    @Test func aSubmodulesCommitsArePushedOntoTheChatsBranch() async throws {
+        let f = try await SubmoduleFixture.make()
+        defer { f.remove() }
+        let wt = f.worktree, core = wt + "/libs/core"
+        // Committed on a detached HEAD, as a chat made before branches were given did.
+        try f.write(core + "/c.txt", "c\n")
+        try await f.commitAll(core, "Chat work")
+        let repos = await Submodules.list(exec, worktree: wt)
+        #expect(await Shipping.unpushedWork(exec, worktree: wt, repos: repos).map { "\($0.repo.path) \($0.commits)" } == ["libs/core 1"],
+                "only in this worktree's clone of libs/core")
+
+        let pushed = try await Shipping.pushSubmodules(exec, worktree: wt, repos: repos, branch: "chat")
+        #expect(pushed == ["libs/core"], "the others have nothing no remote has")
+        let there = GitText.trimmed(try await f.git(f.repo("core"), ["rev-parse", "chat"]))
+        #expect(there == GitText.trimmed(try await f.git(core, ["rev-parse", "HEAD"])))
+        #expect(try await Git.currentBranch(exec, root: core) == "chat")
+        #expect(await Shipping.unpushedWork(exec, worktree: wt, repos: repos).isEmpty)
+        #expect(try await Shipping.pushSubmodules(exec, worktree: wt, repos: repos, branch: "chat") == [])
+    }
+
+    @Test func aFailedPushNamesTheSubmoduleAndGoesNoFurther() async throws {
+        let f = try await SubmoduleFixture.make()
+        defer { f.remove() }
+        let wt = f.worktree
+        for sub in ["libs/core", "libs/other lib"] {
+            try f.write(wt + "/" + sub + "/c.txt", "c\n")
+            try await f.commitAll(wt + "/" + sub, "Chat work")
+        }
+        try await f.git(wt + "/libs/core", ["remote", "set-url", "origin", f.dir + "/missing"])
+        let repos = await Submodules.list(exec, worktree: wt)
+        do {
+            try await Shipping.pushSubmodules(exec, worktree: wt, repos: repos, branch: "chat")
+            Issue.record("the push should have failed")
+        } catch {
+            #expect(error.localizedDescription.contains("libs/core"))
+        }
+        let later = try await exec.run("git", ["rev-parse", "--verify", "-q", "chat"], cwd: f.repo("other"))
+        #expect(!later.ok, "nothing after it was pushed")
+    }
+
+    @Test func aReadOnlySubmoduleIsntPushed() async throws {
+        let f = try await SubmoduleFixture.make()
+        defer { f.remove() }
+        let other = f.worktree + "/libs/other lib"
+        try f.write(other + "/o.txt", "o\n")
+        try await f.commitAll(other, "Agent's own")
+        let repos = await Submodules.list(exec, worktree: f.worktree)
+        #expect(try await Shipping.pushSubmodules(exec, worktree: f.worktree, repos: repos, branch: "chat", readOnly: ["libs/other lib"]) == [])
+        #expect(await Shipping.unpushedWork(exec, worktree: f.worktree, repos: repos).map(\.repo.path) == ["libs/other lib"],
+                "still only in the worktree, so deleting it would lose it")
+    }
+
+    @Test func withoutSubmodulesThereIsNothingToPushFirst() async throws {
+        let f = try await SubmoduleFixture.make()
+        defer { f.remove() }
+        let plain = f.repo("deep")
+        let repos = await Submodules.list(exec, worktree: plain)
+        #expect(try await Shipping.pushSubmodules(exec, worktree: plain, repos: repos, branch: "chat") == [])
+        #expect(await Shipping.unpushedWork(exec, worktree: plain, repos: repos).isEmpty, "a repository's own branch is kept on delete")
+    }
 }
