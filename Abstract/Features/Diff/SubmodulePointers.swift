@@ -14,7 +14,7 @@ extension PointerChange {
 }
 
 /// Which repository the review shows: the worktree's own, or one of its
-/// submodules, each reviewed on its own. A dot marks one with uncommitted work.
+/// submodules, each reviewed on its own, and which ones have uncommitted work.
 struct RepoMenu: View {
     let review: DiffReview
     let context: DiffContext
@@ -23,9 +23,11 @@ struct RepoMenu: View {
         Menu {
             ForEach(review.repoList) { repo in
                 Button { Task { await review.select(repo.path, context) } } label: {
-                    if review.changedRepos.contains(repo.path) { Image(systemName: "circle.fill") }
+                    Image(systemName: repo.isSubmodule ? "shippingbox" : "folder")
                     Text(name(repo))
-                    if repo.path == review.selectedRepo { Text("Showing") }
+                    let notes = [repo.path == review.selectedRepo ? "Showing" : nil,
+                                 review.changedRepos.contains(repo.path) ? "Uncommitted changes" : nil].compactMap { $0 }
+                    if !notes.isEmpty { Text(notes.joined(separator: " · ")) }
                 }
             }
         } label: {
