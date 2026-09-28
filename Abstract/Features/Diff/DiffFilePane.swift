@@ -26,12 +26,14 @@ struct DiffFileSections: View {
                         if showsRepos {
                             RepoHeader(section: section,
                                        title: section.diff.repo.isSubmodule ? section.diff.repo.path : context.projectName,
-                                       parent: parent,
                                        collapsed: review.collapsedRepos.contains(section.id)) { review.toggleRepo(section.id) }
                                 // The tree's row for a submodule with nothing but a heading scrolls here.
                                 .id(section.id)
                         }
                         if !review.collapsedRepos.contains(section.id) {
+                            if let label = section.diff.pointerLabel(committedIn: parent) {
+                                PointerCommits(label: label, commits: section.diff.pointerCommits, review: review, context: context)
+                            }
                             ForEach(section.files) { file in
                                 Section {
                                     if review.isExpanded(file) {
@@ -124,13 +126,8 @@ private struct DiffFileHeader: View {
             Button("Apply to \(context.projectName)") { Task { await review.acceptFile(file, context, model: model) } }
                 .disabled(review.isAccepted(file) || review.isWorking)
             if review.mode == .uncommitted {
-                if review.isCommittedOnly(file) {
-                    Button {} label: { Text("Discard Changes…"); Text("Committed in \(file.diff.repo)") }
-                        .disabled(true)
-                } else {
-                    Button("Discard Changes…", role: .destructive, action: onDiscard)
-                        .disabled(review.isWorking)
-                }
+                Button("Discard Changes…", role: .destructive, action: onDiscard)
+                    .disabled(review.isWorking)
             }
         }
     }
@@ -535,6 +532,31 @@ private struct ReviewCommits: View {
         }
         .padding(.top, Space.md)
         .overlay(alignment: .top) { Hairline() }
+    }
+}
+
+/// Under a submodule's heading, before its files: its pointer, which is one
+/// change to its parent, and the commits the pointer moves over.
+private struct PointerCommits: View {
+    let label: String
+    let commits: [CommitSummary]
+    let review: DiffReview
+    let context: DiffContext
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: Space.sm) {
+                Image(nsImage: Octicon.gitCommit).renderingMode(.template).resizable()
+                    .frame(width: 12, height: 12).foregroundStyle(Color.btTextTertiary)
+                Text(label).font(BTFont.ui(12.5)).foregroundStyle(Color.btTextSecondary).lineLimit(1)
+            }
+            .padding(.leading, Space.md + 10 + Space.sm)
+            .frame(height: 26)
+            ForEach(commits) { commit in
+                ReviewCommitRow(commit: commit, review: review, context: context)
+            }
+        }
+        .padding(.bottom, Space.sm)
     }
 }
 

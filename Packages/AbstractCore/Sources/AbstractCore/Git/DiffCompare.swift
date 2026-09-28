@@ -6,10 +6,6 @@ import Foundation
 public enum DiffCompare: Sendable, Hashable {
     /// The working tree and index against HEAD, new files included.
     case uncommitted
-    /// The working tree against `sha` instead of HEAD: a submodule against
-    /// the commit its parent records, so its commits the parent hasn't
-    /// recorded yet count as not committed too.
-    case uncommittedSince(sha: String)
     /// HEAD against where it left `base` (their merge base).
     case committed(base: String)
     /// HEAD against `sha` itself, with no merge base: a submodule against the
@@ -45,12 +41,10 @@ extension Diff {
             .map { ":(exclude)" + GitText.trimTrailingSlashes($0) }
         let space = ignoreWhitespace ? ["-w"] : []
         switch compare {
-        case .uncommitted, .uncommittedSince:
-            let against: String
-            if case .uncommittedSince(let sha) = compare { against = sha } else { against = "HEAD" }
-            guard ignoreWhitespace else { return try await collect(exec, worktree: worktree, exclude: exclude, against: against) }
-            _ = try await collect(exec, worktree: worktree, exclude: exclude, against: against)
-            return parse(try await Git.gitOK(exec, cwd: worktree, ["-c", "core.quotePath=false", "--no-pager", "diff", against, "--no-color",
+        case .uncommitted:
+            guard ignoreWhitespace else { return try await collect(exec, worktree: worktree, exclude: exclude) }
+            _ = try await collect(exec, worktree: worktree, exclude: exclude)
+            return parse(try await Git.gitOK(exec, cwd: worktree, ["-c", "core.quotePath=false", "--no-pager", "diff", "HEAD", "--no-color",
                                                                     "--no-ext-diff", "--ignore-submodules=all", "-M", "-w", "--", "."] + excludes))
         case .committed(let base):
             let from = await mergeBase(exec, worktree: worktree, base: base) ?? base

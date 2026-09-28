@@ -120,6 +120,7 @@ struct SubmoduleTests {
         let coreDiff = try #require(diffs.first { $0.repo.path == "libs/core" })
         #expect(coreDiff.files.map(\.path) == ["libs/core/chat.txt"], "upstream.txt is the submodule's main, not the chat's work")
         #expect(coreDiff.ahead == 1)
+        #expect(coreDiff.pointerCommits.map(\.subject) == ["Chat work"], "the branch's own commits in it, not its main's")
         #expect(!coreDiff.isNew)
         #expect(diffs.first?.files.isEmpty == true, "the moved pointer isn't shown as a file")
     }
@@ -247,20 +248,17 @@ struct SubmoduleTests {
         let moved = try #require(before.first { $0.repo.path == "libs/core" })
         #expect(moved.pointerUncommitted)
         #expect(moved.ahead == 1)
-        #expect(moved.files.map(\.path) == ["libs/core/chat.txt"], "app hasn't committed the pointer that brings it in")
-        #expect(moved.committedFiles == ["libs/core/chat.txt"], "committed in libs/core: nothing there to discard")
-        // Accepted into the project's checkout, still at the recorded commit.
-        let chat = try #require(moved.files.first)
-        try await Diff.accept(exec, root: f.app + "/libs/core", patch: Diff.buildPatch(chat, hunks: []))
-        #expect(try f.read(f.app + "/libs/core/chat.txt") == "chat\n")
+        #expect(moved.files.isEmpty, "chat.txt is committed in libs/core: only the pointer isn't")
+        #expect(moved.pointerCommits.map(\.subject) == ["Chat work"], "what the pointer entry lists")
+        #expect(moved.pointerCommits.allSatisfy { $0.repo == "libs/core" }, "so picking one shows it from its own repository")
 
-        // Work on top, not committed in libs/core either, can be discarded as usual.
+        // Work on top, not committed in libs/core, is listed as files beside the pointer.
         try f.write(core + "/wip.txt", "wip\n")
         try f.write(core + "/a.txt", "core\nchanged\n")
         let both = try await Diff.collectAll(exec, worktree: f.worktree, repos: repos, compare: .uncommitted, baselines: baselines)
         let mixed = try #require(both.first { $0.repo.path == "libs/core" })
-        #expect(mixed.files.map(\.path).sorted() == ["libs/core/a.txt", "libs/core/chat.txt", "libs/core/wip.txt"])
-        #expect(mixed.committedFiles == ["libs/core/chat.txt"])
+        #expect(mixed.files.map(\.path).sorted() == ["libs/core/a.txt", "libs/core/wip.txt"])
+        #expect(mixed.pointerCommits.map(\.subject) == ["Chat work"])
         try await Diff.discard(exec, worktree: core, paths: ["a.txt", "wip.txt"])
         #expect(before.first { $0.repo.path == "libs/other lib" }?.pointerUncommitted == false)
 
@@ -273,7 +271,7 @@ struct SubmoduleTests {
         #expect(recorded.files.map(\.path) == ["libs/core/more.txt"])
         #expect(!recorded.pointerUncommitted)
         #expect(recorded.ahead == 0, "app has committed the pointer: nothing left to count")
-        #expect(recorded.committedFiles.isEmpty)
+        #expect(recorded.pointerCommits.isEmpty, "nothing left for app to record")
 
         // A nested submodule's pointer is its own parent's to commit.
         try f.write(core + "/vendor/deep/chat.txt", "chat\n")

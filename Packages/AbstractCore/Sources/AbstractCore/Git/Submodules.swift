@@ -98,13 +98,6 @@ public enum Submodules {
                                                 "--porcelain=v1", "-z", "--ignore-submodules=none"])
     }
 
-    /// The files in the repository at `repo` with work not committed there,
-    /// new ones each by name; nil when git can't say.
-    static func uncommittedPaths(_ exec: any Executor, repo: String) async -> Set<String>? {
-        await statusPaths(exec, cwd: repo, ["--no-optional-locks", "status", "--porcelain=v1", "-z", "--untracked-files=all",
-                                            "--ignore-submodules=all"])
-    }
-
     /// The paths a `status --porcelain=v1 -z` run names, a rename's both.
     private static func statusPaths(_ exec: any Executor, cwd: String, _ args: [String]) async -> Set<String>? {
         guard let out = try? await Git.git(exec, cwd: cwd, args), out.ok else { return nil }

@@ -2,16 +2,13 @@ import SwiftUI
 import AbstractCore
 
 /// A repository's heading in the review, once the changes reach into a
-/// submodule: where it is, its branch, how far the chat moved it, its totals,
-/// and whether you can push to it. Clicking folds its files away.
+/// submodule: where it is, its branch, its totals, and whether you can push
+/// to it. Clicking folds its pointer and files away.
 struct RepoHeader: View {
     @Environment(AppModel.self) private var model
     let section: DiffReview.RepoSection
     /// The project's name for the worktree's own repository, else the submodule's path.
     let title: String
-    /// Where its pointer is committed: the project's name for a top-level
-    /// submodule, else its parent's path.
-    let parent: String
     let collapsed: Bool
     let onToggle: () -> Void
     @State private var access: RepoAccess = .unknown
@@ -23,7 +20,7 @@ struct RepoHeader: View {
             Button(action: onToggle) {
                 HStack(spacing: Space.sm) {
                     // Nothing under it to fold, so no arrow.
-                    if section.files.isEmpty {
+                    if section.files.isEmpty && section.diff.pointerLabel(committedIn: nil) == nil {
                         Color.clear.frame(width: 10)
                     } else {
                         Image(systemName: "chevron.right")
@@ -39,8 +36,8 @@ struct RepoHeader: View {
                             .background(Color.btHover, in: Capsule())
                     }
                     Text(repo.branch ?? "detached").font(.btMonoSmall).foregroundStyle(Color.btTextTertiary).lineLimit(1)
-                    if let note = section.diff.note(committedIn: parent) {
-                        Text(note).font(.btCaption).foregroundStyle(Color.btTextTertiary).lineLimit(1)
+                    if section.diff.isNew {
+                        Text("new submodule").font(.btCaption).foregroundStyle(Color.btTextTertiary)
                     }
                     Spacer(minLength: Space.sm)
                     DiffCounts(additions: section.files.reduce(0) { $0 + $1.diff.additions },
@@ -77,13 +74,13 @@ struct RepoHeader: View {
 }
 
 extension RepoDiff {
-    /// What a submodule's heading says besides its files: new, or how far
-    /// its pointer moved and whether `parent` has committed that yet.
-    func note(committedIn parent: String?) -> String? {
-        if isNew { return "new submodule" }
+    /// The pointer entry's label, before a submodule's files: how far its
+    /// pointer moved, and whether `parent` has committed that yet. Nil when
+    /// it hasn't moved.
+    func pointerLabel(committedIn parent: String?) -> String? {
         if pointerUncommitted {
-            return (ahead > 0 ? "pointer +\(ahead)" : "pointer moved") + ", not committed" + (parent.map { " in \($0)" } ?? "")
+            return "Pointer " + (ahead > 0 ? "+\(ahead)" : "moved") + ", not committed" + (parent.map { " in \($0)" } ?? "")
         }
-        return ahead > 0 ? "pointer +\(ahead) commit\(ahead == 1 ? "" : "s")" : nil
+        return ahead > 0 ? "Pointer +\(ahead)" : nil
     }
 }

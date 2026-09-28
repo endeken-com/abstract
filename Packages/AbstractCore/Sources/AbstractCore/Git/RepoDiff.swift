@@ -15,20 +15,20 @@ public struct RepoDiff: Sendable, Hashable, Identifiable {
     public var error: String?
     /// A submodule checked out somewhere other than the commit its parent's
     /// HEAD records, so the parent still has a pointer to commit (Uncommitted
-    /// only). Its files then run from that recorded commit, taking in the
-    /// submodule's own commits the parent hasn't recorded.
+    /// only). Its files stay what's uncommitted in it: its commits are
+    /// committed there, and only the pointer to them isn't.
     public var pointerUncommitted: Bool
-    /// With `pointerUncommitted`: its files (paths from the worktree) whose
-    /// changes are all committed in the submodule, so there's nothing of
-    /// them to discard; only the parent hasn't recorded them.
-    public var committedFiles: Set<String>
+    /// The submodule's commits its pointer moves over, newest first: in
+    /// Uncommitted the ones its parent hasn't recorded yet, in Committed the
+    /// branch's own since its baseline. Each opens as one commit.
+    public var pointerCommits: [CommitSummary]
 
     public var id: String { repo.id }
 
     public init(repo: ChatRepo, files: [FileDiff] = [], ahead: Int = 0, isNew: Bool = false, error: String? = nil,
-                pointerUncommitted: Bool = false, committedFiles: Set<String> = []) {
+                pointerUncommitted: Bool = false, pointerCommits: [CommitSummary] = []) {
         self.repo = repo; self.files = files; self.ahead = ahead; self.isNew = isNew; self.error = error
-        self.pointerUncommitted = pointerUncommitted; self.committedFiles = committedFiles
+        self.pointerUncommitted = pointerUncommitted; self.pointerCommits = pointerCommits
     }
 }
 
@@ -123,10 +123,9 @@ public extension Diff {
                let head = await head(exec, cwd: dir), head != recorded {
                 result.pointerUncommitted = true
                 result.ahead = await commitCount(exec, cwd: dir, "\(recorded)..HEAD")
-                own = .uncommittedSince(sha: recorded)
-            } else {
-                own = .uncommitted
+                result.pointerCommits = await commits(exec, worktree: dir, base: recorded).map { $0.inRepo(repo.path) }
             }
+            own = .uncommitted
         case .committed(let base):
             guard repo.isSubmodule else { own = .committed(base: base); break }
             guard let baseline else {
@@ -135,25 +134,21 @@ public extension Diff {
             }
             guard await head(exec, cwd: dir) != baseline else { return result }
             result.ahead = await commitCount(exec, cwd: dir, "\(baseline)..HEAD")
+            result.pointerCommits = await commits(exec, worktree: dir, base: baseline).map { $0.inRepo(repo.path) }
             // Straight from the recorded commit: a pointer moved back or
             // sideways has no merge base to measure from.
             own = .since(sha: baseline)
-        case .since, .uncommittedSince:
-            // Not modes of the review's: the worktree's own alone.
+        case .since:
+            // Not a mode of the review's: the worktree's own alone.
             guard !repo.isSubmodule else { return result }
             own = compare
         case .commit(let sha, let inRepo):
+            // One commit's files; its repository's pointer isn't what's being shown.
             guard inRepo == repo.path else { return result }
-            if repo.isSubmodule, let baseline { result.ahead = await commitCount(exec, cwd: dir, "\(baseline)..HEAD") }
             own = .commit(sha: sha)
         }
         result.files = try await collect(exec, worktree: dir, exclude: excluded, compare: own, ignoreWhitespace: ignoreWhitespace)
             .map { $0.inRepo(repo.path) }
-        if result.pointerUncommitted, let uncommitted = await Submodules.uncommittedPaths(exec, repo: dir) {
-            result.committedFiles = Set(result.files.filter { file in
-                !uncommitted.contains(file.repoPath) && !(file.repoOldPath.map(uncommitted.contains) ?? false)
-            }.map(\.path))
-        }
         return result
     }
 
