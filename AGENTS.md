@@ -38,6 +38,25 @@ releases are only for fixes cherry-picked onto a release branch.
 
 When it's ambiguous, pick minor and say so in your reply, so the user can overrule it.
 
+## Pull request titles and labels
+
+A pull request's title is its line in the release notes, word for word. Write what
+changed for the user, in the present tense, with no ticket numbers or `feat:` prefixes.
+
+Give every pull request one label, which picks its section in the notes
+(`.github/release.yml`):
+
+| Label | Section |
+|---|---|
+| `feature` | New |
+| `fix` | Fixed |
+| `agents` | Agents |
+| `internal` | Under the hood |
+
+`internal` wins over the others: tests, CI, docs and refactors stay under "Under the
+hood" even if they carry a second label. A pull request with no label lands in "Other
+changes".
+
 ## Test fixtures
 
 Recorded agent streams (like `Tests/AbstractCoreTests/Fixtures/claude-stream.jsonl`)
