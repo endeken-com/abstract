@@ -96,7 +96,7 @@ can be changed after it's added.
 - Tests: already in the PR (502 core tests).
 
 ### R-1001 · Group release notes into features, fixes, agents and internals
-- Status: planned · Size: S · Label: internal · Theme: Trust
+- Status: in progress (#14) · Size: S · Label: internal · Theme: Trust
 - Why: the notes are one flat list of PR titles today. Grouping makes the weekly note
   readable without hand-editing.
 - Do: add `.github/release.yml` mapping labels `feature`, `fix`, `agents`, `internal` to
