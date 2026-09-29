@@ -208,7 +208,7 @@ Abstract lives in the menu bar when its window is closed.
   changes in `CodexProvider.swift`, and a go/no-go for R-1200.
 
 ### R-1106 · Submodules: update, pull, commit and push the repository you're working in
-- Status: planned · Size: M · Label: feature · Theme: Finish · Blocked by: R-1000
+- Status: in progress (#13) · Size: M · Label: feature · Theme: Finish · Blocked by: R-1000
 - Why: a feature often changes the parent and a submodule, and the git actions button
   only acted on the parent, so a submodule's branch couldn't be brought up to date with
   its own default branch from Abstract.
