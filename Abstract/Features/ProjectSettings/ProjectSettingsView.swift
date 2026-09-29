@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 import AbstractCore
 
 /// A project's settings as one quiet document: the header, then General,
-/// Branches & naming, Location & checkout, Lifecycle scripts and the danger
+/// Branches & naming, New chats, Location & checkout, Lifecycle scripts and the danger
 /// zone. Every change is stored at once; text is stored after a pause.
 struct ProjectSettingsView: View {
     @Environment(AppModel.self) private var model
@@ -20,6 +20,7 @@ struct ProjectSettingsView: View {
                     ProjectHeader(project: project, owner: owner)
                     GeneralSection(project: project, origin: origin, owner: owner)
                     BranchSection(project: project)
+                    NewChatSection(project: project)
                     LocationSection(project: project)
                     ScriptsSection(project: project)
                     DangerSection(project: project)
@@ -435,6 +436,73 @@ private struct BranchSection: View {
             if (project.branchPrefix ?? "").isEmpty {
                 customPrefix = model.branchPrefix
                 model.updateProject(project.id) { $0.branchPrefix = model.branchPrefix }
+            }
+        }
+    }
+}
+
+// MARK: - New chats
+
+/// What a new chat in this project starts with; the Launcher fills these in.
+private struct NewChatSection: View {
+    @Environment(AppModel.self) private var model
+    let project: Project
+    @State private var baseRef: String
+
+    init(project: Project) {
+        self.project = project
+        _baseRef = State(initialValue: project.defaultBaseRef)
+    }
+
+    var body: some View {
+        PageSection(title: "New chats", detail: "What a chat started in this project begins with. You can still change each one when you start it.") {
+            SettingRow(title: "Agent") {
+                VStack(alignment: .leading, spacing: Space.xs) {
+                    SentenceMenu(title: ProviderRegistry.name(project.defaultProviderId), logo: project.defaultProviderId) {
+                        Picker("Agent", selection: Binding(get: { project.defaultProviderId },
+                                                           set: { id in model.updateProject(project.id) { $0.defaultProviderId = id } })) {
+                            ForEach(model.pickableAgents(keeping: project.defaultProviderId), id: \.id) { p in
+                                Label {
+                                    Text(p.name)
+                                } icon: {
+                                    if let icon = ProviderRegistry.menuImage(p.id) { Image(nsImage: icon) }
+                                }
+                                .tag(p.id)
+                            }
+                        }
+                        .pickerStyle(.inline)
+                        .labelsHidden()
+                    }
+                    .padding(.leading, -Chip.inset)
+                    .frame(minHeight: ProjectPage.controlHeight)
+                    if model.providerStatus[project.defaultProviderId]?.available == false {
+                        Label("\(ProviderRegistry.name(project.defaultProviderId)) wasn't found on this Mac. Set its path in Settings › Agents.",
+                              systemImage: "exclamationmark.triangle")
+                            .font(.btCallout)
+                            .foregroundStyle(Color.btWarning)
+                    }
+                }
+            }
+            SettingRow(title: "Permissions", detail: project.defaultPermissionPolicy.detail) {
+                SentenceMenu(title: project.defaultPermissionPolicy.title) {
+                    ForEach(PermissionPolicy.allCases, id: \.self) { p in
+                        Toggle(isOn: Binding(get: { project.defaultPermissionPolicy == p },
+                                             set: { _ in model.updateProject(project.id) { $0.defaultPermissionPolicy = p } })) {
+                            Text(p.title)
+                            Text(p.detail)
+                        }
+                    }
+                }
+                .padding(.leading, -Chip.inset)
+                .frame(minHeight: ProjectPage.controlHeight)
+            }
+            SettingRow(title: "Branch from", detail: "The branch or commit each new chat's worktree starts from.") {
+                BTTextField("Branch from", text: $baseRef, prompt: "HEAD", mono: true)
+                    .frame(maxWidth: 240)
+                    .autosave($baseRef, stored: project.defaultBaseRef, normalize: trimmed) { value in
+                        guard let ref = Project.baseRef(typed: value) else { return }
+                        model.updateProject(project.id) { $0.defaultBaseRef = ref }
+                    }
             }
         }
     }
