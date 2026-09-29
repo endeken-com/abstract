@@ -57,6 +57,12 @@ public struct Project: Sendable, Hashable, Identifiable, Codable {
         guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         return text
     }
+
+    /// The branch new chats start from, as typed: trimmed, or nil when blank.
+    public static func baseRef(typed text: String) -> String? {
+        let ref = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return ref.isEmpty ? nil : ref
+    }
 }
 
 public enum SessionStatus: String, Sendable, Codable, CaseIterable {

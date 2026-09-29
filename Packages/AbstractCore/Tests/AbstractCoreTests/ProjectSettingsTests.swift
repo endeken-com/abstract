@@ -27,6 +27,38 @@ import Testing
         #expect(try store.projects() == [cleared])
     }
 
+    @Test func newChatDefaultsCanBeChangedAfterTheProjectIsAdded() throws {
+        let store = try Store.inMemory()
+        let added = Project(id: "p1", name: "api", rootPath: "/r/api", defaultBaseRef: "main", defaultProviderId: "claude",
+                            defaultPermissionPolicy: .ask, nestedRepos: ["vendor/a"], branchPrefix: "wes/",
+                            createdAt: Self.created, namingInstructions: "Prefix fixes with fix/.")
+        try store.save(added)
+
+        var changed = try #require(try store.project("p1"))
+        changed.defaultProviderId = "codex"
+        changed.defaultPermissionPolicy = .bypass
+        changed.defaultBaseRef = try #require(Project.baseRef(typed: "  release/2.0\n"))
+        try store.save(changed)
+
+        let stored = try #require(try store.project("p1"))
+        #expect(stored.defaultProviderId == "codex" && stored.defaultPermissionPolicy == .bypass
+                && stored.defaultBaseRef == "release/2.0")
+        // Nothing else about the project moves.
+        var rest = stored
+        rest.defaultProviderId = added.defaultProviderId
+        rest.defaultPermissionPolicy = added.defaultPermissionPolicy
+        rest.defaultBaseRef = added.defaultBaseRef
+        #expect(rest == added)
+        #expect(try store.projects().count == 1)
+    }
+
+    @Test func aBlankBaseBranchKeepsTheOneStored() {
+        #expect(Project.baseRef(typed: "develop") == "develop")
+        #expect(Project.baseRef(typed: " origin/main \n") == "origin/main")
+        #expect(Project.baseRef(typed: "") == nil)
+        #expect(Project.baseRef(typed: " \n\t") == nil)
+    }
+
     @Test func projectsFromBeforeTheMigrationLoadUnchanged() throws {
         let store = try Store.inMemory(migratedTo: "v4-triggers", thenRunning: """
             INSERT INTO projects (id, name, root_path, default_base_ref, default_provider_id, default_permission_policy,
@@ -195,6 +227,34 @@ import Testing
                                                      worktreeName: "Lima")
         #expect(fallback.path == root + "-wt/lima")
         #expect(fallback.branch == "abstract/improve-cache")
+    }
+
+    @Test func aChangedBaseBranchIsWhereTheNextChatStarts() async throws {
+        let exec = LocalExecutor.shared
+        let root = try await Self.makeRepo(exec)
+        defer {
+            try? FileManager.default.removeItem(atPath: root)
+            try? FileManager.default.removeItem(atPath: root + "-wt")
+        }
+        for args in [["switch", "-qc", "develop"], ["commit", "-q", "--allow-empty", "-m", "on develop"], ["switch", "-q", "main"]] {
+            let out = try await exec.run("git", args, cwd: root)
+            try #require(out.ok, "git \(args): \(out.stderr)")
+        }
+        let head = { (ref: String, cwd: String) in try await exec.run("git", ["rev-parse", ref], cwd: cwd).stdout }
+        let store = try Store.inMemory()
+        try store.save(Project(id: "p1", name: "app", rootPath: root, defaultBaseRef: "main"))
+
+        let before = try await Workspace.provision(executor: exec, project: try #require(try store.project("p1")),
+                                                   name: "Before", baseRef: nil, template: root + "-wt/{slug}", prefix: "")
+        #expect(try await head("HEAD", before.path) == head("main", root))
+
+        var project = try #require(try store.project("p1"))
+        project.defaultBaseRef = "develop"
+        try store.save(project)
+        let after = try await Workspace.provision(executor: exec, project: try #require(try store.project("p1")),
+                                                  name: "After", baseRef: nil, template: root + "-wt/{slug}", prefix: "")
+        #expect(try await head("HEAD", after.path) == head("develop", root))
+        #expect(try await head("main", root) != head("develop", root))
     }
 
     @Test func aFailedSparseCheckoutLeavesNothingBehind() async throws {

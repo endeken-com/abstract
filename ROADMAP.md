@@ -142,7 +142,7 @@ can be changed after it's added.
 - Touches: `.github/release.yml`, `AGENTS.md`.
 
 ### R-1002 · Change a project's default agent, permission policy and base branch in Project Settings
-- Status: planned · Size: S · Label: fix · Theme: Finish
+- Status: in progress (#15) · Size: S · Label: fix · Theme: Finish
 - Why: these three are set only when a project is added (`AppModel.addProject`, around
   `Abstract/App/AppModel.swift:515`) and can't be changed afterwards.
 - Do: add the three controls to `Abstract/Features/ProjectSettings/ProjectSettingsView.swift`
