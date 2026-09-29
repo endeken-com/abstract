@@ -207,6 +207,30 @@ Abstract lives in the menu bar when its window is closed.
 - Output: a one-page note in the PR (no code kept) with the protocol shape, what
   changes in `CodexProvider.swift`, and a go/no-go for R-1200.
 
+### R-1106 · Submodules: update, pull, commit and push the repository you're working in
+- Status: in progress (#13) · Size: M · Label: feature · Theme: Finish · Blocked by: R-1000
+- Why: a feature often changes the parent and a submodule, and the git actions button
+  only acted on the parent, so a submodule's branch couldn't be brought up to date with
+  its own default branch from Abstract.
+- Do: one current repository per chat, picked in the review's repository menu and shared
+  with the git actions button. With a submodule current, Update from its own default
+  branch, Pull, Commit and Push act on it and what's inside it, innermost first and
+  guarded, and leave the parent's pointer for the parent.
+- Done when: with a submodule current, Update from `<its default branch>` merges its
+  `origin/<default>`, and Commit and Push leave the parent untouched.
+- Tests: `SubmoduleGitActionsTests` (update, pull and shipping in a submodule).
+
+### R-1107 · Submodules: see each repository's pull request, linked to the others
+- Status: planned · Size: M · Label: feature · Theme: Finish · Blocked by: R-1106
+- Why: a feature's parent and submodule pull requests live in different repositories, and
+  Abstract only showed the parent's.
+- Do: the Pull Request tab follows the current repository. The parent's lists its
+  submodules' pull requests and a submodule's links back; merging the parent while a
+  submodule's pull request is still open asks first.
+- Done when: a chat with a parent and a submodule pull request shows both, each linking
+  to the other.
+- Tests: `PullRequestPick` rules; one `gh pr list` per distinct submodule repository.
+
 ---
 
 ## v0.12.0 — week of 2026-10-12 (cut Friday 2026-10-16)

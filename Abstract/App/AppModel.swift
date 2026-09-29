@@ -136,10 +136,18 @@ final class AppModel {
     @ObservationIgnored var pinnedPullRequests: [String: Int] = [:]
     /// Where each chat's branch stands, by chat id: for its git actions and its Pull Request tab.
     var branchStates: [String: BranchState] = [:]
-    /// When each project last fetched from origin, by project id.
+    /// When origin was last fetched, by project id (a chat id, without one);
+    /// a chat's current submodule fetches under its own folder instead.
     @ObservationIgnored var originFetchedAt: [String: ContinuousClock.Instant] = [:]
     /// Bumped per chat at each branch read, so a slow read can't overwrite a newer one.
     @ObservationIgnored var branchReads: [String: Int] = [:]
+    /// The repository each chat is working in, by chat id: a submodule's
+    /// path, or absent for the worktree's own. The review and the git actions
+    /// button act on it.
+    var currentRepo: [String: String] = [:]
+    /// Where the current submodule's branch stands, by chat id (absent while
+    /// the worktree's own is current). `branchStates` stays the worktree's own.
+    var currentRepoStates: [String: RepoBranchState] = [:]
 
     // Navigation & transient UI
     var destination: Destination = .home { didSet { if destination != oldValue { syncLocks(); followCLIChat() } } }

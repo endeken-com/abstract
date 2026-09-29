@@ -300,7 +300,12 @@ final class DiffReview {
     /// its commits, when it has none), and `path` in it once it's loaded.
     func select(_ repo: String, _ context: DiffContext, focus path: String? = nil) async {
         guard repo != selectedRepo else {
-            if let path { focus(path) }
+            if let path {
+                // A load for this repository may already be in flight (the
+                // onChange reload's own `select`): let it focus the path when
+                // it finishes rather than focusing into a list not loaded yet.
+                if files.contains(where: { $0.path == path }) { focus(path) } else { focusAfterLoad = path }
+            }
             return
         }
         selectedRepo = repo

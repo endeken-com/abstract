@@ -78,6 +78,20 @@ public enum Submodules {
         return repos
     }
 
+    /// `repos` seen from `root`: it as the worktree's own (path ""), then
+    /// the repositories inside it, with paths, depths and parents relative to
+    /// it. Code written for a worktree then works on a submodule and what it
+    /// holds, and leaves everything outside it alone.
+    public static func subtree(_ repos: [ChatRepo], at root: ChatRepo) -> [ChatRepo] {
+        guard root.isSubmodule else { return repos }
+        let top = ChatRepo(path: "", branch: root.branch, github: root.github)
+        return [top] + repos.compactMap { repo in
+            guard let path = root.inside(repo.path) else { return nil }
+            let parent = repo.parentPath.map { $0 == root.path ? "" : (root.inside($0) ?? "") }
+            return ChatRepo(path: path, depth: repo.depth - root.depth, parentPath: parent, branch: repo.branch, github: repo.github)
+        }
+    }
+
     /// The submodule paths `.gitmodules` registers in `root`, checked out or not.
     public static func registered(_ exec: any Executor, root: String) async -> [String] {
         guard let out = try? await Git.git(exec, cwd: root, ["config", "-z", "-f", ".gitmodules", "--get-regexp", #"^submodule\..*\.path$"#]),

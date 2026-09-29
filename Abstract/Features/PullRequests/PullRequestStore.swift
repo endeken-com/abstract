@@ -94,23 +94,32 @@ extension AppModel {
 
     enum OriginFetch { case never, ifStale, now }
 
+    /// Fetches `directory`'s origin: `.ifStale` at most once a minute per
+    /// `key`, `.now` regardless. Offline (or any other failure) never blocks
+    /// reading the branch state, so a failed fetch is silently skipped. Never
+    /// asks for credentials, gives up after 30 seconds.
+    func fetchOriginIfDue(_ exec: any Executor, key: String, directory: String, fetch: OriginFetch) async {
+        let stale = originFetchedAt[key].map { ContinuousClock.now - $0 >= .seconds(60) } ?? true
+        guard fetch == .now || (fetch == .ifStale && stale) else { return }
+        originFetchedAt[key] = .now
+        let spec = LaunchSpec(command: "git", args: ["fetch", "--quiet", "--prune", "origin"], cwd: directory,
+                              env: ["GIT_TERMINAL_PROMPT": "0"], keepStdinOpen: false)
+        _ = try? await exec.run(spec, timeout: .seconds(30))
+    }
+
     /// Re-reads where a chat's branch stands, fetching from origin first:
     /// `.ifStale` at most once a minute per project, `.now` regardless.
     /// Pruned, so a branch deleted on origin (a merged PR's) shows as gone.
     func refreshBranch(_ sessionId: String, fetch: OriginFetch = .never) async {
         guard let session = session(sessionId), let worktree = session.worktreePath else { return }
         let exec = executor(for: sessionId)
-        let key = session.projectId ?? sessionId
-        let stale = originFetchedAt[key].map { ContinuousClock.now - $0 >= .seconds(60) } ?? true
-        if fetch == .now || (fetch == .ifStale && stale) {
-            originFetchedAt[key] = .now
-            _ = try? await exec.run("git", ["fetch", "--quiet", "--prune", "origin"], cwd: worktree)
-        }
+        await fetchOriginIfDue(exec, key: session.projectId ?? sessionId, directory: worktree, fetch: fetch)
         let read = (branchReads[sessionId] ?? 0) + 1
         branchReads[sessionId] = read
         let state = await GitActions.state(exec, worktree: worktree, preferredBase: session.baseRef)
-        guard branchReads[sessionId] == read, branchStates[sessionId] != state else { return }
-        branchStates[sessionId] = state
+        guard branchReads[sessionId] == read else { return }
+        if branchStates[sessionId] != state { branchStates[sessionId] = state }
+        await refreshCurrentSubmodule(sessionId, worktree: worktree, exec: exec, fetch: fetch, read: read)
     }
 
     func isOnGitHub(_ project: Project) async -> Bool {
@@ -137,8 +146,9 @@ extension AppModel {
         guard let session = session(sessionId), let branch = session.branch, let worktree = session.worktreePath,
               let project = project(session.projectId) else { return }
         // Its submodules committed and pushed first, and its pointers checked, before the branch goes.
-        if commitFirst { try await commitEverything(sessionId, message: title) }
-        try await prepareParentPush(sessionId)
+        // The Pull Request tab shows the worktree's own pull request for now.
+        if commitFirst { try await commitEverything(sessionId, in: "", message: title) }
+        try await prepareParentPush(sessionId, in: "")
         pullRequests[sessionId] = try await GitHub.create(executor(for: sessionId), repo: project.rootPath, worktree: worktree, branch: branch,
                                                           base: base, title: title, body: body, draft: draft, commitMessage: nil)
         pinnedPullRequests[sessionId] = nil
@@ -149,8 +159,8 @@ extension AppModel {
     /// Commits what's in the worktree (if anything) and pushes, updating an open pull request.
     func pushChanges(_ sessionId: String, message: String) async throws {
         guard session(sessionId)?.worktreePath != nil else { return }
-        try await commitEverything(sessionId, message: message)
-        try await pushEverything(sessionId)
+        try await commitEverything(sessionId, in: "", message: message)
+        try await pushEverything(sessionId, in: "")
         await refreshBranch(sessionId)
         try await refreshPullRequest(sessionId)
     }

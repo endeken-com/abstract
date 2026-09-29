@@ -53,12 +53,26 @@ struct DiffView: View {
         .onChange(of: model.session(sessionId)?.status) { Task { await reload() } }
         .onChange(of: model.pendingChangeSelection[sessionId]) { takePendingSelection() }
         .onChange(of: ignoreWhitespace) { Task { await reload() } }
+        // The repository picked here, from the git actions button's side, or gone.
+        .onChange(of: model.currentRepoPath(sessionId)) { Task { await reload() } }
     }
 
     private func reload() async {
         guard case .ready(let context) = model.diffAvailability(sessionId) else { return }
         review.ignoreWhitespace = ignoreWhitespace
-        await review.load(context)
+        let wanted = model.currentRepoPath(sessionId)
+        if review.selectedRepo != wanted {
+            await review.select(wanted, context)
+        } else {
+            await review.load(context)
+        }
+        // Gone since it was picked: the review fell back to the worktree's
+        // own. Only while it's still the one wanted, so a newer pick stands,
+        // and only once git confirms it isn't a checkout any more — a failed
+        // listing alone must not move the chat off it.
+        if !wanted.isEmpty, review.selectedRepo.isEmpty, model.currentRepoPath(sessionId) == wanted {
+            await model.dropRepoIfGone(sessionId, wanted, worktree: context.worktree, exec: context.executor)
+        }
         takePendingSelection()
     }
 
@@ -82,6 +96,7 @@ struct DiffView: View {
                   case .ready(let context) = model.diffAvailability(sessionId) {
             // A file in another of the worktree's repositories: show that one first.
             showTree = false
+            model.selectRepo(sessionId, repo.path)
             Task { await review.select(repo.path, context, focus: path) }
         }
     }
@@ -120,15 +135,15 @@ struct DiffView: View {
                     } else if presentation == .list {
                         // Paseo's Changes list: a file opens the diff in the main pane.
                         ChangesTree(review: review, onOpen: { model.openDiffTab(in: sessionId, focus: $0) },
-                                    onOpenRepo: { path in Task { await review.select(path, context) } })
+                                    onOpenRepo: { path in model.showRepo(path, in: review, context) })
                     } else if showTree, !rail {
                         ChangesTree(review: review, onOpen: { path in showTree = false; review.focus(path) },
-                                    onOpenRepo: { path in Task { await review.select(path, context) } })
+                                    onOpenRepo: { path in model.showRepo(path, in: review, context) })
                     } else {
                         HStack(spacing: 0) {
                             if rail {
                                 ChangesTree(review: review, onOpen: { review.focus($0) },
-                                            onOpenRepo: { path in Task { await review.select(path, context) } })
+                                            onOpenRepo: { path in model.showRepo(path, in: review, context) })
                                     .frame(width: 220)
                                 Rectangle().fill(Color.btBorder).frame(width: 1)
                             }

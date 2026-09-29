@@ -118,19 +118,37 @@ struct GitActionsButton: View {
     @Environment(AppModel.self) private var model
     let session: Session
     @State private var running: GitAction?
+    /// The repository `running` started against, frozen for its duration:
+    /// the current repository can change while it's still running.
+    @State private var runningPath = ""
     @State private var onGitHub = false
     @State private var watcher: AnyObject?
     @State private var pendingRead: Task<Void, Never>?
 
     typealias GitAction = GitActions.Step
 
-    /// Shared with the Pull Request tab, which reads it too.
-    private var state: BranchState? { model.branchStates[session.id] }
-    private var pr: PullRequest? { model.pullRequests[session.id] }
+    /// The repository it acts on: "" for the worktree's own, else a submodule.
+    private var repoPath: String { model.currentRepoPath(session.id) }
+    private var isSubmodule: Bool { !repoPath.isEmpty }
+    /// The worktree's own state is shared with the Pull Request tab. A
+    /// submodule's is shown only once it's been read for that submodule.
+    private var state: BranchState? {
+        guard isSubmodule else { return model.branchStates[session.id] }
+        return model.currentRepoStates[session.id].flatMap { $0.path == repoPath ? $0.state : nil }
+    }
+    /// `owner/name` when the current submodule is one you can't push to, as
+    /// read for that submodule.
+    private var readOnlySlug: String? {
+        guard isSubmodule, let current = model.currentRepoStates[session.id], current.path == repoPath else { return nil }
+        return current.readOnly
+    }
+    /// The worktree's own pull request; a submodule's aren't read yet.
+    private var pr: PullRequest? { isSubmodule ? nil : model.pullRequests[session.id] }
+    private var projectName: String { model.project(session.projectId)?.name ?? "the project" }
 
     var body: some View {
         let primary = primaryAction
-        SplitButton(help: reason(primary) ?? why(primary) ?? title(primary), muted: reason(primary) != nil) {
+        SplitButton(help: named(reason(primary) ?? why(primary) ?? title(primary)), muted: reason(primary) != nil) {
             perform(primary)
         } label: {
             HStack(spacing: 5) {
@@ -139,7 +157,9 @@ struct GitActionsButton: View {
                 } else {
                     glyph(primary)
                 }
-                Text(running.map(pendingTitle) ?? title(primary)).font(BTFont.ui(13)).foregroundStyle(Color.btText)
+                Text(running.map { named(pendingTitle($0), in: runningPath) } ?? named(title(primary)))
+                    .font(BTFont.ui(13)).foregroundStyle(Color.btText)
+                    .lineLimit(1).truncationMode(.middle)
             }
         } items: {
             item(.pull)
@@ -192,6 +212,14 @@ struct GitActionsButton: View {
         Image(nsImage: icon(action))
     }
 
+    /// A step's title, with the submodule it acts on in front: `path` when
+    /// given (a running step, frozen against later switches), else the
+    /// current repository.
+    private func named(_ title: String, in path: String? = nil) -> String {
+        let path = path ?? repoPath
+        return path.isEmpty ? title : "\(path) · \(title)"
+    }
+
     /// Open, draft, merged or closed: the chat's pull request as it stands.
     private var prKind: PullRequestGlyph.Kind { pr?.glyph ?? .open }
 
@@ -199,7 +227,9 @@ struct GitActionsButton: View {
 
     private var primaryAction: GitAction {
         guard let s = state else { return .commit }
-        return GitActions.suggestion(s, pullRequest: pr.map { GitActions.PullRequestStanding($0) }, onGitHub: onGitHub)
+        let step = GitActions.suggestion(s, pullRequest: pr.map { GitActions.PullRequestStanding($0) }, onGitHub: onGitHub && !isSubmodule)
+        // A submodule reaches your checkout through its parent: nothing to merge from here.
+        return isSubmodule && step == .mergeLocally ? .commit : step
     }
 
     /// Why the button suggests an action, for its tooltip.
@@ -208,7 +238,8 @@ struct GitActionsButton: View {
         let base = s.baseName ?? "the base branch"
         func commits(_ n: Int) -> String { "\(n) commit\(n == 1 ? "" : "s")" }
         switch action {
-        case .commit: return s.dirty ? "Commit the changes in the worktree" : nil
+        // The help already names a submodule in front (see `named`).
+        case .commit: return s.dirty ? (isSubmodule ? "Commit the changes" : "Commit the changes in the worktree") : nil
         case .pull: return "Pull \(commits(s.behind)) new on origin"
         case .push: return "Push \(commits(s.ahead)) origin doesn't have yet"
         case .pullAndPush: return "Pull \(commits(s.behind)) from origin, then push \(commits(s.ahead))"
@@ -225,6 +256,14 @@ struct GitActionsButton: View {
     /// Why an action can't run now; nil when it can.
     private func reason(_ action: GitAction) -> String? {
         guard let s = state else { return "Checking the branch…" }
+        if let slug = readOnlySlug {
+            switch action {
+            case .commit, .push, .pullAndPush: return "You can't push to \(slug)"
+            // What they bring in moves its pointer, which the parent leaves out of its commits.
+            case .pull, .updateFromBase: return "You can't push to \(slug), so its pointer can't be committed"
+            default: break
+            }
+        }
         let base = s.baseName ?? "the base branch"
         switch action {
         case .commit: return s.dirty ? nil : "Nothing to commit"
@@ -243,12 +282,16 @@ struct GitActionsButton: View {
             if s.dirty { return "Commit first" }
             return s.behindBase > 0 ? nil : "Already has everything from \(base)"
         case .mergeLocally:
+            if isSubmodule { return "Merge from \(projectName)" }
             if s.dirty { return "Commit first" }
             return s.aheadOfBase > 0 ? nil : "No commits to merge into \(base)"
         case .createPR:
+            if isSubmodule { return "Pull requests for \(repoPath) aren't in Abstract yet" }
             if !onGitHub { return "This project isn't on GitHub" }
             return s.aheadOfBase > 0 || s.dirty ? nil : "This branch has no new commits yet"
-        case .viewPR, .archive: return nil
+        case .viewPR:
+            return isSubmodule ? "Pull requests for \(repoPath) aren't in Abstract yet" : nil
+        case .archive: return nil
         }
     }
 
@@ -345,7 +388,16 @@ struct GitActionsButton: View {
         }
         guard let worktree = session.worktreePath else { return }
         let exec = model.executor(for: session.id)
+        let path = repoPath
+        let dir = ChatRepo(path: path).directory(in: worktree)
+        func done(_ what: String) -> String { path.isEmpty ? what : "\(what) \(path)" }
+        // Frozen now: `state` is read live from the current repository, which
+        // can change before the awaits below finish.
+        let base = state?.base
+        let baseName = state?.baseName
+        let hadPR = pr != nil
         running = action
+        runningPath = path
         Task {
             defer { running = nil }
             do {
@@ -353,36 +405,39 @@ struct GitActionsButton: View {
                 case .commit:
                     // The chat's name already says what it did, in a few words.
                     let message = String(session.name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(72))
-                    try await model.commitEverything(session.id, message: message.isEmpty ? "Update files" : message)
-                    model.flash("Committed")
+                    try await model.commitEverything(session.id, in: path, message: message.isEmpty ? "Update files" : message)
+                    model.flash(done("Committed"))
                 case .pull:
-                    try await GitActions.pull(exec, worktree: worktree)
-                    model.flash("Pulled")
+                    try await GitActions.pull(exec, worktree: dir)
+                    model.flash(done("Pulled"))
                 case .push:
-                    try await model.pushEverything(session.id)
-                    model.flash("Pushed")
+                    try await model.pushEverything(session.id, in: path)
+                    model.flash(done("Pushed"))
                 case .pullAndPush:
-                    try await GitActions.pull(exec, worktree: worktree)
-                    try await model.pushEverything(session.id)
-                    model.flash("Pulled and pushed")
+                    try await GitActions.pull(exec, worktree: dir)
+                    try await model.pushEverything(session.id, in: path)
+                    model.flash(done("Pulled and pushed"))
                 case .updateFromBase:
-                    guard let base = state?.base else { return }
-                    try await GitActions.updateFromBase(exec, worktree: worktree, base: base)
-                    model.flash("Updated from \(state?.baseName ?? base)")
+                    guard let base else { return }
+                    // Merged onto the chat's branch, not a detached commit.
+                    if !path.isEmpty { try await model.putSubmoduleOnBranch(session.id, in: path) }
+                    try await GitActions.updateFromBase(exec, worktree: dir, base: base)
+                    model.flash(path.isEmpty ? "Updated from \(baseName ?? base)" : "Updated \(path) from \(baseName ?? base)")
                 case .mergeLocally:
-                    guard let base = state?.base, let branch = session.branch,
+                    guard let base, let branch = session.branch,
                           let root = model.project(session.projectId)?.rootPath else { return }
                     try await GitActions.mergeLocally(exec, root: root, branch: branch, base: base)
-                    model.flash("Merged into \(state?.baseName ?? base)")
+                    model.flash("Merged into \(baseName ?? base)")
                 case .createPR, .viewPR, .archive:
                     break
                 }
             } catch {
-                model.flash(error.localizedDescription, isError: true)
+                // A submodule's errors name what's inside it as seen from it.
+                model.flash(path.isEmpty ? error.localizedDescription : "\(path): \(error.localizedDescription)", isError: true)
             }
             await refresh()
             // New commits on the branch restart its pull request's checks.
-            if pr != nil, [.push, .pullAndPush].contains(action) {
+            if hadPR, [.push, .pullAndPush].contains(action) {
                 await model.refreshPullRequests(projectId: session.projectId)
                 _ = try? await model.refreshPullRequest(session.id)
             }
