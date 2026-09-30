@@ -9,6 +9,7 @@ const device = { peer: { id: 'mac-1', name: 'Mac', publicKey: 'key' }, address: 
 const sockets = [];
 const requests = [];
 let browser;
+let internetDial = async () => {};
 
 function frame(value) {
   const body = Buffer.from(typeof value === 'string' ? value : JSON.stringify(value));
@@ -62,7 +63,7 @@ const mocks = {
           if (reader) reader.resolve(frame); else this.frames.push(frame);
         });
       }
-      async connect() {}
+      async connect() { await internetDial(); }
       read() { return this.frames.length ? Promise.resolve(this.frames.shift()) : new Promise((resolve, reject) => this.readers.push({resolve, reject})); }
       write(data) { const header = Buffer.alloc(4); header.writeUInt32BE(data.length); this.raw.write(Buffer.concat([header, data])); }
       close() { this.raw.destroy(); this.readers.splice(0).forEach(x => x.reject(Error('closed'))); this.onClose?.(Error('closed')); }
@@ -111,5 +112,38 @@ test('an unreachable local address falls back to the saved internet identity', a
   assert.equal(client.status, 'online');
   assert.equal(client.active.peer.id, device.peer.id);
   assert.equal(client.active.address, '');
+  client.disconnect();
+});
+
+test('cancelling an internet dial cannot adopt the connection when it finishes', async () => {
+  const client = new RemoteClient();
+  let finish;
+  internetDial = () => new Promise(resolve => { finish = resolve; });
+  try {
+    const known = { ...device, internetAddress: { endpointId: 'a'.repeat(64) } };
+    const connecting = client.connect('iroh:' + known.internetAddress.endpointId, known);
+    await new Promise(resolve => setImmediate(resolve));
+    client.disconnect();
+    finish();
+    await connecting;
+    assert.equal(client.status, 'offline');
+    assert.equal(client.active, null);
+    assert.equal(client.error, null);
+  } finally { internetDial = async () => {}; client.disconnect(); }
+});
+
+test('a stale foreground probe cannot replace a newer connection', async () => {
+  const client = new RemoteClient();
+  await client.connect('192.0.2.2:52000', { ...device });
+  let rejectProbe;
+  const request = client.request.bind(client);
+  client.request = () => new Promise((_, reject) => { rejectProbe = reject; });
+  const resuming = client.resume();
+  client.request = request;
+  await client.connect('192.0.2.3:52000', { ...device });
+  rejectProbe(Error('Old connection closed'));
+  await resuming;
+  assert.equal(client.status, 'online');
+  assert.equal(client.active.address, '192.0.2.3:52000');
   client.disconnect();
 });

@@ -7,16 +7,20 @@ private actor InternetHandles {
     var endpoint: InternetEndpoint?
     var starting: Task<InternetEndpoint, Error>?
     var streams: [String: InternetStream] = [:]
+    var stopped = false
 
     func connect(key: String, host: String, handle: String) async throws -> String {
-        guard let secret = Data(base64Encoded: key), secret.count == 32 else { throw InternetError.closed }
+        guard !stopped, let secret = Data(base64Encoded: key), secret.count == 32 else { throw InternetError.closed }
         if endpoint == nil {
             if starting == nil { starting = Task { try await InternetEndpoint.bind(key: secret) } }
             defer { starting = nil }
-            endpoint = try await starting!.value
+            let bound = try await starting!.value
+            guard !stopped else { await bound.close(); throw InternetError.closed }
+            endpoint = bound
         }
         let ep = endpoint!
         let stream = try await ep.connect(to: host)
+        guard !stopped else { stream.close(); throw InternetError.closed }
         streams[handle] = stream
         return ep.id
     }
@@ -35,6 +39,7 @@ private actor InternetHandles {
     }
     func close(handle: String) { streams.removeValue(forKey: handle)?.close() }
     func shutdown() async {
+        stopped = true
         streams.values.forEach { $0.close() }; streams.removeAll()
         starting?.cancel(); starting = nil
         await endpoint?.close(); endpoint = nil

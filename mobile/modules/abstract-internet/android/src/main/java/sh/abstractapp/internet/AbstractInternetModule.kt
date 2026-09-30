@@ -18,6 +18,7 @@ class AbstractInternetModule : Module() {
   private val alpn = "abstract/remote/1".toByteArray()
   private val binding = Mutex()
   private var endpoint: Endpoint? = null
+  @Volatile private var stopped = false
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
   private data class Stream(val connection: Connection, val stream: BiStream)
   private val streams = ConcurrentHashMap<String, Stream>()
@@ -43,6 +44,7 @@ class AbstractInternetModule : Module() {
     } finally { signer.destroy() }
   }
   private suspend fun bind(key: ByteArray): Endpoint = binding.withLock {
+    check(!stopped) { "Connection closed" }
     register(key)
     endpoint?.let { return@withLock it }
     IrohAndroid.installAndroidContext(requireNotNull(appContext.reactContext).applicationContext)
@@ -60,6 +62,7 @@ class AbstractInternetModule : Module() {
         val connection = ep.connect(EndpointAddr(EndpointId.fromString(host), relay, emptyList()), alpn)
         try {
           streams[handle] = Stream(connection, connection.openBi())
+          if (stopped) { streams.remove(handle); error("Connection closed") }
           hex(ep.id().toBytes())
         } catch (error: Throwable) { connection.close(0, byteArrayOf()); throw error }
       }
@@ -74,8 +77,12 @@ class AbstractInternetModule : Module() {
     }
     AsyncFunction("close") { handle: String -> streams.remove(handle)?.connection?.close(0, byteArrayOf()); Unit }
     OnDestroy {
+      stopped = true
       streams.values.forEach { it.connection.close(0, byteArrayOf()) }; streams.clear()
-      scope.launch { endpoint?.close(); endpoint = null; scope.cancel() }
+      scope.launch {
+        try { binding.withLock { endpoint?.shutdown(); endpoint?.destroy(); endpoint = null } }
+        finally { scope.cancel() }
+      }
     }
   }
 }

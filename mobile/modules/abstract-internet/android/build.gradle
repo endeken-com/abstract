@@ -6,7 +6,11 @@ group = 'sh.abstractapp'
 version = '1.0.0'
 android {
   namespace 'sh.abstractapp.internet'
-  defaultConfig { minSdkVersion 24 }
+  defaultConfig {
+    minSdkVersion 24
+    versionCode 1
+    versionName '1.0.0'
+  }
   packagingOptions { resources.excludes += ['darwin-*/**', 'linux-*/**', 'win32-*/**'] }
 }
 dependencies {

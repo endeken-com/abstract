@@ -163,9 +163,13 @@ export class RemoteClient {
   async resume() {
     const active = this.active;
     if (!active || this.status === 'pairing' || this.status === 'connecting') return;
+    const epoch = this.connectionEpoch;
     if (this.status === 'online') {
       try { await this.request('snapshot', {}, 5000); return; }
-      catch { this.disconnect(); }
+      catch {
+        if (epoch !== this.connectionEpoch) return;
+        this.disconnect();
+      }
     }
     await this.connect(this.nearby.find(x => x.id === active.peer.id)?.address || active.address, active);
   }

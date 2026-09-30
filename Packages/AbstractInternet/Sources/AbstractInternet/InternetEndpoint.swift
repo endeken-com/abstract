@@ -29,7 +29,7 @@ public final class InternetEndpoint: Sendable {
         self.endpoint = endpoint; self.key = key; self.relayURL = relayURL
         renewal = Task {
             while !Task.isCancelled {
-                do { try await Task.sleep(for: .seconds(30)) } catch { return }
+                do { try await Task.sleep(nanoseconds: 30_000_000_000) } catch { return }
                 try? await Self.register(key: key, relayURL: relayURL)
             }
         }
@@ -40,7 +40,7 @@ public final class InternetEndpoint: Sendable {
         let addr = EndpointAddr(id: try EndpointId.fromString(s: id), relayUrl: relayURL, addresses: [])
         let connection = try await withThrowingTaskGroup(of: Connection.self) { group in
             group.addTask { try await self.endpoint.connect(addr: addr, alpn: Self.alpn) }
-            group.addTask { try await Task.sleep(for: .seconds(15)); throw InternetError.relayUnavailable }
+            group.addTask { try await Task.sleep(nanoseconds: 15_000_000_000); throw InternetError.relayUnavailable }
             defer { group.cancelAll() }
             return try await group.next()!
         }
@@ -53,7 +53,7 @@ public final class InternetEndpoint: Sendable {
         let accepting = try await incoming.accept()
         let connection = try await accepting.connect()
         let timeout = Task {
-            do { try await Task.sleep(for: .seconds(10)); try? connection.close(errorCode: 0, reason: Data()) } catch {}
+            do { try await Task.sleep(nanoseconds: 10_000_000_000); try? connection.close(errorCode: 0, reason: Data()) } catch {}
         }
         defer { timeout.cancel() }
         do { return InternetStream(connection: connection, stream: try await connection.acceptBi()) }
