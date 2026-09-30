@@ -7,6 +7,10 @@ The [iOS and Android app](mobile/README.md) lives in `mobile/`. It pairs with a
 running Mac through Abstract's encrypted remote protocol. Its React Native
 builds use Xcode Cloud for iOS and GitHub Actions for Google Play.
 
+The [internet relay deployment](infra/relay/README.md) uses a Docker container on
+Lightsail Micro, deployed manually with GitHub Actions. Client integration is
+still pending.
+
 Abstract drives agents you already pay for as **subscription CLIs**
 (`claude`, `codex`), never metered API calls. It never sees your keys and never
 talks to a model itself.
