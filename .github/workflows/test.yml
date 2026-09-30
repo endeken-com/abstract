@@ -75,10 +75,13 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           git fetch --no-tags --depth=1 origin "$BASE_SHA"
-          if git diff --name-only "$BASE_SHA" HEAD | rg -q '^(mobile/|Packages/AbstractInternet/|Packages/Iroh/|scripts/prepare-iroh\.sh$|\.github/workflows/(mobile|test)\.yml$|Packages/AbstractCore/Sources/AbstractCore/Remote/|Abstract/Features/Remote/)'; then
-            echo 'changed=true' >> "$GITHUB_OUTPUT"
-          else
+          if git diff --quiet "$BASE_SHA" HEAD -- \
+            mobile/ Packages/AbstractInternet/ Packages/Iroh/ scripts/prepare-iroh.sh \
+            .github/workflows/mobile.yml .github/workflows/test.yml \
+            Packages/AbstractCore/Sources/AbstractCore/Remote/ Abstract/Features/Remote/; then
             echo 'changed=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
           fi
 
   ios-check:
