@@ -74,19 +74,19 @@ def deployment_state(service, version, observed=False):
     return False
 
 
-def pushed_image(output, service, label):
-    # lightsailctl can write progress text before the AWS JSON result.
-    decoder = json.JSONDecoder()
-    for match in re.finditer(r"\{", output):
-        try:
-            result, _ = decoder.raw_decode(output[match.start():])
-        except ValueError:
-            continue
-        if isinstance(result, dict):
-            image = result.get("containerImage", {}).get("image", "")
-            if re.fullmatch(rf":{re.escape(service)}\.{re.escape(label)}\.\d+", image):
-                return image
-    raise RuntimeError("AWS did not return the exact registered image; refusing to deploy a latest tag.")
+def registered_image(aws, service, label):
+    # The push command's output is not a stable source for the registered image name.
+    expected = re.compile(rf":{re.escape(service)}\.{re.escape(label)}\.\d+")
+    for attempt in range(6):
+        images = aws.json("get-container-images", "--service-name", service)["containerImages"]
+        matches = [image["image"] for image in images if expected.fullmatch(image["image"])]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            raise RuntimeError("Multiple images have this run's label; refusing to choose one.")
+        if attempt < 5:
+            time.sleep(5)
+    raise RuntimeError("The uploaded image was not registered under this run's label.")
 
 
 class Lightsail:
@@ -184,8 +184,9 @@ def deploy(config, image, label):
             service = aws.wait(lambda s: s["state"] in {"READY", "RUNNING"}, "Waiting for the domain update…")
 
     print("Uploading the tested container image…", flush=True)
-    uploaded = pushed_image(aws.command("push-container-image", "--service-name", config["service"],
-                                       "--label", label, "--image", image), config["service"], label)
+    aws.command("push-container-image", "--service-name", config["service"],
+                "--label", label, "--image", image)
+    uploaded = registered_image(aws, config["service"], label)
     result = aws.request("create-container-service-deployment", deployment_request(config, uploaded))
     submitted = result["containerService"].get("nextDeployment")
     if not submitted or "version" not in submitted:
