@@ -165,7 +165,7 @@ can be changed after it's added.
   (`Tests/AbstractCoreTests/Fixtures/`).
 
 ### R-1004 · Don't block every push on a repository with no upstream and no base
-- Status: planned · Size: S · Label: fix · Theme: Finish · Blocked by: R-1000
+- Status: in progress (#20) · Size: S · Label: fix · Theme: Finish · Blocked by: R-1000
 - Why: the push guard compares against the SHA-1 empty tree, so a SHA-256 repository
   with no upstream and no base branch blocks every push.
 - Do: get the empty tree with `git hash-object -t tree /dev/null` in the repository
