@@ -22,6 +22,10 @@ on:
         options: [internal, alpha, beta, production]
         default: internal
 
+concurrency:
+  group: mobile-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -66,6 +70,8 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
       - run: npm ci
       - name: Prepare Android project and signing
         env:
@@ -112,6 +118,8 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
       - uses: actions/cache@v4
         with:
           path: mobile/modules/abstract-internet/android/src/main/jniLibs

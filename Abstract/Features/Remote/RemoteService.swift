@@ -88,6 +88,7 @@ final class RemoteService {
     @ObservationIgnored private var listener: NWListener?
     @ObservationIgnored private var browser: NWBrowser?
     @ObservationIgnored private var decision: CheckedContinuation<Bool, Never>?
+    @ObservationIgnored private var incomingPairingChannel: RemoteChannel?
     @ObservationIgnored private var pushTask: Task<Void, Never>?
     /// Hosting and paired Macs, beside the identity they belong to.
     @ObservationIgnored private let settingsURL: URL
@@ -227,17 +228,20 @@ final class RemoteService {
             if outcome.pairing {
                 // One pairing at a time; a second knock waits for none.
                 guard prompt == nil else { channel.close(); return }
+                incomingPairingChannel = channel
+                defer { if incomingPairingChannel === channel { incomingPairingChannel = nil } }
                 prompt = PairingPrompt(peer: outcome.peer, code: outcome.code, incoming: true)
                 let promptID = prompt?.id
                 let expiry = Task { [weak self] in
                     do { try await Task.sleep(for: .seconds(60)) } catch { return }
                     if self?.prompt?.id == promptID { self?.answerPairing(false) }
                 }
-                let accepted = await withCheckedContinuation { decision = $0 }
+                let approved = await withCheckedContinuation { decision = $0 }
+                let accepted = approved && hosting && (internetPeer == nil || internetHosting)
                 expiry.cancel()
                 prompt = nil
                 try await channel.send(.event(.paired(accepted)))
-                guard accepted, hosting, internetPeer == nil || internetHosting else { channel.close(); return }
+                guard accepted else { channel.close(); return }
                 remember(outcome.peer)
                 startBrowsing()
             } else {
@@ -312,6 +316,9 @@ final class RemoteService {
     private func updateInternetHosting() {
         guard hosting && internetHosting else {
             internetAddress = nil; invitation = nil
+            if let incomingPairingChannel, internetChannels.values.contains(where: { $0 === incomingPairingChannel }) {
+                answerPairing(false)
+            }
             for channel in internetChannels.values { channel.close() }
             internetChannels.removeAll()
             // The endpoint may still be used to control another Mac. The accept loop
