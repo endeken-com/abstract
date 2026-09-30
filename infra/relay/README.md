@@ -64,9 +64,9 @@ workflow uploads to Lightsail's own image registry using `lightsailctl`.
 1. Set the environment values and credentials above. Leave both domain variables
    empty until the domain and certificate are ready.
 2. Run **Actions → Deploy relay → Run workflow** on the intended branch.
-3. The workflow checks that a missing token prevents startup and that missing or
-   wrong credentials cannot use the relay. It tests bidirectional forwarding
-   between two authenticated clients before uploading the image.
+3. The workflow checks that a missing internal token prevents startup, verifies
+   signed registration and quotas, and rejects unregistered device identities.
+   It tests bidirectional forwarding between registered devices before upload.
 4. It creates the service if absent, waits for the exact new deployment version
    to become active, and repeats the protocol test through the public HTTPS
    endpoint. The Actions summary includes the URL, image, and deployment version.
