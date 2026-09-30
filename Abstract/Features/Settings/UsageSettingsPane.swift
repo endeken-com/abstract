@@ -4,7 +4,7 @@ import AppKit
 import AbstractCore
 
 /// Accounts and their plan limits, then what the agents used: every Claude
-/// Code profile and Codex, from their own logs, priced at API rates.
+/// Code profile, Codex and OpenCode, from their own logs, priced at API rates.
 struct UsageSettingsPane: View {
     @Environment(AppModel.self) private var model
     @AppStorage("usage.hideEmails") private var hideEmails = false
@@ -33,7 +33,11 @@ struct UsageSettingsPane: View {
 
 extension Color {
     fileprivate static func provider(_ provider: LocalUsage.Provider?) -> Color {
-        provider == .codex ? .btUsageCodex : .btUsageClaude
+        switch provider {
+        case .codex: .btUsageCodex
+        case .opencode: .btUsageOpenCode
+        case .claude, nil: .btUsageClaude
+        }
     }
 }
 
@@ -499,7 +503,7 @@ private struct UsageChart: View {
                 .interpolationMethod(.catmullRom)
                 .lineStyle(StrokeStyle(lineWidth: 1.6))
         }
-        .chartForegroundStyleScale(["claude": Color.btUsageClaude, "codex": Color.btUsageCodex])
+        .chartForegroundStyleScale(["claude": Color.btUsageClaude, "codex": Color.btUsageCodex, "opencode": Color.btUsageOpenCode])
         .chartLegend(.hidden)
         .chartXAxis {
             // First, middle and last day, the ends anchored inward so neither clips.
