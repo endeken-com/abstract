@@ -58,9 +58,10 @@ nonisolated extension Color {
     static let btTextSecondary = dynamic(light: 0x5C5C66, dark: 0xA4A4AD)
     static let btTextTertiary = dynamic(light: 0x8C8C96, dark: 0x75757E)
 
-    // Usage chart series: Claude's clay, and a quiet slate for Codex.
+    // Usage chart series: Claude's clay, a quiet slate for Codex, a muted teal for OpenCode.
     static let btUsageClaude = dynamic(light: 0xC2613F, dark: 0xD97757)
     static let btUsageCodex = dynamic(light: 0x5B6B82, dark: 0x8E9DB5)
+    static let btUsageOpenCode = dynamic(light: 0x3D8B78, dark: 0x6FC2AB)
 
     // Pull request states, as GitHub colours them (only the title's menu uses these, as a wash).
     static let btPullRequestOpen = dynamic(light: 0x1F883D, dark: 0x238636)

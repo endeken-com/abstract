@@ -65,10 +65,7 @@ struct UsageReport {
         end = now
         let shown = records.filter { $0.date >= from }
 
-        func costed(_ r: LocalUsage.Record) -> (Double, Bool) {
-            let known = ModelPricing.rates(provider: r.provider, model: r.model)?.known ?? false
-            return (ModelPricing.cost(provider: r.provider, model: r.model, tokens: r.tokens) ?? 0, !known)
-        }
+        func costed(_ r: LocalUsage.Record) -> (Double, Bool) { ModelPricing.price(r) }
 
         func rows(_ key: (LocalUsage.Record) -> String, name: (String) -> String, provider: (LocalUsage.Record) -> LocalUsage.Provider?) -> [Row] {
             var totals: [String: (LocalUsage.Tokens, Double, Bool, LocalUsage.Provider?)] = [:]
@@ -82,7 +79,7 @@ struct UsageReport {
                 .sorted { $0.cost > $1.cost }
         }
 
-        providers = rows({ $0.provider.rawValue }, name: { $0 == "claude" ? "Claude Code" : "Codex" }, provider: { $0.provider })
+        providers = rows({ $0.provider.rawValue }, name: { ["claude": "Claude Code", "codex": "Codex", "opencode": "OpenCode"][$0] ?? $0 }, provider: { $0.provider })
         models = rows({ $0.model }, name: { $0 }, provider: { $0.provider })
         // Named once per folder: a chat's worktree reads as the chat, a project root as the project.
         let names = Dictionary(uniqueKeysWithValues: Set(shown.map(\.cwd)).map { ($0, workspaceName($0)) })

@@ -1,10 +1,12 @@
 import Foundation
+import GRDB
 import Synchronization
 
 /// Token use read from the agents' own session logs: every Claude profile
 /// (`~/.claude` and any `~/.claude-*` a `CLAUDE_CONFIG_DIR` points at,
-/// subagent transcripts included) and Codex (`~/.codex/sessions`). Nothing
-/// is sent anywhere; costs are estimates at API list prices.
+/// subagent transcripts included), Codex (`~/.codex/sessions`) and OpenCode
+/// (`~/.local/share/opencode/opencode.db`). Nothing is sent anywhere; costs
+/// are estimates at API list prices unless the agent logged its own.
 public enum LocalUsage {
     public struct Tokens: Codable, Sendable, Hashable {
         /// Input not served from the cache.
@@ -28,7 +30,7 @@ public enum LocalUsage {
         }
     }
 
-    public enum Provider: String, Codable, Sendable, Hashable, CaseIterable { case claude, codex }
+    public enum Provider: String, Codable, Sendable, Hashable, CaseIterable { case claude, codex, opencode }
 
     /// One model response.
     public struct Record: Codable, Sendable, Hashable {
@@ -39,9 +41,12 @@ public enum LocalUsage {
         public var model: String
         public var cwd: String
         public var tokens: Tokens
+        /// What the agent itself said the response cost (OpenCode does).
+        public var reportedCost: Double?
 
-        public init(key: String?, date: Date, provider: Provider, model: String, cwd: String, tokens: Tokens) {
+        public init(key: String?, date: Date, provider: Provider, model: String, cwd: String, tokens: Tokens, reportedCost: Double? = nil) {
             self.key = key; self.date = date; self.provider = provider; self.model = model; self.cwd = cwd; self.tokens = tokens
+            self.reportedCost = reportedCost
         }
     }
 
@@ -103,8 +108,11 @@ public enum LocalUsage {
             try? fm.createDirectory(at: cache.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? data.write(to: cache, options: .atomic)
         }
+        // OpenCode's database takes its writes in a WAL file, so its own date
+        // says nothing; it is quick to read again each time.
+        let openCode = openCodeRecords(database: openCodeDatabase(home: home), fileManager: fm)
         var seen = Set<String>()
-        return fresh.values.flatMap(\.records).sorted { $0.date < $1.date }.filter { record in
+        return (fresh.values.flatMap(\.records) + openCode).sorted { $0.date < $1.date }.filter { record in
             guard let key = record.key else { return true }
             return seen.insert(key).inserted
         }
@@ -179,6 +187,43 @@ public enum LocalUsage {
         return records
     }
 
+    // MARK: OpenCode messages
+
+    public static func openCodeDatabase(home: String) -> String { home + "/.local/share/opencode/opencode.db" }
+
+    /// Every assistant message in OpenCode's database; nothing if it isn't there.
+    public static func openCodeRecords(database path: String, fileManager fm: FileManager = .default) -> [Record] {
+        guard fm.fileExists(atPath: path) else { return [] }
+        var config = Configuration()
+        config.readonly = true
+        config.busyMode = .timeout(2)
+        guard let queue = try? DatabaseQueue(path: path, configuration: config),
+              let rows = try? queue.read({ db in
+                  try Row.fetchAll(db, sql: "SELECT id, data FROM message WHERE data LIKE '%\"tokens\"%'")
+              }) else { return [] }
+        return rows.compactMap { row in
+            let data: String = row["data"]
+            return openCodeRecord(id: row["id"], data: Data(data.utf8))
+        }
+    }
+
+    /// One OpenCode step: an assistant message with its tokens and the cost
+    /// OpenCode worked out. Reasoning is billed as output.
+    public static func openCodeRecord(id: String, data: Data) -> Record? {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              object["role"] as? String == "assistant",
+              let usage = object["tokens"] as? [String: Any],
+              let created = (object["time"] as? [String: Any])?["created"] as? NSNumber else { return nil }
+        let cache = usage["cache"] as? [String: Any]
+        let tokens = Tokens(input: int(usage["input"]), cacheWrite5m: int(cache?["write"]), cacheRead: int(cache?["read"]),
+                            output: int(usage["output"]) + int(usage["reasoning"]))
+        guard tokens.total > 0 else { return nil }
+        let model = [object["providerID"] as? String, object["modelID"] as? String].compactMap { $0 }.joined(separator: "/")
+        return Record(key: "opencode:" + id, date: Date(timeIntervalSince1970: created.doubleValue / 1000), provider: .opencode,
+                      model: model.isEmpty ? "opencode" : model, cwd: (object["path"] as? [String: Any])?["cwd"] as? String ?? "",
+                      tokens: tokens, reportedCost: (object["cost"] as? NSNumber)?.doubleValue)
+    }
+
     // MARK: Helpers
 
     /// Lines of a JSONL file, skipping any without `needle` before parsing them.
@@ -244,7 +289,9 @@ public enum ModelPricing {
     static let codexFallback = Rates(input: 1.25, output: 10)
 
     public static func rates(provider: LocalUsage.Provider, model: String) -> (rates: Rates, known: Bool)? {
-        let id = model.lowercased()
+        var id = model.lowercased()
+        // OpenCode names models `provider/model`; the price follows the model.
+        if provider == .opencode, let slash = id.firstIndex(of: "/") { id = String(id[id.index(after: slash)...]) }
         if let match = table.filter({ id.hasPrefix($0.prefix) }).max(by: { $0.prefix.count < $1.prefix.count }) {
             return (match.rates, true)
         }
@@ -259,6 +306,14 @@ public enum ModelPricing {
         let millions = Double(t.input) * r.input + Double(t.output) * r.output + Double(t.cacheRead) * r.cacheRead
             + Double(t.cacheWrite5m) * r.cacheWrite5m + Double(t.cacheWrite1h) * r.cacheWrite1h
         return millions / 1_000_000
+    }
+
+    /// What a response cost: the agent's own figure when it logged one above
+    /// zero, else the list price. `estimated` when that price was assumed.
+    public static func price(_ record: LocalUsage.Record) -> (cost: Double, estimated: Bool) {
+        if let reported = record.reportedCost, reported > 0 { return (reported, false) }
+        let known = rates(provider: record.provider, model: record.model)?.known ?? false
+        return (cost(provider: record.provider, model: record.model, tokens: record.tokens) ?? 0, !known)
     }
 
     /// What reading from the cache saved, against paying full input price.
