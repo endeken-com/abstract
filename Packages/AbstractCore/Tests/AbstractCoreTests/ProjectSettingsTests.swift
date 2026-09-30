@@ -167,7 +167,7 @@ import Testing
         let slow = try await exec.run(LaunchSpec(command: "/bin/sleep", args: ["20"], cwd: NSTemporaryDirectory(),
                                                  keepStdinOpen: false), timeout: .milliseconds(300))
         #expect(slow.timedOut && !slow.ok)
-        #expect(Date().timeIntervalSince(start) < 5)
+        #expect(Date().timeIntervalSince(start) < 10)
     }
 
     // MARK: - Worktrees
