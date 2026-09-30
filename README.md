@@ -3,6 +3,10 @@
 A native macOS app for running several CLI coding agents in parallel, each in
 its own git worktree, then reviewing and merging what they changed.
 
+The [iOS and Android app](mobile/README.md) lives in `mobile/`. It pairs with a
+running Mac through Abstract's encrypted remote protocol. Its React Native
+builds use Xcode Cloud for iOS and GitHub Actions for Google Play.
+
 Abstract drives agents you already pay for as **subscription CLIs**
 (`claude`, `codex`), never metered API calls. It never sees your keys and never
 talks to a model itself.

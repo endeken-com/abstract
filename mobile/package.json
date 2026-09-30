@@ -1,0 +1,67 @@
+{
+  "name": "abstract-mobile",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.js",
+  "scripts": {
+    "start": "expo start --dev-client",
+    "ios": "expo run:ios",
+    "ios:release": "expo run:ios --configuration Release",
+    "android": "expo run:android",
+    "typecheck": "tsc --noEmit",
+    "doctor": "npx expo-doctor",
+    "terminal:assets": "node scripts/build-terminal-assets.mjs",
+    "prebuild": "expo prebuild",
+    "bundle:android": "cd android && ./gradlew bundleRelease"
+  },
+  "dependencies": {
+    "@noble/ciphers": "^1.3.0",
+    "@noble/curves": "^1.9.7",
+    "@noble/hashes": "^1.8.0",
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "@react-native-masked-view/masked-view": "0.3.2",
+    "@react-native-menu/menu": "^2.0.0",
+    "@react-navigation/native": "^7.2.2",
+    "@react-navigation/native-stack": "^7.14.10",
+    "@types/prismjs": "^1.26.6",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "buffer": "^6.0.3",
+    "expo": "^55.0.12",
+    "expo-blur": "~55.0.18",
+    "expo-dev-client": "~55.0.40",
+    "expo-document-picker": "~55.0.17",
+    "expo-file-system": "~55.0.26",
+    "expo-font": "~55.0.8",
+    "expo-haptics": "^55.0.13",
+    "expo-linear-gradient": "~55.0.18",
+    "expo-secure-store": "~55.0.18",
+    "expo-status-bar": "~55.0.6",
+    "expo-symbols": "~55.0.9",
+    "prismjs": "^1.30.0",
+    "react": "19.2.0",
+    "react-native": "0.83.10",
+    "react-native-get-random-values": "^1.11.0",
+    "react-native-markdown-display": "^7.0.2",
+    "react-native-safe-area-context": "~5.6.2",
+    "react-native-screens": "~4.23.0",
+    "react-native-svg": "15.15.3",
+    "react-native-tcp-socket": "^6.4.3",
+    "react-native-webview": "13.16.0",
+    "react-native-zeroconf": "^0.15.1"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.25.2",
+    "@types/react": "~19.2.10",
+    "babel-preset-expo": "~55.0.8",
+    "typescript": "^5.8.3"
+  },
+  "overrides": {
+    "markdown-it": "14.3.1",
+    "linkify-it": "5.0.2"
+  },
+  "engines": {
+    "node": ">=22.11.0"
+  },
+  "packageManager": "yarn@4.5.0+sha512.837566d24eec14ec0f5f1411adb544e892b3454255e61fdef8fd05f3429480102806bac7446bc9daff3896b01ae4b62d00096c7e989f1596f2af10b927532f39"
+}

@@ -44,6 +44,38 @@ struct SessionEngineTests {
         #expect(engine.logLength(sessionId: "s1") == 3)
     }
 
+    @Test func recentPagesAreBoundedAndDoNotRepeatLines() throws {
+        let (engine, dir) = makeEngine()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        for number in 1...7 { engine.recordInput(sessionId: "paged", text: "message \(number)") }
+        let recent = engine.replayPage(sessionId: "paged", limit: 3)
+        #expect(recent.lines.map(\.seq) == [5, 6, 7])
+        #expect(recent.beforeSeq == 5)
+        #expect(recent.hasMore)
+        let older = engine.replayPage(sessionId: "paged", beforeSeq: 5, limit: 3)
+        #expect(older.lines.map(\.seq) == [2, 3, 4])
+        #expect(older.beforeSeq == 2)
+        #expect(older.hasMore)
+        let oldest = engine.replayPage(sessionId: "paged", beforeSeq: 2, limit: 3)
+        #expect(oldest.lines.map(\.seq) == [1])
+        #expect(!oldest.hasMore)
+        #expect(engine.replayPage(sessionId: "paged", beforeSeq: 1).lines.isEmpty)
+    }
+
+    @Test func recentPageAlsoLimitsLargeOutput() throws {
+        let (engine, dir) = makeEngine()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let body = String(repeating: "x", count: 1 << 20)
+        for number in 1...6 { engine.recordInput(sessionId: "large", text: "\(number)\(body)") }
+        let page = engine.replayPage(sessionId: "large", limit: 160)
+        #expect(page.lines.last?.seq == 6)
+        #expect(page.lines.count < 6)
+        #expect(page.lines.reduce(0) { $0 + $1.line.line.utf8.count } <= (4 << 20))
+        #expect(page.hasMore)
+        let older = engine.replayPage(sessionId: "large", beforeSeq: page.beforeSeq, limit: 160)
+        #expect(older.lines.last?.seq == (page.beforeSeq ?? 0) - 1)
+    }
+
     @Test func streamsLogsAndReplaysInOrder() async throws {
         let (engine, dir) = makeEngine()
         defer { try? FileManager.default.removeItem(at: dir) }

@@ -1,0 +1,87 @@
+name: Mobile
+
+on:
+  pull_request:
+    paths:
+      - mobile/**
+      - .github/workflows/mobile.yml
+      - Packages/AbstractCore/Sources/AbstractCore/Remote/**
+      - Abstract/Features/Remote/**
+  workflow_dispatch:
+    inputs:
+      publish_android:
+        description: Build and upload Android to Google Play
+        type: boolean
+        default: false
+      track:
+        description: Google Play track
+        type: choice
+        options: [internal, alpha, beta, production]
+        default: internal
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npx expo export --platform all --output-dir dist/ci
+      - run: npx expo config --type public
+
+  android:
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_android
+    needs: check
+    runs-on: ubuntu-latest
+    environment: mobile-android
+    defaults:
+      run:
+        working-directory: mobile
+    env:
+      MOBILE_ANDROID_VERSION_CODE: ${{ github.run_number }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - run: npm ci
+      - name: Prepare Android project and signing
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          test -n "$ANDROID_KEYSTORE_BASE64"
+          test -n "$PLAY_SERVICE_ACCOUNT_JSON"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/abstract-upload.keystore"
+          printf '%s' "$PLAY_SERVICE_ACCOUNT_JSON" > "$RUNNER_TEMP/play-service-account.json"
+          echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/abstract-upload.keystore" >> "$GITHUB_ENV"
+          CI=1 npx expo prebuild --platform android --clean
+          node scripts/prepare-android-release.js
+      - run: npm run bundle:android
+      - uses: actions/upload-artifact@v4
+        with:
+          name: abstract-android-aab
+          path: mobile/android/app/build/outputs/bundle/release/app-release.aab
+      - name: Upload to Google Play
+        run: |
+          python3 -m venv "$RUNNER_TEMP/play-venv"
+          "$RUNNER_TEMP/play-venv/bin/pip" install google-api-python-client google-auth
+          "$RUNNER_TEMP/play-venv/bin/python" scripts/publish-google-play.py --credentials "$RUNNER_TEMP/play-service-account.json" --bundle android/app/build/outputs/bundle/release/app-release.aab --track '${{ inputs.track }}'
