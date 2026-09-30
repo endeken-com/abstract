@@ -85,7 +85,8 @@ jobs:
           echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/abstract-upload.keystore" >> "$GITHUB_ENV"
           CI=1 npx expo prebuild --platform android --clean
           node scripts/prepare-android-release.js
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
+        id: iroh-cache
         with:
           path: mobile/modules/abstract-internet/android/src/main/jniLibs
           key: iroh-android-${{ hashFiles('scripts/prepare-iroh.sh') }}
@@ -93,6 +94,11 @@ jobs:
         run: |
           sdkmanager 'ndk;27.1.12297006'
           ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.1.12297006" ../scripts/prepare-iroh.sh android
+      - uses: actions/cache/save@v4
+        if: steps.iroh-cache.outputs.cache-hit != 'true'
+        with:
+          path: mobile/modules/abstract-internet/android/src/main/jniLibs
+          key: ${{ steps.iroh-cache.outputs.cache-primary-key }}
       - run: npm run bundle:android
       - uses: actions/upload-artifact@v4
         with:
@@ -120,7 +126,8 @@ jobs:
       - uses: android-actions/setup-android@v3
         with:
           packages: platform-tools
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
+        id: iroh-cache
         with:
           path: mobile/modules/abstract-internet/android/src/main/jniLibs
           key: iroh-android-${{ hashFiles('scripts/prepare-iroh.sh') }}
@@ -128,6 +135,11 @@ jobs:
         run: |
           sdkmanager 'ndk;27.1.12297006'
           ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.1.12297006" scripts/prepare-iroh.sh android
+      - uses: actions/cache/save@v4
+        if: steps.iroh-cache.outputs.cache-hit != 'true'
+        with:
+          path: mobile/modules/abstract-internet/android/src/main/jniLibs
+          key: ${{ steps.iroh-cache.outputs.cache-primary-key }}
       - run: npm ci
         working-directory: mobile
       - run: npx expo prebuild --platform android --clean --no-install
@@ -144,11 +156,17 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: mobile/package-lock.json
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
+        id: iroh-cache
         with:
           path: Packages/Iroh/Iroh.xcframework
           key: iroh-apple-${{ hashFiles('scripts/prepare-iroh.sh') }}
       - run: scripts/prepare-iroh.sh apple
+      - uses: actions/cache/save@v4
+        if: steps.iroh-cache.outputs.cache-hit != 'true'
+        with:
+          path: Packages/Iroh/Iroh.xcframework
+          key: ${{ steps.iroh-cache.outputs.cache-primary-key }}
       - run: npm ci
         working-directory: mobile
       - run: pod install

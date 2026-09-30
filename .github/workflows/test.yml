@@ -37,12 +37,18 @@ jobs:
         working-directory: Packages/AbstractCore
         run: swift test
 
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
+        id: iroh-cache
         with:
           path: Packages/Iroh/Iroh.xcframework
           key: iroh-apple-${{ hashFiles('scripts/prepare-iroh.sh') }}
       - name: Prepare internet transport
         run: scripts/prepare-iroh.sh apple
+      - uses: actions/cache/save@v4
+        if: steps.iroh-cache.outputs.cache-hit != 'true'
+        with:
+          path: Packages/Iroh/Iroh.xcframework
+          key: ${{ steps.iroh-cache.outputs.cache-primary-key }}
 
       - name: Build the app
         run: |
