@@ -58,13 +58,20 @@ class RelayDeployTests(unittest.TestCase):
         self.assertTrue(deploy.deployment_state(service, 2))
 
     def test_image_registration_must_match_this_service_and_run(self):
-        response = 'Uploading layers…\n' + json.dumps({"containerImage": {"image": ":abstract-relay.relay-42-1.7"}})
-        self.assertEqual(deploy.pushed_image(response, "abstract-relay", "relay-42-1"),
-                         ":abstract-relay.relay-42-1.7")
-        for output in [response.replace("relay-42-1", "relay-41-1"), response.replace("abstract-relay", "other"),
-                       "Upload failed", '{"containerImage":{"image":":abstract-relay.relay-42-1.latest"}}']:
-            with self.subTest(output=output), self.assertRaises(RuntimeError):
-                deploy.pushed_image(output, "abstract-relay", "relay-42-1")
+        aws = Mock()
+        exact = ":abstract-relay.relay-42-1.7"
+        aws.json.return_value = {"containerImages": [
+            {"image": ":abstract-relay.relay-41-1.1"}, {"image": exact},
+            {"image": ":other.relay-42-1.1"}, {"image": ":abstract-relay.relay-42-1.latest"}]}
+        self.assertEqual(deploy.registered_image(aws, "abstract-relay", "relay-42-1"), exact)
+        aws.json.assert_called_once_with("get-container-images", "--service-name", "abstract-relay")
+        aws.json.return_value = {"containerImages": [{"image": exact},
+                                                      {"image": ":abstract-relay.relay-42-1.8"}]}
+        with self.assertRaisesRegex(RuntimeError, "Multiple images"):
+            deploy.registered_image(aws, "abstract-relay", "relay-42-1")
+        aws.json.return_value = {"containerImages": []}
+        with patch.object(deploy.time, "sleep"), self.assertRaisesRegex(RuntimeError, "not registered"):
+            deploy.registered_image(aws, "abstract-relay", "relay-42-1")
 
     def test_certificate_must_be_issued_and_cover_exactly_one_wildcard_label(self):
         config = {**self.config, "domain": "relay.example.com", "certificate": "relay-cert"}
@@ -107,7 +114,8 @@ class RelayDeployTests(unittest.TestCase):
         aws = Mock()
         aws.services.return_value = [{**service, "containerServiceName": self.config["service"]}]
         aws.wait.return_value = service
-        aws.command.return_value = json.dumps({"containerImage": {"image": ":abstract-relay.relay-42-1.1"}})
+        aws.command.return_value = "Upload complete"
+        aws.json.return_value = {"containerImages": [{"image": ":abstract-relay.relay-42-1.1"}]}
         aws.request.return_value = {"containerService": {"nextDeployment": {"version": 2}}}
         with tempfile.TemporaryDirectory() as directory:
             summary, output = Path(directory) / "summary", Path(directory) / "output"

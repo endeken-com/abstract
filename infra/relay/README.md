@@ -51,6 +51,7 @@ lightsail:GetContainerServices
 lightsail:CreateContainerService
 lightsail:CreateContainerServiceRegistryLogin
 lightsail:RegisterContainerImage
+lightsail:GetContainerImages
 lightsail:CreateContainerServiceDeployment
 lightsail:GetCertificates             # only for a custom domain
 lightsail:UpdateContainerService      # only for a custom domain
@@ -70,6 +71,10 @@ workflow uploads to Lightsail's own image registry using `lightsailctl`.
 4. It creates the service if absent, waits for the exact new deployment version
    to become active, and repeats the protocol test through the public HTTPS
    endpoint. The Actions summary includes the URL, image, and deployment version.
+
+After uploading, the workflow looks up the registered image by this run's unique
+label and deploys that exact version. It does not depend on the upload command's
+human-readable output.
 
 An existing service must already have one node and be enabled; the workflow
 does not resize or enable it silently. If another service is visible in `AWS_REGION`
