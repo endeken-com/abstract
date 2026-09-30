@@ -36,10 +36,11 @@ class RelayDeployTests(unittest.TestCase):
                 deploy.configuration({**self.env, "RELAY_DOMAIN": domain, "LIGHTSAIL_CERTIFICATE_NAME": "relay"})
 
     def test_refuses_to_resize_or_enable_an_existing_service(self):
-        for service in [{"power": "small", "scale": 1}, {"power": "micro", "scale": 2},
+        for service in [{"power": "micro", "scale": 2},
                         {"power": "micro", "scale": 1, "isDisabled": True}]:
             with self.subTest(service=service), self.assertRaises(RuntimeError):
                 deploy.check_service(service)
+        deploy.check_service({"power": "nano", "scale": 1, "isDisabled": False})
 
     def test_old_active_version_does_not_pass_pending_new_deployment(self):
         service = {"state": "DEPLOYING", "currentDeployment": {"version": 1, "state": "ACTIVE"},
@@ -104,7 +105,7 @@ class RelayDeployTests(unittest.TestCase):
     def test_failed_smoke_never_publishes_success(self):
         service = {"power": "micro", "scale": 1, "state": "RUNNING", "url": "https://relay.example.com"}
         aws = Mock()
-        aws.service.return_value = service
+        aws.services.return_value = [{**service, "containerServiceName": self.config["service"]}]
         aws.wait.return_value = service
         aws.command.return_value = json.dumps({"containerImage": {"image": ":abstract-relay.relay-42-1.1"}})
         aws.request.return_value = {"containerService": {"nextDeployment": {"version": 2}}}
@@ -118,9 +119,28 @@ class RelayDeployTests(unittest.TestCase):
             self.assertFalse(summary.exists())
             self.assertFalse(output.exists())
 
+    def test_existing_service_with_another_name_does_not_trigger_creation(self):
+        aws = Mock()
+        aws.services.return_value = [{"containerServiceName": "my-relay"}]
+        with patch.object(deploy, "Lightsail", return_value=aws), self.assertRaisesRegex(
+                RuntimeError, "Set LIGHTSAIL_SERVICE_NAME to the service you created"):
+            deploy.deploy(self.config, "abstract-relay:ci", "relay-42-1")
+        aws.json.assert_not_called()
+        aws.request.assert_not_called()
+
+    def test_creates_service_only_when_region_has_none(self):
+        aws = Mock()
+        aws.services.return_value = []
+        aws.wait.side_effect = RuntimeError("stop after creation")
+        with patch.object(deploy, "Lightsail", return_value=aws), self.assertRaisesRegex(
+                RuntimeError, "stop after creation"):
+            deploy.deploy(self.config, "abstract-relay:ci", "relay-42-1")
+        aws.json.assert_called_once_with("create-container-service", "--service-name", "abstract-relay",
+                                         "--power", "micro", "--scale", "1")
+
     def test_aws_read_failure_does_not_trigger_service_creation(self):
         aws = Mock()
-        aws.service.side_effect = RuntimeError("Access denied")
+        aws.services.side_effect = RuntimeError("Access denied")
         with patch.object(deploy, "Lightsail", return_value=aws), self.assertRaises(RuntimeError):
             deploy.deploy(self.config, "abstract-relay:ci", "relay-42-1")
         aws.json.assert_not_called()

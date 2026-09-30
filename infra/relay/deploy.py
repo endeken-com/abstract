@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deploy a tested image to one Lightsail Micro container node.
+"""Deploy a tested image to one Lightsail container node.
 
 AWS CLI and lightsailctl must be installed and AWS credentials configured.
 AWS responses contain container secrets: capture them, never print them.
@@ -54,8 +54,8 @@ def deployment_request(config, image):
 
 
 def check_service(service):
-    if service.get("power") != "micro" or service.get("scale") != 1:
-        raise RuntimeError("The existing service is not Micro with one node; refusing to resize it.")
+    if service.get("scale") != 1:
+        raise RuntimeError("The existing service must have one node; refusing to resize it.")
     if service.get("isDisabled"):
         raise RuntimeError("The existing service is disabled; enable it in Lightsail first.")
 
@@ -115,10 +115,12 @@ class Lightsail:
             path.write_text(json.dumps(payload))
             return self.json(action, "--cli-input-json", f"file://{path}")
 
-    def service(self):
+    def services(self):
         # Listing distinguishes absence from access/network errors without parsing stderr.
-        services = self.json("get-container-services")["containerServices"]
-        return next((s for s in services if s["containerServiceName"] == self.config["service"]), None)
+        return self.json("get-container-services")["containerServices"]
+
+    def service(self):
+        return next((s for s in self.services() if s["containerServiceName"] == self.config["service"]), None)
 
     def wait(self, ready, description):
         deadline = time.monotonic() + 1200
@@ -155,10 +157,17 @@ def deploy(config, image, label):
         raise ValueError("Use a short lowercase image label, such as relay-123456-1.")
     aws = Lightsail(config)
     verify_certificate(aws, config)
-    service = aws.service()
+    services = aws.services()
+    service = next((s for s in services if s["containerServiceName"] == config["service"]), None)
     if service:
         check_service(service)
     else:
+        if services:
+            names = ", ".join(sorted(s["containerServiceName"] for s in services))
+            raise RuntimeError(
+                f"No Lightsail container service named {config['service']} in {config['region']}. "
+                f"Existing services: {names}. Set LIGHTSAIL_SERVICE_NAME to the service you created."
+            )
         print("Creating one Lightsail Micro node.", flush=True)
         aws.json("create-container-service", "--service-name", config["service"],
                  "--power", "micro", "--scale", "1")
@@ -204,7 +213,7 @@ def deploy(config, image, label):
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with open(summary, "a") as file:
-            file.write(f"Relay deployed to **{config['service']}** (Micro, one node).\n\n"
+            file.write(f"Relay deployed to **{config['service']}** ({service['power'].title()}, one node).\n\n"
                        f"- Endpoint: {urls[-1]}\n- Lightsail endpoint: {urls[0]}\n"
                        f"- Image: `{uploaded}`\n- Deployment: {version}\n"
                        "- Verified authorization and bidirectional relay forwarding over HTTPS.\n"

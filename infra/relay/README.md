@@ -1,7 +1,8 @@
 # Internet relay on Lightsail
 
 The **Deploy relay** GitHub workflow builds and tests an Iroh 1.3.0 container,
-then deploys that exact image to **Lightsail Container Service, Micro, one node**.
+then deploys that exact image to a **Lightsail Container Service with one node**.
+It uses the existing service's power; if no service exists, it creates a Micro service.
 Deployment is manual; pull requests only run checks. This is infrastructure for a
 private beta. The desktop/mobile clients do not use Iroh yet: deploying this
 container alone does not enable internet connections in Abstract.
@@ -21,7 +22,7 @@ Configure these **environment variables**:
 | Variable | Value |
 | --- | --- |
 | `AWS_REGION` | Required; the AWS region in which to run the service. |
-| `LIGHTSAIL_SERVICE_NAME` | Optional; defaults to `abstract-relay`. |
+| `LIGHTSAIL_SERVICE_NAME` | Set to the exact name of an existing Lightsail container service; defaults to `abstract-relay`. This is the service name, not the name of a container inside it. |
 | `AWS_ROLE_ARN` | Optional; assume this IAM role using GitHub OIDC. |
 | `RELAY_DOMAIN` | Set to `relay.useabstract.app` once DNS and the certificate are ready; omit `https://`. |
 | `LIGHTSAIL_CERTIFICATE_NAME` | Set to `abstract-relay` after creating an issued Lightsail certificate with that name in the same region. Required when `RELAY_DOMAIN` is set. |
@@ -70,8 +71,11 @@ workflow uploads to Lightsail's own image registry using `lightsailctl`.
    to become active, and repeats the protocol test through the public HTTPS
    endpoint. The Actions summary includes the URL, image, and deployment version.
 
-An existing service must already be Micro with one node and enabled; the workflow
-does not resize or enable it silently. Concurrent manual deployments are queued.
+An existing service must already have one node and be enabled; the workflow
+does not resize or enable it silently. If another service is visible in `AWS_REGION`
+but its name does not match `LIGHTSAIL_SERVICE_NAME`, deployment stops and reports
+the visible service names instead of trying to create another one. Concurrent
+manual deployments are queued.
 An AWS failure is not treated as a missing service. Deployment request files
 contain secrets, are created with mode `0600`, and are deleted after the call;
 raw AWS responses are not printed or uploaded.
