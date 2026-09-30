@@ -217,7 +217,16 @@ public enum Shipping {
             from = fork
         } else {
             // Nothing on origin at all: every pointer at HEAD is new to it.
-            from = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+            // The empty tree's name depends on the object format (SHA-1 or SHA-256).
+            do {
+                let tree = try await Git.git(exec, cwd: dir, ["hash-object", "-t", "tree", "/dev/null"])
+                guard tree.ok, !GitText.trimmed(tree.stdout).isEmpty else {
+                    return [unreadable(repo, reason(tree, "couldn't name the empty tree"))]
+                }
+                from = GitText.trimmed(tree.stdout)
+            } catch {
+                return [unreadable(repo, error.localizedDescription)]
+            }
         }
         let out: ExecResult
         do {

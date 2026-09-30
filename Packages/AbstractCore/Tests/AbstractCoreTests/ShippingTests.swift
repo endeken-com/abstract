@@ -489,4 +489,51 @@ struct ShippingTests {
         #expect(blocked.map(\.repo.path) == ["libs/core"])
         #expect(blocked.first?.sha == GitText.trimmed(try await f.git(core, ["rev-parse", "HEAD"])))
     }
+
+    // MARK: SHA-256 repositories
+
+    /// A SHA-256 repository in its own temp folder, on `trunk` so no base
+    /// branch is found, with one commit.
+    private func sha256Repo(_ f: SubmoduleFixture, _ name: String) async throws -> String {
+        let dir = f.repo(name)
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        try await f.git(dir, ["init", "-q", "--object-format=sha256", "-b", "trunk"])
+        try await f.identify(dir)
+        try f.write(dir + "/a.txt", "\(name)\n")
+        try await f.commitAll(dir, "init")
+        return dir
+    }
+
+    @Test func aSha256RepositoryWithNoUpstreamAndNoBaseCanBePushed() async throws {
+        let f = SubmoduleFixture(dir: FileManager.default.temporaryDirectory.appendingPathComponent("abstract-sha256-\(UUID().uuidString)").path)
+        defer { f.remove() }
+        let solo = try await sha256Repo(f, "solo")
+        let repos = [ChatRepo(path: "")]
+        #expect(await Shipping.unpublishedPointers(exec, worktree: solo, repos: repos).isEmpty, "no pointers: nothing to block")
+
+        try await f.git(f.dir, ["init", "-q", "--bare", "--object-format=sha256", "solo.git"])
+        try await f.git(solo, ["remote", "add", "origin", f.dir + "/solo.git"])
+        #expect(await Shipping.unpublishedPointers(exec, worktree: solo, repos: repos).isEmpty, "a new remote has nothing to compare with")
+        try await Git.push(exec, worktree: solo, branch: "trunk")
+        #expect(try await f.git(f.dir + "/solo.git", ["rev-parse", "trunk"]) == (try await f.git(solo, ["rev-parse", "HEAD"])))
+    }
+
+    @Test func aSha256SubmodulePointerItsOriginLacksStillBlocks() async throws {
+        let f = SubmoduleFixture(dir: FileManager.default.temporaryDirectory.appendingPathComponent("abstract-sha256-\(UUID().uuidString)").path)
+        defer { f.remove() }
+        let lib = try await sha256Repo(f, "lib"), top = try await sha256Repo(f, "top")
+        try await f.git(top, ["submodule", "add", "-q", lib, "lib"])
+        try await f.git(top, ["commit", "-qm", "Add lib"])
+        // A commit in the submodule its origin never got, and the pointer to it.
+        try await f.identify(top + "/lib")
+        try f.write(top + "/lib/b.txt", "b\n")
+        try await f.commitAll(top + "/lib", "Local")
+        try await f.git(top, ["add", "lib"])
+        try await f.git(top, ["commit", "-qm", "Move lib"])
+        let repos = await Submodules.list(exec, worktree: top)
+
+        let blocked = await Shipping.unpublishedPointers(exec, worktree: top, repos: repos)
+        #expect(blocked.map(\.repo.path) == ["lib"])
+        #expect(blocked.first?.reason == .notOnOrigin)
+    }
 }
