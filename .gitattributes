@@ -1,0 +1,3 @@
+
+# Preserve generated upstream bindings verbatim.
+Packages/Iroh/Sources/** linguist-vendored whitespace=-blank-at-eol

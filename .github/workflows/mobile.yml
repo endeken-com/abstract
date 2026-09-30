@@ -4,6 +4,9 @@ on:
   pull_request:
     paths:
       - mobile/**
+      - Packages/AbstractInternet/**
+      - Packages/Iroh/**
+      - scripts/prepare-iroh.sh
       - .github/workflows/mobile.yml
       - Packages/AbstractCore/Sources/AbstractCore/Remote/**
       - Abstract/Features/Remote/**
@@ -34,6 +37,7 @@ jobs:
           cache-dependency-path: mobile/package-lock.json
       - run: npm ci
       - run: npm run typecheck
+      - run: node --test tests/*.test.js
       - run: npx expo export --platform all --output-dir dist/ci
       - run: npx expo config --type public
 
@@ -75,6 +79,14 @@ jobs:
           echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/abstract-upload.keystore" >> "$GITHUB_ENV"
           CI=1 npx expo prebuild --platform android --clean
           node scripts/prepare-android-release.js
+      - uses: actions/cache@v4
+        with:
+          path: mobile/modules/abstract-internet/android/src/main/jniLibs
+          key: iroh-android-${{ hashFiles('scripts/prepare-iroh.sh') }}
+      - name: Prepare internet transport
+        run: |
+          sdkmanager 'ndk;27.1.12297006'
+          ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.1.12297006" ../scripts/prepare-iroh.sh android
       - run: npm run bundle:android
       - uses: actions/upload-artifact@v4
         with:
@@ -85,3 +97,53 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/play-venv"
           "$RUNNER_TEMP/play-venv/bin/pip" install google-api-python-client google-auth
           "$RUNNER_TEMP/play-venv/bin/python" scripts/publish-google-play.py --credentials "$RUNNER_TEMP/play-service-account.json" --bundle android/app/build/outputs/bundle/release/app-release.aab --track '${{ inputs.track }}'
+
+  android-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: actions/cache@v4
+        with:
+          path: mobile/modules/abstract-internet/android/src/main/jniLibs
+          key: iroh-android-${{ hashFiles('scripts/prepare-iroh.sh') }}
+      - name: Prepare internet transport
+        run: |
+          sdkmanager 'ndk;27.1.12297006'
+          ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.1.12297006" scripts/prepare-iroh.sh android
+      - run: npm ci
+        working-directory: mobile
+      - run: npx expo prebuild --platform android --clean --no-install
+        working-directory: mobile
+      - run: ./gradlew assembleDebug
+        working-directory: mobile/android
+
+  ios-check:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - uses: actions/cache@v4
+        with:
+          path: Packages/Iroh/Iroh.xcframework
+          key: iroh-apple-${{ hashFiles('scripts/prepare-iroh.sh') }}
+      - run: scripts/prepare-iroh.sh apple
+      - run: npm ci
+        working-directory: mobile
+      - run: pod install
+        working-directory: mobile/ios
+      - run: xcodebuild -workspace Abstract.xcworkspace -scheme Abstract -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
+        working-directory: mobile/ios

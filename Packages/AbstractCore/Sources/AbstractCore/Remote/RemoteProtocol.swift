@@ -177,13 +177,15 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
     public var turnStartedAt: [String: Date]?
     /// A host advertising bounded chat history requests.
     public var pagedHistory: Bool?
+    /// Exchanged only inside an authenticated, encrypted session.
+    public var internetAddress: InternetAddress?
 
     public init(projects: [Project], sessions: [Session], providers: [String], alive: [String],
                 home: String? = nil, modelCatalogs: [String: ModelCatalog]? = nil,
                 defaultModelNames: [String: String]? = nil,
                 pullRequests: [String: RemotePullRequest]? = nil, automations: [Automation]? = nil,
                 pendingPermissions: [String: [RemotePendingPermission]]? = nil,
-                turnStartedAt: [String: Date]? = nil, pagedHistory: Bool? = nil) {
+                turnStartedAt: [String: Date]? = nil, pagedHistory: Bool? = nil, internetAddress: InternetAddress? = nil) {
         self.projects = projects; self.sessions = sessions; self.providers = providers; self.alive = alive
         self.home = home; self.modelCatalogs = modelCatalogs; self.defaultModelNames = defaultModelNames
         self.pullRequests = pullRequests
@@ -191,6 +193,7 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
         self.pendingPermissions = pendingPermissions
         self.turnStartedAt = turnStartedAt
         self.pagedHistory = pagedHistory
+        self.internetAddress = internetAddress
     }
 }
 

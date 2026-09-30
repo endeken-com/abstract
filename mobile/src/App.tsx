@@ -159,8 +159,9 @@ function DevicesScreen() {
     </View>
     <Section title="Nearby"><Text style={styles.subtitle}>On your local network</Text>{nearby.length ? nearby.map(mac => <Row key={mac.id} title={mac.name} subtitle={state.devices.some(device => device.peer.id === mac.id) ? 'Paired · Tap to connect' : 'Tap to pair'} icon="devices" onPress={() => state.connect(mac.address, state.devices.find(x => x.peer.id === mac.id || x.peer.name === mac.name)).catch(() => {})} />) : <Empty text="Searching… Open Abstract on your Mac and enable mobile sharing in Settings." />}</Section>
     {state.devices.length > 0 && <Section title="Your Macs">{state.devices.map(device => <View key={device.peer.id} style={{ flexDirection: 'row', alignItems: 'center' }}><View style={{ flex: 1 }}><Row title={device.peer.name} subtitle={device.peer.id === connected?.peer.id ? 'Connected' : device.address} icon="devices" onPress={() => state.connect(state.nearby.find(x => x.id === device.peer.id)?.address || device.address, device).catch(() => {})} trailing={device.peer.id === connected?.peer.id ? '●' : 'Connect'} /></View><MenuView actions={[{ id: 'forget', title: 'Forget Mac', image: Platform.OS === 'ios' ? 'trash' : undefined, attributes: { destructive: true } }]} onPressAction={() => Alert.alert('Forget this Mac?', device.peer.name, [{ text: 'Cancel' }, { text: 'Forget', style: 'destructive', onPress: () => run(() => state.forget(device.peer.id)) }])}><View style={{ paddingHorizontal: 10, paddingVertical: 16 }}><SymbolView name="ellipsis" size={17} tintColor={muted} /></View></MenuView></View>)}</Section>}
+    <Section title="Connect over the internet"><Text style={styles.subtitle}>On your Mac, enable internet connections in Settings → Devices and copy an invitation.</Text><TextInput style={styles.input} value={address} onChangeText={setAddress} placeholder="Paste an Abstract invitation" placeholderTextColor={muted} autoCapitalize="none" autoCorrect={false} /><Button title="Pair with Mac" onPress={() => state.connect(address).catch(() => {})} /></Section>
     <Pressable style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 14, gap: 8 }} onPress={() => setAdvanced(!advanced)}><Icon name="chevron" size={12} /><Text style={styles.sectionTitle}>Connect by address</Text></Pressable>
-    {advanced && <View style={{ gap: 10 }}><Text style={styles.subtitle}>For a Mac reachable over VPN or the internet</Text><TextInput style={styles.input} value={address} onChangeText={setAddress} placeholder="mac.example.com:52000" placeholderTextColor={muted} autoCapitalize="none" keyboardType="url" /><Button title="Connect or pair" onPress={() => state.connect(address, state.devices.find(x => x.address === address)).catch(() => {})} /></View>}
+    {advanced && <View style={{ gap: 10 }}><Text style={styles.subtitle}>For a Mac on your network or VPN</Text><TextInput style={styles.input} value={address} onChangeText={setAddress} placeholder="mac.example.com:52000" placeholderTextColor={muted} autoCapitalize="none" keyboardType="url" /><Button title="Connect or pair" onPress={() => state.connect(address, state.devices.find(x => x.address === address)).catch(() => {})} /></View>}
   </ScrollView>;
 }
 
@@ -413,8 +414,7 @@ export default function App() {
   useEffect(() => {
     remote.load();
     const appState = AppState.addEventListener('change', value => {
-      if (value === 'active' && remote.active && remote.status === 'offline') remote.connect(remote.nearby.find(x => x.id === remote.active?.peer.id)?.address || remote.active.address, remote.active).catch(() => {});
-      else if (value === 'active' && remote.status === 'online') remote.refresh().catch(() => {});
+      if (value === 'active') remote.resume().catch(() => {});
     });
     return () => appState.remove();
   }, []);

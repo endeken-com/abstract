@@ -1,4 +1,9 @@
 PODS:
+  - AbstractInternet (1.0.0):
+    - AbstractInternetTransport
+    - ExpoModulesCore
+  - AbstractInternetTransport (1.0.0):
+    - IrohLib (= 1.1.0)
   - CocoaAsyncSocket (7.6.5)
   - EXConstants (55.0.17):
     - ExpoModulesCore
@@ -237,6 +242,7 @@ PODS:
   - hermes-engine (0.14.1):
     - hermes-engine/Pre-built (= 0.14.1)
   - hermes-engine/Pre-built (0.14.1)
+  - IrohLib (1.1.0)
   - RCTDeprecation (0.83.10)
   - RCTRequired (0.83.10)
   - RCTSwiftUI (0.83.10)
@@ -2313,6 +2319,8 @@ PODS:
   - Yoga (0.0.0)
 
 DEPENDENCIES:
+  - AbstractInternet (from `../modules/abstract-internet/ios`)
+  - AbstractInternetTransport (from `../../Packages/AbstractInternet`)
   - EXConstants (from `../node_modules/expo/node_modules/expo-constants/ios`)
   - EXJSONUtils (from `../node_modules/expo-json-utils/ios`)
   - EXManifests (from `../node_modules/expo-manifests/ios`)
@@ -2338,6 +2346,7 @@ DEPENDENCIES:
   - EXUpdatesInterface (from `../node_modules/expo-updates-interface/ios`)
   - FBLazyVector (from `../node_modules/react-native/Libraries/FBLazyVector`)
   - hermes-engine (from `../node_modules/react-native/sdks/hermes-engine/hermes-engine.podspec`)
+  - IrohLib (from `../../Packages/Iroh`)
   - RCTDeprecation (from `../node_modules/react-native/ReactApple/Libraries/RCTFoundation/RCTDeprecation`)
   - RCTRequired (from `../node_modules/react-native/Libraries/Required`)
   - RCTSwiftUI (from `../node_modules/react-native/ReactApple/RCTSwiftUI`)
@@ -2427,6 +2436,10 @@ SPEC REPOS:
     - CocoaAsyncSocket
 
 EXTERNAL SOURCES:
+  AbstractInternet:
+    :path: "../modules/abstract-internet/ios"
+  AbstractInternetTransport:
+    :path: "../../Packages/AbstractInternet"
   EXConstants:
     :path: "../node_modules/expo/node_modules/expo-constants/ios"
   EXJSONUtils:
@@ -2478,6 +2491,8 @@ EXTERNAL SOURCES:
   hermes-engine:
     :podspec: "../node_modules/react-native/sdks/hermes-engine/hermes-engine.podspec"
     :tag: hermes-v0.14.1
+  IrohLib:
+    :path: "../../Packages/Iroh"
   RCTDeprecation:
     :path: "../node_modules/react-native/ReactApple/Libraries/RCTFoundation/RCTDeprecation"
   RCTRequired:
@@ -2644,6 +2659,8 @@ EXTERNAL SOURCES:
     :path: "../node_modules/react-native/ReactCommon/yoga"
 
 SPEC CHECKSUMS:
+  AbstractInternet: 856345f234853db3cf2e68985ddd5e97ce36f6f5
+  AbstractInternetTransport: 1e66dd25e5c0b15f290e35eb6ff974bf4b8c0518
   CocoaAsyncSocket: 065fd1e645c7abab64f7a6a2007a48038fdc6a99
   EXConstants: dd0b0af9c628c00bc5ce556964210c4465ac9ffe
   EXJSONUtils: 04bc3807d351331a5fe154ce1da596ec15d99169
@@ -2670,6 +2687,7 @@ SPEC CHECKSUMS:
   EXUpdatesInterface: 33cfb4116f9ddd0ee1732484248495d4fece9744
   FBLazyVector: b88945378388c6651d3725b0e8c2624fbb37ec64
   hermes-engine: f37e1d6f1eb198649a60b3f17b6f685a6ac12470
+  IrohLib: f1d56a1fb53388f1edb7737077d59198436304f2
   RCTDeprecation: 86774ca0048c2293d01cc7dfb71811fd32ebbd46
   RCTRequired: c7f2bc9661a7c341d33f411fc161f057c97cc731
   RCTSwiftUI: 3b36c814293f91f5179c0f113a885ce47853035c
@@ -2678,7 +2696,7 @@ SPEC CHECKSUMS:
   React: c8a434eb4c7720649ce29b79ec65a8a085d9ef89
   React-callinvoker: 4c2b5f172ed44389be239e98c3f337c5196cace7
   React-Core: 592fc89c19401011ccdf0827de0e7735c7ffd70d
-  React-Core-prebuilt: 61050a1a6a27b572e9b13d93d70dd6e622e8cc85
+  React-Core-prebuilt: 2a081e1a1eca2eed61b7bfd5785f25518b8c9827
   React-CoreModules: 5478af0a8fd1630f2e22f51c99d66f1cf776e7ad
   React-cxxreact: ee1d07f9563ba064ca72e9493cb8c1ab4c4b17dc
   React-debug: 4f438e5a751a73ea73cded17cd51db62588d7bac
@@ -2746,13 +2764,13 @@ SPEC CHECKSUMS:
   ReactAppDependencyProvider: 38aa49711b58e4f7e27033cb218bb804eadc7356
   ReactCodegen: ecbd22c07f187aa9f1772690228d11aa26aafe39
   ReactCommon: e8e2f75f9847b9e23aa851690d5f191137da9d6b
-  ReactNativeDependencies: 1d2a96a9c60344646d5d407c8e847bdb2ca8f8f6
+  ReactNativeDependencies: 2a2ec4f1e4716bfa1dba299df83ffd09237d44a9
   RNCAsyncStorage: e85a99325df9eb0191a6ee2b2a842644c7eb29f4
   RNCMaskedView: 3c9d7586e2b9bbab573591dcb823918bc4668005
   RNScreens: fb11b7412bcbdc0ffafcaf9174938d998d4e2bc4
   RNSVG: b5bd4454de003a99d3130a3c6a1b1c949c89d37d
   Yoga: 3a3ee5afb97f3a990839cfae6092b0540c7441a4
 
-PODFILE CHECKSUM: 39a4aa609224b4b5ced9721f4716cf09b4ca9e87
+PODFILE CHECKSUM: 4c88dfd1b30a0bc45e4a077c7537ae3124870243
 
 COCOAPODS: 1.17.0

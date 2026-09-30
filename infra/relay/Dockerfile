@@ -13,8 +13,10 @@ RUN case "$TARGETARCH" in \
     && find . -type f -name iroh-relay -exec cp '{}' /iroh-relay \;
 
 FROM alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8
+RUN apk add --no-cache python3 py3-aiohttp py3-cryptography
 RUN addgroup -S relay && adduser -S -G relay relay
 COPY --from=download /iroh-relay /usr/local/bin/iroh-relay
+COPY gateway.py /usr/local/bin/relay-gateway.py
 COPY relay.toml /etc/iroh-relay/relay.toml
 COPY --chmod=755 entrypoint.sh /usr/local/bin/relay-entrypoint
 USER relay

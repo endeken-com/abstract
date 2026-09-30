@@ -2,6 +2,7 @@ import Foundation
 import Network
 import CryptoKit
 import AbstractCore
+import AbstractInternet
 
 /// Abstract on other Macs on the local network: finding them, pairing once,
 /// then driving their agents from here (as a controller) or letting paired
@@ -16,6 +17,7 @@ final class RemoteService {
         var lastSeen: Date?
         /// "host:port" for a Mac paired by address, reached directly rather than found on the network.
         var address: String?
+        var internetAddress: InternetAddress?
         var id: String { peer.id }
     }
 
@@ -40,8 +42,19 @@ final class RemoteService {
         didSet {
             save()
             hosting ? startListening() : stopListening()
+            updateInternetHosting()
         }
     }
+    var internetHosting: Bool { didSet { save(); updateInternetHosting() } }
+    private(set) var internetAddress: InternetAddress?
+    private(set) var invitation: InternetInvitation?
+    @ObservationIgnored private var internet: InternetEndpoint?
+    @ObservationIgnored private var internetStarting: Task<InternetEndpoint, any Error>?
+    @ObservationIgnored private var internetAccepting: Task<Void, Never>?
+    @ObservationIgnored private var internetChannels: [UUID: RemoteChannel] = [:]
+    @ObservationIgnored private var outgoingPair: RemoteChannel?
+    @ObservationIgnored private var pairingTask: Task<Void, Never>?
+
     private(set) var identity: DeviceIdentity
     private(set) var paired: [PairedDevice] { didSet { save() } }
 
@@ -85,6 +98,7 @@ final class RemoteService {
         var name: String?
         var port: UInt16?
         var peerToPeer: Bool?
+        var internetHosting: Bool?
     }
 
     init(dataDirectory: URL) {
@@ -93,6 +107,7 @@ final class RemoteService {
         let stored = Self.loadIdentity(in: dataDirectory)
         identity = DeviceIdentity(id: stored.id, name: Self.name(settings.name), signingKey: stored.signingKey)
         hosting = settings.hosting
+        internetHosting = settings.internetHosting ?? false
         paired = settings.paired
         customName = settings.name
         fixedPort = settings.port
@@ -112,6 +127,7 @@ final class RemoteService {
         if hosting { startListening() }
         if !paired.isEmpty { startBrowsing() }
         startReachingByAddress()
+        updateInternetHosting()
     }
 
     // MARK: Identity
@@ -135,11 +151,12 @@ final class RemoteService {
 
     private func save() {
         guard let data = try? JSONEncoder().encode(Settings(hosting: hosting, paired: paired, name: customName, port: fixedPort,
-                                                            peerToPeer: peerToPeer)) else { return }
+                                                            peerToPeer: peerToPeer, internetHosting: internetHosting)) else { return }
         try? data.write(to: settingsURL, options: .atomic)
     }
 
     func unpair(_ id: String) {
+        if prompt?.peer.id == id { dismissPrompt() }
         links[id]?.disconnect()
         links[id] = nil
         hosted[id]?.channel.close()
@@ -180,10 +197,12 @@ final class RemoteService {
     }
 
     private func stopListening() {
+        pushTask?.cancel(); pushTask = nil
         listener?.cancel()
         listener = nil
         listening = false
         listeningPort = nil
+        answerPairing(false)
         for peer in hosted.values { peer.channel.close() }
         hosted = [:]
     }
@@ -191,22 +210,39 @@ final class RemoteService {
     /// A Mac connecting to this one: a paired Mac straight in, a new one only after you accept its code.
     private func accept(_ connection: NWConnection) async {
         guard hosting else { connection.cancel(); return }
-        let channel = RemoteChannel(connection: connection)
+        await accept(RemoteChannel(connection: connection))
+    }
+
+    private func accept(_ channel: RemoteChannel, internetPeer: PeerInfo? = nil) async {
         let pins = Dictionary(uniqueKeysWithValues: paired.map { ($0.id, $0.peer) })
+        let watchdog = Task {
+            do { try await Task.sleep(for: .seconds(10)); channel.close() } catch {}
+        }
+        defer { watchdog.cancel() }
         do {
             try await channel.open()
             let outcome = try await channel.accept(as: identity, lookup: { pins[$0] })
+            watchdog.cancel()
+            guard hosting, internetPeer == nil || (internetHosting && internetPeer == outcome.peer) else { channel.close(); return }
             if outcome.pairing {
                 // One pairing at a time; a second knock waits for none.
                 guard prompt == nil else { channel.close(); return }
                 prompt = PairingPrompt(peer: outcome.peer, code: outcome.code, incoming: true)
+                let promptID = prompt?.id
+                let expiry = Task { [weak self] in
+                    do { try await Task.sleep(for: .seconds(60)) } catch { return }
+                    if self?.prompt?.id == promptID { self?.answerPairing(false) }
+                }
                 let accepted = await withCheckedContinuation { decision = $0 }
+                expiry.cancel()
                 prompt = nil
                 try await channel.send(.event(.paired(accepted)))
-                guard accepted else { channel.close(); return }
+                guard accepted, hosting, internetPeer == nil || internetHosting else { channel.close(); return }
                 remember(outcome.peer)
                 startBrowsing()
             } else {
+                // Revocation or disabling sharing may have happened during the handshake.
+                guard paired.contains(where: { $0.peer.id == outcome.peer.id && $0.peer.publicKey == outcome.peer.publicKey }) else { channel.close(); return }
                 touch(outcome.peer.id)
             }
             let peer = HostedPeer(channel: channel, peer: outcome.peer, service: self)
@@ -227,15 +263,114 @@ final class RemoteService {
     private func remember(_ peer: PeerInfo, address: String? = nil) {
         let known = paired.first { $0.id == peer.id }
         paired.removeAll { $0.id == peer.id }
-        paired.append(PairedDevice(peer: peer, pairedAt: Date(), lastSeen: Date(), address: address ?? known?.address))
+        paired.append(PairedDevice(peer: peer, pairedAt: Date(), lastSeen: Date(), address: address ?? known?.address, internetAddress: known?.internetAddress))
     }
 
     private func touch(_ id: String) {
         if let i = paired.firstIndex(where: { $0.id == id }) { paired[i].lastSeen = Date() }
     }
 
+    func rememberInternet(_ address: InternetAddress?, for id: String) {
+        guard address == nil || address?.isValid == true,
+              let index = paired.firstIndex(where: { $0.id == id }), paired[index].internetAddress != address else { return }
+        paired[index].internetAddress = address
+    }
+
+    private func internetEndpoint() async throws -> InternetEndpoint {
+        if let internet { return internet }
+        if let internetStarting { return try await internetStarting.value }
+        let key = InternetEndpoint.networkKey(signingKey: identity.signingKey.rawRepresentation)
+        let starting = Task { try await InternetEndpoint.bind(key: key) }
+        internetStarting = starting
+        defer { internetStarting = nil }
+        let endpoint = try await starting.value
+        internet = endpoint
+        return endpoint
+    }
+
+    func internetChannel(to address: InternetAddress, invitation: String? = nil) async throws -> RemoteChannel {
+        guard address.isValid else { throw SecureChannelError.malformed }
+        let endpoint = try await internetEndpoint()
+        let stream = try await withThrowingTaskGroup(of: InternetStream.self) { group in
+            group.addTask { try await endpoint.connect(to: address.endpointId) }
+            group.addTask {
+                try await Task.sleep(for: .seconds(15))
+                throw InternetError.relayUnavailable
+            }
+            defer { group.cancelAll() }
+            return try await group.next()!
+        }
+        guard !Task.isCancelled else { stream.close(); throw CancellationError() }
+        let channel = RemoteChannel(transport: IrohRemoteTransport(stream: stream))
+        do {
+            let hello = try InternetHello(identity: identity, host: address.endpointId, client: endpoint.id, invitation: invitation)
+            try await channel.sendPlain(JSONEncoder().encode(hello))
+            return channel
+        } catch { channel.close(); throw error }
+    }
+
+    private func updateInternetHosting() {
+        guard hosting && internetHosting else {
+            internetAddress = nil; invitation = nil
+            for channel in internetChannels.values { channel.close() }
+            internetChannels.removeAll()
+            // The endpoint may still be used to control another Mac. The accept loop
+            // keeps rejecting incoming connections until hosting is enabled again.
+            return
+        }
+        guard internetAccepting == nil else {
+            if let internet { internetAddress = InternetAddress(endpointId: internet.id) }
+            return
+        }
+        internetAccepting = Task { [weak self] in
+            guard let self else { return }
+            defer { self.internetAccepting = nil }
+            do {
+                let endpoint = try await internetEndpoint()
+                if hosting && internetHosting { internetAddress = InternetAddress(endpointId: endpoint.id) }
+                while !Task.isCancelled {
+                    // Failed or abandoned incoming handshakes must not stop the listener.
+                    let stream: InternetStream
+                    do {
+                        guard let next = try await endpoint.accept() else { return }
+                        stream = next
+                    } catch { continue }
+                    guard hosting && internetHosting, internetChannels.count < 16 else { stream.close(); continue }
+                    let channel = RemoteChannel(transport: IrohRemoteTransport(stream: stream))
+                    let id = UUID(); internetChannels[id] = channel
+                    Task {
+                        let timeout = Task {
+                            do { try await Task.sleep(for: .seconds(10)); channel.close() } catch {}
+                        }
+                        defer {
+                            timeout.cancel()
+                            if !hosted.values.contains(where: { $0.channel === channel }) { internetChannels[id] = nil }
+                        }
+                        do {
+                            let data = try await channel.receivePlain(maximumLength: 4096)
+                            let hello = try JSONDecoder().decode(InternetHello.self, from: data)
+                            guard hello.verify(host: endpoint.id, client: stream.remoteID) else { throw SecureChannelError.badSignature }
+                            let known = paired.contains { $0.peer.id == hello.peer.id && $0.peer.publicKey == hello.peer.publicKey }
+                            let invited = invitation.map { $0.expires > Int(Date().timeIntervalSince1970) && $0.token == hello.invitation } ?? false
+                            guard known || invited else { throw SecureChannelError.unknownPeer }
+                            if !known { invitation = nil } // One invitation permits one pairing attempt.
+                            timeout.cancel()
+                            await accept(channel, internetPeer: hello.peer)
+                        } catch { channel.close() }
+                    }
+                }
+            } catch { lastError = error.localizedDescription; internetAddress = nil }
+        }
+    }
+
+    func makeInvitation() {
+        guard let internetAddress else { return }
+        invitation = InternetInvitation(peer: identity.peer, address: internetAddress)
+    }
+
     func hostedPeerEnded(_ peer: HostedPeer) {
         if hosted[peer.peer.id] === peer { hosted[peer.peer.id] = nil }
+        internetChannels = internetChannels.filter { $0.value !== peer.channel }
     }
 
     /// Keeps connected Macs' view of projects and chats current.
@@ -294,7 +429,7 @@ final class RemoteService {
                                   (session.id, model.pendingPermissions(session.id).map {
                                       RemotePendingPermission(requestId: $0.requestId, toolName: $0.toolName, input: $0.input)
                                   })
-                              }), turnStartedAt: model.turnStartedAt, pagedHistory: true)
+                              }), turnStartedAt: model.turnStartedAt, pagedHistory: true, internetAddress: internetAddress)
     }
 
     /// A chat's new output, to the Macs watching it.
@@ -337,7 +472,7 @@ final class RemoteService {
             guard let pairing = paired.first(where: { $0.id == device.id }) else { continue }
             let link = links[device.id] ?? RemoteLink(device: pairing, service: self)
             links[device.id] = link
-            if !link.isConnected { link.connect(to: device.endpoint, as: identity) }
+            if !link.isConnected { reconnect(device.id) }
         }
         for (id, link) in links where !nearby.contains(where: { $0.id == id }) {
             link.markOffline()
@@ -351,6 +486,7 @@ final class RemoteService {
     /// Pairs with a Mac by "host:port", for when it can't be found on the
     /// network (another subnet, a VPN). It's reached there from then on.
     func pair(address: String) {
+        if address.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("abstract://") { pair(invitation: address); return }
         guard let endpoint = RemoteNetwork.endpoint(address) else {
             lastError = "Use an address like 192.168.1.20:52000, or name.local:52000."
             return
@@ -360,26 +496,55 @@ final class RemoteService {
     }
 
     private func pair(at endpoint: NWEndpoint, address: String?) {
-        guard prompt == nil else { return }
-        Task {
-            let channel = RemoteChannel(connection: NWConnection(to: endpoint, using: parameters))
+        beginPair(address: address, invitation: nil) {
+            RemoteChannel(connection: NWConnection(to: endpoint, using: self.parameters))
+        }
+    }
+
+    func pair(invitation text: String) {
+        do {
+            let invite = try InternetInvitation.parse(text)
+            beginPair(address: nil, invitation: invite) {
+                try await self.internetChannel(to: invite.address, invitation: invite.token)
+            }
+        } catch { lastError = "This invitation is invalid or expired. Copy a new one from the host Mac." }
+    }
+
+    private func beginPair(address: String?, invitation: InternetInvitation?, makeChannel: @escaping () async throws -> RemoteChannel) {
+        guard prompt == nil, pairingTask == nil else { return }
+        pairingTask = Task {
+            defer { pairingTask = nil; outgoingPair = nil }
             do {
+                let channel = try await makeChannel()
+                guard !Task.isCancelled else { channel.close(); return }
+                outgoingPair = channel
+                let timeout = Task {
+                    do { try await Task.sleep(for: .seconds(70)); channel.close() } catch {}
+                }
+                defer { timeout.cancel() }
                 try await channel.open()
                 let outcome = try await channel.handshake(as: identity, pairing: true, expected: nil)
+                if let invitation, outcome.peer.id != invitation.peer.id || outcome.peer.publicKey != invitation.peer.publicKey {
+                    throw SecureChannelError.keyChanged
+                }
                 prompt = PairingPrompt(peer: outcome.peer, code: outcome.code, incoming: false)
                 guard case .event(.paired(let accepted)) = try await channel.receive(), accepted else {
                     prompt?.declined = true
                     channel.close()
                     return
                 }
+                guard !Task.isCancelled else { channel.close(); return }
                 prompt = nil
                 remember(outcome.peer, address: address)
-                let link = RemoteLink(device: PairedDevice(peer: outcome.peer, pairedAt: Date(), lastSeen: Date(), address: address), service: self)
+                if let invitation { rememberInternet(invitation.address, for: outcome.peer.id) }
+                let link = RemoteLink(device: paired.first { $0.id == outcome.peer.id }!, service: self)
                 links[outcome.peer.id] = link
                 link.adopt(channel)
             } catch {
-                if prompt != nil { prompt?.declined = true } else { lastError = error.localizedDescription }
-                channel.close()
+                if !Task.isCancelled {
+                    if prompt != nil { prompt?.declined = true } else { lastError = error.localizedDescription }
+                }
+                outgoingPair?.close()
             }
         }
     }
@@ -403,6 +568,7 @@ final class RemoteService {
     }
 
     func reconnectAll() {
+        if hosting && internetHosting && internetAccepting == nil { updateInternetHosting() }
         for device in paired { reconnect(device.id) }
     }
 
@@ -410,10 +576,10 @@ final class RemoteService {
     func reconnect(_ id: String) {
         guard let device = paired.first(where: { $0.id == id }) else { return }
         let endpoint = nearby.first { $0.id == id }?.endpoint ?? device.address.flatMap(RemoteNetwork.endpoint)
-        guard let endpoint else { return }
+        guard endpoint != nil || device.internetAddress != nil else { return }
         let link = links[id] ?? RemoteLink(device: device, service: self)
         links[id] = link
-        if !link.isConnected { link.connect(to: endpoint, as: identity) }
+        if !link.isConnected { link.connect(to: endpoint, internet: device.internetAddress, as: identity) }
     }
 
     /// The link to a chat's Mac when it's up; otherwise says so, starts
@@ -460,6 +626,7 @@ final class RemoteService {
     }
 
     func dismissPrompt() {
+        pairingTask?.cancel(); outgoingPair?.close(); outgoingPair = nil
         if prompt?.incoming == true { answerPairing(false) }
         prompt = nil
     }
@@ -900,22 +1067,49 @@ final class RemoteLink {
 
     var isConnected: Bool { state == .online || state == .connecting }
 
-    func connect(to endpoint: NWEndpoint, as identity: DeviceIdentity) {
+    @ObservationIgnored private var dial: Task<Void, Never>?
+    @ObservationIgnored private var dialChannel: RemoteChannel?
+    @ObservationIgnored private var generation = UUID()
+
+    func connect(to endpoint: NWEndpoint?, internet: InternetAddress?, as identity: DeviceIdentity) {
+        guard !isConnected else { return }
         state = .connecting
-        let channel = RemoteChannel(connection: NWConnection(to: endpoint, using: RemoteNetwork.parameters(peerToPeer: service?.peerToPeer ?? true)))
-        // A try that hangs (a Mac asleep, a stale address) gives way to the next.
-        Task { [weak self] in
-            try? await Task.sleep(for: .seconds(12))
-            if self?.channel !== channel, self?.state == .connecting { channel.close() }
-        }
-        Task {
+        let attempt = UUID(); generation = attempt
+        dial = Task {
             do {
-                try await channel.open()
-                _ = try await channel.handshake(as: identity, pairing: false, expected: device.peer)
-                adopt(channel)
+                var connected: RemoteChannel?
+                if let endpoint {
+                    let local = RemoteChannel(connection: NWConnection(to: endpoint, using: RemoteNetwork.parameters(peerToPeer: service?.peerToPeer ?? true)))
+                    dialChannel = local
+                    let timeout = Task {
+                        do { try await Task.sleep(for: .seconds(3)); local.close() } catch {}
+                    }
+                    do {
+                        try await local.open()
+                        _ = try await local.handshake(as: identity, pairing: false, expected: device.peer)
+                        connected = local
+                    } catch { local.close() }
+                    timeout.cancel()
+                }
+                guard generation == attempt, !Task.isCancelled else { connected?.close(); return }
+                if connected == nil, let internet, let service {
+                    let remote = try await service.internetChannel(to: internet)
+                    dialChannel = remote
+                    let timeout = Task {
+                        do { try await Task.sleep(for: .seconds(10)); remote.close() } catch {}
+                    }
+                    defer { timeout.cancel() }
+                    do {
+                        _ = try await remote.handshake(as: identity, pairing: false, expected: device.peer)
+                        connected = remote
+                    } catch { remote.close(); throw error }
+                }
+                guard let connected else { throw RemoteChannel.Failure.closed }
+                guard generation == attempt, !Task.isCancelled else { connected.close(); return }
+                dialChannel = nil
+                adopt(connected)
             } catch {
-                channel.close()
-                state = .failed(error.localizedDescription)
+                if generation == attempt { dialChannel?.close(); dialChannel = nil; state = .failed(error.localizedDescription) }
             }
         }
     }
@@ -934,7 +1128,7 @@ final class RemoteLink {
         }
         Task {
             while true {
-                guard let message = try? await channel.receive() else { break }
+                guard let message = try? await channel.receive(), self.channel === channel else { break }
                 handle(message)
             }
             if self.channel === channel { ended() }
@@ -966,12 +1160,14 @@ final class RemoteLink {
     }
 
     func disconnect() {
+        generation = UUID(); dial?.cancel(); dial = nil
+        dialChannel?.close(); dialChannel = nil
         channel?.close()
         ended()
     }
 
     func markOffline() {
-        guard state != .online else { return }
+        guard !isConnected else { return }
         state = .offline
     }
 
@@ -1018,6 +1214,7 @@ final class RemoteLink {
             if let waiter = waiting.removeValue(forKey: id) { waiter.resume(returning: response) } else { spawnAnswered(id, response) }
         case .event(.snapshot(let snapshot)):
             self.snapshot = snapshot
+            service?.rememberInternet(snapshot.internetAddress, for: device.id)
             service?.model?.remoteSnapshotChanged(device: device.id, snapshot)
             for (session, lines) in early where snapshot.sessions.contains(where: { $0.id == session }) {
                 early[session] = nil
@@ -1053,5 +1250,15 @@ final class RemoteLink {
             events += stream.feed(line.line)
         }
         service?.model?.applyRemote(events, to: RemoteService.mirrorId(device: device.id, session: session))
+    }
+}
+
+private struct IrohRemoteTransport: RemoteTransport {
+    let stream: InternetStream
+    nonisolated func open() async throws {}
+    nonisolated func close() { stream.close() }
+    nonisolated func read(_ count: Int) async throws -> Data { try await stream.read(count) }
+    nonisolated func write(_ data: Data, completion: @escaping @Sendable ((any Error)?) -> Void) {
+        stream.write(data, completion: completion)
     }
 }

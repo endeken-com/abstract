@@ -22,6 +22,8 @@ prepare_react_native_project!
 
 target 'Abstract' do
   use_expo_modules!
+  pod 'IrohLib', :path => '../../Packages/Iroh'
+  pod 'AbstractInternetTransport', :path => '../../Packages/AbstractInternet'
 
   if ENV['EXPO_USE_COMMUNITY_AUTOLINKING'] == '1'
     config_command = ['node', '-e', "process.argv=['', '', 'config'];require('@react-native-community/cli').run()"];

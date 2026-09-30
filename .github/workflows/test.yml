@@ -37,6 +37,13 @@ jobs:
         working-directory: Packages/AbstractCore
         run: swift test
 
+      - uses: actions/cache@v4
+        with:
+          path: Packages/Iroh/Iroh.xcframework
+          key: iroh-apple-${{ hashFiles('scripts/prepare-iroh.sh') }}
+      - name: Prepare internet transport
+        run: scripts/prepare-iroh.sh apple
+
       - name: Build the app
         run: |
           xcodegen generate

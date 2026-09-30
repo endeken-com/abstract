@@ -2,3 +2,5 @@
 !Dockerfile
 !entrypoint.sh
 !relay.toml
+
+!gateway.py

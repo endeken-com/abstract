@@ -11,6 +11,9 @@ import argparse
 import asyncio
 import os
 import secrets
+import json
+import time
+from urllib.request import Request, urlopen
 from contextlib import asynccontextmanager
 from urllib.parse import urlsplit, urlunsplit
 
@@ -31,6 +34,17 @@ def websocket_url(url):
 
 @asynccontextmanager
 async def client(url, token, allowed=True):
+    key = Ed25519PrivateKey.generate()
+    if allowed:
+        origin = url.replace("wss://", "https://").replace("ws://", "http://").removesuffix("/relay")
+        timestamp = int(time.time())
+        import base64
+        body = json.dumps({"key": key.public_key().public_bytes_raw().hex(), "timestamp": timestamp,
+            "signature": base64.b64encode(key.sign(f"abstract-relay-register-v1\n{timestamp}".encode())).decode()}).encode()
+        def register():
+            with urlopen(Request(origin + "/v1/register", data=body, headers={"Content-Type": "application/json"}), timeout=10) as response:
+                assert response.status == 200
+        await asyncio.to_thread(register)
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     async with connect(url, additional_headers=headers, subprotocols=["iroh-relay-v2"],
                        open_timeout=15, close_timeout=3, max_size=128 * 1024) as socket:
@@ -39,7 +53,6 @@ async def client(url, token, allowed=True):
         challenge = await asyncio.wait_for(socket.recv(), 10)
         if not isinstance(challenge, bytes) or len(challenge) != 17 or challenge[0] != 0:
             raise RuntimeError("Expected the Iroh signed authentication challenge.")
-        key = Ed25519PrivateKey.generate()
         public = key.public_key().public_bytes_raw()
         message = blake3(challenge[1:], derive_key_context="iroh-relay handshake v1 challenge signature").digest()
         # Frame tag + 32-byte public key + postcard byte-string length + signature.
@@ -77,7 +90,7 @@ async def check(url, token):
         await receive_datagram(second, first_id, payload)
         await second.send(b"\x04" + first_id + b"\x00" + payload)
         await receive_datagram(first, second_id, payload)
-    print("Relay smoke test passed: unauthorized clients rejected; authenticated traffic forwarded both ways.")
+    print("Relay smoke test passed: unregistered devices rejected; registered device traffic forwarded both ways.")
 
 
 if __name__ == "__main__":

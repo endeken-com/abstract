@@ -5,6 +5,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { PermissionsAndroid, Platform } from 'react-native';
 import { beginHandshake, Cipher, identity } from './secure';
 import { FrameDecoder } from './framing';
+import { InternetSocket, parseInvitation, validInternetAddress, type FramedConnection } from './internet';
 import type { Device, Nearby, Peer, RemoteLine, Snapshot } from './types';
 
 type Listener = (state: RemoteClient) => void;
@@ -70,7 +71,7 @@ export class RemoteClient {
   loadingHistory = new Set<string>();
   terminals: Record<number, string> = {};
   private listeners = new Set<Listener>();
-  private socket: FramedSocket | null = null;
+  private socket: FramedConnection | null = null;
   private cipher: Cipher | null = null;
   private nextId = 1;
   private pending = new Map<number, { resolve: (value: Reply) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
@@ -139,6 +140,7 @@ export class RemoteClient {
     this.connectingAddress = null; this.connectingPeerId = null; this.connectingTask = null;
     if (this.lineNotification) { clearTimeout(this.lineNotification); this.lineNotification = null; }
     if (this.reconnect) clearTimeout(this.reconnect);
+    this.reconnect = null; this.pairingCode = null;
     for (const waiter of this.pending.values()) { clearTimeout(waiter.timer); waiter.reject(Error('Mac disconnected.')); }
     this.pending.clear();
     this.subscribing.clear();
@@ -158,6 +160,15 @@ export class RemoteClient {
       }
     }, 1500);
   }
+  async resume() {
+    const active = this.active;
+    if (!active || this.status === 'pairing' || this.status === 'connecting') return;
+    if (this.status === 'online') {
+      try { await this.request('snapshot', {}, 5000); return; }
+      catch { this.disconnect(); }
+    }
+    await this.connect(this.nearby.find(x => x.id === active.peer.id)?.address || active.address, active);
+  }
   connect(address: string, paired?: Device): Promise<void> {
     if (this.status === 'online' && this.active?.peer.id === paired?.peer.id && this.active?.address === address) return Promise.resolve();
     if (this.status === 'connecting' && this.connectingAddress === address && this.connectingPeerId === (paired?.peer.id || null) && this.connectingTask) return this.connectingTask;
@@ -169,13 +180,24 @@ export class RemoteClient {
     task.finally(() => { if (this.connectingTask === task) { this.connectingTask = null; this.connectingAddress = null; this.connectingPeerId = null; } }).catch(() => {});
     return task;
   }
-  private async connectAttempt(address: string, paired: Device | undefined, epoch: number) {
-    let socket: FramedSocket | null = null;
+  private async connectAttempt(address: string, paired: Device | undefined, epoch: number): Promise<void> {
+    let socket: FramedConnection | null = null;
     try {
-      const { host, port } = endpoint(address);
+      const invite = address.trim().startsWith('abstract://') ? parseInvitation(address) : undefined;
+      const internetAddress = invite?.address || (address.startsWith('iroh:') ? { endpointId: address.slice(5) } : undefined);
       const who = await identity();
       if (epoch !== this.connectionEpoch) return;
       const handshake = beginHandshake(who, !paired);
+      if (internetAddress) {
+        if (!validInternetAddress(internetAddress)) throw Error('Invalid internet address.');
+        const remote = new InternetSocket();
+        socket = remote; this.socket = remote;
+        const abort = () => remote.close(Error('Connection replaced.'));
+        this.abortDial = abort;
+        try { await remote.connect(who, internetAddress, invite?.token); }
+        finally { if (this.abortDial === abort) this.abortDial = null; }
+      } else {
+      const { host, port } = endpoint(address);
       const raw = await new Promise<ReturnType<typeof TcpSocket.createConnection>>((resolve, reject) => {
         let settled = false;
         const rawSocket = TcpSocket.createConnection({ host, port }, () => finish());
@@ -201,6 +223,8 @@ export class RemoteClient {
       });
       if (epoch !== this.connectionEpoch) { raw.destroy(); return; }
       socket = new FramedSocket(raw); this.socket = socket;
+      }
+      if (epoch !== this.connectionEpoch) { socket.close(); return; }
       socket.write(handshake.hello);
       let handshakeTimer: ReturnType<typeof setTimeout> | undefined;
       const reply = await Promise.race([
@@ -208,16 +232,19 @@ export class RemoteClient {
         new Promise<never>((_, reject) => { handshakeTimer = setTimeout(() => reject(Error('Mac did not complete the connection.')), 5000); }),
       ]).finally(() => clearTimeout(handshakeTimer));
       const outcome = handshake.finish(reply, paired?.peer);
+      if (invite && (outcome.peer.id !== invite.peer.id || outcome.peer.publicKey !== invite.peer.publicKey)) throw Error('The host does not match this invitation.');
       socket.write(outcome.finish);
       this.cipher = outcome.cipher;
       if (!paired) {
         this.pairingCode = outcome.code; this.status = 'pairing'; this.changed();
-        const answer = this.decode(await socket.read());
+        const pairingTimeout = setTimeout(() => socket?.close(Error('Pairing timed out.')), 60000);
+        const answer = this.decode(await socket.read().finally(() => clearTimeout(pairingTimeout)));
+        if (epoch !== this.connectionEpoch) { socket.close(); return; }
         if (answer.event?._0?.paired?._0 !== true) throw Error('Pairing was declined on the Mac.');
-        paired = { peer: outcome.peer, address, pairedAt: Date.now() };
+        paired = { peer: outcome.peer, address: internetAddress ? '' : address, internetAddress, pairedAt: Date.now() };
         this.devices = [...this.devices.filter(x => x.peer.id !== paired!.peer.id), paired];
         await this.persist();
-      } else if (paired.address !== address) {
+      } else if (!internetAddress && paired.address !== address) {
         paired.address = address; await this.persist();
       }
       if (epoch !== this.connectionEpoch) { socket.close(); return; }
@@ -240,6 +267,10 @@ export class RemoteClient {
       socket?.close();
       if (epoch !== this.connectionEpoch) return;
       this.socket = null; this.cipher = null;
+      // A stale local address should not prevent reaching the same pinned host online.
+      if (paired?.internetAddress && !address.startsWith('iroh:') && !address.startsWith('abstract://')) {
+        return this.connectAttempt('iroh:' + paired.internetAddress.endpointId, paired, epoch);
+      }
       this.error = String(error); this.status = 'offline'; this.pairingCode = null; this.changed();
       if (paired) this.scheduleReconnect();
       throw error;
@@ -265,7 +296,7 @@ export class RemoteClient {
     this.lines[sessionId] = [...bySequence.values()].sort((a, b) => a.seq - b.seq);
     return true;
   }
-  private async receive(socket: FramedSocket) {
+  private async receive(socket: FramedConnection) {
     try {
       while (this.socket === socket) {
         const message = this.decode(await socket.read());
@@ -275,7 +306,16 @@ export class RemoteClient {
           if (waiter) { this.pending.delete(id); clearTimeout(waiter.timer); response.failed !== undefined ? waiter.reject(Error(response.failed._0)) : waiter.resolve(response); }
         } else if (message.event?._0) {
           const event = message.event._0;
-          if (event.snapshot) { this.snapshot = event.snapshot._0; this.snapshotHostId = this.active?.peer.id || null; }
+          if (event.snapshot) {
+            this.snapshot = event.snapshot._0; this.snapshotHostId = this.active?.peer.id || null;
+            if (this.active) {
+              const address = validInternetAddress(this.snapshot?.internetAddress) ? this.snapshot.internetAddress : undefined;
+              if (this.active.internetAddress?.endpointId !== address?.endpointId) {
+                this.active.internetAddress = address;
+                this.persist().catch(() => {});
+              }
+            }
+          }
           let receivedLines = false;
           if (event.lines) {
             const { sessionId, _1: incoming } = event.lines;

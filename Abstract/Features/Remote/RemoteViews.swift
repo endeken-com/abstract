@@ -7,6 +7,7 @@ import AbstractCore
 /// This Mac, the Macs paired with it, and the ones nearby to pair.
 struct DevicesSettingsPane: View {
     @Environment(AppModel.self) private var model
+    @State private var invitation = ""
 
     var body: some View {
         @Bindable var remote = model.remote
@@ -20,7 +21,7 @@ struct DevicesSettingsPane: View {
                     Text("Other Macs see this name. The code beside it identifies this Mac's key.")
                 }
                 Toggle(isOn: $remote.hosting) {
-                    Text("Let paired Macs use this one")
+                    Text("Let paired devices use this Mac")
                     Text(remote.hosting
                          ? (remote.listening ? "Paired Macs can see these projects, start chats and answer their agents here." : "Starting…")
                          : "Off: paired Macs can't reach this one, and no new Mac can ask to pair.")
@@ -30,6 +31,33 @@ struct DevicesSettingsPane: View {
             } footer: {
                 SettingsCaption("A paired Mac can run commands here through the agents, the same as you can. Pair only your own Macs.")
             }
+
+            Section {
+                Toggle(isOn: $remote.internetHosting) {
+                    Text("Connect over the internet")
+                    Text("Paired devices reconnect from any network while this Mac is awake and Abstract is open.")
+                }.disabled(!remote.hosting)
+                if remote.hosting && remote.internetHosting {
+                    LabeledContent(remote.internetAddress == nil ? "Connecting to the relay…" : "Ready for internet connections") {
+                        Button("Copy invitation") {
+                            remote.makeInvitation()
+                            if let link = remote.invitation?.link {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(link, forType: .string)
+                            }
+                        }.disabled(remote.internetAddress == nil)
+                    }
+                    Text("Paste the invitation on your phone or other Mac, then compare the pairing codes. Invitations expire after 10 minutes and can be used once.")
+                        .font(.btCallout).foregroundStyle(Color.btTextSecondary)
+                }
+                HStack {
+                    TextField("Paste an Abstract invitation", text: $invitation)
+                        .textFieldStyle(.roundedBorder)
+                    Button("Pair") { remote.pair(invitation: invitation); invitation = "" }
+                        .disabled(invitation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            } header: { Text("Internet") }
+            footer: { SettingsCaption("Connections are encrypted between your devices. Existing pairings learn this Mac's internet address when they next connect locally.") }
 
             Section {
                 if remote.paired.isEmpty {

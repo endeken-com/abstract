@@ -12,6 +12,8 @@ if docker run --rm "$IMAGE" >/dev/null 2>&1; then
   echo 'The relay started without an access token.' >&2
   exit 1
 fi
+docker run --rm --entrypoint python3 -v "$RELAY_DIR:/tests:ro" "$IMAGE" /tests/test_gateway.py
+
 export IROH_RELAY_ACCESS_TOKEN
 IROH_RELAY_ACCESS_TOKEN=$("$PYTHON" -c 'import secrets; print(secrets.token_hex(32))')
 CONTAINER=$(docker run -d -p 127.0.0.1::8080 -e IROH_RELAY_ACCESS_TOKEN "$IMAGE")
