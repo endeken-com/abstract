@@ -73,9 +73,14 @@ export class RemoteClient {
   private socket: FramedSocket | null = null;
   private cipher: Cipher | null = null;
   private nextId = 1;
-  private pending = new Map<number, { resolve: (value: Reply) => void; reject: (error: Error) => void }>();
+  private pending = new Map<number, { resolve: (value: Reply) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
   private browser: Zeroconf | null = null;
   private reconnect: ReturnType<typeof setTimeout> | null = null;
+  private connectionEpoch = 0;
+  private connectingAddress: string | null = null;
+  private connectingPeerId: string | null = null;
+  private connectingTask: Promise<void> | null = null;
+  private abortDial: (() => void) | null = null;
   private lineNotification: ReturnType<typeof setTimeout> | null = null;
   private watched = new Set<string>();
   private subscribing = new Map<string, Promise<void>>();
@@ -94,7 +99,7 @@ export class RemoteClient {
   async load() {
     try { this.devices = JSON.parse(await AsyncStorage.getItem('paired-macs') || '[]'); } catch { this.devices = []; }
     this.changed();
-    this.discover().catch(error => { this.error = String(error); this.changed(); });
+    this.discover().catch(() => {});
     if (this.devices[0]) this.connect(this.devices[0].address, this.devices[0]).catch(() => {});
   }
   async discover() {
@@ -113,11 +118,14 @@ export class RemoteClient {
         this.nearby = [...this.nearby.filter(x => x.id !== id), { id, name: service.name, address: `${host}:${service.port}` }];
         this.changed();
         const paired = this.devices.find(x => x.peer.id === id || x.peer.name === service.name);
-        if (paired && this.status === 'offline' && !this.active) this.connect(`${host}:${service.port}`, paired).catch(() => {});
+        const address = `${host}:${service.port}`;
+        if (paired && (!this.active || this.active.peer.id === paired.peer.id) && this.status !== 'online' && (this.connectingAddress !== address || this.connectingPeerId !== paired.peer.id)) {
+          this.connect(address, paired).catch(() => {});
+        }
       });
       browser.on('remove', (name: string) => { this.nearby = this.nearby.filter(x => x.name !== name); this.changed(); });
       browser.scan('abstract', 'tcp', 'local.');
-    } catch (error) { this.error = String(error); this.changed(); }
+    } catch (error) { if (!this.active && !this.devices.length) { this.error = String(error); this.changed(); } }
   }
   private async persist() { await AsyncStorage.setItem('paired-macs', JSON.stringify(this.devices)); }
   async forget(id: string) {
@@ -126,9 +134,12 @@ export class RemoteClient {
     await this.persist(); this.changed();
   }
   disconnect(clearSnapshot = false) {
+    this.connectionEpoch++;
+    this.abortDial?.(); this.abortDial = null;
+    this.connectingAddress = null; this.connectingPeerId = null; this.connectingTask = null;
     if (this.lineNotification) { clearTimeout(this.lineNotification); this.lineNotification = null; }
     if (this.reconnect) clearTimeout(this.reconnect);
-    for (const waiter of this.pending.values()) waiter.reject(Error('Mac disconnected.'));
+    for (const waiter of this.pending.values()) { clearTimeout(waiter.timer); waiter.reject(Error('Mac disconnected.')); }
     this.pending.clear();
     this.subscribing.clear();
     this.replayBuffers.clear();
@@ -141,31 +152,62 @@ export class RemoteClient {
     if (!this.active || this.reconnect) return;
     this.reconnect = setTimeout(() => {
       this.reconnect = null;
-      if (this.active) this.connect(this.active.address, this.active).catch(() => {});
-    }, 5000);
+      if (this.active) {
+        const nearby = this.nearby.find(x => x.id === this.active?.peer.id);
+        this.connect(nearby?.address || this.active.address, this.active).catch(() => {});
+      }
+    }, 1500);
   }
-  async connect(address: string, paired?: Device) {
+  connect(address: string, paired?: Device): Promise<void> {
+    if (this.status === 'online' && this.active?.peer.id === paired?.peer.id && this.active?.address === address) return Promise.resolve();
+    if (this.status === 'connecting' && this.connectingAddress === address && this.connectingPeerId === (paired?.peer.id || null) && this.connectingTask) return this.connectingTask;
     this.disconnect(!paired || paired.peer.id !== this.snapshotHostId); this.active = paired || null; this.error = null; this.status = 'connecting'; this.changed();
-    const { host, port } = endpoint(address);
-    const who = await identity();
-    const handshake = beginHandshake(who, !paired);
-    let raw: ReturnType<typeof TcpSocket.createConnection>;
+    const epoch = this.connectionEpoch;
+    this.connectingAddress = address; this.connectingPeerId = paired?.peer.id || null;
+    const task = this.connectAttempt(address, paired, epoch);
+    this.connectingTask = task;
+    task.finally(() => { if (this.connectingTask === task) { this.connectingTask = null; this.connectingAddress = null; this.connectingPeerId = null; } }).catch(() => {});
+    return task;
+  }
+  private async connectAttempt(address: string, paired: Device | undefined, epoch: number) {
+    let socket: FramedSocket | null = null;
     try {
-      raw = await new Promise<ReturnType<typeof TcpSocket.createConnection>>((resolve, reject) => {
-        let ready = false;
-        const socket = TcpSocket.createConnection({ host, port }, () => { ready = true; resolve(socket); });
-        socket.once('error', reject);
-        setTimeout(() => { if (!ready) { socket.destroy(); reject(Error('Connection timed out.')); } }, 12000);
+      const { host, port } = endpoint(address);
+      const who = await identity();
+      if (epoch !== this.connectionEpoch) return;
+      const handshake = beginHandshake(who, !paired);
+      const raw = await new Promise<ReturnType<typeof TcpSocket.createConnection>>((resolve, reject) => {
+        let settled = false;
+        const rawSocket = TcpSocket.createConnection({ host, port }, () => finish());
+        const finish = (error?: Error) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          rawSocket.removeListener('connect', connected);
+          rawSocket.removeListener('error', failed);
+          rawSocket.removeListener('close', closed);
+          if (this.abortDial === abort) this.abortDial = null;
+          if (error) { rawSocket.destroy(); reject(error); } else resolve(rawSocket);
+        };
+        const connected = () => finish();
+        const failed = (error: Error) => finish(error);
+        const closed = () => finish(Error('Connection closed.'));
+        const abort = () => finish(Error('Connection replaced.'));
+        const timer = setTimeout(() => finish(Error('Connection timed out.')), 5000);
+        this.abortDial = abort;
+        rawSocket.once('connect', connected);
+        rawSocket.once('error', failed);
+        rawSocket.once('close', closed);
       });
-    } catch (error) {
-      this.status = 'offline'; this.error = String(error); this.changed();
-      if (paired) this.scheduleReconnect();
-      throw error;
-    }
-    const socket = new FramedSocket(raw); this.socket = socket;
-    try {
+      if (epoch !== this.connectionEpoch) { raw.destroy(); return; }
+      socket = new FramedSocket(raw); this.socket = socket;
       socket.write(handshake.hello);
-      const outcome = handshake.finish(await socket.read(), paired?.peer);
+      let handshakeTimer: ReturnType<typeof setTimeout> | undefined;
+      const reply = await Promise.race([
+        socket.read(),
+        new Promise<never>((_, reject) => { handshakeTimer = setTimeout(() => reject(Error('Mac did not complete the connection.')), 5000); }),
+      ]).finally(() => clearTimeout(handshakeTimer));
+      const outcome = handshake.finish(reply, paired?.peer);
       socket.write(outcome.finish);
       this.cipher = outcome.cipher;
       if (!paired) {
@@ -178,19 +220,27 @@ export class RemoteClient {
       } else if (paired.address !== address) {
         paired.address = address; await this.persist();
       }
-      this.active = paired; this.status = 'online'; this.pairingCode = null; this.changed();
+      if (epoch !== this.connectionEpoch) { socket.close(); return; }
+      this.active = paired; this.connectingPeerId = paired?.peer.id || null;
+      this.status = 'connecting'; this.pairingCode = null; this.changed();
       socket.onClose = error => {
         if (this.socket !== socket) return;
-        this.status = 'offline'; this.error = error.message; this.changed();
-        for (const waiter of this.pending.values()) waiter.reject(error);
+        this.socket = null; this.cipher = null;
+        this.status = 'offline'; this.error = null; this.changed();
+        for (const waiter of this.pending.values()) { clearTimeout(waiter.timer); waiter.reject(error); }
         this.pending.clear();
         this.scheduleReconnect();
       };
       this.receive(socket);
       await this.request('snapshot');
-      for (const sessionId of this.watched) await this.subscribeChat(sessionId);
+      if (epoch !== this.connectionEpoch) return;
+      this.status = 'online'; this.pairingCode = null; this.changed();
+      await Promise.all([...this.watched].map(sessionId => this.subscribeChat(sessionId)));
     } catch (error) {
-      socket.close(); this.error = String(error); this.status = 'offline'; this.pairingCode = null; this.changed();
+      socket?.close();
+      if (epoch !== this.connectionEpoch) return;
+      this.socket = null; this.cipher = null;
+      this.error = String(error); this.status = 'offline'; this.pairingCode = null; this.changed();
       if (paired) this.scheduleReconnect();
       throw error;
     }
@@ -222,7 +272,7 @@ export class RemoteClient {
         if (message.response) {
           const { id, _1: response } = message.response;
           const waiter = this.pending.get(id);
-          if (waiter) { this.pending.delete(id); response.failed !== undefined ? waiter.reject(Error(response.failed._0)) : waiter.resolve(response); }
+          if (waiter) { this.pending.delete(id); clearTimeout(waiter.timer); response.failed !== undefined ? waiter.reject(Error(response.failed._0)) : waiter.resolve(response); }
         } else if (message.event?._0) {
           const event = message.event._0;
           if (event.snapshot) { this.snapshot = event.snapshot._0; this.snapshotHostId = this.active?.peer.id || null; }
@@ -253,14 +303,18 @@ export class RemoteClient {
     } catch (error) { socket.close(error as Error); }
   }
   async request(name: string, args: Record<string, unknown> = {}, timeoutMs = 30000): Promise<Reply> {
-    if (!this.socket || !this.cipher || this.status !== 'online') throw Error('Connect to a Mac first.');
+    if (!this.socket || !this.cipher || (this.status !== 'online' && !(this.status === 'connecting' && name === 'snapshot'))) throw Error('Connect to a Mac first.');
     const id = this.nextId++;
     const body = Buffer.from(JSON.stringify({ request: { id, _1: { [name]: args } } }), 'utf8');
     const result = new Promise<Reply>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      setTimeout(() => { if (this.pending.has(id)) { this.pending.delete(id); reject(Error('Mac did not respond.')); } }, timeoutMs);
+      const timer = setTimeout(() => { if (this.pending.has(id)) { this.pending.delete(id); reject(Error('Mac did not respond.')); } }, timeoutMs);
+      this.pending.set(id, { resolve, reject, timer });
     });
-    this.socket.write(this.cipher.seal(body));
+    try { this.socket.write(this.cipher.seal(body)); }
+    catch (error) {
+      const waiter = this.pending.get(id);
+      if (waiter) { this.pending.delete(id); clearTimeout(waiter.timer); waiter.reject(error as Error); }
+    }
     return result;
   }
   async subscribeChat(sessionId: string) {
