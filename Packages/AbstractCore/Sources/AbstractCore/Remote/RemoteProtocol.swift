@@ -26,6 +26,10 @@ public enum RemoteRequest: Codable, Sendable {
     case snapshot
     /// A chat's output from `afterSeq` on, then as it streams.
     case subscribe(sessionId: String, afterSeq: Int)
+    /// Subscribe to live output and initially send only the latest page.
+    case subscribeRecent(sessionId: String, limit: Int)
+    /// A page strictly before `beforeSeq`; does not change the live subscription.
+    case history(sessionId: String, beforeSeq: Int, limit: Int)
     case unsubscribe(sessionId: String)
     case send(sessionId: String, text: String)
     /// A message with attachments; a file's bytes travel with it, by attachment id.
@@ -33,6 +37,9 @@ public enum RemoteRequest: Codable, Sendable {
     case start(projectId: String, providerId: String, prompt: String, policy: PermissionPolicy)
     /// A chat as the New Chat window sets it up, started on the Mac its project is on.
     case startChat(RemoteStart)
+    case startStandalone(providerId: String, prompt: String, policy: PermissionPolicy)
+    case startStandaloneConfigured(providerId: String, prompt: String, policy: PermissionPolicy,
+                                   attachments: [PromptAttachment], files: [String: Data], model: String?, effort: String?)
     case stop(sessionId: String)
     case answer(sessionId: String, requestId: String, allow: Bool)
     /// Answers to the agent's questions, by question text.
@@ -46,6 +53,20 @@ public enum RemoteRequest: Codable, Sendable {
     case resume(sessionId: String)
     case rename(sessionId: String, name: String)
     case setArchived(sessionId: String, archived: Bool)
+    case deleteChat(sessionId: String, removeWorktree: Bool)
+    case removeWorktree(projectId: String, path: String, deleteBranch: Bool)
+    /// Automations are scheduled and persisted on the host Mac.
+    case saveAutomation(Automation)
+    case deleteAutomation(id: String)
+    case runAutomation(id: String)
+    case automationRuns(id: String)
+    case review(sessionId: String, committed: Bool)
+    case reviewFile(sessionId: String, path: String, committed: Bool, accept: Bool)
+    case createPullRequest(sessionId: String, title: String, body: String, base: String?, draft: Bool, commitFirst: Bool)
+    case pushChanges(sessionId: String, message: String)
+    case mergePullRequest(sessionId: String, method: String)
+    case markPullRequestReady(sessionId: String)
+    case closePullRequest(sessionId: String)
 
     // The host's worktrees, so a chat there reviews, browses and edits here
     // as it would on the host. Only inside its projects and worktrees; only
@@ -95,12 +116,30 @@ public struct RemoteStart: Codable, Sendable {
 
 public enum RemoteResponse: Codable, Sendable {
     case ok
+    case historyPage(beforeSeq: Int?, hasMore: Bool)
     case failed(String)
     case started(sessionId: String)
     case exec(ExecResult)
     case data(Data)
     case fileInfo(FileInfo?)
     case files([String], truncated: Bool)
+    case automation(Automation)
+    case automationRuns([AutomationRun])
+    case review([RemoteReviewFile])
+}
+
+public struct RemoteReviewFile: Codable, Sendable, Hashable {
+    public var path: String
+    public var status: String
+    public var additions: Int
+    public var deletions: Int
+    public var binary: Bool
+    public var patch: String
+
+    public init(path: String, status: String, additions: Int, deletions: Int, binary: Bool, patch: String) {
+        self.path = path; self.status = status; self.additions = additions; self.deletions = deletions
+        self.binary = binary; self.patch = patch
+    }
 }
 
 public enum RemoteEvent: Codable, Sendable {
@@ -127,15 +166,41 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
     public var home: String?
     /// The models each agent offers there.
     public var modelCatalogs: [String: ModelCatalog]?
+    /// The model shown in the host's composer when a chat uses its default.
+    public var defaultModelNames: [String: String]?
     /// Pull requests keyed by the host's chat id. Optional for older peers.
     public var pullRequests: [String: RemotePullRequest]?
+    /// Optional so snapshots from older Macs still decode.
+    public var automations: [Automation]?
+    public var pendingPermissions: [String: [RemotePendingPermission]]?
+    /// Start of the current agent turn, keyed by chat id. Optional for older peers.
+    public var turnStartedAt: [String: Date]?
+    /// A host advertising bounded chat history requests.
+    public var pagedHistory: Bool?
 
     public init(projects: [Project], sessions: [Session], providers: [String], alive: [String],
                 home: String? = nil, modelCatalogs: [String: ModelCatalog]? = nil,
-                pullRequests: [String: RemotePullRequest]? = nil) {
+                defaultModelNames: [String: String]? = nil,
+                pullRequests: [String: RemotePullRequest]? = nil, automations: [Automation]? = nil,
+                pendingPermissions: [String: [RemotePendingPermission]]? = nil,
+                turnStartedAt: [String: Date]? = nil, pagedHistory: Bool? = nil) {
         self.projects = projects; self.sessions = sessions; self.providers = providers; self.alive = alive
-        self.home = home; self.modelCatalogs = modelCatalogs
+        self.home = home; self.modelCatalogs = modelCatalogs; self.defaultModelNames = defaultModelNames
         self.pullRequests = pullRequests
+        self.automations = automations
+        self.pendingPermissions = pendingPermissions
+        self.turnStartedAt = turnStartedAt
+        self.pagedHistory = pagedHistory
+    }
+}
+
+public struct RemotePendingPermission: Codable, Sendable, Hashable {
+    public var requestId: String
+    public var toolName: String
+    public var input: JSONValue
+
+    public init(requestId: String, toolName: String, input: JSONValue) {
+        self.requestId = requestId; self.toolName = toolName; self.input = input
     }
 }
 
@@ -145,9 +210,108 @@ public struct RemotePullRequest: Codable, Sendable, Hashable {
     public var state: String
     public var isDraft: Bool
     public var url: URL?
+    public var standing: String?
+    public var reviewDecision: String?
+    public var hasConflicts: Bool
+    public var checks: [RemotePullRequestCheck]
+    public var head: String?
+    public var base: String?
+    public var author: String?
+    public var additions: Int?
+    public var deletions: Int?
+    public var body: String?
+    public var reviews: [RemotePullRequestReview]
+    public var comments: [RemotePullRequestComment]
+    public var threads: [RemotePullRequestThread]
 
-    public init(number: Int, title: String, state: String, isDraft: Bool, url: URL?) {
+    public init(number: Int, title: String, state: String, isDraft: Bool, url: URL?,
+                standing: String? = nil, reviewDecision: String? = nil,
+                hasConflicts: Bool = false, checks: [RemotePullRequestCheck] = [],
+                head: String? = nil, base: String? = nil, author: String? = nil,
+                additions: Int? = nil, deletions: Int? = nil, body: String? = nil,
+                reviews: [RemotePullRequestReview] = [], comments: [RemotePullRequestComment] = [],
+                threads: [RemotePullRequestThread] = []) {
         self.number = number; self.title = title; self.state = state; self.isDraft = isDraft; self.url = url
+        self.standing = standing; self.reviewDecision = reviewDecision
+        self.hasConflicts = hasConflicts; self.checks = checks
+        self.head = head; self.base = base; self.author = author
+        self.additions = additions; self.deletions = deletions; self.body = body
+        self.reviews = reviews; self.comments = comments; self.threads = threads
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case number, title, state, isDraft, url, standing, reviewDecision, hasConflicts, checks
+        case head, base, author, additions, deletions, body, reviews, comments, threads
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        number = try values.decode(Int.self, forKey: .number)
+        title = try values.decode(String.self, forKey: .title)
+        state = try values.decode(String.self, forKey: .state)
+        isDraft = try values.decode(Bool.self, forKey: .isDraft)
+        url = try values.decodeIfPresent(URL.self, forKey: .url)
+        standing = try values.decodeIfPresent(String.self, forKey: .standing)
+        reviewDecision = try values.decodeIfPresent(String.self, forKey: .reviewDecision)
+        hasConflicts = try values.decodeIfPresent(Bool.self, forKey: .hasConflicts) ?? false
+        checks = try values.decodeIfPresent([RemotePullRequestCheck].self, forKey: .checks) ?? []
+        head = try values.decodeIfPresent(String.self, forKey: .head)
+        base = try values.decodeIfPresent(String.self, forKey: .base)
+        author = try values.decodeIfPresent(String.self, forKey: .author)
+        additions = try values.decodeIfPresent(Int.self, forKey: .additions)
+        deletions = try values.decodeIfPresent(Int.self, forKey: .deletions)
+        body = try values.decodeIfPresent(String.self, forKey: .body)
+        reviews = try values.decodeIfPresent([RemotePullRequestReview].self, forKey: .reviews) ?? []
+        comments = try values.decodeIfPresent([RemotePullRequestComment].self, forKey: .comments) ?? []
+        threads = try values.decodeIfPresent([RemotePullRequestThread].self, forKey: .threads) ?? []
+    }
+}
+
+public struct RemotePullRequestReview: Codable, Sendable, Hashable {
+    public var author: String
+    public var verdict: String
+    public var body: String
+    public var submittedAt: Date?
+
+    public init(author: String, verdict: String, body: String, submittedAt: Date?) {
+        self.author = author; self.verdict = verdict; self.body = body; self.submittedAt = submittedAt
+    }
+}
+
+public struct RemotePullRequestComment: Codable, Sendable, Hashable {
+    public var author: String
+    public var body: String
+    public var createdAt: Date?
+    public var isBot: Bool
+
+    public init(author: String, body: String, createdAt: Date?, isBot: Bool) {
+        self.author = author; self.body = body; self.createdAt = createdAt; self.isBot = isBot
+    }
+}
+
+public struct RemotePullRequestThread: Codable, Sendable, Hashable {
+    public var id: String
+    public var path: String
+    public var line: Int?
+    public var isResolved: Bool
+    public var isOutdated: Bool
+    public var comments: [RemotePullRequestComment]
+
+    public init(id: String, path: String, line: Int?, isResolved: Bool, isOutdated: Bool,
+                comments: [RemotePullRequestComment]) {
+        self.id = id; self.path = path; self.line = line; self.isResolved = isResolved
+        self.isOutdated = isOutdated; self.comments = comments
+    }
+}
+
+public struct RemotePullRequestCheck: Codable, Sendable, Hashable {
+    public var name: String
+    public var workflow: String?
+    public var outcome: String
+    public var url: URL?
+
+    public init(name: String, workflow: String?, outcome: String, url: URL?) {
+        self.name = name; self.workflow = workflow; self.outcome = outcome; self.url = url
     }
 }
 

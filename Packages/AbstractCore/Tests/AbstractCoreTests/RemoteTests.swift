@@ -153,6 +153,43 @@ struct RemoteAccessTests {
             Issue.record("wrong response"); return
         }
         #expect(r.stdout == "ok")
+        let mobileRequests: [RemoteRequest] = [
+            .subscribeRecent(sessionId: "chat", limit: 160),
+            .history(sessionId: "chat", beforeSeq: 320, limit: 160),
+            .startStandalone(providerId: "claude", prompt: "hello", policy: .ask),
+            .startStandaloneConfigured(providerId: "claude", prompt: "see file", policy: .ask,
+                                       attachments: [PromptAttachment(kind: .file, title: "note.txt")],
+                                       files: ["bytes": Data([1, 2, 3])], model: "opus", effort: "high"),
+            .deleteChat(sessionId: "chat", removeWorktree: true),
+            .removeWorktree(projectId: "project", path: "/worktree", deleteBranch: false),
+            .review(sessionId: "chat", committed: true),
+            .reviewFile(sessionId: "chat", path: "file.swift", committed: false, accept: true),
+            .createPullRequest(sessionId: "chat", title: "Title", body: "Body", base: "main", draft: true, commitFirst: true),
+            .pushChanges(sessionId: "chat", message: "Update"),
+            .mergePullRequest(sessionId: "chat", method: "squash"),
+            .markPullRequestReady(sessionId: "chat"),
+            .closePullRequest(sessionId: "chat")
+        ]
+        for request in mobileRequests {
+            let encoded = try JSONEncoder().encode(RemoteMessage.request(id: 5, request))
+            guard case .request(id: 5, _) = try JSONDecoder().decode(RemoteMessage.self, from: encoded) else {
+                Issue.record("mobile request failed to decode")
+                return
+            }
+        }
+        let page = RemoteMessage.response(id: 6, .historyPage(beforeSeq: 161, hasMore: true))
+        let pageData = try JSONEncoder().encode(page)
+        let wire = try #require(JSONSerialization.jsonObject(with: pageData) as? [String: Any])
+        let responseBody = try #require(wire["response"] as? [String: Any])
+        let responseCase = try #require(responseBody["_1"] as? [String: Any])
+        let historyBody = try #require(responseCase["historyPage"] as? [String: Any])
+        #expect(historyBody["beforeSeq"] as? Int == 161)
+        #expect(historyBody["hasMore"] as? Bool == true)
+        guard case .response(id: 6, .historyPage(let before, let hasMore)) = try JSONDecoder().decode(RemoteMessage.self, from: pageData) else {
+            Issue.record("history response failed to decode")
+            return
+        }
+        #expect(before == 161 && hasMore)
     }
 }
 

@@ -137,6 +137,47 @@ public final class SessionEngine: Sendable {
         return out
     }
 
+    /// A bounded page of complete log lines in chronological order. With no
+    /// `beforeSeq`, select the newest page. A page is capped by line count and
+    /// about 4 MiB of raw log data.
+    /// The cursor is the first raw sequence in this page; malformed lines still
+    /// occupy a sequence number so subsequent pages cannot overlap.
+    public func replayPage(sessionId: String, beforeSeq: Int? = nil, limit: Int = 160)
+        -> (lines: [(seq: Int, line: OutputLine)], beforeSeq: Int?, hasMore: Bool) {
+        guard let data = try? Data(contentsOf: logFile(sessionId), options: .mappedIfSafe),
+              let lastNewline = data.lastIndex(of: 0x0A) else { return ([], nil, false) }
+        let complete = data[data.startIndex...lastNewline]
+        let total = complete.reduce(0) { $0 + ($1 == 0x0A ? 1 : 0) }
+        let end = min(total, max(0, (beforeSeq ?? total + 1) - 1))
+        guard end > 0 else { return ([], nil, false) }
+        let requestedStart = max(1, end - min(max(limit, 1), 256) + 1)
+        let decoder = JSONDecoder()
+        var ranges: [(seq: Int, bytes: Range<Data.Index>)] = []
+        var pageBytes = 0
+        var seq = 0
+        var lineStart = complete.startIndex
+        for position in complete.indices where complete[position] == 0x0A {
+            seq += 1
+            if seq < requestedStart { lineStart = complete.index(after: position); continue }
+            if seq > end { break }
+            let range = lineStart..<position
+            ranges.append((seq, range))
+            pageBytes += range.count
+            while ranges.count > 1 && pageBytes > (4 << 20) {
+                pageBytes -= ranges.removeFirst().bytes.count
+            }
+            lineStart = complete.index(after: position)
+        }
+        var lines: [(seq: Int, line: OutputLine)] = []
+        for entry in ranges {
+            if let line = try? decoder.decode(OutputLine.self, from: Data(complete[entry.bytes])) {
+                lines.append((entry.seq, line))
+            }
+        }
+        let start = ranges.first?.seq
+        return (lines, start, (start ?? 1) > 1)
+    }
+
     /// The log's whole lines from byte `offset` on, numbered from `firstSeq`
     /// (a line that doesn't decode keeps its number), and the byte after the
     /// last of them and its number. For following a log another process

@@ -257,10 +257,44 @@ final class RemoteService {
                               providers: ProviderRegistry.all.map(\.id).filter { model.providerStatus[$0]?.available ?? false },
                               alive: Array(model.alive),
                               home: model.executor.homeDirectory, modelCatalogs: model.modelCatalogs,
-                              pullRequests: model.pullRequests.mapValues {
-                                  RemotePullRequest(number: $0.number, title: $0.title, state: $0.state.rawValue,
-                                                    isDraft: $0.isDraft, url: $0.url)
-                              })
+                              defaultModelNames: Dictionary(uniqueKeysWithValues: ProviderRegistry.all.compactMap { provider in
+                                  model.defaultModelName(for: provider.id).map { (provider.id, $0) }
+                              }),
+                              pullRequests: model.pullRequests.mapValues { pr in
+                                  RemotePullRequest(number: pr.number, title: pr.title, state: pr.state.rawValue,
+                                                    isDraft: pr.isDraft, url: pr.url, standing: pr.standing,
+                                                    reviewDecision: pr.reviewDecision?.rawValue, hasConflicts: pr.hasConflicts,
+                                                    checks: pr.checks.map { check in
+                                      let outcome: String = switch check.outcome {
+                                      case .passed: "passed"
+                                      case .failed: "failed"
+                                      case .pending: "pending"
+                                      case .skipped: "skipped"
+                                      }
+                                      return RemotePullRequestCheck(name: check.name, workflow: check.workflow,
+                                                                    outcome: outcome, url: check.url)
+                                  }, head: pr.head, base: pr.base, author: pr.author,
+                                                    additions: pr.additions, deletions: pr.deletions, body: pr.body,
+                                                    reviews: pr.reviews.map { review in
+                                      RemotePullRequestReview(author: review.author, verdict: review.verdict.rawValue,
+                                                              body: review.body, submittedAt: review.submittedAt)
+                                  }, comments: pr.comments.map { comment in
+                                      RemotePullRequestComment(author: comment.author, body: comment.body,
+                                                               createdAt: comment.createdAt, isBot: comment.isBot)
+                                  }, threads: pr.threads.map { thread in
+                                      RemotePullRequestThread(id: thread.id, path: thread.path, line: thread.line,
+                                                              isResolved: thread.isResolved, isOutdated: thread.isOutdated,
+                                                              comments: thread.comments.map { comment in
+                                          RemotePullRequestComment(author: comment.author, body: comment.body,
+                                                                   createdAt: comment.createdAt, isBot: false)
+                                      })
+                                  })
+                              }, automations: model.automations,
+                              pendingPermissions: Dictionary(uniqueKeysWithValues: model.sessions.map { session in
+                                  (session.id, model.pendingPermissions(session.id).map {
+                                      RemotePendingPermission(requestId: $0.requestId, toolName: $0.toolName, input: $0.input)
+                                  })
+                              }), turnStartedAt: model.turnStartedAt, pagedHistory: true)
     }
 
     /// A chat's new output, to the Macs watching it.
@@ -602,6 +636,17 @@ final class HostedPeer {
             // would never show there).
             for batch in RemoteLine.batches(lines, bytes: 2 << 20) { post(.event(.lines(sessionId: session, batch))) }
             return .ok
+        case let .subscribeRecent(session, limit):
+            subscriptions.insert(session)
+            let page = model.engine.replayPage(sessionId: session, limit: limit)
+            let lines = page.lines.map { RemoteLine(seq: $0.seq, line: $0.line) }
+            for batch in RemoteLine.batches(lines, bytes: 2 << 20) { post(.event(.lines(sessionId: session, batch))) }
+            return .historyPage(beforeSeq: page.beforeSeq, hasMore: page.hasMore)
+        case let .history(session, before, limit):
+            let page = model.engine.replayPage(sessionId: session, beforeSeq: before, limit: limit)
+            let lines = page.lines.map { RemoteLine(seq: $0.seq, line: $0.line) }
+            for batch in RemoteLine.batches(lines, bytes: 2 << 20) { post(.event(.lines(sessionId: session, batch))) }
+            return .historyPage(beforeSeq: page.beforeSeq, hasMore: page.hasMore)
         case .unsubscribe(let session):
             subscriptions.remove(session)
             return .ok
@@ -643,6 +688,22 @@ final class HostedPeer {
             } catch {
                 return .failed(error.localizedDescription)
             }
+        case let .startStandalone(provider, prompt, policy):
+            do {
+                let id = try await model.startChat(projectId: nil, providerId: RetiredAgents.current(provider),
+                                                   prompt: prompt, baseRef: nil, policy: policy, select: false)
+                return .started(sessionId: id)
+            } catch { return .failed(error.localizedDescription) }
+        case let .startStandaloneConfigured(provider, prompt, policy, attachments, files, name, effort):
+            do {
+                let kept = try attachments.map { a in try files[a.id].map { try AttachmentStore.keep($0, for: a) } ?? a }
+                let agent = RetiredAgents.current(provider)
+                let id = try await model.startChat(projectId: nil, providerId: agent,
+                                                   prompt: prompt, attachments: kept, baseRef: nil,
+                                                   policy: policy, model: agent == provider ? name : nil,
+                                                   effort: agent == provider ? effort : nil, select: false)
+                return .started(sessionId: id)
+            } catch { return .failed(error.localizedDescription) }
         case .stop(let session):
             model.stop(session)
             return .ok
@@ -674,6 +735,83 @@ final class HostedPeer {
         case let .setArchived(session, archived):
             model.setArchived(session, archived)
             return .ok
+        case let .deleteChat(session, removeWorktree):
+            guard model.session(session) != nil else { return .failed("Chat not found.") }
+            await model.delete(session, removeWorktree: removeWorktree)
+            return .ok
+        case let .removeWorktree(projectId, path, deleteBranch):
+            guard let project = model.project(projectId),
+                  let worktree = await model.reusableWorktrees(projectId: projectId).first(where: {
+                      AppModel.canonical($0.path) == AppModel.canonical(path)
+                  }) else { return .failed("That worktree is unavailable.") }
+            for session in model.sessions where session.worktreePath.map({ AppModel.canonical($0) }) == AppModel.canonical(path) {
+                model.stop(session.id)
+            }
+            await model.runTeardownScript(project, worktree: worktree.path)
+            do {
+                try await Git.removeWorktree(model.executor, root: project.rootPath, path: worktree.path,
+                                             deleteBranch: deleteBranch ? worktree.branch : nil)
+                return .ok
+            } catch { return .failed(error.localizedDescription) }
+        case .saveAutomation(let automation):
+            do { return .automation(try model.saveAutomation(automation)) }
+            catch { return .failed(error.localizedDescription) }
+        case .deleteAutomation(let id):
+            guard model.automations.contains(where: { $0.id == id }) else { return .failed("Automation not found.") }
+            model.deleteAutomation(id)
+            return .ok
+        case .runAutomation(let id):
+            guard let automation = model.automations.first(where: { $0.id == id }) else { return .failed("Automation not found.") }
+            guard let run = await model.runAutomationNow(automation) else { return .failed("Automations are not running yet.") }
+            return .automationRuns([run])
+        case .automationRuns(let id):
+            return .automationRuns(model.automationRuns(id))
+        case let .review(session, committed):
+            do {
+                let files = try await reviewFiles(session: session, committed: committed, model: model)
+                return .review(files.map { file in
+                    let patch = Diff.buildPatch(file, hunks: [])
+                    return RemoteReviewFile(path: file.path, status: file.status.rawValue, additions: file.additions,
+                                            deletions: file.deletions, binary: file.isBinary,
+                                            patch: String(patch.prefix(128_000)))
+                })
+            } catch { return .failed(error.localizedDescription) }
+        case let .reviewFile(session, path, committed, accept):
+            do {
+                guard !committed || accept else { return .failed("Committed changes cannot be discarded from review.") }
+                guard case .ready(let context) = model.diffAvailability(session) else { return .failed("The chat's worktree is unavailable.") }
+                guard let file = try await reviewFiles(session: session, committed: committed, model: model).first(where: { $0.path == path })
+                else { return .failed("That changed file is no longer in the review. Refresh and try again.") }
+                let repoRoot = file.repo.isEmpty ? context.root : context.root + "/" + file.repo
+                let repoWorktree = file.repo.isEmpty ? context.worktree : context.worktree + "/" + file.repo
+                if accept {
+                    guard !file.isBinary else { return .failed("Accept this binary file in the Mac app.") }
+                    _ = try await Diff.accept(context.executor, root: repoRoot, patch: Diff.buildPatch(file, hunks: []))
+                } else {
+                    try await Diff.discard(context.executor, worktree: repoWorktree,
+                                           paths: [file.repoPath] + (file.repoOldPath.map { [$0] } ?? []))
+                }
+                return .ok
+            } catch { return .failed(error.localizedDescription) }
+        case let .createPullRequest(session, title, body, base, draft, commitFirst):
+            do {
+                try await model.createPullRequest(session, title: title, body: body, base: base,
+                                                  draft: draft, commitFirst: commitFirst)
+                return .ok
+            } catch { return .failed(error.localizedDescription) }
+        case let .pushChanges(session, message):
+            do { try await model.pushChanges(session, message: message); return .ok }
+            catch { return .failed(error.localizedDescription) }
+        case let .mergePullRequest(session, method):
+            guard let method = MergeMethod(rawValue: method) else { return .failed("Unknown merge method.") }
+            do { try await model.mergePullRequest(session, method: method); return .ok }
+            catch { return .failed(error.localizedDescription) }
+        case .markPullRequestReady(let session):
+            do { try await model.markPullRequestReady(session); return .ok }
+            catch { return .failed(error.localizedDescription) }
+        case .closePullRequest(let session):
+            do { try await model.closePullRequest(session); return .ok }
+            catch { return .failed(error.localizedDescription) }
         case let .exec(command, args, cwd):
             return await exec(command, args, cwd: cwd)
         case .spawn(let spec):
@@ -706,6 +844,28 @@ final class HostedPeer {
             terminals.removeValue(forKey: terminal)?.close()
             return .ok
         }
+    }
+
+    private func reviewFiles(session: String, committed: Bool, model: AppModel) async throws -> [FileDiff] {
+        guard case .ready(let context) = model.diffAvailability(session) else {
+            throw AbstractError.message("The chat's worktree is unavailable.")
+        }
+        let repos = await Submodules.list(context.executor, worktree: context.worktree)
+        var files: [FileDiff] = []
+        for repo in repos {
+            let compare: DiffCompare
+            if committed {
+                let state = await RepoReview.state(context.executor, worktree: context.worktree, repo: repo,
+                                                   preferredBase: repo.isSubmodule ? nil : context.baseRef)
+                guard let base = state.base else { continue }
+                compare = .committed(base: base)
+            } else {
+                compare = .uncommitted
+            }
+            files += try await RepoReview.changes(context.executor, worktree: context.worktree, repo: repo, repos: repos,
+                                                  exclude: context.exclude, compare: compare).files
+        }
+        return files
     }
 }
 
