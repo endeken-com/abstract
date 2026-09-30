@@ -153,7 +153,7 @@ can be changed after it's added.
   test if one exists in `Tests/AbstractCoreTests`.
 
 ### R-1003 · Count OpenCode's tokens and cost in Usage
-- Status: planned · Size: S · Label: agents · Theme: Parity
+- Status: in progress (#17) · Size: S · Label: agents · Theme: Parity
 - Why: the Usage ledger reads Claude and Codex logs only; OpenCode chats show nothing
   under Settings → Usage even though its stream reports tokens and cost per step.
 - Do: extend `Abstract/Features/Usage/UsageLedger.swift` (and the core `Usage/` types)
