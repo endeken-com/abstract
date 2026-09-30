@@ -9,6 +9,7 @@ const device = { peer: { id: 'mac-1', name: 'Mac', publicKey: 'key' }, address: 
 const sockets = [];
 const requests = [];
 let browser;
+let internetDial = async () => {};
 
 function frame(value) {
   const body = Buffer.from(typeof value === 'string' ? value : JSON.stringify(value));
@@ -51,6 +52,23 @@ const mocks = {
   'react-native-zeroconf': Zeroconf,
   '@react-native-async-storage/async-storage': { getItem: async () => JSON.stringify([device]), setItem: async () => {} },
   'react-native': { PermissionsAndroid: {}, Platform: { OS: 'ios' } },
+  './internet': {
+    validInternetAddress: x => /^[a-f0-9]{64}$/.test(x?.endpointId || ''),
+    parseInvitation: () => { throw Error('not an invitation'); },
+    InternetSocket: class {
+      constructor() {
+        this.raw = new Socket('internet'); this.frames = []; this.readers = [];
+        this.raw.on('data', data => {
+          const frame = data.subarray(4); const reader = this.readers.shift();
+          if (reader) reader.resolve(frame); else this.frames.push(frame);
+        });
+      }
+      async connect() { await internetDial(); }
+      read() { return this.frames.length ? Promise.resolve(this.frames.shift()) : new Promise((resolve, reject) => this.readers.push({resolve, reject})); }
+      write(data) { const header = Buffer.alloc(4); header.writeUInt32BE(data.length); this.raw.write(Buffer.concat([header, data])); }
+      close() { this.raw.destroy(); this.readers.splice(0).forEach(x => x.reject(Error('closed'))); this.onClose?.(Error('closed')); }
+    }
+  },
   './secure': { identity: async () => ({}), beginHandshake: (_, pairing) => ({ hello: Buffer.from(pairing ? 'pair' : 'hello'), finish: () => ({ peer: device.peer, finish: Buffer.from('finish'), cipher: { seal: x => x, open: x => x } }) }) },
   './framing': { FrameDecoder: class { push(data) { return [data.subarray(4)]; } } },
 };
@@ -84,5 +102,48 @@ test('a newly paired Mac reaches online after the snapshot', async () => {
   assert.equal(client.status, 'online');
   assert.equal(client.active.peer.id, 'mac-1');
   assert.equal(client.snapshot.pagedHistory, true);
+  client.disconnect();
+});
+
+test('an unreachable local address falls back to the saved internet identity', async () => {
+  const client = new RemoteClient();
+  const known = { ...device, address: '', internetAddress: { endpointId: 'a'.repeat(64) } };
+  await client.connect('', known);
+  assert.equal(client.status, 'online');
+  assert.equal(client.active.peer.id, device.peer.id);
+  assert.equal(client.active.address, '');
+  client.disconnect();
+});
+
+test('cancelling an internet dial cannot adopt the connection when it finishes', async () => {
+  const client = new RemoteClient();
+  let finish;
+  internetDial = () => new Promise(resolve => { finish = resolve; });
+  try {
+    const known = { ...device, internetAddress: { endpointId: 'a'.repeat(64) } };
+    const connecting = client.connect('iroh:' + known.internetAddress.endpointId, known);
+    await new Promise(resolve => setImmediate(resolve));
+    client.disconnect();
+    finish();
+    await connecting;
+    assert.equal(client.status, 'offline');
+    assert.equal(client.active, null);
+    assert.equal(client.error, null);
+  } finally { internetDial = async () => {}; client.disconnect(); }
+});
+
+test('a stale foreground probe cannot replace a newer connection', async () => {
+  const client = new RemoteClient();
+  await client.connect('192.0.2.2:52000', { ...device });
+  let rejectProbe;
+  const request = client.request.bind(client);
+  client.request = () => new Promise((_, reject) => { rejectProbe = reject; });
+  const resuming = client.resume();
+  client.request = request;
+  await client.connect('192.0.2.3:52000', { ...device });
+  rejectProbe(Error('Old connection closed'));
+  await resuming;
+  assert.equal(client.status, 'online');
+  assert.equal(client.active.address, '192.0.2.3:52000');
   client.disconnect();
 });

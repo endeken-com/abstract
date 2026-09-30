@@ -1,0 +1,20 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+group = 'sh.abstractapp'
+version = '1.0.0'
+android {
+  namespace 'sh.abstractapp.internet'
+  defaultConfig {
+    minSdkVersion 24
+    versionCode 1
+    versionName '1.0.0'
+  }
+  packagingOptions { resources.excludes += ['darwin-*/**', 'linux-*/**', 'win32-*/**'] }
+}
+dependencies {
+  // Use the published API, with our matching 16 KB-aligned native builds.
+  implementation('computer.iroh:iroh:1.1.0') { exclude group: 'net.java.dev.jna', module: 'jna' }
+  implementation 'net.java.dev.jna:jna:5.18.1@aar'
+}

@@ -40,3 +40,7 @@ mobile/ios/*.xcworkspace/xcuserdata/
 mobile/android/
 mobile/.env*
 !mobile/.env.example
+
+# Pinned native Iroh artifacts, prepared by scripts/prepare-iroh.sh.
+Packages/Iroh/Iroh.xcframework/
+mobile/modules/abstract-internet/android/src/main/jniLibs/

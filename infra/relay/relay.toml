@@ -1,12 +1,11 @@
 # Lightsail terminates public HTTPS and forwards HTTP privately to this port.
-http_bind_addr = "0.0.0.0:8080"
+http_bind_addr = "127.0.0.1:8081"
 enable_relay = true
 enable_quic_addr_discovery = false
 enable_metrics = false
 
-# An empty list fails startup unless IROH_RELAY_ACCESS_TOKEN overrides it.
-# This is a private beta credential, not a key to ship inside a public app.
-access.shared_token = []
+# Only devices with a current signed registration can attach to the relay.
+access.http.url = "http://127.0.0.1:8082/access"
 
 # Bound each client's ingress to 1 MiB/s with room for a short burst.
 # This is not a total bandwidth budget or a limit on the number of connections.

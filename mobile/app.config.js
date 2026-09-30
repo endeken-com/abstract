@@ -14,6 +14,6 @@ module.exports = {
       versionCode: Number(process.env.MOBILE_ANDROID_VERSION_CODE || 1),
       permissions: ['INTERNET', 'ACCESS_NETWORK_STATE', 'ACCESS_WIFI_STATE', 'CHANGE_WIFI_MULTICAST_STATE', 'NEARBY_WIFI_DEVICES']
     },
-    plugins: ['./plugins/withLocalNetwork', 'expo-font']
+    plugins: ['./plugins/withLocalNetwork', './plugins/withInternet', 'expo-font']
   }
 };

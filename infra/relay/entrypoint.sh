@@ -13,4 +13,4 @@ case "$IROH_RELAY_ACCESS_TOKEN" in
         exit 1
         ;;
 esac
-exec /usr/local/bin/iroh-relay --config-path /etc/iroh-relay/relay.toml
+exec python3 /usr/local/bin/relay-gateway.py

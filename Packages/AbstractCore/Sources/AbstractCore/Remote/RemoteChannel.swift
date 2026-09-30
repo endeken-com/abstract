@@ -2,7 +2,7 @@ import Foundation
 import Network
 import Synchronization
 
-/// One encrypted connection to another Abstract, over Network.framework.
+/// One encrypted connection to another Abstract, over TCP or an internet stream.
 /// Handshake first (plain frames), then every frame sealed with the
 /// connection's keys.
 public final class RemoteChannel: @unchecked Sendable {
@@ -17,36 +17,14 @@ public final class RemoteChannel: @unchecked Sendable {
         }
     }
 
-    public let connection: NWConnection
-    private let queue = DispatchQueue(label: "sh.abstract.remote.channel")
+    private let transport: any RemoteTransport
     private let cipher = Mutex<FrameCipher?>(nil)
-    /// Encodes outgoing messages one at a time, so sealed frames keep their order.
     private let sending = Mutex<Void>(())
 
-    public init(connection: NWConnection) { self.connection = connection }
-
-    /// Connects (or accepts) and waits until the connection is ready.
-    public func open() async throws {
-        let resumed = Mutex(false)
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
-            connection.stateUpdateHandler = { state in
-                func finish(_ result: Result<Void, any Error>) {
-                    guard resumed.withLock({ done in defer { done = true }; return !done }) else { return }
-                    continuation.resume(with: result)
-                }
-                switch state {
-                case .ready: finish(.success(()))
-                case .failed(let error): finish(.failure(error))
-                case .cancelled: finish(.failure(Failure.closed))
-                case .waiting(let error): finish(.failure(error))
-                default: break
-                }
-            }
-            connection.start(queue: queue)
-        }
-    }
-
-    public func close() { connection.cancel() }
+    public init(connection: NWConnection) { transport = TCPRemoteTransport(connection) }
+    public init(transport: any RemoteTransport) { self.transport = transport }
+    public func open() async throws { try await transport.open() }
+    public func close() { transport.close() }
 
     // MARK: Frames
 
@@ -54,8 +32,8 @@ public final class RemoteChannel: @unchecked Sendable {
         try await write(RemoteFraming.frame(payload))
     }
 
-    public func receivePlain() async throws -> Data {
-        guard let length = RemoteFraming.length(try await read(4)) else { throw Failure.frameTooLarge }
+    public func receivePlain(maximumLength: Int = 16 << 20) async throws -> Data {
+        guard let length = RemoteFraming.length(try await read(4)), length <= maximumLength else { throw Failure.frameTooLarge }
         return try await read(length)
     }
 
@@ -74,9 +52,9 @@ public final class RemoteChannel: @unchecked Sendable {
                         defer { cipher = c }
                         return try c.seal(plain)
                     }
-                    connection.send(content: RemoteFraming.frame(sealed), completion: .contentProcessed { error in
+                    transport.write(RemoteFraming.frame(sealed)) { error in
                         if let error { continuation.resume(throwing: error) } else { continuation.resume() }
-                    })
+                    }
                 }
             } catch {
                 continuation.resume(throwing: error)
@@ -98,21 +76,14 @@ public final class RemoteChannel: @unchecked Sendable {
 
     private func write(_ data: Data) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
-            connection.send(content: data, completion: .contentProcessed { error in
+            transport.write(data) { error in
                 if let error { continuation.resume(throwing: error) } else { continuation.resume() }
-            })
+            }
         }
     }
 
     private func read(_ count: Int) async throws -> Data {
-        guard count > 0 else { return Data() }
-        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, any Error>) in
-            connection.receive(minimumIncompleteLength: count, maximumLength: count) { data, _, isComplete, error in
-                if let error { continuation.resume(throwing: error) }
-                else if let data, data.count == count { continuation.resume(returning: data) }
-                else { continuation.resume(throwing: isComplete ? Failure.closed : Failure.closed) }
-            }
-        }
+        try await transport.read(count)
     }
 
     // MARK: Handshakes
@@ -121,7 +92,7 @@ public final class RemoteChannel: @unchecked Sendable {
     public func handshake(as identity: DeviceIdentity, pairing: Bool, expected: PeerInfo?) async throws -> Handshake.Outcome {
         let initiator = Handshake.Initiator(identity: identity, pairing: pairing)
         try await sendPlain(try initiator.start())
-        let (finish, outcome) = try initiator.finish(reply: try await receivePlain(), expected: expected)
+        let (finish, outcome) = try initiator.finish(reply: try await receivePlain(maximumLength: 4096), expected: expected)
         try await sendPlain(finish)
         secure(with: outcome.cipher)
         return outcome
@@ -130,9 +101,9 @@ public final class RemoteChannel: @unchecked Sendable {
     /// The listening side: `lookup` gives a paired device's pinned identity.
     public func accept(as identity: DeviceIdentity, lookup: @Sendable (String) -> PeerInfo?) async throws -> Handshake.Outcome {
         let responder = Handshake.Responder(identity: identity)
-        let (reply, _, _) = try responder.respond(to: try await receivePlain(), lookup: lookup)
+        let (reply, _, _) = try responder.respond(to: try await receivePlain(maximumLength: 4096), lookup: lookup)
         try await sendPlain(reply)
-        let outcome = try responder.complete(finish: try await receivePlain())
+        let outcome = try responder.complete(finish: try await receivePlain(maximumLength: 4096))
         secure(with: outcome.cipher)
         return outcome
     }
@@ -163,5 +134,51 @@ public enum RemoteNetwork {
         if host.hasPrefix("["), host.hasSuffix("]") { host = String(host.dropFirst().dropLast()) }
         guard !host.isEmpty else { return nil }
         return .hostPort(host: NWEndpoint.Host(host), port: port)
+    }
+}
+
+/// Writes must be queued synchronously in call order, even when their completions are asynchronous.
+public protocol RemoteTransport: Sendable {
+    func open() async throws
+    func read(_ count: Int) async throws -> Data
+    func write(_ data: Data, completion: @escaping @Sendable ((any Error)?) -> Void)
+    func close()
+}
+
+private final class TCPRemoteTransport: RemoteTransport, @unchecked Sendable {
+    let connection: NWConnection
+    let queue = DispatchQueue(label: "sh.abstract.remote.tcp")
+    init(_ connection: NWConnection) { self.connection = connection }
+    func open() async throws {
+        let resumed = Mutex(false)
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+            connection.stateUpdateHandler = { state in
+                func finish(_ result: Result<Void, any Error>) {
+                    guard resumed.withLock({ done in defer { done = true }; return !done }) else { return }
+                    continuation.resume(with: result)
+                }
+                switch state {
+                case .ready: finish(.success(()))
+                case .failed(let error), .waiting(let error): finish(.failure(error))
+                case .cancelled: finish(.failure(RemoteChannel.Failure.closed))
+                default: break
+                }
+            }
+            connection.start(queue: queue)
+        }
+    }
+    func close() { connection.cancel() }
+    func write(_ data: Data, completion: @escaping @Sendable ((any Error)?) -> Void) {
+        connection.send(content: data, completion: .contentProcessed { completion($0) })
+    }
+    func read(_ count: Int) async throws -> Data {
+        guard count > 0 else { return Data() }
+        return try await withCheckedThrowingContinuation { continuation in
+            connection.receive(minimumIncompleteLength: count, maximumLength: count) { data, _, _, error in
+                if let error { continuation.resume(throwing: error) }
+                else if let data, data.count == count { continuation.resume(returning: data) }
+                else { continuation.resume(throwing: RemoteChannel.Failure.closed) }
+            }
+        }
     }
 }

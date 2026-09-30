@@ -4,8 +4,9 @@ The **Deploy relay** GitHub workflow builds and tests an Iroh 1.3.0 container,
 then deploys that exact image to a **Lightsail Container Service with one node**.
 It uses the existing service's power; if no service exists, it creates a Micro service.
 Deployment is manual; pull requests only run checks. This is infrastructure for a
-private beta. The desktop/mobile clients do not use Iroh yet: deploying this
-container alone does not enable internet connections in Abstract.
+initial rollout. Updated desktop and mobile builds use `https://relay.useabstract.app`.
+Deploy this relay revision and finish the custom domain before releasing those builds.
+Existing local pairing continues to work without the relay.
 
 Lightsail terminates HTTPS and forwards HTTP to the relay on port 8080. QUIC
 address discovery is disabled because the managed public endpoint does not
@@ -65,9 +66,9 @@ workflow uploads to Lightsail's own image registry using `lightsailctl`.
 1. Set the environment values and credentials above. Leave both domain variables
    empty until the domain and certificate are ready.
 2. Run **Actions → Deploy relay → Run workflow** on the intended branch.
-3. The workflow checks that a missing token prevents startup and that missing or
-   wrong credentials cannot use the relay. It tests bidirectional forwarding
-   between two authenticated clients before uploading the image.
+3. The workflow checks that a missing internal token prevents startup, verifies
+   signed registration and quotas, and rejects unregistered device identities.
+   It tests bidirectional forwarding between registered devices before upload.
 4. It creates the service if absent, waits for the exact new deployment version
    to become active, and repeats the protocol test through the public HTTPS
    endpoint. The Actions summary includes the URL, image, and deployment version.
@@ -115,19 +116,39 @@ the Lightsail console explicitly.
 
 ## Access and operations
 
-The shared access token is for a controlled beta and the deployment probe.
-**Do not compile it into a publicly distributed desktop or mobile app.** Before
-public rollout, add device enrollment and per-device relay authorization; Iroh
-also supports an HTTP access-check service. Abstract's existing device pairing
-must remain the authority for accessing a host, independently of relay access.
+Apps register their Iroh public key with a timestamped Ed25519 proof at
+`POST /v1/register`. Iroh's signed challenge authenticates that same key; the
+private HTTP callback admits it only while its registration is valid.
+Registrations last 24 hours, renew every 30 seconds while running, and live in
+memory. Redeployments need no database; clients register again.
+
+`IROH_RELAY_ACCESS_TOKEN` now authenticates only the internal callback between the
+relay and gateway. It never goes to apps or invitations. Public ingress is port
+8080; the relay and callback bind only to loopback.
+
+**Registration proves key possession, not an account entitlement.** Anyone can
+implement the public registration protocol. This is an account-free relay, not a
+private allowlist. Limits: 4,096 registered identities, 64 concurrent sockets,
+32 new registrations per source IP/hour and 512/hour globally. Existing devices
+can renew at capacity. These bounds constrain resource use, but do not guarantee
+availability or prevent distributed abuse. The last `X-Forwarded-For` address
+relies on Lightsail ingress appending its observed source; reassess this if
+another proxy is added.
+
+Only app pairing grants access to a host. Internet invitations expire after ten
+minutes and permit one attempt; users must compare the code and approve on the
+host. Reconnections prove the pinned app identity, bound to both Iroh endpoint
+IDs. The existing end-to-end cipher runs over the Iroh stream. Sharing off and
+unpairing close app sessions. The relay sees routing metadata, IPs, timing and
+byte counts, but cannot read commands, terminal output or files.
 
 The relay runs as an unprivileged user. It exposes no metrics port and applies a
 1 MiB/s ingress limit per connection with a 2 MiB burst. That is not a spending
 cap: multiple clients can consume more. Set AWS billing/transfer alerts and watch
 CPU, memory, connections, and transfer usage. One node has no redundancy.
 
-Update the GitHub token secret and redeploy to rotate relay access. Clients using
-the old token need the new credential. Lightsail administrators who can read
+Update the GitHub token secret and redeploy to rotate the internal callback credential.
+Apps need no credential update. Lightsail administrators who can read
 deployment configuration can read the token; restrict those permissions. Keep
 `RUST_LOG=info`: upstream debug configuration logs can include secrets.
 
