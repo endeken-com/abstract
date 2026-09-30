@@ -54,3 +54,52 @@ jobs:
         run: |
           xcodegen generate
           scripts/build-app.sh
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'pull_request'
+        with:
+          name: iroh-apple-xcframework
+          path: Packages/Iroh/Iroh.xcframework
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
+
+  mobile-changes:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.paths.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: paths
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          if git diff --name-only "$BASE_SHA" HEAD | rg -q '^(mobile/|Packages/AbstractInternet/|Packages/Iroh/|scripts/prepare-iroh\.sh$|\.github/workflows/(mobile|test)\.yml$|Packages/AbstractCore/Sources/AbstractCore/Remote/|Abstract/Features/Remote/)'; then
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+          fi
+
+  ios-check:
+    needs: [test, mobile-changes]
+    if: needs.mobile-changes.outputs.changed == 'true'
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - uses: actions/download-artifact@v4
+        with:
+          name: iroh-apple-xcframework
+          path: Packages/Iroh/Iroh.xcframework
+      - run: test -f Packages/Iroh/Iroh.xcframework/.abstract-native-v1
+      - run: npm ci
+        working-directory: mobile
+      - run: pod install
+        working-directory: mobile/ios
+      - run: xcodebuild -workspace Abstract.xcworkspace -scheme Abstract -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
+        working-directory: mobile/ios
