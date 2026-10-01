@@ -6,7 +6,7 @@ import { SymbolView } from 'expo-symbols';
 import * as Haptics from 'expo-haptics';
 import { KeyboardAwareScrollView } from './KeyboardAwareScrollView';
 import { remote } from './remote';
-import { phoneHostName } from './secure';
+import { phoneHostName } from './phoneHostName';
 import type { Device } from './types';
 
 const ink = '#ECECEF', muted = '#A4A4AD', tertiary = '#75757E';
