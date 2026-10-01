@@ -350,7 +350,7 @@ private struct PullRequestDetail: View {
 
     private func readPublish() async {
         guard let worktree = session.worktreePath, let branch = session.branch, !model.isDemo else { return }
-        publish = await Git.publishState(model.executor(for: session.id), worktree: worktree, branch: branch)
+        publish = await Git.publishState(model.reader(for: session.id), worktree: worktree, branch: branch)
     }
 
     private var header: some View {
@@ -828,7 +828,7 @@ private struct CreatePullRequestForm: View {
 
     private func readPublish() async {
         guard let worktree = session.worktreePath, let branch = session.branch, !model.isDemo else { return }
-        publish = await Git.publishState(model.executor(for: session.id), worktree: worktree, branch: branch)
+        publish = await Git.publishState(model.reader(for: session.id), worktree: worktree, branch: branch)
     }
 
     private var state: String {

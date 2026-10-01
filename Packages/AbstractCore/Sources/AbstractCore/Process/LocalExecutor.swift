@@ -36,46 +36,44 @@ public final class LocalExecutor: Executor, Sendable {
         // Keep git quiet and scriptable.
         environment["GIT_TERMINAL_PROMPT"] = "0"
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = args
-        if let cwd { process.currentDirectoryURL = URL(fileURLWithPath: cwd, isDirectory: true) }
-        process.environment = environment
-        process.standardInput = FileHandle.nullDevice
-        let stdout = Pipe()
-        let stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
-
-        let collector = RunCollector()
-        let result = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<ExecResult, any Error>) in
-            collector.begin(continuation)
-            // Both pipes drain concurrently, so a child filling one while we
-            // wait on the other can never deadlock.
-            for (output, kind) in [(stdout, OutputStreamKind.stdout), (stderr, .stderr)] {
-                output.fileHandleForReading.readabilityHandler = { handle in
-                    let data = handle.availableData
-                    if data.isEmpty {
-                        handle.readabilityHandler = nil
-                        collector.finish(kind)
-                    } else {
-                        collector.append(data, kind)
+        let collector = RunCollector(killGrace: killGrace)
+        let result = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<ExecResult, any Error>) in
+                collector.begin(continuation)
+                // Its own session and process group, so cancelling reaches
+                // everything it started (`submodule foreach` runs a shell and
+                // more git per submodule).
+                let child: Spawner.Child
+                do {
+                    child = try Spawner.launch(
+                        executable: executable, arguments: [executable] + args, environment: environment, cwd: cwd,
+                        stdin: .null, stdout: .pipe, stderr: .pipe)
+                } catch {
+                    collector.fail(AbstractError.message("failed to run `\(command)`: \(error.localizedDescription)"))
+                    return
+                }
+                // Both pipes drain concurrently, so a child filling one while we
+                // wait on the other can never deadlock.
+                for (fd, kind) in [(child.stdout, OutputStreamKind.stdout), (child.stderr, .stderr)] {
+                    let output = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+                    collector.keep(output)
+                    output.readabilityHandler = { handle in
+                        let data = handle.availableData
+                        if data.isEmpty {
+                            handle.readabilityHandler = nil
+                            collector.finish(kind)
+                        } else {
+                            collector.append(data, kind)
+                        }
                     }
                 }
+                collector.started(child.pid)
+                Thread.detachNewThread { collector.waitForExit(child.pid) }
             }
-            process.terminationHandler = { finished in
-                // Killed by a signal: no exit code, like Rust's `status.code()`.
-                collector.exited(finished.terminationReason == .exit ? finished.terminationStatus : -1)
-            }
-            do {
-                try process.run()
-            } catch {
-                stdout.fileHandleForReading.readabilityHandler = nil
-                stderr.fileHandleForReading.readabilityHandler = nil
-                collector.fail(AbstractError.message("failed to run `\(command)`: \(error.localizedDescription)"))
-            }
+        } onCancel: {
+            collector.cancel()
         }
-        withExtendedLifetime((process, stdout, stderr)) {}
+        if collector.wasCancelled { throw CancellationError() }
         return result
     }
 
@@ -177,7 +175,8 @@ public final class LocalExecutor: Executor, Sendable {
 // MARK: - run() output collection
 
 /// Gathers a `run` child's output and resumes the caller once the process
-/// has exited and both pipes hit EOF.
+/// has exited and both pipes hit EOF. Cancelled, it stops the child's whole
+/// process group: SIGTERM, then SIGKILL after `killGrace`.
 private final class RunCollector: Sendable {
     private struct State {
         var continuation: CheckedContinuation<ExecResult, any Error>?
@@ -185,12 +184,68 @@ private final class RunCollector: Sendable {
         var stderr = Data()
         var open: Set<OutputStreamKind> = [.stdout, .stderr]
         var code: Int32?
+        var handles: [FileHandle] = []
+        var pid: pid_t?
+        /// Set once the child is a zombie, before it is reaped, so a signal can
+        /// never reach a recycled pid.
+        var exited = false
+        var cancelled = false
     }
 
     /// How long to wait for EOF after exit. A grandchild that inherited the
     /// pipes (a daemon the command started) must not hang the caller forever.
     private static let eofGrace: TimeInterval = 2
+    private let killGrace: TimeInterval
     private let state = Mutex(State())
+
+    init(killGrace: TimeInterval) { self.killGrace = killGrace }
+
+    var wasCancelled: Bool { state.withLock { $0.cancelled } }
+
+    func keep(_ handle: FileHandle) { state.withLock { $0.handles.append(handle) } }
+
+    /// The child is running; stop it now if the caller already gave up.
+    func started(_ pid: pid_t) {
+        let cancelled = state.withLock { s in
+            s.pid = pid
+            return s.cancelled
+        }
+        if cancelled { stop() }
+    }
+
+    func cancel() {
+        let running = state.withLock { s in
+            s.cancelled = true
+            return s.pid != nil
+        }
+        if running { stop() }
+    }
+
+    private func stop() {
+        signal(SIGTERM)
+        DispatchQueue.global().asyncAfter(deadline: .now() + killGrace) { [self] in signal(SIGKILL) }
+    }
+
+    /// The whole group, so whatever the child started goes too, until the
+    /// caller has its result; the pid alone only until it is reaped.
+    private func signal(_ sig: Int32) {
+        state.withLock { s in
+            guard let pid = s.pid, s.continuation != nil || !s.exited else { return }
+            if kill(-pid, sig) != 0, !s.exited { _ = kill(pid, sig) }
+        }
+    }
+
+    /// On its own thread: wait without reaping, mark exited, then reap.
+    func waitForExit(_ pid: pid_t) {
+        var info = siginfo_t()
+        while waitid(P_PID, id_t(pid), &info, WEXITED | WNOWAIT) == -1 && errno == EINTR {}
+        state.withLock { $0.exited = true }
+        var status: Int32 = 0
+        var reaped: pid_t
+        repeat { reaped = waitpid(pid, &status, 0) } while reaped == -1 && errno == EINTR
+        // Killed by a signal: no exit code, like Rust's `status.code()`.
+        exited(reaped == pid && (status & 0x7f) == 0 ? (status >> 8) & 0xff : -1)
+    }
 
     func begin(_ continuation: CheckedContinuation<ExecResult, any Error>) {
         state.withLock { $0.continuation = continuation }
@@ -225,6 +280,8 @@ private final class RunCollector: Sendable {
         let ready = state.withLock { s -> (CheckedContinuation<ExecResult, any Error>, ExecResult)? in
             guard let code = s.code, force || s.open.isEmpty, let continuation = s.continuation else { return nil }
             s.continuation = nil
+            for handle in s.handles { handle.readabilityHandler = nil }
+            s.handles = []
             return (continuation, ExecResult(code: code, stdout: String(decoding: s.stdout, as: UTF8.self),
                                              stderr: String(decoding: s.stderr, as: UTF8.self)))
         }

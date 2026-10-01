@@ -191,9 +191,15 @@ public enum Git {
         _ = try await gitOK(exec, cwd: worktree, ["commit", "-m", message])
     }
 
-    /// Pushes `branch` to `origin`, setting it as the upstream.
+    /// How long a push or pull may take before it's stopped.
+    static let transferLimit: Duration = .seconds(300)
+
+    /// Pushes `branch` to `origin`, setting it as the upstream. Stopped after
+    /// `transferLimit`.
     public static func push(_ exec: any Executor, worktree: String, branch: String) async throws {
-        _ = try await gitOK(exec, cwd: worktree, ["push", "-u", "origin", "HEAD:refs/heads/\(branch)"])
+        _ = try await withTimeLimit(transferLimit, what: "git push") {
+            try await gitOK(exec, cwd: worktree, ["push", "-u", "origin", "HEAD:refs/heads/\(branch)"])
+        }
     }
 
     /// What publishing a worktree's branch involves: uncommitted files, and

@@ -104,7 +104,14 @@ extension AppModel {
         originFetchedAt[key] = .now
         let spec = LaunchSpec(command: "git", args: ["fetch", "--quiet", "--prune", "origin"], cwd: directory,
                               env: ["GIT_TERMINAL_PROMPT": "0"], keepStdinOpen: false)
-        _ = try? await exec.run(spec, timeout: .seconds(30))
+        // A background read's fetch counts against the background budget too.
+        if let reader = exec as? BudgetedExecutor {
+            _ = try? await reader.budget.run(in: directory, what: "`git fetch`", timeout: .seconds(30)) {
+                try await reader.base.run(spec, timeout: .seconds(30))
+            }
+        } else {
+            _ = try? await exec.run(spec, timeout: .seconds(30))
+        }
     }
 
     /// Re-reads where a chat's branch stands, fetching from origin first:
@@ -112,7 +119,7 @@ extension AppModel {
     /// Pruned, so a branch deleted on origin (a merged PR's) shows as gone.
     func refreshBranch(_ sessionId: String, fetch: OriginFetch = .never) async {
         guard let session = session(sessionId), let worktree = session.worktreePath else { return }
-        let exec = executor(for: sessionId)
+        let exec = reader(for: sessionId)
         await fetchOriginIfDue(exec, key: session.projectId ?? sessionId, directory: worktree, fetch: fetch)
         let read = (branchReads[sessionId] ?? 0) + 1
         branchReads[sessionId] = read

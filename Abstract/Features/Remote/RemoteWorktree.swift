@@ -305,6 +305,14 @@ extension AppModel {
         return remote.executor(for: device)
     }
 
+    /// Where a chat's background git reads run: on this Mac, inside the
+    /// app-wide budget, so views keeping up to date can't pile up processes.
+    /// A chat on another Mac reads there, as before.
+    func reader(for sessionId: String?) -> any Executor {
+        let exec = executor(for: sessionId)
+        return exec is RemoteExecutor ? exec : BudgetedExecutor(exec)
+    }
+
     /// Where a project's commands run: here, or on the Mac it lives on.
     func executor(forProject id: String?) -> any Executor {
         guard let id, !projects.contains(where: { $0.id == id }), let device = remote.device(ofProject: id) else { return executor }
