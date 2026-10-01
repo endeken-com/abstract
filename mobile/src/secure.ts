@@ -3,6 +3,8 @@ import { ed25519, x25519 } from '@noble/curves/ed25519';
 import { sha256 } from '@noble/hashes/sha256';
 import { hkdf } from '@noble/hashes/hkdf';
 import { chacha20poly1305 } from '@noble/ciphers/chacha';
+import { Platform } from 'react-native';
+import { requireNativeModule } from 'expo-modules-core';
 import type { Peer } from './types';
 
 const utf8 = (text: string) => new Uint8Array(Buffer.from(text, 'utf8'));
@@ -23,6 +25,16 @@ export function uuid() {
 }
 
 export type Identity = { peer: Peer; privateKey: Uint8Array };
+export function phoneHostName(): string {
+  if (Platform.OS === 'ios') {
+    try {
+      const host = requireNativeModule<{ hostName(): string }>('AbstractInternet').hostName().trim();
+      if (host && host !== 'localhost') return host.replace(/(?:\.coredevice)?\.local\.?$/i, '');
+    } catch { /* A stale local build can still connect with a generic name. */ }
+    return 'iPhone';
+  }
+  return Platform.OS === 'android' ? Platform.constants.Model || 'Android device' : 'Mobile device';
+}
 export async function identity(): Promise<Identity> {
   const SecureStore = await import('expo-secure-store');
   let id = await SecureStore.getItemAsync('remote-device-id');
@@ -35,7 +47,7 @@ export async function identity(): Promise<Identity> {
     await SecureStore.setItemAsync('remote-signing-key', key);
   }
   const privateKey = bytes(key);
-  return { peer: { id, name: 'Abstract Mobile', publicKey: base64(ed25519.getPublicKey(privateKey)) }, privateKey };
+  return { peer: { id, name: phoneHostName(), publicKey: base64(ed25519.getPublicKey(privateKey)) }, privateKey };
 }
 
 export class Cipher {
