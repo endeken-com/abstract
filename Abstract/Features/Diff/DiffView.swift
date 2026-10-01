@@ -71,14 +71,14 @@ struct DiffView: View {
         // and only once git confirms it isn't a checkout any more — a failed
         // listing alone must not move the chat off it.
         if !wanted.isEmpty, review.selectedRepo.isEmpty, model.currentRepoPath(sessionId) == wanted {
-            await model.dropRepoIfGone(sessionId, wanted, worktree: context.worktree, exec: context.executor)
+            await model.dropRepoIfGone(sessionId, wanted, worktree: context.worktree, exec: context.reader)
         }
         takePendingSelection()
     }
 
     /// Refresh as the agent (or you) changes files, commits or switches branch.
     private func watch(_ context: DiffContext) async {
-        let gitDir = (try? await context.executor.run("git", ["rev-parse", "--absolute-git-dir"], cwd: context.worktree))
+        let gitDir = (try? await context.reader.run("git", ["rev-parse", "--absolute-git-dir"], cwd: context.worktree))
             .flatMap { $0.ok ? $0.stdout.trimmingCharacters(in: .whitespacesAndNewlines) : nil }
         watcher = model.watch([context.worktree] + (gitDir.map { [$0] } ?? []), for: sessionId) {
             Task { await reload() }

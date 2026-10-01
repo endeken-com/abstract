@@ -110,7 +110,9 @@ public enum GitActions {
     }
 
     public static func pull(_ exec: any Executor, worktree: String) async throws {
-        let result = try await Git.git(exec, cwd: worktree, ["pull", "--no-rebase"])
+        let result = try await withTimeLimit(Git.transferLimit, what: "git pull") {
+            try await Git.git(exec, cwd: worktree, ["pull", "--no-rebase"])
+        }
         guard result.ok else {
             _ = try? await Git.git(exec, cwd: worktree, ["merge", "--abort"])
             throw AbstractError.message(result.stderr.trimmingCharacters(in: .whitespacesAndNewlines))

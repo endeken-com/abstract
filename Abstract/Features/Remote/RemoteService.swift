@@ -1024,19 +1024,19 @@ final class HostedPeer {
         guard case .ready(let context) = model.diffAvailability(session) else {
             throw AbstractError.message("The chat's worktree is unavailable.")
         }
-        let repos = await Submodules.list(context.executor, worktree: context.worktree)
+        let repos = await Submodules.list(context.reader, worktree: context.worktree)
         var files: [FileDiff] = []
         for repo in repos {
             let compare: DiffCompare
             if committed {
-                let state = await RepoReview.state(context.executor, worktree: context.worktree, repo: repo,
+                let state = await RepoReview.state(context.reader, worktree: context.worktree, repo: repo,
                                                    preferredBase: repo.isSubmodule ? nil : context.baseRef)
                 guard let base = state.base else { continue }
                 compare = .committed(base: base)
             } else {
                 compare = .uncommitted
             }
-            files += try await RepoReview.changes(context.executor, worktree: context.worktree, repo: repo, repos: repos,
+            files += try await RepoReview.changes(context.reader, worktree: context.worktree, repo: repo, repos: repos,
                                                   exclude: context.exclude, compare: compare).files
         }
         return files

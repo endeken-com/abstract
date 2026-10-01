@@ -102,6 +102,51 @@ private final class Recorder: Sendable {
         }
     }
 
+    @Test func runInAMissingFolderThrows() async {
+        await #expect(throws: AbstractError.self) {
+            try await self.exec.run("sh", ["-c", "true"], cwd: "/abstract-no-such-folder")
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func cancellingRunStopsTheCommandAndWhatItStarted() async throws {
+        let dir = NSTemporaryDirectory() + "run-cancel-\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        let task = Task { [exec] in
+            try await exec.run("sh", ["-c", "sleep 30 & echo $$ $! > pids; wait"], cwd: dir)
+        }
+        var pids: [pid_t] = []
+        let deadline = ContinuousClock.now + .seconds(10)
+        while pids.count < 2 && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+            let text = (try? String(contentsOfFile: dir + "/pids", encoding: .utf8)) ?? ""
+            pids = text.split(whereSeparator: \.isWhitespace).compactMap { pid_t($0) }
+        }
+        try #require(pids.count == 2)
+        let start = ContinuousClock.now
+        task.cancel()
+        await #expect(throws: CancellationError.self) { try await task.value }
+        #expect(ContinuousClock.now - start < .seconds(5))
+        let gone = ContinuousClock.now + .seconds(5)
+        while pids.contains(where: { kill($0, 0) == 0 }) && ContinuousClock.now < gone {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(!pids.contains { kill($0, 0) == 0 }, "the shell and its sleep both ended")
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func cancellingRunEscalatesToSIGKILL() async throws {
+        let task = Task { [exec] in
+            try await exec.run("sh", ["-c", "trap '' TERM; while :; do sleep 0.1; done"], cwd: nil)
+        }
+        try await Task.sleep(for: .milliseconds(300))
+        let start = ContinuousClock.now
+        task.cancel()
+        await #expect(throws: CancellationError.self) { try await task.value }
+        #expect(ContinuousClock.now - start < .seconds(8))
+    }
+
     // MARK: which / PATH
 
     @Test func whichResolvesAgainstTheLoginPath() async throws {
@@ -201,6 +246,8 @@ private final class Recorder: Sendable {
 
     @Test(.timeLimit(.minutes(1)))
     func terminateEndsSleep() async throws {
+        // A slow login shell (its first lookup) isn't what's measured.
+        _ = await exec.searchPath
         let start = ContinuousClock.now
         let (process, recorder) = try spawn("sleep", ["30"])
         try await Task.sleep(for: .milliseconds(100))
