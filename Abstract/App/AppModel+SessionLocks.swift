@@ -145,7 +145,7 @@ extension AppModel {
         case .up:
             return AppLink.StartReply(agent: appAgents[id], message: nil)
         case let .failed(message):
-            stop(id)
+            stopAgent(id)
             return AppLink.StartReply(agent: nil, message: message)
         }
     }
