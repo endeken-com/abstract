@@ -168,6 +168,14 @@ public struct EditPreview: Sendable, Hashable, Codable {
     }
 }
 
+/// A picture in a tool's result, as its bytes.
+public struct ToolImage: Sendable, Hashable {
+    /// "image/png", as the agent labelled it.
+    public var mediaType: String
+    public var data: Data
+    public init(mediaType: String, data: Data) { self.mediaType = mediaType; self.data = data }
+}
+
 public enum TextRole: String, Sendable, Codable { case assistant, user }
 
 /// Normalised agent output. Every provider parser produces only these.
@@ -181,6 +189,8 @@ public enum AgentEvent: Sendable, Hashable {
     case thinking(text: String, blockId: String?, partial: Bool)
     case toolUse(id: String, name: String, input: JSONValue, edit: EditPreview?)
     case toolResult(toolUseId: String, output: String, isError: Bool, edit: EditPreview?)
+    /// Pictures a tool's result carried, as when Claude reads an image.
+    case toolImages(toolUseId: String, images: [ToolImage])
     case permissionRequest(requestId: String, toolName: String, input: JSONValue)
     case turnEnd(durationMs: Int?, costUsd: Double?, usage: UsageTotals?, summary: String?)
     case usage(UsageTotals, costUsd: Double?, durationMs: Int?, turns: Int?)

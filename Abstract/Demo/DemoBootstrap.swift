@@ -137,6 +137,25 @@ final class DemoBootstrap {
         }
     }
 
+    /// A 128 × 128 PNG, transparent around a rounded square.
+    private static func logo() -> Data {
+        let image = NSImage(size: NSSize(width: 128, height: 128), flipped: false) { rect in
+            NSColor(srgbRed: 0.36, green: 0.42, blue: 0.95, alpha: 1).setFill()
+            NSBezierPath(roundedRect: rect.insetBy(dx: 12, dy: 12), xRadius: 24, yRadius: 24).fill()
+            NSColor.white.setFill()
+            NSBezierPath(ovalIn: rect.insetBy(dx: 44, dy: 44)).fill()
+            return true
+        }
+        let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 128, pixelsHigh: 128, bitsPerSample: 8, samplesPerPixel: 4,
+                                      hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
+        guard let bitmap else { return Data() }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+        image.draw(in: NSRect(x: 0, y: 0, width: 128, height: 128))
+        NSGraphicsContext.restoreGraphicsState()
+        return bitmap.representation(using: .png, properties: [:]) ?? Data()
+    }
+
     private func makeRepo(_ name: String, _ model: AppModel) async -> Project? {
         let dir = root.appendingPathComponent("repos").appendingPathComponent(name)
         try? FileManager.default.createDirectory(at: dir.appendingPathComponent("src/sessions"), withIntermediateDirectories: true)
@@ -177,6 +196,9 @@ final class DemoBootstrap {
             try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? text.write(to: url, atomically: true, encoding: .utf8)
         }
+        // An image, for Files' preview and the links and thumbnails in the chat.
+        try? FileManager.default.createDirectory(at: dir.appendingPathComponent("assets"), withIntermediateDirectories: true)
+        try? Self.logo().write(to: dir.appendingPathComponent("assets/logo.png"))
         let exec = model.executor
         for args in [["init", "-q", "-b", "main"], ["config", "user.email", "demo@abstract.local"], ["config", "user.name", "Abstract Demo"],
                      ["add", "-A"], ["commit", "-qm", "Initial commit"]] {
@@ -275,6 +297,11 @@ struct Snapshotter {
                 model.openFile("Dockerfile", in: idle.id)
                 model.showPane(.files, in: idle.id)
                 await shot("\(t)-04-files", settle: 1.5)
+                // An image previews, fitted and then at its actual size.
+                model.openFile("assets/logo.png", in: idle.id, preview: true)
+                await shot("\(t)-04c-image-fit", settle: 1.0)
+                model.activeImageDocument?.zoomToActualSize()
+                await shot("\(t)-04d-image-actual", settle: 0.6)
                 model.showPane(.review, in: idle.id)
                 await shot("\(t)-23-pull-request", settle: 1.2)
                 model.showPane(.terminal, in: idle.id)
