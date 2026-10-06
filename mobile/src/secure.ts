@@ -24,6 +24,7 @@ export function uuid() {
 
 export type Identity = { peer: Peer; privateKey: Uint8Array };
 export async function identity(): Promise<Identity> {
+  const { phoneHostName } = await import('./phoneHostName');
   const SecureStore = await import('expo-secure-store');
   let id = await SecureStore.getItemAsync('remote-device-id');
   let key = await SecureStore.getItemAsync('remote-signing-key');
@@ -35,7 +36,7 @@ export async function identity(): Promise<Identity> {
     await SecureStore.setItemAsync('remote-signing-key', key);
   }
   const privateKey = bytes(key);
-  return { peer: { id, name: 'Abstract Mobile', publicKey: base64(ed25519.getPublicKey(privateKey)) }, privateKey };
+  return { peer: { id, name: phoneHostName(), publicKey: base64(ed25519.getPublicKey(privateKey)) }, privateKey };
 }
 
 export class Cipher {

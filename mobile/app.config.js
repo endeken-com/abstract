@@ -12,6 +12,7 @@ module.exports = {
     android: {
       package: 'sh.abstractapp.mobile',
       versionCode: Number(process.env.MOBILE_ANDROID_VERSION_CODE || 1),
+      softwareKeyboardLayoutMode: 'resize',
       permissions: ['INTERNET', 'ACCESS_NETWORK_STATE', 'ACCESS_WIFI_STATE', 'CHANGE_WIFI_MULTICAST_STATE', 'NEARBY_WIFI_DEVICES']
     },
     plugins: ['./plugins/withLocalNetwork', './plugins/withInternet', 'expo-font']
