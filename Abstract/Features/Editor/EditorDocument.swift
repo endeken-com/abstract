@@ -13,7 +13,7 @@ final class EditorDocument {
     enum Content: Equatable {
         case loading
         case text(editable: Bool)
-        case image(NSImage)
+        case image(ImagePreview)
         case binary
         case tooLarge
         case missing
@@ -57,10 +57,13 @@ final class EditorDocument {
     @ObservationIgnored private let watch: @MainActor ([String], @escaping () -> Void) -> AnyObject?
     /// Called on the first edit, so a preview tab is kept.
     @ObservationIgnored var onFirstEdit: (() -> Void)?
+    /// How large an image shows: nil fits it to the tab, 1 is its actual size.
+    var imageScale: CGFloat?
+    /// The scale that fits the image to its tab, as last laid out.
+    @ObservationIgnored var fitScale: CGFloat = 1
 
     static let editableLimit: Int64 = 2 * 1024 * 1024
     static let readLimit: Int64 = 10 * 1024 * 1024
-    private static let images: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "heic", "tiff", "tif", "bmp", "ico", "icns", "svg", "pdf"]
 
     init(root: String, path: String, executor: any Executor = LocalExecutor.shared,
          watch: @escaping @MainActor ([String], @escaping () -> Void) -> AnyObject? = { WorktreeWatcher(paths: $0, onChange: $1) }) {
@@ -83,20 +86,22 @@ final class EditorDocument {
     }
 
     private func read() async {
-        let url = URL(fileURLWithPath: absolute)
         guard let info = await executor.fileInfo(absolute), !info.isDirectory else { content = .missing; return }
         size = info.size
         disk = (size, info.modified)
-        let isImage = Self.images.contains(url.pathExtension.lowercased())
-        guard size <= Self.readLimit || isImage else { content = .tooLarge; return }
+        let named = ImageFacts.isImageName(path)
+        guard size <= Self.readLimit || named else { content = .tooLarge; return }
         let data: Data
         do { data = try await executor.readData(absolute) } catch { content = .unreadable(error.localizedDescription); return }
-        if isImage, let image = NSImage(data: data) {
-            content = .image(image)
+        // Paseo's test: a NUL, or bytes that aren't UTF-8, mean binary.
+        let string = data.prefix(8000).contains(0) ? nil : String(data: data, encoding: .utf8)
+        // An image is told by its bytes, whatever its name; text is only an
+        // image when its name says so (SVG).
+        if named || string == nil, let preview = ImagePreview(data, named: named) {
+            content = .image(preview)
             return
         }
-        // Paseo's test: a NUL, or bytes that aren't UTF-8, mean binary.
-        guard !data.prefix(8000).contains(0), let string = String(data: data, encoding: .utf8) else { content = .binary; return }
+        guard let string else { content = .binary; return }
         text = string
         saved = string
         lineCount = Self.lines(in: string)
@@ -195,6 +200,26 @@ final class EditorDocument {
         if bytes < 1024 * 1024 { return String(format: "%.1f KB", Double(bytes) / 1024) }
         return String(format: "%.1f MB", Double(bytes) / 1024 / 1024)
     }
+}
+
+/// An image as Files shows it.
+struct ImagePreview: Equatable {
+    let image: NSImage
+    /// Its format, pixel size and transparency; nil for the vector formats
+    /// ImageIO doesn't read (PDF, SVG).
+    let facts: ImageFacts?
+
+    /// The image in `data`: anything ImageIO decodes, or what `NSImage`
+    /// draws when the file's name says it's an image.
+    init?(_ data: Data, named: Bool) {
+        let facts = ImageFacts(data)
+        guard facts != nil || named, let image = NSImage(data: data), image.size.width > 0, image.size.height > 0 else { return nil }
+        self.image = image
+        self.facts = facts
+    }
+
+    /// Its size at 100%, in points: a Retina screenshot shows at the size it was taken.
+    var size: CGSize { image.size }
 }
 
 /// Open documents by worktree and path, so a tab that comes back keeps its

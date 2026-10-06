@@ -325,6 +325,20 @@ import AbstractCore
             lines: [.init(origin: .context, content: "keep"), .init(origin: .removed, content: "old"),
                     .init(origin: .added, content: "new"), .init(origin: .added, content: "more")]))])
     }
+
+    @Test func imagesInAToolResultAreKept() {
+        let png = Data([0x89, 0x50, 0x4E, 0x47]).base64EncodedString()
+        let events = Self.feed([
+            #"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":""# + png + #""}}]}]}}"#,
+        ])
+        #expect(events == [.toolResult(toolUseId: "t", output: "", isError: false, edit: nil),
+                           .toolImages(toolUseId: "t", images: [ToolImage(mediaType: "image/png", data: Data([0x89, 0x50, 0x4E, 0x47]))])])
+        var timeline = Timeline()
+        timeline.append(.toolUse(id: "t", name: "Read", input: .object(["file_path": .string("/w/shot.png")]), edit: nil))
+        events.forEach { timeline.append($0) }
+        guard case let .tools(_, calls)? = timeline.blocks.first else { Issue.record("no call"); return }
+        #expect(calls.first?.result?.images.map(\.mediaType) == ["image/png"])
+    }
 }
 
 @Suite struct ProviderRegistryTests {

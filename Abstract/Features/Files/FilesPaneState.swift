@@ -33,8 +33,9 @@ final class FilesPaneState {
 
 extension AppModel {
     /// Open `relativePath` in a tab of the main pane, and select it in the chat's file tree.
-    /// Absolute paths inside the chat's worktree are accepted too.
-    func openFile(_ relativePath: String, in sessionId: String) {
+    /// Absolute paths inside the chat's worktree are accepted too. A preview
+    /// tab is replaced by the next file previewed, unless you edit it.
+    func openFile(_ relativePath: String, in sessionId: String, preview: Bool = false) {
         var path = relativePath
         if let root = session(sessionId)?.worktreePath, !root.isEmpty {
             let base = FileIndex.join(root, "") + "/"
@@ -43,12 +44,12 @@ extension AppModel {
         while path.hasPrefix("./") { path.removeFirst(2) }
         while path.hasSuffix("/") { path.removeLast() }
         FilesPaneState.shared.session(sessionId).reveal(path)
-        openFileTab(path, in: sessionId)
+        openFileTab(path, in: sessionId, preview: preview)
     }
 
     /// The same, with the caret on `line`.
-    func openFile(_ relativePath: String, in sessionId: String, line: Int?) {
-        openFile(relativePath, in: sessionId)
+    func openFile(_ relativePath: String, in sessionId: String, line: Int?, preview: Bool = false) {
+        openFile(relativePath, in: sessionId, preview: preview)
         guard let line, let root = session(sessionId)?.worktreePath else { return }
         EditorStore.shared.document(root: root, path: relativePath, in: sessionId, model: self).goToLine = line
     }
