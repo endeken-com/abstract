@@ -183,7 +183,10 @@ struct ReviewGroup: Identifiable {
 
 /// Everything a review needs from the app, resolved once per action.
 struct DiffContext: Sendable {
+    /// For what you do: accept, discard.
     let executor: any Executor
+    /// For keeping the review up to date: inside the background git budget.
+    let reader: any Executor
     let sessionId: String
     let worktree: String
     let root: String
@@ -212,7 +215,8 @@ extension AppModel {
         // A chat on another Mac: its worktree is there; the link says if it's gone.
         let remote = sessionId.hasPrefix(RemoteService.mirrorPrefix)
         guard remote || FileManager.default.fileExists(atPath: worktree) else { return .worktreeMissing(worktree) }
-        return .ready(DiffContext(executor: executor(for: sessionId), sessionId: sessionId, worktree: worktree, root: project.rootPath,
+        return .ready(DiffContext(executor: executor(for: sessionId), reader: reader(for: sessionId), sessionId: sessionId,
+                                  worktree: worktree, root: project.rootPath,
                                   projectName: project.name, exclude: project.nestedRepos, baseRef: session.baseRef))
     }
 }
@@ -358,7 +362,7 @@ final class DiffReview {
         accepted = AcceptedLedger.bySession[context.sessionId] ?? []
         if phase == .loaded { isRefreshing = true } else { phase = .loading }
         defer { if current == generation { isRefreshing = false } }
-        let exec = context.executor
+        let exec = context.reader
         let repoList = await Submodules.list(exec, worktree: context.worktree)
         // A submodule that's gone (removed, or no longer checked out) gives way to the worktree's own.
         if !repoList.contains(where: { $0.path == selectedRepo }) {

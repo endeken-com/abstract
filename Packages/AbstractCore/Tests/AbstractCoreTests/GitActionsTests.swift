@@ -39,6 +39,19 @@ struct GitActionsTests {
         #expect(!state.dirty && state.aheadOfBase == 1 && state.behindBase == 0)
     }
 
+    @Test func stateReadsTheSameInsideTheBackgroundBudget() async throws {
+        let (root, wt) = try await makeRepo()
+        defer { try? FileManager.default.removeItem(atPath: (root as NSString).deletingLastPathComponent) }
+        try "two\n".write(toFile: wt + "/b.txt", atomically: true, encoding: .utf8)
+        try await git(wt, ["add", "-A"])
+        try await git(wt, ["commit", "-qm", "Add b"])
+        try "three\n".write(toFile: wt + "/c.txt", atomically: true, encoding: .utf8)
+        let reader = BudgetedExecutor(exec, budget: GitBudget(log: { _ in }))
+        let budgeted = await GitActions.state(reader, worktree: wt, preferredBase: "main")
+        #expect(budgeted == (await GitActions.state(exec, worktree: wt, preferredBase: "main")))
+        #expect(budgeted.dirty && budgeted.aheadOfBase == 1)
+    }
+
     @Test func updateFromBaseThenMergeLocally() async throws {
         let (root, wt) = try await makeRepo()
         defer { try? FileManager.default.removeItem(atPath: (root as NSString).deletingLastPathComponent) }

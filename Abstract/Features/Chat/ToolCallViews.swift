@@ -52,8 +52,10 @@ enum ToolSegment: Identifiable {
         }
         for call in calls {
             let kind = ToolKind(call.name)
-            // A command left running in the background stands on its own row.
-            if folds, kind == .explore || kind == .command, !asking.contains(call.id), !ToolPresentation.startsInBackground(call) {
+            // A command left running in the background, and an image with its
+            // thumbnail, stand on their own rows.
+            if folds, kind == .explore || kind == .command, !asking.contains(call.id), !ToolPresentation.startsInBackground(call),
+               !ToolThumbnail.shows(call) {
                 if kind != runKind { flush() }
                 runKind = kind
                 run.append(call)
@@ -184,6 +186,7 @@ struct ToolCallView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
+            if ToolThumbnail.shows(call) { ToolThumbnail(sessionId: sessionId, call: call) }
             if isOpen {
                 details
                     .padding(.top, 4)

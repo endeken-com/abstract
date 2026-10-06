@@ -33,6 +33,12 @@ extension AppModel {
         return EditorStore.shared.existing(root: root, path: path, in: sessionId)
     }
 
+    /// The image showing, when an image's tab is: ⌘0 and ⌘1 zoom it.
+    var activeImageDocument: EditorDocument? {
+        guard let document = activeFileDocument, case .image = document.content else { return nil }
+        return document
+    }
+
     func saveActiveFile() {
         guard let document = activeFileDocument else { return }
         Task { await document.save() }

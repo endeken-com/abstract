@@ -138,7 +138,7 @@ struct BlockView: View, Equatable {
             // The fade only for text still arriving: finished text draws the
             // fast way (a custom text renderer draws through Core Graphics,
             // which stalls a scroll that brings many rows in at once).
-            AgentProse(markdown: text, streaming: streaming || live ? streaming : nil)
+            ReplyProse(sessionId: sessionId, text: text, streaming: streaming || live ? streaming : nil)
         case let .thinking(_, text):
             ThinkingView(text: text, streaming: live)
         case let .tools(_, calls):

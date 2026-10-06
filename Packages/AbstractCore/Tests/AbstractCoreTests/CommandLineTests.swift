@@ -347,7 +347,8 @@ struct CommandLineTests {
         defer { box.tearDown() }
         let idle = ["ABSTRACT_AGENT_IDLE_TIMEOUT": "1"]
         let id = try #require(try await box.create(environment: idle).object["id"] as? String)
-        try await waitUntil { SessionLock.holder(of: id, in: box.locks) == nil }
+        // The full suite runs many process-heavy tests alongside this host on CI.
+        try await waitUntil(timeout: 30) { SessionLock.holder(of: id, in: box.locks) == nil }
         #expect(try box.store.session(id)?.status == .finished)
         #expect(try await box.run(["agent", "find", "--session", id]).json is NSNull)
         let out = try await box.run(["agent", "respawn", "--session", id, "--agent", "claude", "--prompt-file", box.file("Again")],
