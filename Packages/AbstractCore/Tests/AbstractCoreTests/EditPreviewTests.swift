@@ -16,6 +16,16 @@ import Testing
         #expect(preview.filePath == "/a.swift")
     }
 
+    @Test func readsCamelCaseFieldNames() throws {
+        let edit = try #require(EditPreview.fromToolInput(name: "edit", input: input(
+            #"{"filePath":"/a.swift","oldString":"a","newString":"b"}"#)))
+        #expect(edit.filePath == "/a.swift")
+        #expect((edit.additions, edit.deletions) == (1, 1))
+        let multi = try #require(EditPreview.fromToolInput(name: "multiedit", input: input(
+            #"{"filePath":"/a","edits":[{"oldString":"a","newString":"b"}]}"#)))
+        #expect(multi.lines.map(\.content) == ["a", "b"])
+    }
+
     @Test func removalsReadBeforeAdditions() {
         let lines = EditPreview.lineDiff("x\ny", "p\nq\nr")
         #expect(lines.map(\.origin) == [.removed, .removed, .added, .added, .added])

@@ -798,7 +798,9 @@ enum ToolPresentation {
 
     static func path(_ call: ToolCall) -> String? {
         guard let o = call.input.object else { return nil }
-        return o["file_path"]?.string ?? o["notebook_path"]?.string ?? (ToolKind(call.name) == .command ? nil : o["path"]?.string)
+        return o["file_path"]?.string ?? o["filePath"]?.string ?? o["notebook_path"]?.string
+            ?? (ToolKind(call.name) == .command ? nil : o["path"]?.string)
+            ?? call.edit.flatMap { $0.filePath.isEmpty ? nil : $0.filePath }
     }
 
     static func relative(_ path: String, root: String?) -> String {

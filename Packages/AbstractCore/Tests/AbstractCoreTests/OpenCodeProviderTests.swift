@@ -60,6 +60,40 @@ import Testing
         #expect(parser.onExit(code: 0) == [.status(.finished, detail: nil)])
     }
 
+    @Test func editAndWriteCarryTheirDiff() throws {
+        let parser = provider.makeParser()
+        let edit = #"{"type":"tool_use","sessionID":"ses_a","part":{"type":"tool","tool":"edit","callID":"call_1","state":{"status":"completed","input":{"filePath":"/tmp/work/a.txt","oldString":"one\ntwo\nthree","newString":"one\n2\nthree"},"output":"Edit applied successfully."}}}"#
+        let write = #"{"type":"tool_use","sessionID":"ses_a","part":{"type":"tool","tool":"write","callID":"call_2","state":{"status":"completed","input":{"filePath":"/tmp/work/new.txt","content":"hello\nworld\n"},"output":"Wrote file successfully."}}}"#
+
+        var timeline = Timeline()
+        timeline.append(contentsOf: parser.feed(edit, stream: .stdout) + parser.feed(write, stream: .stdout))
+        guard case let .tools(_, calls)? = timeline.blocks.first else { Issue.record("no tool calls"); return }
+        #expect(calls.count == 2)
+
+        let edited = try #require(calls[0].edit)
+        #expect(edited.filePath == "/tmp/work/a.txt")
+        #expect((edited.additions, edited.deletions) == (1, 1))
+        #expect(edited.lines.map(\.content) == ["one", "two", "2", "three"])
+
+        let wrote = try #require(calls[1].edit)
+        #expect(wrote.filePath == "/tmp/work/new.txt")
+        #expect((wrote.additions, wrote.deletions) == (2, 0))
+        #expect(wrote.lines.allSatisfy { $0.origin == .added })
+    }
+
+    @Test func anEditWhoseInputArrivesWithItsResultStillShowsTheDiff() throws {
+        let parser = provider.makeParser()
+        let running = #"{"type":"tool_use","sessionID":"ses_a","part":{"type":"tool","tool":"edit","callID":"call_1","state":{"status":"running","input":{}}}}"#
+        let done = #"{"type":"tool_use","sessionID":"ses_a","part":{"type":"tool","tool":"edit","callID":"call_1","state":{"status":"completed","input":{"filePath":"/tmp/work/a.txt","oldString":"a","newString":"b"},"output":"Edit applied successfully."}}}"#
+
+        var timeline = Timeline()
+        timeline.append(contentsOf: parser.feed(running, stream: .stdout) + parser.feed(done, stream: .stdout))
+        guard case let .tools(_, calls)? = timeline.blocks.first else { Issue.record("no tool calls"); return }
+        let preview = try #require(calls.first?.edit)
+        #expect(preview.filePath == "/tmp/work/a.txt")
+        #expect((preview.additions, preview.deletions) == (1, 1))
+    }
+
     @Test func discoversModelVariantsFromVerboseCatalog() throws {
         let output = """
         openai/gpt-5.4
