@@ -366,9 +366,12 @@ final class ClaudeParser: OutputParser {
         for block in message["content"]?.array ?? [] {
             switch block["type"]?.string {
             case "tool_result":
-                events.append(.toolResult(toolUseId: block["tool_use_id"]?.string ?? "",
+                let id = block["tool_use_id"]?.string ?? ""
+                events.append(.toolResult(toolUseId: id,
                                           output: ClaudeWire.flatten(block["content"]),
                                           isError: block["is_error"]?.bool == true, edit: edit))
+                let images = ClaudeWire.images(block["content"])
+                if !images.isEmpty { events.append(.toolImages(toolUseId: id, images: images)) }
             case "text":
                 // Claude Code's own additions (a skill's instructions, reminders)
                 // come as user messages marked synthetic; they aren't yours.
@@ -529,6 +532,15 @@ private enum ClaudeWire {
     static func flatten(_ content: JSONValue?) -> String {
         if let s = content?.string { return s }
         return (content?.array ?? []).compactMap { $0["text"]?.string }.joined()
+    }
+
+    /// The `image` blocks of a tool_result `content` array, base64 as Claude sends them.
+    static func images(_ content: JSONValue?) -> [ToolImage] {
+        (content?.array ?? []).compactMap { block in
+            guard block["type"]?.string == "image", let source = block["source"], source["type"]?.string == "base64",
+                  let encoded = source["data"]?.string, let data = Data(base64Encoded: encoded, options: .ignoreUnknownCharacters) else { return nil }
+            return ToolImage(mediaType: source["media_type"]?.string ?? "image/png", data: data)
+        }
     }
 
     static func editPreview(toolUseResult result: JSONValue?) -> EditPreview? {

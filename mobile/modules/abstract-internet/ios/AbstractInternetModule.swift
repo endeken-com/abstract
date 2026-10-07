@@ -1,6 +1,7 @@
 import ExpoModulesCore
 import AbstractInternetTransport
 import Foundation
+import UIKit
 
 /// Native handles are owned by one actor; closing a handle interrupts pending reads.
 private actor InternetHandles {
@@ -50,6 +51,11 @@ public final class AbstractInternetModule: Module {
     private let handles = InternetHandles()
     public func definition() -> ModuleDefinition {
         Name("AbstractInternet")
+        Function("hostName") {
+            var name = [CChar](repeating: 0, count: 256)
+            guard gethostname(&name, name.count) == 0 else { return UIDevice.current.name }
+            return String(cString: name)
+        }
         AsyncFunction("connect") { (key: String, host: String, handle: String) in
             try await self.handles.connect(key: key, host: host, handle: handle)
         }

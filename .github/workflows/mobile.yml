@@ -84,6 +84,8 @@ jobs:
           printf '%s' "$PLAY_SERVICE_ACCOUNT_JSON" > "$RUNNER_TEMP/play-service-account.json"
           echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/abstract-upload.keystore" >> "$GITHUB_ENV"
           CI=1 npx expo prebuild --platform android --clean
+          sed -i 's/^networkTimeout=.*/networkTimeout=120000/' android/gradle/wrapper/gradle-wrapper.properties
+          grep -q '^networkTimeout=120000$' android/gradle/wrapper/gradle-wrapper.properties
           node scripts/prepare-android-release.js
       - uses: actions/cache/restore@v4
         id: iroh-cache
@@ -144,5 +146,10 @@ jobs:
         working-directory: mobile
       - run: npx expo prebuild --platform android --clean --no-install
         working-directory: mobile
+      - name: Allow time to download Gradle
+        run: |
+          sed -i 's/^networkTimeout=.*/networkTimeout=120000/' gradle/wrapper/gradle-wrapper.properties
+          grep -q '^networkTimeout=120000$' gradle/wrapper/gradle-wrapper.properties
+        working-directory: mobile/android
       - run: ./gradlew assembleDebug
         working-directory: mobile/android

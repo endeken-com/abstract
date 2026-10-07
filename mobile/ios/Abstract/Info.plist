@@ -31,12 +31,6 @@
           <string>sh.abstract.mobile</string>
         </array>
       </dict>
-      <dict>
-        <key>CFBundleURLSchemes</key>
-        <array>
-          <string>exp+abstract-mobile</string>
-        </array>
-      </dict>
     </array>
     <key>CFBundleVersion</key>
     <string>1</string>
@@ -54,7 +48,6 @@
     <key>NSBonjourServices</key>
     <array>
       <string>_abstract._tcp</string>
-      <string>_expo._tcp</string>
     </array>
     <key>NSLocalNetworkUsageDescription</key>
     <string>Abstract finds your Macs on the local network so you can pair and manage chats.</string>
