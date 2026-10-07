@@ -869,6 +869,7 @@ final class AppModel {
         for block in blocks.reversed() {
             switch block {
             case let .error(_, message): if LimitDetector.classify(message) != nil { return true }
+            case .notice(_, .limitReached): return true
             case .user, .handoff: return false
             default: continue
             }

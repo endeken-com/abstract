@@ -148,8 +148,9 @@ import AbstractCore
         let parser = provider.makeParser()
         #expect(parser.feed(#"{"type":"turn.failed","error":{"message":"nope"}}"#, stream: .stdout)
             == [.error("nope"), .status(.errored, detail: nil)])
-        #expect(parser.feed(#"{"type":"error","message":"boom"}"#, stream: .stdout)
-            == [.error("boom"), .status(.errored, detail: nil)])
+        // A top-level `error` alone doesn't end the turn: Codex carries on,
+        // or follows it with `turn.failed`.
+        #expect(parser.feed(#"{"type":"error","message":"boom"}"#, stream: .stdout) == [.notice(.warning("boom"))])
     }
 
     @Test func reportsExitStatus() {

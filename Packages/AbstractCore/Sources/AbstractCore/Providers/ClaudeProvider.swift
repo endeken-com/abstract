@@ -173,6 +173,8 @@ final class ClaudeParser: OutputParser {
     /// terminal. `commands_changed` repeats the list without saying.
     private var skills: Set<String> = []
     private var terminalOnly: Set<String> = []
+    /// The last `rate_limit_event`'s status, window and reset time.
+    private var lastRateLimit: String?
 
     func feed(_ line: String, stream: OutputStreamKind) -> [AgentEvent] {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -206,9 +208,9 @@ final class ClaudeParser: OutputParser {
         case "user": onUser(obj).map { Self.under(parent, $0) }
         case "result": onResult(obj)
         case "control_request": onControlRequest(obj)
-        // Housekeeping the UI has no use for; `tool_progress` is a long
-        // command's heartbeat.
-        case "rate_limit_event", "tool_progress": []
+        case "rate_limit_event": onRateLimit(obj)
+        // A long command's heartbeat; the UI has no use for it.
+        case "tool_progress": []
         case "control_response": onControlResponse(obj)
         case "prompt_suggestion": obj["suggestion"]?.string.flatMap { $0.isEmpty ? nil : [.promptSuggestion($0)] } ?? []
         default: nil
@@ -252,12 +254,35 @@ final class ClaudeParser: OutputParser {
             return events
         case "task_started", "task_progress", "task_updated", "task_notification":
             return ClaudeWire.task(obj).map { [.task($0)] } ?? []
+        // A failed request it is sending again; `error_status` is null when
+        // no answer came back at all.
+        case "api_retry":
+            guard let attempt = ClaudeWire.int(obj["attempt"]) else { return [] }
+            return [.notice(.retrying(attempt: attempt, maxAttempts: ClaudeWire.int(obj["max_retries"]),
+                                      httpStatus: ClaudeWire.int(obj["error_status"])))]
         // Every other system frame is the CLI's own bookkeeping (status,
         // hooks, thinking_tokens, task_summary, background_tasks_changed,
         // permission_denied…). New ones appear between releases; none of
         // them belong in the conversation.
         default:
             return []
+        }
+    }
+
+    /// `rate_limit_info.status` is "allowed", "allowed_warning" or "rejected",
+    /// sent before every turn. A notice only when it turns to a warning or a
+    /// refusal, so a chat near its limit doesn't repeat it each turn.
+    private func onRateLimit(_ obj: JSONValue) -> [AgentEvent] {
+        guard let info = obj["rate_limit_info"], let status = info["status"]?.string else { return [] }
+        let resetsAt = ClaudeWire.double(info["resetsAt"]).map { Date(timeIntervalSince1970: $0) }
+        let key = [status, info["rateLimitType"]?.string ?? "", resetsAt.map { "\($0.timeIntervalSince1970)" } ?? ""]
+            .joined(separator: "|")
+        defer { lastRateLimit = key }
+        guard key != lastRateLimit else { return [] }
+        return switch status {
+        case "allowed_warning": [.notice(.nearLimit(resetsAt: resetsAt))]
+        case "rejected": [.notice(.limitReached(resetsAt: resetsAt))]
+        default: []
         }
     }
 
