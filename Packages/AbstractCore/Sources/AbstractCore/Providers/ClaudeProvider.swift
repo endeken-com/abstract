@@ -67,6 +67,14 @@ public struct ClaudeProvider: ProviderDefinition {
             + #","request":{"subtype":"stop_task","task_id":"# + ClaudeWire.quoted(taskId) + "}}\n"
     }
 
+    /// Verified against claude 2.1.283's control channel: the turn ends with a
+    /// `result` whose `terminal_reason` is `aborted_streaming` (or
+    /// `aborted_tools` mid-tool), and the process, its session and its
+    /// background tasks stay for the next message.
+    public func buildInterrupt(requestId: String) -> String? {
+        #"{"type":"control_request","request_id":"# + ClaudeWire.quoted(requestId) + #","request":{"subtype":"interrupt"}}"# + "\n"
+    }
+
     /// `background_tasks`, the control-request form of Ctrl+B: the blocking
     /// call returns at once and the work carries on as a background task.
     public func buildBackground(toolUseId: String?, requestId: String) -> String? {
@@ -173,6 +181,8 @@ final class ClaudeParser: OutputParser {
     /// terminal. `commands_changed` repeats the list without saying.
     private var skills: Set<String> = []
     private var terminalOnly: Set<String> = []
+    /// The CLI said the turn under way was interrupted; its `result` follows.
+    private var interrupted = false
 
     func feed(_ line: String, stream: OutputStreamKind) -> [AgentEvent] {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -376,6 +386,12 @@ final class ClaudeParser: OutputParser {
                 // Claude Code's own additions (a skill's instructions, reminders)
                 // come as user messages marked synthetic; they aren't yours.
                 if obj["isSynthetic"]?.bool == true || obj["isMeta"]?.bool == true { continue }
+                // "[Request interrupted by user]", or "… for tool use": the CLI's
+                // note that the turn was stopped, which its result shows.
+                if let text = block["text"]?.string, text.hasPrefix("[Request interrupted by user") {
+                    interrupted = true
+                    continue
+                }
                 events.append(.text(role: .user, text: block["text"]?.string ?? "", blockId: nil, partial: false))
             default:
                 break
@@ -386,7 +402,12 @@ final class ClaudeParser: OutputParser {
 
     private func onResult(_ obj: JSONValue) -> [AgentEvent]? {
         let usage = obj["usage"]
-        var events: [AgentEvent] = [
+        // A stopped turn reports itself as an error; it isn't one. Its rule
+        // comes first so the usage after it folds in.
+        let stopped = interrupted || obj["terminal_reason"]?.string?.hasPrefix("aborted") == true
+        interrupted = false
+        var events: [AgentEvent] = stopped ? [TurnStop.rule] : []
+        events += [
             .usage(
                 UsageTotals(
                     inputTokens: ClaudeWire.int(usage?["input_tokens"]) ?? 0,
@@ -399,7 +420,7 @@ final class ClaudeParser: OutputParser {
                 turns: ClaudeWire.int(obj["num_turns"])
             ),
         ]
-        if obj["is_error"]?.bool == true {
+        if obj["is_error"]?.bool == true, !stopped {
             events.append(.error(obj["result"]?.string ?? obj["subtype"]?.string ?? "Agent reported an error"))
             events.append(.status(.errored, detail: nil))
         } else {

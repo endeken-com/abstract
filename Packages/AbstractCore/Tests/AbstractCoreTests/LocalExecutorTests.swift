@@ -137,6 +137,8 @@ private final class Recorder: Sendable {
 
     @Test(.timeLimit(.minutes(1)))
     func cancellingRunEscalatesToSIGKILL() async throws {
+        // A slow login shell (its first lookup) isn't what's measured.
+        _ = await exec.searchPath
         let task = Task { [exec] in
             try await exec.run("sh", ["-c", "trap '' TERM; while :; do sleep 0.1; done"], cwd: nil)
         }

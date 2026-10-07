@@ -923,7 +923,7 @@ final class HostedPeer {
                       AppModel.canonical($0.path) == AppModel.canonical(path)
                   }) else { return .failed("That worktree is unavailable.") }
             for session in model.sessions where session.worktreePath.map({ AppModel.canonical($0) }) == AppModel.canonical(path) {
-                model.stop(session.id)
+                model.stopAgent(session.id)
             }
             await model.runTeardownScript(project, worktree: worktree.path)
             do {

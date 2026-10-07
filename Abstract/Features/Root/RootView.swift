@@ -78,7 +78,7 @@ struct RootView: View {
                             titleVisibility: .visible) {
             Button("Archive", role: .destructive) {
                 if let id = model.requestArchive {
-                    if model.isAlive(id) { model.stop(id) }
+                    if model.isAlive(id) { model.stopAgent(id) }
                     model.setArchived(id, true)
                 }
                 model.requestArchive = nil

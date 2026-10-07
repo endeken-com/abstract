@@ -93,7 +93,7 @@ final class WorktreeList {
 
     func remove(_ entry: WorktreeEntry, deleteBranch: Bool, project: Project, model: AppModel) async {
         isBusy = true
-        if let s = entry.session, model.isAlive(s.id) { model.stop(s.id) }
+        if let s = entry.session, model.isAlive(s.id) { model.stopAgent(s.id) }
         await model.runTeardownScript(project, worktree: entry.path)
         do {
             try await Git.removeWorktree(model.executor, root: project.rootPath, path: entry.path,
