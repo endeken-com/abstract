@@ -247,7 +247,7 @@ final class RemoteService {
             } else {
                 // Revocation or disabling sharing may have happened during the handshake.
                 guard paired.contains(where: { $0.peer.id == outcome.peer.id && $0.peer.publicKey == outcome.peer.publicKey }) else { channel.close(); return }
-                touch(outcome.peer.id)
+                touch(outcome.peer)
             }
             let peer = HostedPeer(channel: channel, peer: outcome.peer, service: self)
             hosted[outcome.peer.id]?.channel.close()
@@ -270,8 +270,12 @@ final class RemoteService {
         paired.append(PairedDevice(peer: peer, pairedAt: Date(), lastSeen: Date(), address: address ?? known?.address, internetAddress: known?.internetAddress))
     }
 
-    private func touch(_ id: String) {
-        if let i = paired.firstIndex(where: { $0.id == id }) { paired[i].lastSeen = Date() }
+    private func touch(_ peer: PeerInfo) {
+        if let i = paired.firstIndex(where: { $0.id == peer.id }) {
+            paired[i].lastSeen = Date()
+            // A paired phone can change its name without changing its identity.
+            paired[i].peer.name = peer.name
+        }
     }
 
     func rememberInternet(_ address: InternetAddress?, for id: String) {

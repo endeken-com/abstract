@@ -119,6 +119,9 @@ struct AbstractCommands: Commands {
     let updater: Updater
 
     var body: some Commands {
+        // While an image shows, ⌘0 and ⌘1 zoom it, as in Preview, instead of
+        // starting a chat and opening the first one.
+        let image = model.activeImageDocument
         CommandGroup(after: .appInfo) {
             CheckForUpdatesButton(updater: updater)
         }
@@ -149,12 +152,27 @@ struct AbstractCommands: Commands {
             Button("Show Previous Tab") { model.cycleTab(-1) }
                 .keyboardShortcut("[", modifiers: [.command, .shift])
         }
+        CommandGroup(after: .toolbar) {
+            Button("Actual Size") { image?.zoomToActualSize() }
+                .keyboardShortcut(image == nil ? nil : KeyboardShortcut("1"))
+                .disabled(image == nil)
+            Button("Zoom to Fit") { image?.zoomToFit() }
+                .keyboardShortcut(image == nil ? nil : KeyboardShortcut("0"))
+                .disabled(image == nil)
+            Button("Zoom In") { image?.zoom(in: true) }
+                .keyboardShortcut("=")
+                .disabled(image == nil)
+            Button("Zoom Out") { image?.zoom(in: false) }
+                .keyboardShortcut("-")
+                .disabled(image == nil)
+            Divider()
+        }
         CommandMenu("Go") {
             Button("Jump To…") { model.isPaletteOpen.toggle() }
                 .keyboardShortcut("k")
             Divider()
             Button("New") { model.startNew() }
-                .keyboardShortcut("0")
+                .keyboardShortcut(image == nil ? KeyboardShortcut("0") : nil)
             Button("Automations") { model.destination = .automations }
                 .keyboardShortcut("a", modifiers: [.command, .shift])
             Button("Worktrees") { model.destination = .worktrees }
@@ -162,7 +180,7 @@ struct AbstractCommands: Commands {
             Divider()
             ForEach(Array(model.sessions.filter { $0.archivedAt == nil }.prefix(9).enumerated()), id: \.element.id) { i, s in
                 Button(s.name) { model.open(s.id) }
-                    .keyboardShortcut(KeyEquivalent(Character("\(i + 1)")))
+                    .keyboardShortcut(i == 0 && image != nil ? nil : KeyboardShortcut(KeyEquivalent(Character("\(i + 1)"))))
             }
         }
         CommandMenu("Chat") {

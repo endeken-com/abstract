@@ -17,25 +17,34 @@ private final class FakeGit: Executor {
     }
 
     let hold: Duration?
+    let firstRunGate: AsyncStream<Void>?
     let counts = Mutex(Counts())
 
     /// `hold` nil: never exits on its own.
-    init(hold: Duration?) { self.hold = hold }
+    init(hold: Duration?, firstRunGate: AsyncStream<Void>? = nil) {
+        self.hold = hold
+        self.firstRunGate = firstRunGate
+    }
 
     var homeDirectory: String { "/home/test" }
 
     func run(_ command: String, _ args: [String], cwd: String?) async throws -> ExecResult {
         let folder = cwd ?? ""
-        counts.withLock { c in
+        let runNumber = counts.withLock { c in
             c.live += 1
             c.started += 1
             c.peak = max(c.peak, c.live)
             c.perFolder[folder, default: 0] += 1
             c.peakPerFolder = max(c.peakPerFolder, c.perFolder[folder]!)
+            return c.started
         }
         defer { counts.withLock { $0.live -= 1; $0.perFolder[folder]! -= 1 } }
         do {
-            try await Task.sleep(for: hold ?? .seconds(3600))
+            if runNumber == 1, let firstRunGate {
+                for await _ in firstRunGate { break }
+            } else {
+                try await Task.sleep(for: hold ?? .seconds(3600))
+            }
         } catch {
             counts.withLock { $0.killed += 1 }
             throw error
@@ -93,13 +102,19 @@ private func isAlive(_ pid: pid_t) -> Bool { kill(pid, 0) == 0 || errno != ESRCH
 
     @Test(.timeLimit(.minutes(1)))
     func aReadAskedForWhileTheSameIsQueuedJoinsIt() async throws {
-        let git = FakeGit(hold: .milliseconds(100))
-        let exec = BudgetedExecutor(git, budget: budget())
+        let gate = AsyncStream<Void>.makeStream()
+        let git = FakeGit(hold: .milliseconds(20), firstRunGate: gate.stream)
+        let budget = budget()
+        let exec = BudgetedExecutor(git, budget: budget)
         // The first holds the folder; the rest wait behind it, as one.
         try await withThrowingTaskGroup(of: ExecResult.self) { group in
             group.addTask { try await exec.run("git", ["status"], cwd: "/wt") }
-            try await Task.sleep(for: .milliseconds(20))
+            #expect(await eventually { git.snapshot().started == 1 })
             for _ in 0..<10 { group.addTask { try await exec.run("git", ["status"], cwd: "/wt") } }
+            let allJoined = await eventually { budget.waiterCount == 11 }
+            gate.continuation.yield(())
+            gate.continuation.finish()
+            #expect(allJoined)
             for try await result in group { #expect(result.stdout == "status") }
         }
         #expect(git.snapshot().started == 2)
@@ -122,7 +137,9 @@ private func isAlive(_ pid: pid_t) -> Bool { kill(pid, 0) == 0 || errno != ESRCH
         let dir = NSTemporaryDirectory() + "budget-\(UUID().uuidString)"
         try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(atPath: dir) }
-        let exec = BudgetedExecutor(LocalExecutor.shared, budget: budget(timeout: .milliseconds(500)))
+        let local = LocalExecutor.shared
+        _ = await local.searchPath
+        let exec = BudgetedExecutor(local, budget: budget(timeout: .seconds(2)))
         // A git that never exits, and the shell it waits on.
         let alias = "alias.hang=!f() { echo $$ > \"\(dir)/pid\"; sleep 60; }; f"
         await #expect(throws: TimeLimitExceeded.self) {

@@ -55,6 +55,7 @@ public final class GitBudget: Sendable {
     /// Background reads that are running, and waiting to.
     public var running: Int { state.withLock { $0.runningCount } }
     public var queued: Int { state.withLock { $0.queue.count } }
+    var waiterCount: Int { state.withLock { $0.waiting.count } }
     /// Whether the guard has stopped background reads from starting.
     public var isPaused: Bool { state.withLock { $0.paused } }
 

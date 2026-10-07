@@ -1,5 +1,6 @@
 import type { RemoteLine } from './types';
 import { toolTarget, toolVerb } from './toolPresentation';
+import { editPreviewFromInput, editPreviewFromResult, editPreviewsFromChanges, type EditPreview } from './editPreview';
 
 export type ChatItem = {
   id: string;
@@ -14,6 +15,7 @@ export type ChatItem = {
   durationMs?: number;
   additions?: number;
   deletions?: number;
+  edits?: EditPreview[];
 };
 
 function editCounts(value: any): { additions: number; deletions: number } | undefined {
@@ -64,7 +66,12 @@ export function chatTimeline(lines: RemoteLine[], cacheKey = 'default'): ChatIte
   };
   const addTool = (id: string, name: string, input: any, pending: boolean): ChatItem => {
     const target = toolTarget(name, input);
-    const row: ChatItem = { id, kind: 'tool', text: toolVerb(name, pending), toolName: name, target: target.text, path: target.path, pending };
+    const edits = editPreviewFromInput(name, input);
+    const row: ChatItem = { id, kind: 'tool', text: toolVerb(name, pending), toolName: name, target: target.text, path: target.path, pending, edits };
+    if (edits.length) {
+      row.additions = edits.reduce((total, edit) => total + edit.additions, 0);
+      row.deletions = edits.reduce((total, edit) => total + edit.deletions, 0);
+    }
     rows.push(row);
     return row;
   };
@@ -136,6 +143,8 @@ export function chatTimeline(lines: RemoteLine[], cacheKey = 'default'): ChatIte
           row.failed = !!content.is_error;
           row.text = toolVerb(row.toolName || 'Tool');
           Object.assign(row, editCounts(value.tool_use_result));
+          const edits = editPreviewFromResult(value.tool_use_result, row.path);
+          if (edits.length) row.edits = edits;
         }
       }
       continue;
@@ -165,6 +174,8 @@ export function chatTimeline(lines: RemoteLine[], cacheKey = 'default'): ChatIte
           row.detail = typeof detail === 'string' ? detail : JSON.stringify(detail, null, 2);
           row.failed = item.status === 'failed' || (typeof item.exit_code === 'number' && item.exit_code !== 0);
           Object.assign(row, editCounts(item));
+          const edits = editPreviewsFromChanges(Array.isArray(item.changes) ? item.changes : []);
+          if (edits.length) row.edits = edits;
         }
       }
       continue;

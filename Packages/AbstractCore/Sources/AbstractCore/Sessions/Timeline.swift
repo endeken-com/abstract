@@ -128,14 +128,23 @@ public struct ToolCall: Sendable, Hashable, Identifiable {
 public struct ToolResult: Sendable, Hashable {
     public var output: String
     public var isError: Bool
-    public init(output: String, isError: Bool) { self.output = output; self.isError = isError }
+    /// Pictures the result carried besides its text.
+    public var images: [ToolImage]
+    public init(output: String, isError: Bool, images: [ToolImage] = []) {
+        self.output = output; self.isError = isError; self.images = images
+    }
 }
 
 extension Timeline {
     public var blocks: [TimelineBlock] {
         var results: [String: (String, Bool, EditPreview?)] = [:]
+        var images: [String: [ToolImage]] = [:]
         for e in entries {
-            if case let .toolResult(toolUseId, output, isError, edit) = e.event { results[toolUseId] = (output, isError, edit) }
+            switch e.event {
+            case let .toolResult(toolUseId, output, isError, edit): results[toolUseId] = (output, isError, edit)
+            case let .toolImages(toolUseId, pictures): images[toolUseId, default: []] += pictures
+            default: break
+            }
         }
 
         var out: [TimelineBlock] = []
@@ -160,7 +169,7 @@ extension Timeline {
                 // then the diff comes from the input, so it shows straight away.
                 let call = ToolCall(id: id, name: name, input: input,
                                     edit: r?.2 ?? edit,
-                                    result: r.map { ToolResult(output: $0.0, isError: $0.1) })
+                                    result: r.map { ToolResult(output: $0.0, isError: $0.1, images: images[id] ?? []) })
                 if case let .tools(groupId, calls)? = out.last {
                     out[out.count - 1] = .tools(id: groupId, calls: calls + [call])
                 } else {
@@ -194,7 +203,7 @@ extension Timeline {
                 out.append(.handoff(id: entry.id, from: from, to: to, summary: summary, source: source))
                 assistantOpen = false
             // Tasks and what subagents did are listed apart from the conversation.
-            case .status, .sessionId, .toolResult, .permissionRequest, .promptSuggestion, .commands, .task, .subagent:
+            case .status, .sessionId, .toolResult, .toolImages, .permissionRequest, .promptSuggestion, .commands, .task, .subagent:
                 break
             }
         }
