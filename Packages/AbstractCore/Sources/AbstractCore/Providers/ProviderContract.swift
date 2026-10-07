@@ -195,6 +195,9 @@ public enum AgentEvent: Sendable, Hashable {
     case turnEnd(durationMs: Int?, costUsd: Double?, usage: UsageTotals?, summary: String?)
     case usage(UsageTotals, costUsd: Double?, durationMs: Int?, turns: Int?)
     case error(String)
+    /// How the work is going, beside the conversation: a retry, a usage
+    /// limit, a problem the agent carries on past.
+    case notice(AgentNotice)
     case raw(line: String, stream: OutputStreamKind)
     /// What the agent predicts you'll say next, offered in the reply box.
     case promptSuggestion(String)

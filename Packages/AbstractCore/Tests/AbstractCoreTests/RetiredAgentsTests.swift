@@ -20,7 +20,9 @@ import Testing
         } == true)
         // The notices Codex gave about every model that isn't OpenAI's stay out.
         let notice = #"{"type":"error","message":"Model metadata for `qwen3` not found."}"#
-        #expect(parser?.feed(notice, stream: .stdout).contains { if case .error = $0 { true } else { false } } == false)
+        #expect(parser?.feed(notice, stream: .stdout).isEmpty == true)
+        let item = #"{"type":"item.completed","item":{"id":"item_2","type":"error","message":"Model metadata for `qwen3` not found."}}"#
+        #expect(parser?.feed(item, stream: .stdout).isEmpty == true)
         #expect(ProviderRegistry.makeParser("missing") == nil)
         #expect(ProviderRegistry.name("ollama") == "Codex · Ollama")
         #expect(ProviderRegistry.name("lmstudio") == "Codex · LM Studio")

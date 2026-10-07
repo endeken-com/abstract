@@ -96,6 +96,7 @@ enum TranscriptRows {
             }.joined(separator: "\n")
         case let .turn(_, summary, _, _, _): return summary ?? ""
         case let .error(_, message): return message
+        case let .notice(_, notice): return notice.message(agent: "The agent")
         case let .handoff(_, from, to, summary, _):
             return (["Handed over from \(ProviderRegistry.name(from)) to \(ProviderRegistry.name(to))"] + [summary].compactMap { $0 })
                 .joined(separator: "\n")
@@ -161,6 +162,8 @@ struct BlockView: View, Equatable {
                 if LimitDetector.classify(message) != nil { ContinueWithActions(sessionId: sessionId) }
             }
             .btLeadingRule(Color.btRemoved)
+        case let .notice(_, notice):
+            NoticeRow(sessionId: sessionId, notice: notice)
         case let .raw(_, lines):
             // Frames no parser understood are debugging material, not
             // conversation. Settings › General can bring them back.
@@ -186,6 +189,35 @@ private struct SignInActions: View {
             }
             .buttonStyle(.bt(.ghost, size: .small))
             .help("Pick another Claude account; the chat carries on there")
+        }
+    }
+}
+
+/// A retry, a usage limit or a warning, on one line in the agent's own words.
+private struct NoticeRow: View {
+    @Environment(AppModel.self) private var model
+    let sessionId: String
+    let notice: AgentNotice
+
+    var body: some View {
+        let agent = ProviderRegistry.name(model.session(sessionId)?.providerId ?? "")
+        VStack(alignment: .leading, spacing: Space.sm) {
+            HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
+                Image(systemName: icon).foregroundStyle(Color.btWarning).font(.system(size: 11, weight: .regular))
+                SelectableText(TextClip.block(notice.message(agent: agent)))
+                    .font(.btChatCaption).foregroundStyle(Color.btTextSecondary).lineSpacing(2)
+                Spacer(minLength: 0)
+            }
+            // Out of room until the limit resets: another agent can carry on now.
+            if case .limitReached = notice { ContinueWithActions(sessionId: sessionId) }
+        }
+    }
+
+    private var icon: String {
+        switch notice {
+        case .retrying: "arrow.clockwise"
+        case .nearLimit, .limitReached: "gauge.with.dots.needle.67percent"
+        case .warning: "exclamationmark.triangle"
         }
     }
 }

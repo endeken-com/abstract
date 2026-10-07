@@ -100,6 +100,8 @@ public enum TimelineBlock: Sendable, Identifiable, Hashable {
     case system(id: Int, model: String?, permissionMode: String?)
     case turn(id: Int, summary: String?, durationMs: Int?, usage: UsageTotals?, costUsd: Double?)
     case error(id: Int, message: String)
+    /// A retry, a usage limit or a warning, on one line.
+    case notice(id: Int, AgentNotice)
     case raw(id: Int, lines: [OutputLine])
     /// The chat passed to another agent here.
     case handoff(id: Int, from: String, to: String, summary: String?, source: HandoffSource?)
@@ -107,7 +109,7 @@ public enum TimelineBlock: Sendable, Identifiable, Hashable {
     public var id: Int {
         switch self {
         case .user(let id, _), .assistant(let id, _, _, _), .thinking(let id, _), .tools(let id, _),
-             .system(let id, _, _), .turn(let id, _, _, _, _), .error(let id, _), .raw(let id, _),
+             .system(let id, _, _), .turn(let id, _, _, _, _), .error(let id, _), .notice(let id, _), .raw(let id, _),
              .handoff(let id, _, _, _, _): id
         }
     }
@@ -139,13 +141,19 @@ extension Timeline {
     public var blocks: [TimelineBlock] {
         var results: [String: (String, Bool, EditPreview?)] = [:]
         var images: [String: [ToolImage]] = [:]
+        var errors: Set<String> = []
         for e in entries {
             switch e.event {
             case let .toolResult(toolUseId, output, isError, edit): results[toolUseId] = (output, isError, edit)
             case let .toolImages(toolUseId, pictures): images[toolUseId, default: []] += pictures
+            case let .error(message): errors.insert(message)
             default: break
             }
         }
+        // A retry shows only while nothing has come since; stray raw lines
+        // aren't the agent carrying on.
+        let liveRetry = entries.last { if case .raw = $0.event { false } else { true } }
+            .flatMap { if case .notice(.retrying) = $0.event { $0.id } else { nil } }
 
         var out: [TimelineBlock] = []
         var assistantOpen = false
@@ -193,6 +201,14 @@ extension Timeline {
                 assistantOpen = false
             case let .error(message):
                 out.append(.error(id: entry.id, message: message))
+            case let .notice(notice):
+                switch notice {
+                case .retrying: if entry.id != liveRetry { continue }
+                // A warning the turn then failed over is said once, as the error.
+                case let .warning(message): if errors.contains(message) { continue }
+                case .nearLimit, .limitReached: break
+                }
+                out.append(.notice(id: entry.id, notice))
             case let .raw(line, stream):
                 if case let .raw(groupId, lines)? = out.last {
                     out[out.count - 1] = .raw(id: groupId, lines: lines + [OutputLine(stream: stream, line: line)])

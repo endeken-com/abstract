@@ -149,12 +149,13 @@ final class CodexParser: OutputParser {
                 .status(.finished, detail: nil),
             ]
         // NOTE: unverified: no failing turn appears in the recorded fixture.
-        case "turn.failed", "error":
-            let message = obj["error"]?["message"]?.string
-                ?? obj["message"]?.string
-                ?? obj["error"]?.string
-                ?? "Codex reported an error"
-            return [.error(message), .status(.errored, detail: nil)]
+        case "turn.failed":
+            return [.error(CodexWire.message(obj) ?? "Codex reported an error"), .status(.errored, detail: nil)]
+        // Codex carries on after an `error`: when the turn fails over it,
+        // `turn.failed` follows with the same message (codex-rs exec's
+        // jsonl processor, 0.156).
+        case "error":
+            return CodexWire.message(obj).map { [.notice(.warning($0))] } ?? []
         case "item.started": return onItem(obj, .started)
         case "item.updated": return onItem(obj, .updated)
         case "item.completed": return onItem(obj, .completed)
@@ -174,6 +175,11 @@ final class CodexParser: OutputParser {
                               blockId: id, partial: phase != .completed)]
         case "command_execution":
             return onCommandExecution(item, id: id, phase: phase)
+        // Warnings: a deprecated setting, a model rerouted, anything Codex
+        // carries on past (openai/codex#27415). They come completed.
+        case "error":
+            guard phase == .completed, let message = item["message"]?.string, !message.isEmpty else { return [] }
+            return [.notice(.warning(message))]
         case "file_change", "patch_apply":
             return onFileChange(item, id: id, itemType: itemType, phase: phase)
         // NOTE: unverified: these item types do not appear in the recorded fixture.
@@ -255,6 +261,12 @@ private enum CodexWire {
     /// Never traps: out-of-range numbers yield nil instead of crashing `Int(_:)`.
     static func int(_ value: JSONValue?) -> Int? {
         double(value).flatMap { Int(exactly: $0.rounded(.towardZero)) }
+    }
+
+    /// An `error` or `turn.failed` line's message, wherever it sits.
+    static func message(_ obj: JSONValue) -> String? {
+        (obj["error"]?["message"]?.string ?? obj["message"]?.string ?? obj["error"]?.string)
+            .flatMap { $0.isEmpty ? nil : $0 }
     }
 
     /// Display name for a generic (non-command) item type.

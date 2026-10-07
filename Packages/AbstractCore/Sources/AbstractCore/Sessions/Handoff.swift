@@ -186,7 +186,7 @@ public enum HandoffTranscript {
                 agent = name(to)
                 speaker = nil
                 out += "\n---\n\n_Handed over from \(name(from)) to \(agent)._\n"
-            case .thinking, .system, .turn, .raw:
+            case .thinking, .system, .turn, .notice, .raw:
                 continue
             }
         }
