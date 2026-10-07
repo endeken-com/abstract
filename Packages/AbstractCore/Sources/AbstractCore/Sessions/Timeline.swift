@@ -61,6 +61,15 @@ public struct Timeline: Sendable {
     }
 
     public var last: AgentEvent? { entries.last?.event }
+
+    /// The agent's latest reply with something in it.
+    public var lastReply: String? {
+        for entry in entries.reversed() {
+            if case let .text(.assistant, text, _, _) = entry.event,
+               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return text }
+        }
+        return nil
+    }
 }
 
 extension AgentEvent {
