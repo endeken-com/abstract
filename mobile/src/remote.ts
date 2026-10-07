@@ -87,6 +87,7 @@ export class RemoteClient {
   private subscribing = new Map<string, Promise<void>>();
   private replayBuffers = new Map<string, RemoteLine[]>();
   private snapshotHostId: string | null = null;
+  private reconnectPaused = false;
 
   subscribe(listener: Listener) { this.listeners.add(listener); listener(this); return () => { this.listeners.delete(listener); }; }
   private changed() { this.listeners.forEach(listener => listener(this)); }
@@ -120,7 +121,7 @@ export class RemoteClient {
         this.changed();
         const paired = this.devices.find(x => x.peer.id === id || x.peer.name === service.name);
         const address = `${host}:${service.port}`;
-        if (paired && (!this.active || this.active.peer.id === paired.peer.id) && this.status !== 'online' && (this.connectingAddress !== address || this.connectingPeerId !== paired.peer.id)) {
+        if (paired && !this.reconnectPaused && (!this.active || this.active.peer.id === paired.peer.id) && this.status !== 'online' && (this.connectingAddress !== address || this.connectingPeerId !== paired.peer.id)) {
           this.connect(address, paired).catch(() => {});
         }
       });
@@ -150,6 +151,10 @@ export class RemoteClient {
     this.terminals = {};
     const socket = this.socket; this.socket = null; socket?.close(); this.cipher = null; this.changed();
   }
+  disconnectFromMac() {
+    this.reconnectPaused = true;
+    this.disconnect(true);
+  }
   private scheduleReconnect() {
     if (!this.active || this.reconnect) return;
     this.reconnect = setTimeout(() => {
@@ -174,6 +179,7 @@ export class RemoteClient {
     await this.connect(this.nearby.find(x => x.id === active.peer.id)?.address || active.address, active);
   }
   connect(address: string, paired?: Device): Promise<void> {
+    this.reconnectPaused = false;
     if (this.status === 'online' && this.active?.peer.id === paired?.peer.id && this.active?.address === address) return Promise.resolve();
     if (this.status === 'connecting' && this.connectingAddress === address && this.connectingPeerId === (paired?.peer.id || null) && this.connectingTask) return this.connectingTask;
     this.disconnect(!paired || paired.peer.id !== this.snapshotHostId); this.active = paired || null; this.error = null; this.status = 'connecting'; this.changed();
