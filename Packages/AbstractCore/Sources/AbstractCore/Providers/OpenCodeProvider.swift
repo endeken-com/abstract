@@ -134,13 +134,20 @@ final class OpenCodeParser: OutputParser {
                 return events + [.raw(line: line, stream: stream)]
             }
             let state = part?["state"]
+            let input = state?["input"] ?? .object([:])
+            let status = state?["status"]?.string
+            // OpenCode's edit and write name their fields in camelCase; the
+            // shared preview reads both spellings.
+            let edit = EditPreview.fromToolInput(name: tool, input: input)
             if seenTools.insert(id).inserted {
-                events.append(.toolUse(id: id, name: tool, input: state?["input"] ?? .object([:]), edit: nil))
+                events.append(.toolUse(id: id, name: tool, input: input, edit: edit))
             }
-            if let status = state?["status"]?.string,
-               (status == "completed" || status == "error"), finishedTools.insert(id).inserted {
+            // The full input may only come with the result, so a completed
+            // edit carries its diff there too.
+            if let status, status == "completed" || status == "error", finishedTools.insert(id).inserted {
                 events.append(.toolResult(toolUseId: id, output: state?["output"]?.string
-                                          ?? state?["error"]?.string ?? "", isError: status == "error", edit: nil))
+                                          ?? state?["error"]?.string ?? "", isError: status == "error",
+                                          edit: status == "completed" ? edit : nil))
             }
         case "step_finish":
             let tokens = part?["tokens"]

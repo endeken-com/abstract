@@ -193,7 +193,7 @@ public enum HandoffTranscript {
 
     /// "Edit `/path`", "Bash `swift test`".
     static func toolLine(_ call: ToolCall) -> String {
-        let keys = ["file_path", "path", "notebook_path", "command", "pattern", "url", "query"]
+        let keys = ["file_path", "filePath", "path", "notebook_path", "command", "pattern", "url", "query"]
         let target = call.edit?.filePath ?? keys.lazy.compactMap { call.input[$0]?.string }.first
         guard let target else { return call.name }
         let line = target.replacingOccurrences(of: "\n", with: " ")
