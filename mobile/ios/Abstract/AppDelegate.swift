@@ -55,13 +55,18 @@ class ReactNativeDelegate: ExpoReactNativeFactoryDelegate {
   // Extension point for config-plugins
 
   override func sourceURL(for bridge: RCTBridge) -> URL? {
-    // needed to return the correct URL for expo-dev-client.
-    bridge.bundleURL ?? bundleURL()
+    bundleURL()
   }
 
   override func bundleURL() -> URL? {
 #if DEBUG
-    return RCTBundleURLProvider.sharedSettings().jsBundleURL(forBundleRoot: ".expo/.virtual-metro-entry")
+    // RCTBundleURLProvider probes Metro synchronously on the main thread. A
+    // slow network can make iOS kill the app before its first screen appears.
+    let address = Bundle.main.path(forResource: "ip", ofType: "txt")
+      .flatMap { try? String(contentsOfFile: $0, encoding: .utf8) }
+      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+      .flatMap { $0.isEmpty ? nil : $0 } ?? "localhost"
+    return URL(string: "http://\(address):8081/.expo/.virtual-metro-entry.bundle?platform=ios&dev=true&minify=false")
 #else
     return Bundle.main.url(forResource: "main", withExtension: "jsbundle")
 #endif
