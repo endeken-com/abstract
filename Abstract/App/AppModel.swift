@@ -212,6 +212,8 @@ final class AppModel {
     /// as its last edit left it, so the next edit's diff is its own.
     @ObservationIgnored private var enrichers: [String: any LineEnricher] = [:]
     @ObservationIgnored private var seenSeq: [String: Int] = [:]
+    /// Automation runs whose chat is being named for its agent's report.
+    @ObservationIgnored private var namingRuns: Set<String> = []
     /// Chats `abstract` drives, and what it says about them; see AppModel+SessionLocks.
     var cliDriven: [String: SessionLockInfo] = [:]
     /// The chats' locks the app holds: the chat showing, and those whose agent it runs.
@@ -631,6 +633,23 @@ final class AppModel {
         s.name = title
         try? store.save(s)
         reload()
+    }
+
+    /// A fresh-worktree automation run, still named for its automation once
+    /// a turn ends, is renamed for what its agent says it worked on.
+    private func nameAutomationRun(_ sessionId: String) {
+        guard let s = session(sessionId), let automationId = s.automationId, !namingRuns.contains(sessionId),
+              let automation = try? store.automation(automationId), automation.workspaceMode == .newWorktree,
+              AutomationRunNaming.isProvisional(s.name, automationName: automation.name),
+              let report = feed(sessionId).timeline.lastReply else { return }
+        namingRuns.insert(sessionId)
+        Task {
+            let naming = await suggestedNaming(instructions: project(s.projectId)?.namingInstructions, providerId: s.providerId,
+                                               model: s.model ?? defaultModel(for: s.providerId),
+                                               prompt: AutomationRunNaming.task(fromReport: report))
+            namingRuns.remove(sessionId)
+            await rename(sessionId, from: s.name, to: naming?.title)
+        }
     }
 
     // MARK: - Reusing worktrees
@@ -1183,6 +1202,7 @@ final class AppModel {
                 // An agent that runs a process per turn (Codex) ends its turn by exiting.
                 if code == 0, ProviderRegistry.provider(s.providerId)?.followUpMode != .stdin {
                     RevundService.shared.turnEnded(sessionId, model: self)
+                    nameAutomationRun(sessionId)
                 }
             }
             permissions[sessionId] = nil
@@ -1216,6 +1236,7 @@ final class AppModel {
                 // takes another turn as each task ends.
                 if runningBackgroundTasks(sessionId) == 0 { notify(sessionId, .finished) }
                 RevundService.shared.turnEnded(sessionId, model: self)
+                nameAutomationRun(sessionId)
             }
             if status == .waitingInput || status == .errored { notify(sessionId, status, detail: detail) }
         case let .permissionRequest(requestId, toolName, input) where AgentQuestion.isQuestion(toolName):

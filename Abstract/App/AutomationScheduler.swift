@@ -104,9 +104,8 @@ final class AutomationScheduler {
             }
             return id
         case .newWorktree:
-            let stamp = Date().formatted(.dateTime.month(.abbreviated).day().hour().minute())
             let slug = "auto-\(WorktreeNaming.slugify(a.name))-\(Date().formatted(.iso8601.year().month().day().dateSeparator(.omitted)))"
-            return try await newChat(a, name: "\(a.name) · \(stamp)", slug: slug)
+            return try await newChat(a, name: AutomationRunNaming.provisional(a.name, at: Date()), slug: slug)
         }
     }
 
