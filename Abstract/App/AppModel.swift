@@ -103,6 +103,9 @@ final class AppModel {
     /// Chats passing to another agent: the outgoing one's summary turn is
     /// running, and its exit is not an ending.
     private(set) var handingOff: Set<String> = []
+    /// Chats you pressed Stop in, until the turn or the process ends: neither
+    /// is a failure. The token tells this press's fallback from a later one's.
+    private(set) var stopRequests: [String: UUID] = [:]
     /// Tool names to approve without asking, per chat.
     var autoContinueTools: [String: Set<String>] = [:]
     /// A file the Changes pane should select next time it loads, per chat.
@@ -546,7 +549,7 @@ final class AppModel {
     }
 
     func removeProject(_ id: String) {
-        for s in sessions where s.projectId == id { stop(s.id) }
+        for s in sessions where s.projectId == id { stopAgent(s.id) }
         try? store.deleteProject(id)
         if case .session(let sid) = destination, session(sid)?.projectId == id { destination = .home }
         if destination == .projectSettings(id) { destination = .home }
@@ -969,10 +972,37 @@ final class AppModel {
             .run(ClaudeAccounts.loginCommand(profile), label: "Sign in")
     }
 
+    /// Stop as you press it in the chat: an agent that can be interrupted
+    /// (Claude) ends its turn and stays alive, with its background tasks, for
+    /// the next message; any other ends its process. Either way the turn
+    /// reads as stopped, not failed.
     func stop(_ sessionId: String) {
         if sessionId.hasPrefix(RemoteService.mirrorPrefix) { remote.stop(sessionId); return }
         if setups[sessionId]?.active == true { cancelSetup(sessionId); return }
         if stopCLIAgent(sessionId) { return }
+        guard engine.isAlive(sessionId), let session = session(sessionId) else { return }
+        let token = UUID()
+        stopRequests[sessionId] = token
+        guard !isDemo, !handingOff.contains(sessionId), let provider = ProviderRegistry.provider(session.providerId),
+              case let .interrupt(line) = TurnStop.action(provider, status: session.status, requestId: "stop-\(token.uuidString.prefix(8))"),
+              (try? engine.write(sessionId: sessionId, line)) != nil else {
+            engine.stop(sessionId: sessionId)
+            return
+        }
+        // Its turn ending takes the request; one that doesn't end has its process ended.
+        Task {
+            try? await Task.sleep(for: TurnStop.grace)
+            if stopRequests[sessionId] == token { engine.stop(sessionId: sessionId) }
+        }
+    }
+
+    /// Ends the chat's agent and its background tasks, as archiving or
+    /// removing its worktree needs. Still a stop you asked for.
+    func stopAgent(_ sessionId: String) {
+        if sessionId.hasPrefix(RemoteService.mirrorPrefix) || setups[sessionId]?.active == true { stop(sessionId); return }
+        if stopCLIAgent(sessionId) { return }
+        guard engine.isAlive(sessionId) else { return }
+        stopRequests[sessionId] = UUID()
         engine.stop(sessionId: sessionId)
     }
 
@@ -1051,7 +1081,7 @@ final class AppModel {
 
     func delete(_ sessionId: String, removeWorktree: Bool) async {
         guard let s = session(sessionId) else { return }
-        stop(sessionId)
+        stopAgent(sessionId)
         setups[sessionId] = nil
         if removeWorktree, let path = s.worktreePath, let project = project(s.projectId) {
             await runTeardownScript(project, worktree: path)
@@ -1120,6 +1150,7 @@ final class AppModel {
                 let name = ProviderRegistry.name(session(sessionId)?.providerId ?? "")
                 agentStart(sessionId, .failed("\(name) exited with code \(code.map(String.init) ?? "?") before it started."))
             }
+            let stopRequested = stopRequests.removeValue(forKey: sessionId) != nil
             // Stopped only to start again with a new model or agent: not an ending.
             if relaunching.remove(sessionId) != nil { permissions[sessionId] = nil; return }
             if handingOff.contains(sessionId) {
@@ -1131,6 +1162,15 @@ final class AppModel {
             if session(sessionId)?.status == .idle {
                 setStatus(sessionId, .finished)
                 remote.forwardExit(sessionId: sessionId, code: code)
+                permissions[sessionId] = nil
+                return
+            }
+            // Stopped mid-turn: a quiet line, no notification, and the chat
+            // waits for your next message. Not forwarded: another Mac would
+            // read the exit as a failure, and its status comes with the chat.
+            if stopRequested {
+                for e in stream(for: sessionId)?.onExit(code: code, stopRequested: true) ?? [] { append(e, to: sessionId) }
+                setStatus(sessionId, .idle)
                 permissions[sessionId] = nil
                 return
             }
@@ -1168,7 +1208,10 @@ final class AppModel {
             }
         case let .status(status, detail):
             setStatus(sessionId, status, detail: detail)
-            if status == .idle {
+            if status == .idle, stopRequests.removeValue(forKey: sessionId) != nil {
+                // A turn you stopped: nothing to tell you, review or answer.
+                permissions[sessionId] = nil
+            } else if status == .idle {
                 // Still at work in the background: not done yet. The agent
                 // takes another turn as each task ends.
                 if runningBackgroundTasks(sessionId) == 0 { notify(sessionId, .finished) }

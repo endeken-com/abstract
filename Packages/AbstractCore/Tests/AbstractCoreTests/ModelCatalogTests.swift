@@ -133,6 +133,8 @@ struct ClaudeModelCatalogTests {
         try body.write(toFile: script, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script)
 
+        // A slow login shell (its first lookup) isn't what's measured.
+        _ = await LocalExecutor.shared.searchPath
         let started = Date()
         let catalog = await ClaudeProvider().discoverModels(executor: HomeExecutor(homeDirectory: home), binary: script, timeout: .seconds(10))
         #expect(catalog?.models.map(\.id) == ["opus[1m]", "claude-fable-5-1[1m]", "sonnet", "haiku"])

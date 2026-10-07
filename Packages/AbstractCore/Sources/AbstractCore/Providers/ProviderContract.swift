@@ -291,6 +291,9 @@ public protocol ProviderDefinition: Sendable {
     func buildPermissionModeChange(_ policy: PermissionPolicy, requestId: String) -> String?
     /// A stdin line that stops one of the agent's tasks. nil: it can't.
     func buildStopTask(_ taskId: String, requestId: String) -> String?
+    /// A stdin line that ends the turn under way and keeps the agent alive
+    /// for the next message. nil: Stop ends its process.
+    func buildInterrupt(requestId: String) -> String?
     /// A stdin line that moves running work into the background, as Ctrl+B
     /// does in Claude Code: one tool call's, or all of it. nil: it can't.
     func buildBackground(toolUseId: String?, requestId: String) -> String?
@@ -317,6 +320,7 @@ public extension ProviderDefinition {
     func buildUserMessage(_ text: String, images: [String]) -> String? { buildUserMessage(text) }
     func buildPermissionModeChange(_ policy: PermissionPolicy, requestId: String) -> String? { nil }
     func buildStopTask(_ taskId: String, requestId: String) -> String? { nil }
+    func buildInterrupt(requestId: String) -> String? { nil }
     func buildBackground(toolUseId: String?, requestId: String) -> String? { nil }
     func permissionDetail(_ policy: PermissionPolicy) -> String { policy.detail }
     var commands: ProviderCommands { .none }

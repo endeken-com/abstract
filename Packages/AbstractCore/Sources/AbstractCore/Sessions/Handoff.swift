@@ -104,8 +104,10 @@ public final class ChatStream {
         }
     }
 
-    public func onExit(code: Int32?) -> [AgentEvent] {
-        guard isSummarizing else { return parser?.onExit(code: code) ?? [] }
+    /// `stopRequested`: you pressed Stop, so however the process ended, the
+    /// turn was stopped rather than failed.
+    public func onExit(code: Int32?, stopRequested: Bool = false) -> [AgentEvent] {
+        guard isSummarizing else { return stopRequested ? TurnStop.events : parser?.onExit(code: code) ?? [] }
         summaryFinished = true
         if code != 0, capturedSummary.isEmpty { summaryFailed = true }
         return []
