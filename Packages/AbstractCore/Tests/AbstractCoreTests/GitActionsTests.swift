@@ -64,6 +64,14 @@ struct GitActionsTests {
         #expect(await GitActions.state(exec, worktree: wt, preferredBase: "main").movedBranch(from: "feature-x") == "other")
     }
 
+    @Test func aChatNeverFollowsItsWorktreeOntoTheBase() {
+        #expect(!BranchState.mayFollow("main", bases: ["origin/main", nil]))
+        #expect(!BranchState.mayFollow("main", bases: [nil, "main"]))
+        #expect(!BranchState.mayFollow("develop", bases: ["refs/heads/develop"]))
+        #expect(BranchState.mayFollow("feature-x", bases: ["origin/main", "main"]))
+        #expect(BranchState.mayFollow("main-fix", bases: ["origin/main"]))
+    }
+
     @Test func aDetachedHeadKeepsTheRecordedBranch() async throws {
         let (root, wt) = try await makeRepo()
         defer { try? FileManager.default.removeItem(atPath: (root as NSString).deletingLastPathComponent) }

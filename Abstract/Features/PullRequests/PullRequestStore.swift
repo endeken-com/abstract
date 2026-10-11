@@ -133,8 +133,11 @@ extension AppModel {
     /// The chat's worktree is on another branch than it records (the agent
     /// renamed it, or switched): the chat records that one, so Push and the
     /// Pull Request tab use it. A chat on another Mac is that Mac's to update.
+    /// Never onto its base: Push would then push straight to it.
     func followBranch(_ sessionId: String, to branch: String) {
-        guard !sessionId.hasPrefix(RemoteService.mirrorPrefix), var session = session(sessionId), session.branch != branch else { return }
+        guard !sessionId.hasPrefix(RemoteService.mirrorPrefix), var session = session(sessionId), session.branch != branch,
+              BranchState.mayFollow(branch, bases: [session.baseRef, project(session.projectId)?.defaultBaseRef,
+                                                    branchStates[sessionId]?.base]) else { return }
         session.branch = branch
         try? store.save(session)
         // The old branch's pull request isn't this one's.

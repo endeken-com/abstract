@@ -31,6 +31,19 @@ public struct BranchState: Sendable, Equatable {
         guard let branch, branch != recorded else { return nil }
         return branch
     }
+
+    /// Whether a chat may take `branch` as its own: never one of its bases
+    /// (`main`, `origin/main`). An agent that switched its worktree onto the
+    /// base must not turn the chat's Push into a push to the base.
+    public static func mayFollow(_ branch: String, bases: [String?]) -> Bool {
+        let names = bases.compactMap { $0 }.map { base -> String in
+            for prefix in ["refs/heads/", "refs/remotes/origin/", "origin/"] where base.hasPrefix(prefix) {
+                return String(base.dropFirst(prefix.count))
+            }
+            return base
+        }
+        return !names.contains(branch)
+    }
 }
 
 /// The git actions behind the Commit button, after Paseo's (Apache-2.0,
