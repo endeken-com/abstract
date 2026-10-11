@@ -566,7 +566,7 @@ private struct RailChatDetails: View {
             Hairline()
             VStack(alignment: .leading, spacing: Space.sm) {
                 row("Branch") {
-                    Image(systemName: "arrow.triangle.branch")
+                    Image(nsImage: Octicon.gitBranch).renderingMode(.template).resizable().frame(width: 12, height: 12)
                 } content: {
                     value(session.branch ?? "No branch", monospaced: true)
                 }
