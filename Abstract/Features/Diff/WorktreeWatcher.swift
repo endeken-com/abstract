@@ -7,21 +7,27 @@ import CoreServices
 final class WorktreeWatcher {
     nonisolated(unsafe) private var stream: FSEventStreamRef?
     private let onChange: () -> Void
+    /// Whether an event at a path counts; the ignored folders never do.
+    private let matters: (String) -> Bool
     private var pending = false
 
     /// Folders that are build output or dependencies nearly everywhere.
     private static let ignored = ["/.build/", "/node_modules/", "/DerivedData/", "/.next/", "/target/", "/dist/", "/.gradle/", "/Pods/",
                                   "/.git/objects/", "/.git/logs/", "/objects/pack/", ".lock"]
 
-    init(paths: [String], onChange: @escaping () -> Void) {
+    init(paths: [String], matters: @escaping (String) -> Bool = { _ in true }, onChange: @escaping () -> Void) {
         self.onChange = onChange
+        self.matters = matters
         var context = FSEventStreamContext(version: 0, info: Unmanaged.passUnretained(self).toOpaque(), retain: nil, release: nil, copyDescription: nil)
         let callback: FSEventStreamCallback = { _, info, count, paths, _, _ in
             guard let info else { return }
             let watcher = Unmanaged<WorktreeWatcher>.fromOpaque(info).takeUnretainedValue()
-            let list = unsafeBitCast(paths, to: NSArray.self) as? [String] ?? []
-            guard list.prefix(count).contains(where: { path in !WorktreeWatcher.ignored.contains { path.contains($0) } }) else { return }
-            MainActor.assumeIsolated { watcher.changed() }
+            let list = Array((unsafeBitCast(paths, to: NSArray.self) as? [String] ?? []).prefix(count))
+            MainActor.assumeIsolated {
+                guard list.contains(where: { path in !WorktreeWatcher.ignored.contains { path.contains($0) } && watcher.matters(path) })
+                else { return }
+                watcher.changed()
+            }
         }
         guard let stream = FSEventStreamCreate(nil, callback, &context, paths as CFArray, FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
                                                0.15, FSEventStreamCreateFlags(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagUseCFTypes | kFSEventStreamCreateFlagNoDefer))

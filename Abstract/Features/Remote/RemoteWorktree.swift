@@ -327,9 +327,12 @@ extension AppModel {
 
     /// Calls `onChange` when something under `paths` changes, wherever the
     /// chat's worktree is. Kept alive by holding the returned object.
-    func watch(_ paths: [String], for sessionId: String, onChange: @escaping () -> Void) -> AnyObject? {
+    /// `matters` picks the events that count on this Mac; the other Mac's
+    /// watcher reports all of them.
+    func watch(_ paths: [String], for sessionId: String, matters: @escaping (String) -> Bool = { _ in true },
+               onChange: @escaping () -> Void) -> AnyObject? {
         if let link = remoteLink(for: sessionId) { return link.watch(paths, onChange: onChange) }
-        return WorktreeWatcher(paths: paths, onChange: onChange)
+        return WorktreeWatcher(paths: paths, matters: matters, onChange: onChange)
     }
 }
 
