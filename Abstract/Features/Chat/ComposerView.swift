@@ -346,14 +346,27 @@ private struct ComposerContext: View {
 
     var body: some View {
         HStack(spacing: Space.sm) {
-            if let branch = session.branch {
-                Label(branch, systemImage: "arrow.triangle.branch")
-                    .labelStyle(.titleAndIcon)
-                    .font(.btChatCaption)
-                    .foregroundStyle(Color.btTextTertiary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .help(branch)
+            if let line = BranchLine(session: session) {
+                Label {
+                    Text(line.branch)
+                } icon: {
+                    Image(nsImage: Octicon.gitBranch).renderingMode(.template).resizable().frame(width: 11, height: 11)
+                }
+                .labelStyle(.titleAndIcon)
+                .font(.btChatCaption)
+                .foregroundStyle(Color.btTextTertiary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .help(line.help)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(line.accessibilityLabel)
+                .contextMenu {
+                    Button("Copy Branch Name") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(line.branch, forType: .string)
+                        model.flash("Copied")
+                    }
+                }
             }
             Spacer(minLength: Space.md)
             BackgroundTasksChip(sessionId: session.id)
