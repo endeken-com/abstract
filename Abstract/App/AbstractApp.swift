@@ -152,6 +152,19 @@ struct AbstractCommands: Commands {
             Button("Show Previous Tab") { model.cycleTab(-1) }
                 .keyboardShortcut("[", modifiers: [.command, .shift])
         }
+        CommandGroup(after: .textEditing) {
+            // Looked up when chosen: the chat in front may have changed since the menu was built.
+            let finding = model.chatInFront.map { model.feed($0).find.isOpen }
+            Button("Find in Chat…") { model.chatInFront.map { model.feed($0).find.open() } }
+                .keyboardShortcut("f")
+                .disabled(finding == nil)
+            Button("Find Next") { model.chatInFront.map { model.feed($0).find.next() } }
+                .keyboardShortcut("g")
+                .disabled(finding != true)
+            Button("Find Previous") { model.chatInFront.map { model.feed($0).find.previous() } }
+                .keyboardShortcut("g", modifiers: [.command, .shift])
+                .disabled(finding != true)
+        }
         CommandGroup(after: .toolbar) {
             Button("Actual Size") { image?.zoomToActualSize() }
                 .keyboardShortcut(image == nil ? nil : KeyboardShortcut("1"))

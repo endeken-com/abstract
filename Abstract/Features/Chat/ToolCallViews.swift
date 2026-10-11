@@ -144,6 +144,7 @@ struct ToolCallView: View {
     var approval: PendingPermission? = nil
     @Environment(\.transcriptExpansion) private var expansion
     @Environment(\.transcriptRow) private var row
+    @Environment(\.transcriptFind) private var find
     @State private var open: Bool?
     @State private var hovering = false
     @State private var answered = false
@@ -262,6 +263,12 @@ struct ToolCallView: View {
             }
         }
         .frame(minHeight: asking ? 30 : 26)
+        // ⌘F's match in the title: the whole line, which shows only part of a long command.
+        .background {
+            if find?.current(in: "title:\(call.id)") != nil {
+                RoundedRectangle(cornerRadius: 5, style: .continuous).fill(Color.btFindCurrent).padding(.horizontal, -4)
+            }
+        }
         .opacity(isAnswered && call.result == nil ? 0.6 : 1)
     }
 
@@ -297,7 +304,7 @@ struct ToolCallView: View {
             TodoChecklist(items: ToolPresentation.todos(call.input))
         case .plan:
             if let plan = call.input["plan"]?.string {
-                AgentProse(markdown: plan).btLeadingRule()
+                AgentProse(markdown: plan, findField: "out:\(call.id)").btLeadingRule()
             } else {
                 InputFields(input: call.input)
             }
@@ -307,7 +314,7 @@ struct ToolCallView: View {
                 if task?.isBackgrounded == true {
                     if let report = backgroundReport { Text(report).font(.btChatCallout).foregroundStyle(Color.btTextSecondary).textSelection(.enabled) }
                 } else if let result = call.result, !result.output.isEmpty {
-                    OutputText(text: result.output, isError: result.isError, key: "out:\(call.id)")
+                    OutputText(text: result.output, isError: result.isError, key: "out:\(call.id)", findField: "out:\(call.id)")
                 }
             }
         case .question:
@@ -318,13 +325,15 @@ struct ToolCallView: View {
                 if task?.isBackgrounded == true {
                     if let report = backgroundReport { AgentProse(markdown: report) }
                 } else if let result = call.result, !result.output.isEmpty {
-                    AgentProse(markdown: result.output)
+                    AgentProse(markdown: result.output, findField: "out:\(call.id)")
                 }
             }
         case .explore, .other:
             VStack(alignment: .leading, spacing: Space.sm) {
                 if kind == .other { InputFields(input: call.input) }
-                if let result = call.result, !result.output.isEmpty { OutputText(text: result.output, isError: result.isError, key: "out:\(call.id)") }
+                if let result = call.result, !result.output.isEmpty {
+                    OutputText(text: result.output, isError: result.isError, key: "out:\(call.id)", findField: "out:\(call.id)")
+                }
             }
         }
     }
@@ -665,16 +674,19 @@ struct CodeText: View {
 private struct OutputText: View {
     @Environment(\.transcriptExpansion) private var expansion
     @Environment(\.transcriptRow) private var row
+    @Environment(\.transcriptFind) private var find
     let text: String
     let isError: Bool
     var key: String? = nil
+    var findField: String? = nil
     @State private var local = false
     private var expanded: Bool { key.flatMap { ExpansionSwitch(key: $0, expansion: expansion, row: row).value(local: local) } ?? local }
     var body: some View {
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
         VStack(alignment: .leading, spacing: 4) {
             TextLines(text: TextClip.block(expanded || lines.count <= 14 ? text : lines.prefix(14).joined(separator: "\n")),
-                      font: .btChatMono, color: isError ? Color.btRemoved : Color.btTextSecondary, spacing: 2.5)
+                      font: .btChatMono, color: isError ? Color.btRemoved : Color.btTextSecondary, spacing: 2.5,
+                      find: findField.flatMap { field in find.map { ($0.query, $0.current(in: field)) } })
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .btLeadingRule(isError ? Color.btRemoved : Color.btBorderStrong)
             if lines.count > 14 {
@@ -953,10 +965,19 @@ struct TextLines: View {
     let font: Font
     let color: Color
     var spacing: CGFloat = 2
+    /// What ⌘F is finding, and the appearance of it you're on, to mark them.
+    var find: (query: String, current: Int?)? = nil
 
     var body: some View {
-        SelectableLines(text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init), spacing: spacing)
-            .font(font)
-            .foregroundStyle(color)
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        Group {
+            if let find {
+                SelectableLines(FindMarks.mark(lines: lines, query: find.query, current: find.current), spacing: spacing)
+            } else {
+                SelectableLines(lines, spacing: spacing)
+            }
+        }
+        .font(font)
+        .foregroundStyle(color)
     }
 }

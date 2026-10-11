@@ -109,6 +109,7 @@ public struct StructuredText: View {
 
   private let markup: String
   private let parser: any MarkupParser
+  private var parseKey: AnyHashable?
 
   /// Creates a structured-text view by parsing `markup` with a custom parser.
   ///
@@ -119,7 +120,7 @@ public struct StructuredText: View {
   }
 
   public var body: some View {
-    WithAttachments(parsed.value(for: markup, parser)) {
+    WithAttachments(parsed.value(for: markup, key: parseKey, parser)) {
       BlockContent(content: $0)
         .modifier(TextSelectionInteraction())
         .modifier(TextSelectionCoordination())
@@ -133,15 +134,25 @@ public struct StructuredText: View {
   /// drawing never invalidates the view.
   @MainActor private final class Parsed {
     private var markup: String?
+    private var key: AnyHashable?
     private var value = AttributedString()
 
-    func value(for markup: String, _ parser: any MarkupParser) -> AttributedString {
-      if markup != self.markup {
+    func value(for markup: String, key: AnyHashable?, _ parser: any MarkupParser) -> AttributedString {
+      if markup != self.markup || key != self.key {
         value = (try? parser.attributedString(for: markup)) ?? .init()
         self.markup = markup
+        self.key = key
       }
       return value
     }
+  }
+
+  /// Added for Abstract: parses again when `key` changes, not only the
+  /// markup; for a parser whose output depends on more (find marks).
+  public func parsing(key: AnyHashable?) -> StructuredText {
+    var copy = self
+    copy.parseKey = key
+    return copy
   }
 }
 

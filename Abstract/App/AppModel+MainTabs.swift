@@ -33,6 +33,16 @@ extension AppModel {
         return EditorStore.shared.existing(root: root, path: path, in: sessionId)
     }
 
+    /// The chat whose transcript is in front, when one is: ⌘F finds in it.
+    var chatInFront: String? {
+        guard let id = selectedSessionId else { return nil }
+        switch mainTabs.active?.kind {
+        case let .file(sessionId, _)? where sessionId == id: return nil
+        case let .diff(sessionId)? where sessionId == id: return nil
+        default: return id
+        }
+    }
+
     /// The image showing, when an image's tab is: ⌘0 and ⌘1 zoom it.
     var activeImageDocument: EditorDocument? {
         guard let document = activeFileDocument, case .image = document.content else { return nil }

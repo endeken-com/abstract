@@ -106,6 +106,10 @@ final class TranscriptController: NSObject {
     let selection = TranscriptSelection()
     /// When the view last scrolled: work ahead waits for a pause.
     private var lastScroll: CFTimeInterval = 0
+    /// Where ⌘F's current match is drawn.
+    private var findPlace: FindPlace?
+    /// A match to take the view to at the next layout: its row, and how far down it.
+    private var pendingReveal: (id: Int, fraction: CGFloat)?
     var onBottomChange: ((Bool) -> Void)?
 
     private static let top = Space.xl
@@ -163,7 +167,10 @@ final class TranscriptController: NSObject {
             self.feed = feed
             feed.expansion.onChange = { [weak self] row in self?.rowToggled(row) }
             observe(feed)
+            attach(feed.find)
         }
+        feed.find.includesThinking = context.transcript.showsThinking
+        feed.find.root = model.session(context.sessionId)?.worktreePath
         if jump != self.jump {
             self.jump = jump
             following = true
@@ -181,6 +188,7 @@ final class TranscriptController: NSObject {
                 guard let self, let feed, feed === self.feed else { return }
                 self.rebuild(force: false)
                 self.observe(feed)
+                feed.find.chatChanged()
             }
         }
     }
@@ -205,8 +213,11 @@ final class TranscriptController: NSObject {
         let oldItems = items
         items = next
         index = Dictionary(uniqueKeysWithValues: next.enumerated().map { ($1.id, $0) })
+        findPlace = feed.find.state.currentMatch.flatMap(locate)
         for item in next {
             let changed = old[item.id].map { oldItems[$0] != item } ?? true
+            // A row whose find marks changed draws them; its height stays.
+            if !changed, !force, let host = mounted[item.id], host.find != rowFind(item) { host.update(root(for: item)) }
             guard changed || force else { continue }
             if let host = mounted[item.id] {
                 host.update(root(for: item))
@@ -239,7 +250,8 @@ final class TranscriptController: NSObject {
                                  transcript: context?.transcript ?? .normal,
                                  expansion: feed?.expansion,
                                  row: item.map { TranscriptRowKey(id: $0.id, version: $0.version) },
-                                 selection: selection)
+                                 selection: selection,
+                                 find: rowFind(item))
     }
 
     private func root(for item: Item) -> TranscriptRowView {
@@ -303,7 +315,9 @@ final class TranscriptController: NSObject {
             footerHost.update(TranscriptRowView(content: footerView, environment: environment(nil), width: width, model: model))
         }
         let clip = scrollView.contentView
-        let anchor = following ? nil : readingAnchor()
+        let reveal = pendingReveal
+        pendingReveal = nil
+        let anchor = following || reveal != nil ? nil : readingAnchor()
 
         let x = ((scrollView.contentSize.width - width) / 2).rounded()
         // Rows keep their heights current as they report them.
@@ -325,7 +339,14 @@ final class TranscriptController: NSObject {
             if document.frame.size != NSSize(width: scrollView.contentSize.width, height: docHeight) {
                 document.setFrameSize(NSSize(width: scrollView.contentSize.width, height: docHeight))
             }
-            if following || !didInitialScroll {
+            if let reveal, let i = index[reveal.id] {
+                // A match: a third of the way down the view, where the eye finds it.
+                let h = heights[reveal.id] ?? estimate(items[i], width: width)
+                let view = clip.bounds.height
+                let y = h <= view * 0.6 ? tops[i] : tops[i] + h * reveal.fraction
+                let target = min(max(0, y - view / 3), max(0, docHeight - view))
+                if abs(clip.bounds.minY - target) > 0.5 { scroll(to: target) }
+            } else if following || !didInitialScroll {
                 didInitialScroll = true
                 scrollToEnd(animated: false)
             } else if let anchor, let i = index[anchor.id] {
@@ -417,6 +438,7 @@ final class TranscriptController: NSObject {
         if let parkedHost = parked.removeValue(forKey: item.id) {
             parkedOrder.removeAll { $0 == item.id }
             host = parkedHost
+            if host.find != rowFind(item) { host.update(root(for: item)) }
         } else {
             host = RowHost(root: root(for: item))
         }
@@ -559,6 +581,128 @@ final class TranscriptController: NSObject {
         }.joined(separator: " | ")
     }
 
+    // MARK: Finding
+
+    private func attach(_ find: ChatFind) {
+        find.topBlock = { [weak self] in self?.readingAnchor().map { $0.id / ChatFeed.partsPerBlock } }
+        find.reveal = { [weak self] match in self?.reveal(match) }
+        observeFind(find)
+    }
+
+    private func observeFind(_ find: ChatFind) {
+        withObservationTracking {
+            _ = find.isOpen
+            _ = find.state
+        } onChange: { [weak self, weak find] in
+            Task { @MainActor in
+                guard let self, let find, find === self.feed?.find else { return }
+                self.findChanged()
+                self.observeFind(find)
+            }
+        }
+    }
+
+    /// What's found, or which match you're on, changed: the rows showing redraw their marks.
+    private func findChanged() {
+        findPlace = feed?.find.state.currentMatch.flatMap(locate)
+        for (id, host) in mounted {
+            guard let i = index[id], host.find != rowFind(items[i]) else { continue }
+            host.update(root(for: items[i]))
+        }
+        for (id, host) in parked {
+            guard let i = index[id], host.find != rowFind(items[i]) else { continue }
+            dropParked(id)
+        }
+        document.needsLayout = true
+    }
+
+    /// What a row marks: the words being found, and the match you're on if it's in this row.
+    private func rowFind(_ item: Item?) -> RowFind? {
+        guard let item, let find = feed?.find, find.isOpen, !find.state.query.isEmpty else { return nil }
+        return RowFind(query: find.state.query, current: findPlace?.row == item.id ? findPlace?.spot : nil)
+    }
+
+    /// Takes the view to a match: opens what hides it (a run of calls, a
+    /// call's output, a long message) and scrolls it a third of the way down.
+    private func reveal(_ match: TranscriptMatch) {
+        guard let place = locate(match) else { return }
+        following = false
+        for key in place.opens { feed?.expansion.set(key, true, row: place.row) }
+        pendingReveal = (place.row, place.fraction)
+        layoutRows()
+    }
+
+    /// Where a match is drawn: its row (a reply's part, a call's row), its
+    /// place among that row's texts, and what has to open to show it.
+    private func locate(_ match: TranscriptMatch) -> FindPlace? {
+        guard let find = feed?.find else { return nil }
+        let rows = items.filter { $0.id / ChatFeed.partsPerBlock == match.block }
+        guard let first = rows.first else { return nil }
+        let query = find.state.query
+        let field = FindSpot.field(match.field)
+        func share(_ location: Int, of text: String) -> CGFloat {
+            CGFloat(location) / CGFloat(max(1, text.utf16.count))
+        }
+        switch match.field {
+        case .user:
+            guard case let .user(_, text) = first.row.block else { return nil }
+            return FindPlace(row: first.id, spot: FindSpot(field: field, occurrence: match.occurrence), opens: ["user:\(first.id)"],
+                             fraction: share(match.location, of: PromptAttachments.split(text).text))
+        case .thinking:
+            guard case let .thinking(_, text) = first.row.block else { return nil }
+            return FindPlace(row: first.id, spot: FindSpot(field: field, occurrence: match.occurrence), opens: [],
+                             fraction: share(match.location, of: text))
+        case .reply:
+            // A reply still streaming, or a very long one, is a row per Markdown block.
+            var n = match.occurrence
+            for row in rows {
+                guard case let .assistant(_, text, _, _) = row.row.block else { continue }
+                let ranges = TranscriptSearch.ranges(of: query, in: text)
+                if n < ranges.count {
+                    return FindPlace(row: row.id, spot: FindSpot(field: field, occurrence: n), opens: [],
+                                     fraction: share(ranges[n].lowerBound.utf16Offset(in: text), of: text))
+                }
+                n -= ranges.count
+            }
+            return FindPlace(row: rows[rows.count - 1].id, spot: nil, opens: [], fraction: 0)
+        case let .toolTitle(id), let .toolOutput(id):
+            for row in rows {
+                guard case let .tools(_, calls) = row.row.block, let i = calls.firstIndex(where: { $0.id == id }) else { continue }
+                var opens: [String] = []
+                if calls.count > 1, context?.transcript.opensTools != true { opens.append("run:\(calls[0].id)") }
+                var within: CGFloat = 0
+                if case .toolOutput = match.field {
+                    opens.append("call:\(id)")
+                    let text = ChatFind.fields(calls[i], root: find.root).first { $0.0 == match.field }?.1 ?? ""
+                    let line = text.utf16.prefix(match.location).count { $0 == 10 }
+                    // Past the lines an output shows before Show more.
+                    if line >= 14 { opens.append("out:\(id)") }
+                    within = CGFloat(line) / CGFloat(max(1, text.utf16.count { $0 == 10 } + 1))
+                }
+                return FindPlace(row: row.id, spot: FindSpot(field: field, occurrence: match.occurrence), opens: opens,
+                                 fraction: (CGFloat(i) + within) / CGFloat(calls.count))
+            }
+            return nil
+        }
+    }
+
+    /// For the demo's find probe: where the current match is, whether its
+    /// row is on screen, and what it marks.
+    func describeFind() -> String {
+        guard let place = findPlace, let i = index[place.row] else { return "no match placed" }
+        let visible = scrollView.contentView.bounds
+        let frame = mounted[place.row]?.view.frame
+        let block: String = switch items[i].row.block {
+        case let .tools(_, calls): "tools [" + calls.map { "\($0.id) open \(feed?.expansion.value("call:\($0.id)") ?? false) out \(feed?.expansion.value("out:\($0.id)") ?? false)" }.joined(separator: ", ") + "]"
+        case let .assistant(_, text, _, _): "reply “\(text.prefix(60))”"
+        default: "other"
+        }
+        return "row #\(i) of \(items.count) \(block), spot \(place.spot.map { "\($0.field)#\($0.occurrence)" } ?? "none"), "
+            + (frame.map { String(format: "frame y %.0f–%.0f, view y %.0f–%.0f, in view %d", $0.minY, $0.maxY, visible.minY, visible.maxY,
+                                  visible.intersects($0) ? 1 : 0) } ?? "not mounted")
+            + ", marks \(mounted[place.row]?.find.map { "\($0.query) current \($0.current.map { "\($0.field)#\($0.occurrence)" } ?? "none")" } ?? "none")"
+    }
+
     // MARK: Scrolling
 
     private var distanceFromEnd: CGFloat {
@@ -606,6 +750,16 @@ final class TranscriptController: NSObject {
     private func reportBottom() {
         onBottomChange?(distanceFromEnd < 80)
     }
+}
+
+/// Where ⌘F's match is drawn in a transcript, and what has to open to show it.
+struct FindPlace {
+    let row: Int
+    let spot: FindSpot?
+    /// Expansion keys to open: a run of calls, a call, its output, a long message.
+    let opens: [String]
+    /// How far down the row, from 0 to 1.
+    let fraction: CGFloat
 }
 
 /// The transcript's scroll view. Scrolling up by hand stops following the end.
@@ -656,10 +810,13 @@ final class RowHost {
     private var lastHeight: CGFloat = 0
     /// Whether the content changed since it was last measured.
     private(set) var dirty = false
+    /// The find marks it draws.
+    private(set) var find: RowFind?
     var onHeightChange: (() -> Void)?
     var view: NSView { host }
 
     init(root: TranscriptRowView) {
+        find = root.environment.find
         host = RowHostingView(rootView: root.reporting(to: reporter))
         host.sizingOptions = [.intrinsicContentSize]
         host.safeAreaRegions = []
@@ -687,6 +844,7 @@ final class RowHost {
 
     func update(_ root: TranscriptRowView) {
         host.rootView = root.reporting(to: reporter)
+        find = root.environment.find
         dirty = true
     }
 
@@ -727,9 +885,10 @@ struct TranscriptRowEnvironment {
     var expansion: TranscriptExpansion?
     var row: TranscriptRowKey?
     var selection: TranscriptSelection?
+    var find: RowFind?
 
     static let empty = TranscriptRowEnvironment(approvals: [:], latestTodoCallId: nil, prose: ProseStyle(font: .inter, size: .medium),
-                                                transcript: .normal, expansion: nil, row: nil, selection: nil)
+                                                transcript: .normal, expansion: nil, row: nil, selection: nil, find: nil)
 }
 
 /// A row as its hosting view draws it: the content at the row's width, with
@@ -761,5 +920,6 @@ struct TranscriptRowView: View {
             .environment(\.transcriptExpansion, environment.expansion)
             .environment(\.transcriptRow, environment.row)
             .environment(\.textSelectionGroup, environment.selection)
+            .environment(\.transcriptFind, environment.find)
     }
 }

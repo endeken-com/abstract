@@ -13,7 +13,7 @@ struct ReplyProse: View {
     @State private var linked: String?
 
     var body: some View {
-        AgentProse(markdown: streaming == nil ? linked ?? text : text, streaming: streaming)
+        AgentProse(markdown: streaming == nil ? linked ?? text : text, streaming: streaming, findField: "reply")
             .environment(\.openURL, OpenURLAction { url in
                 guard let target = FilePathLinks.target(url) else { return .systemAction }
                 model.openFile(target.path, in: sessionId, line: target.line, preview: true)

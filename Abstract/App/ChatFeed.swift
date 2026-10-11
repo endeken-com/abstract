@@ -58,6 +58,8 @@ final class ChatFeed {
 
     /// What's open in the transcript, kept with the chat.
     @ObservationIgnored let expansion = TranscriptExpansion()
+    /// ⌘F in the chat.
+    @ObservationIgnored private(set) lazy var find = ChatFind(feed: self)
     /// Rows' measured heights, kept across openings, with what they were measured for.
     @ObservationIgnored var measured: [Int: MeasuredRow] = [:]
 
@@ -70,7 +72,7 @@ final class ChatFeed {
     @ObservationIgnored private var parts: [Int: (text: String, blocks: [String])] = [:]
     static let interval: Duration = .milliseconds(50)
     /// Row ids for a reply's blocks: the block id, then the part.
-    private static let partsPerBlock = 4096
+    static let partsPerBlock = 4096
 
     func append(_ event: AgentEvent) {
         timeline.append(event)
