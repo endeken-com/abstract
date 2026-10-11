@@ -105,11 +105,12 @@ extension AppModel {
     /// Ask the chat's provider for a short title. A project's naming
     /// instructions can also guide the branch; a failed naming call leaves a
     /// readable fallback.
-    func suggestedNaming(instructions: String?, providerId: String, model: String?, prompt: String) async -> ChatNaming.Suggestion? {
+    func suggestedNaming(instructions: String?, providerId: String, model: String?, prompt: String,
+                         focus: String = "") async -> ChatNaming.Suggestion? {
         guard !isDemo else { return nil }
         let binary = providerOverrides[providerId]?.path.flatMap { $0.isEmpty ? nil : $0 }
         return await ChatNaming.suggest(executor: executor, binary: binary, providerId: providerId, model: model,
-                                        instructions: instructions ?? "", task: prompt)
+                                        instructions: instructions ?? "", task: prompt, focus: focus)
     }
 
     /// The chat toolbar's Run: the project's run script in the chat's Run

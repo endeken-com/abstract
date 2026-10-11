@@ -561,6 +561,9 @@ private struct ScopeSentence: View {
             note("Each run arrives in “\(chat.name)” as your next message would, and its agent picks up where it left off, "
                  + "with the chat's own agent and permissions.")
         }
+        if !draft.isPinned, draft.projectId != nil {
+            note("Each run gets its own branch, renamed for its work once the agent starts.")
+        }
         if draft.isPinned {
             note("Its agent can start chats of their own, each in its own worktree, with the abstract command line "
                  + "(Settings › General › Command line).")

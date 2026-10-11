@@ -203,7 +203,7 @@ private struct NoticeRow: View {
         let agent = ProviderRegistry.name(model.session(sessionId)?.providerId ?? "")
         VStack(alignment: .leading, spacing: Space.sm) {
             HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
-                Image(systemName: icon).foregroundStyle(Color.btWarning).font(.system(size: 11, weight: .regular))
+                Image(systemName: icon).foregroundStyle(isInfo ? Color.btTextTertiary : Color.btWarning).font(.system(size: 11, weight: .regular))
                 SelectableText(TextClip.block(notice.message(agent: agent)))
                     .font(.btChatCaption).foregroundStyle(Color.btTextSecondary).lineSpacing(2)
                 Spacer(minLength: 0)
@@ -218,8 +218,11 @@ private struct NoticeRow: View {
         case .retrying: "arrow.clockwise"
         case .nearLimit, .limitReached: "gauge.with.dots.needle.67percent"
         case .warning: "exclamationmark.triangle"
+        case .info: "info.circle"
         }
     }
+
+    private var isInfo: Bool { if case .info = notice { true } else { false } }
 }
 
 /// A limit stopped the agent: carry on with another one.

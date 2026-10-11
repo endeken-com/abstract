@@ -13,6 +13,8 @@ public enum AgentNotice: Sendable, Hashable {
     case limitReached(resetsAt: Date?)
     /// A problem the agent reported and carries on past.
     case warning(String)
+    /// Something Abstract did to the chat, said in passing.
+    case info(String)
 
     /// The notice as one sentence. `agent` names who is retrying; reset
     /// times are read in `calendar`'s time zone.
@@ -29,7 +31,7 @@ public enum AgentNotice: Sendable, Hashable {
         case let .limitReached(resetsAt):
             guard let resetsAt else { return "You've hit your usage limit." }
             return "You've hit your usage limit until \(Self.resetTime(resetsAt, now: now, calendar: calendar, locale: locale).text)"
-        case let .warning(message):
+        case let .warning(message), let .info(message):
             return message
         }
     }

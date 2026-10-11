@@ -212,8 +212,10 @@ final class AppModel {
     /// as its last edit left it, so the next edit's diff is its own.
     @ObservationIgnored private var enrichers: [String: any LineEnricher] = [:]
     @ObservationIgnored private var seenSeq: [String: Int] = [:]
-    /// Automation runs whose chat is being named for its agent's report.
+    /// Automation runs whose chat is being named, for its agent's first reply or its report.
     @ObservationIgnored private var namingRuns: Set<String> = []
+    /// How far each fresh-worktree run's naming got.
+    @ObservationIgnored private var runNamings: [String: RunNaming] = [:]
     /// Chats `abstract` drives, and what it says about them; see AppModel+SessionLocks.
     var cliDriven: [String: SessionLockInfo] = [:]
     /// The chats' locks the app holds: the chat showing, and those whose agent it runs.
@@ -635,21 +637,109 @@ final class AppModel {
         reload()
     }
 
-    /// A fresh-worktree automation run, still named for its automation once
-    /// a turn ends, is renamed for what its agent says it worked on.
-    private func nameAutomationRun(_ sessionId: String) {
-        guard let s = session(sessionId), let automationId = s.automationId, !namingRuns.contains(sessionId),
-              let automation = try? store.automation(automationId), automation.workspaceMode == .newWorktree,
+    /// How far a fresh-worktree run's naming got.
+    struct RunNaming {
+        /// Naming calls made on the agent's first replies.
+        var replyCalls = 0
+        /// The title its first reply gave the chat, which the end of the turn still refines.
+        var title: String?
+        /// The first reply's branch, kept for the end of the turn when renaming had to wait.
+        var branch: String?
+        /// The branch has had its last try, at the end of a turn.
+        var retried = false
+    }
+
+    /// The fresh-worktree automation a chat is a run of.
+    private func freshRunAutomation(_ s: Session) -> Automation? {
+        guard let id = s.automationId, let automation = try? store.automation(id),
+              automation.workspaceMode == .newWorktree else { return nil }
+        return automation
+    }
+
+    /// A run's agent says what it's taking on: the chat and its branch are
+    /// named for that work at once, while nothing is committed on the branch.
+    /// Too little to go on, and its next reply is tried.
+    private func nameRunFromReply(_ sessionId: String, _ text: String) {
+        guard !namingRuns.contains(sessionId), let s = session(sessionId), let automation = freshRunAutomation(s),
               AutomationRunNaming.isProvisional(s.name, automationName: automation.name),
-              let report = feed(sessionId).timeline.lastReply else { return }
+              runNamings[sessionId, default: RunNaming()].replyCalls < 3,
+              AutomationRunNaming.canName(fromReply: text) else { return }
+        runNamings[sessionId, default: RunNaming()].replyCalls += 1
         namingRuns.insert(sessionId)
         Task {
             let naming = await suggestedNaming(instructions: project(s.projectId)?.namingInstructions, providerId: s.providerId,
                                                model: s.model ?? defaultModel(for: s.providerId),
-                                               prompt: AutomationRunNaming.task(fromReport: report))
+                                               prompt: text, focus: AutomationRunNaming.firstReplyFocus)
             namingRuns.remove(sessionId)
-            await rename(sessionId, from: s.name, to: naming?.title)
+            if let naming {
+                await rename(sessionId, from: s.name, to: naming.title)
+                if session(sessionId)?.name == naming.title { runNamings[sessionId, default: RunNaming()].title = naming.title }
+                if await !renameRunBranch(sessionId, for: naming.branch, allowCommits: false) {
+                    runNamings[sessionId, default: RunNaming()].branch = naming.branch
+                }
+            }
+            // The turn ended while this was being asked: its own naming comes now.
+            if let status = session(sessionId)?.status, status != .running, status != .waitingInput {
+                nameAutomationRun(sessionId)
+            }
         }
+    }
+
+    /// A turn of a fresh-worktree run ended. Still named for its automation,
+    /// or for its agent's first reply, the chat is renamed for what the agent
+    /// says it worked on. A branch still named as the run started gets one
+    /// last try, commits and all, unless it was pushed.
+    private func nameAutomationRun(_ sessionId: String) {
+        guard !namingRuns.contains(sessionId), let s = session(sessionId), let automation = freshRunAutomation(s) else { return }
+        let run = runNamings[sessionId, default: RunNaming()]
+        let refine = AutomationRunNaming.isProvisional(s.name, automationName: automation.name) || (run.title != nil && run.title == s.name)
+        let retry = !run.retried && s.branch.map(WorktreeNaming.isRunBranch) == true
+        let report = refine || run.branch == nil ? feed(sessionId).timeline.lastReply : nil
+        guard refine || retry, report != nil || (retry && run.branch != nil) else { return }
+        if retry { runNamings[sessionId, default: RunNaming()].retried = true }
+        namingRuns.insert(sessionId)
+        Task {
+            var naming: ChatNaming.Suggestion?
+            if let report {
+                naming = await suggestedNaming(instructions: project(s.projectId)?.namingInstructions, providerId: s.providerId,
+                                               model: s.model ?? defaultModel(for: s.providerId),
+                                               prompt: report, focus: AutomationRunNaming.reportFocus)
+            }
+            namingRuns.remove(sessionId)
+            if refine, let title = naming?.title {
+                await rename(sessionId, from: s.name, to: title)
+                runNamings[sessionId]?.title = nil
+            }
+            if retry, let branch = naming?.branch ?? run.branch {
+                await renameRunBranch(sessionId, for: branch, allowCommits: true)
+            }
+        }
+    }
+
+    /// The run's branch, named for its work, unless it was pushed, has a pull
+    /// request or was renamed already (by Abstract or its agent). With
+    /// `allowCommits`, only once the agent is done. Whether it was renamed.
+    @discardableResult
+    private func renameRunBranch(_ sessionId: String, for suggestion: String, allowCommits: Bool) async -> Bool {
+        guard let s = session(sessionId), pullRequests[sessionId] == nil, let branch = s.branch, WorktreeNaming.isRunBranch(branch),
+              let worktree = s.worktreePath, let project = project(s.projectId) else { return false }
+        if allowCommits, s.status == .running || s.status == .waitingInput { return false }
+        let exec = executor(for: sessionId)
+        let onGitHub = await isOnGitHub(project)
+        let base = await Diff.resolveBase(exec, worktree: worktree, preferred: s.baseRef)
+        let renamed = await AutomationRunNaming.renameBranch(
+            exec, worktree: worktree, from: branch, suggestion: suggestion, prefix: project.branchPrefix ?? branchPrefix,
+            base: base, allowCommits: allowCommits
+        ) { branch in
+            guard onGitHub else { return false }
+            // Unknown counts as having one: a pull request's branch is never renamed under it.
+            do { return try await GitHub.pullRequest(exec, repo: project.rootPath, branch: branch) != nil } catch { return true }
+        }
+        guard let renamed else { return false }
+        if let head = renamed.head { followBranch(sessionId, to: head) }
+        guard renamed.head == renamed.name else { return false }
+        engine.record(sessionId: sessionId, OutputLine(stream: .note, line: "Branch renamed to `\(renamed.name)`"))
+        return true
     }
 
     // MARK: - Reusing worktrees
@@ -1254,6 +1344,8 @@ final class AppModel {
             permissions[sessionId, default: []].append(PendingPermission(requestId: requestId, toolName: toolName, input: input))
             setStatus(sessionId, .waitingInput, detail: "\(toolName) needs approval")
             notify(sessionId, .waitingInput, detail: "\(ProviderRegistry.name(session(sessionId)?.providerId ?? "")) wants to use \(toolName)")
+        case let .text(.assistant, text, _, false):
+            nameRunFromReply(sessionId, text)
         case let .usage(totals, cost, duration, turns):
             let s = session(sessionId)
             try? store.record(UsageRecord(sessionId: sessionId, projectId: s?.projectId, providerId: s?.providerId ?? "unknown",

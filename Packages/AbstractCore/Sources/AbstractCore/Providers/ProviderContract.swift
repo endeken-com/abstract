@@ -125,6 +125,9 @@ public enum OutputStreamKind: String, Sendable, Codable {
     /// A chat passing from one agent to another (`HandoffMarker`): the
     /// replay switches parsers here.
     case handoff
+    /// A line of Abstract's own about the chat (its branch renamed, say),
+    /// shown quietly between the agent's output.
+    case note
 }
 
 public struct UsageTotals: Sendable, Hashable, Codable {

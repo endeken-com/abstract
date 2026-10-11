@@ -109,6 +109,25 @@ public enum WorktreeNaming {
         return out.isEmpty ? nil : out
     }
 
+    /// The branch a fresh-worktree automation run starts on:
+    /// `auto/<automation, at most 30 characters>/<yyyy-mm-dd-hhmm>`. The
+    /// time is never cut, so only runs started in the same minute collide.
+    public static func runBranch(automationName: String, at date: Date, timeZone: TimeZone = .current) -> String {
+        var name = String(slugify(automationName).prefix(30))
+        while name.last == "-" { name.removeLast() }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = timeZone
+        formatter.dateFormat = "yyyy-MM-dd-HHmm"
+        return "auto/\(name)/\(formatter.string(from: date))"
+    }
+
+    /// Whether `branch` still has the name a run started on (behind any
+    /// prefix, with any counter): not yet renamed, by Abstract or its agent.
+    public static func isRunBranch(_ branch: String) -> Bool {
+        branch.range(of: #"(^|/)auto/[a-z0-9-]+/\d{4}-\d{2}-\d{2}-\d{4}(-\d+)?$"#, options: .regularExpression) != nil
+    }
+
     /// First 8 hex characters of the SHA-256 of `input`. Keeps worktree
     /// directories of same-named repositories apart.
     public static func shortHash(_ input: String) -> String {

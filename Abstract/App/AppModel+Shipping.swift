@@ -41,6 +41,7 @@ extension AppModel {
     /// submodule and what was pushed already, when it can't go yet, or saying
     /// so when there's no branch at all.
     func prepareParentPush(_ sessionId: String, in path: String) async throws {
+        await followWorktreeBranch(sessionId)
         guard let session = session(sessionId), let worktree = session.worktreePath else { return }
         guard let branch = session.branch else { throw AbstractError.message("This chat has no branch to push.") }
         let exec = executor(for: sessionId)
@@ -51,6 +52,7 @@ extension AppModel {
     /// submodule goes to the branch it's on (the chat's, unless the agent
     /// chose another); the worktree's own to the chat's branch.
     func pushEverything(_ sessionId: String, in path: String) async throws {
+        await followWorktreeBranch(sessionId)
         guard let session = session(sessionId), let worktree = session.worktreePath else { return }
         guard let branch = session.branch else { throw AbstractError.message("This chat has no branch to push.") }
         let exec = executor(for: sessionId)
