@@ -102,15 +102,26 @@ extension AppModel {
 extension AppModel {
     static let runLabel = "Run"
 
-    /// Ask the chat's provider for a short title. A project's naming
-    /// instructions can also guide the branch; a failed naming call leaves a
-    /// readable fallback.
+    /// Ask the chat's agent for a short title and branch, following the
+    /// project's naming instructions; an agent that can't name chats has the
+    /// first installed one that can do it. A failed call is tried again
+    /// `attempts - 1` times, and says why it failed.
     func suggestedNaming(instructions: String?, providerId: String, model: String?, prompt: String,
-                         focus: String = "") async -> ChatNaming.Suggestion? {
+                         focus: String = "", attempts: Int = 2) async -> Result<ChatNaming.Suggestion, ChatNaming.Failure> {
+        guard !isDemo else { return .failure(ChatNaming.Failure("The demo doesn't name chats.")) }
+        guard let namer = ChatNaming.namer(for: providerId, installed: { providerStatus[$0]?.available != false }) else {
+            return .failure(ChatNaming.Failure("No installed agent can name chats."))
+        }
+        let binary = providerOverrides[namer.id]?.path.flatMap { $0.isEmpty ? nil : $0 }
+        return await ChatNaming.suggest(executor: executor, provider: namer, binary: binary, model: namer.id == providerId ? model : nil,
+                                        instructions: instructions ?? "", task: prompt, focus: focus, attempts: attempts)
+    }
+
+    /// What a chat its naming call failed for says, in place of a name from the model.
+    func namingFailureNote(_ failure: ChatNaming.Failure, project: Project?) -> String? {
         guard !isDemo else { return nil }
-        let binary = providerOverrides[providerId]?.path.flatMap { $0.isEmpty ? nil : $0 }
-        return await ChatNaming.suggest(executor: executor, binary: binary, providerId: providerId, model: model,
-                                        instructions: instructions ?? "", task: prompt, focus: focus)
+        return Project.nonBlank(project?.namingInstructions) == nil ? "Couldn't name this chat: \(failure.reason)"
+            : "Couldn't name this chat from the project's naming instructions: \(failure.reason)"
     }
 
     /// The chat toolbar's Run: the project's run script in the chat's Run

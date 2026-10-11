@@ -586,7 +586,7 @@ final class AppModel {
         // Named for what was asked, or for what was attached when nothing was typed.
         let gist = text.isEmpty ? attachments.map(\.label).joined(separator: ", ") : text
         let provisional = name ?? Workspace.title(fromPrompt: gist)
-        let naming: Task<ChatNaming.Suggestion?, Never>? = name != nil ? nil : Task {
+        let naming: Task<Result<ChatNaming.Suggestion, ChatNaming.Failure>, Never>? = name != nil ? nil : Task {
             await suggestedNaming(instructions: project?.namingInstructions, providerId: providerId,
                                   model: model ?? defaultModel(for: providerId), prompt: gist)
         }
@@ -625,7 +625,15 @@ final class AppModel {
             setStatus(session.id, .errored, detail: error.localizedDescription)
             throw error
         }
-        if let naming { Task { await rename(session.id, from: provisional, to: naming.value?.title) } }
+        if let naming {
+            Task {
+                let result = await naming.value
+                if case .failure(let failure) = result, let note = namingFailureNote(failure, project: project) {
+                    engine.record(sessionId: session.id, OutputLine(stream: .note, line: note))
+                }
+                await rename(session.id, from: provisional, to: try? result.get().title)
+            }
+        }
         return session.id
     }
 
@@ -667,9 +675,10 @@ final class AppModel {
         runNamings[sessionId, default: RunNaming()].replyCalls += 1
         namingRuns.insert(sessionId)
         Task {
-            let naming = await suggestedNaming(instructions: project(s.projectId)?.namingInstructions, providerId: s.providerId,
-                                               model: s.model ?? defaultModel(for: s.providerId),
-                                               prompt: text, focus: AutomationRunNaming.firstReplyFocus)
+            // One try: an answer with no title means the agent hasn't said yet.
+            let naming = try? await suggestedNaming(instructions: project(s.projectId)?.namingInstructions, providerId: s.providerId,
+                                                    model: s.model ?? defaultModel(for: s.providerId),
+                                                    prompt: text, focus: AutomationRunNaming.firstReplyFocus, attempts: 1).get()
             namingRuns.remove(sessionId)
             if let naming {
                 await rename(sessionId, from: s.name, to: naming.title)
@@ -701,9 +710,9 @@ final class AppModel {
         Task {
             var naming: ChatNaming.Suggestion?
             if let report {
-                naming = await suggestedNaming(instructions: project(s.projectId)?.namingInstructions, providerId: s.providerId,
-                                               model: s.model ?? defaultModel(for: s.providerId),
-                                               prompt: report, focus: AutomationRunNaming.reportFocus)
+                naming = try? await suggestedNaming(instructions: project(s.projectId)?.namingInstructions, providerId: s.providerId,
+                                                    model: s.model ?? defaultModel(for: s.providerId),
+                                                    prompt: report, focus: AutomationRunNaming.reportFocus).get()
             }
             namingRuns.remove(sessionId)
             if refine, let title = naming?.title {

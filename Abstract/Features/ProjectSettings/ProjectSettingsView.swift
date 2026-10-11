@@ -403,7 +403,7 @@ private struct BranchSection: View {
                 }
             }
             StackedSetting(title: "Naming instructions",
-                           detail: "Guides AI-generated chat titles and branch names. Default worktree folders keep city names.") {
+                           detail: "Guides chat titles and branch names for every agent. Commit messages come from your agent's own instructions (AGENTS.md or CLAUDE.md) and from the chat title.") {
                 GrowingEditor(text: $instructions,
                              placeholder: "e.g. Start branches with fix/ or feat/. Keep titles short, in sentence case.",
                              minHeight: 76)

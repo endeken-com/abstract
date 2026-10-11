@@ -41,8 +41,8 @@ import Testing
         let prompt = ChatNaming.prompt(instructions: "", task: "I'll take ABS-51.", focus: AutomationRunNaming.firstReplyFocus)
         #expect(prompt.contains(AutomationRunNaming.firstReplyFocus) && prompt.contains("<task>\nI'll take ABS-51.\n</task>"))
         // Told it can't tell yet, the naming call answers with no title: no name, so the next reply is tried.
-        #expect(ChatNaming.parse(#"{"type":"result","is_error":false,"result":"{\"title\": \"\", \"branch\": \"\"}"}"#) == nil)
-        #expect(ChatNaming.parse(#"{"type":"result","is_error":false,"result":"{\"title\": \"Show diff stats\", \"branch\": \"feat/diff-stats\"}"}"#)
+        #expect(ChatNaming.parse(#"{"title": "", "branch": ""}"#) == nil)
+        #expect(ChatNaming.parse(#"{"title": "Show diff stats", "branch": "feat/diff-stats"}"#)
             == ChatNaming.Suggestion(title: "Show diff stats", branch: "feat/diff-stats"))
     }
 

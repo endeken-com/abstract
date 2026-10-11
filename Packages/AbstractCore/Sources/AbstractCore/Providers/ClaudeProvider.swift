@@ -92,6 +92,30 @@ public struct ClaudeProvider: ProviderDefinition {
         return json["model"]?.string
     }
 
+    /// `claude -p` with no tools, the small model and JSON output, reading
+    /// the prompt from stdin (`--tools` takes several values, so a prompt
+    /// argument after it would be read as one).
+    static let namingArgs = ["-p", "--tools", "", "--model", "haiku", "--output-format", "json", "--no-session-persistence"]
+
+    public func namingLaunch(prompt: String, home: String, binary: String?, model: String?) -> LaunchSpec? {
+        LaunchSpec(command: binary ?? self.binary, args: Self.namingArgs, cwd: home, stdinInitial: prompt, keepStdinOpen: false)
+    }
+
+    /// The `result` text of `--output-format json`.
+    public func namingAnswer(_ output: String) -> String? {
+        guard let envelope = ChatNaming.firstObject(in: output),
+              let outer = try? JSONSerialization.jsonObject(with: Data(envelope.utf8)) as? [String: Any],
+              outer["is_error"] as? Bool != true else { return nil }
+        return outer["result"] as? String
+    }
+
+    public func namingError(_ output: String) -> String? {
+        guard let envelope = ChatNaming.firstObject(in: output),
+              let outer = try? JSONSerialization.jsonObject(with: Data(envelope.utf8)) as? [String: Any],
+              outer["is_error"] as? Bool == true else { return nil }
+        return outer["result"] as? String
+    }
+
     public func buildLaunch(_ ctx: LaunchContext) -> LaunchSpec {
         launchSpec(ctx, resumeArgs: [])
     }
