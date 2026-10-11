@@ -72,6 +72,7 @@ public struct OpenCodeProvider: ProviderDefinition {
     /// reply, or a repository), so it must not read, fetch or run anything.
     static let namingAgent = "abstract-naming"
     static let namingConfig = #"{"agent":{"abstract-naming":{"mode":"primary","tools":{"*":false},"permission":{"*":"deny"}}}}"#
+    static let namingEnv = ["OPENCODE_CONFIG_CONTENT": namingConfig, "OPENCODE_PERMISSION": #"{"*":"deny"}"#]
 
     /// Its small model when one is set, else the chat's, as `namingAgent`,
     /// given through the environment so the user's own config stays untouched.
@@ -80,9 +81,30 @@ public struct OpenCodeProvider: ProviderDefinition {
         return LaunchSpec(command: binary ?? self.binary,
                           args: ["run", "--format", "json", "--agent", Self.namingAgent, "--dir", home]
                               + (model.map { ["--model", $0] } ?? []) + (prompt.hasPrefix("-") ? ["--", prompt] : [prompt]),
-                          cwd: home,
-                          env: ["OPENCODE_CONFIG_CONTENT": Self.namingConfig, "OPENCODE_PERMISSION": #"{"*":"deny"}"#],
-                          keepStdinOpen: false)
+                          cwd: home, env: Self.namingEnv, keepStdinOpen: false)
+    }
+
+    /// `run` falls back to its default agent, every tool on, when it doesn't
+    /// find the one asked for; an OpenCode that ignores the config above
+    /// would do just that. So how it resolves `namingAgent` is read first.
+    public func namingCheck(home: String, binary: String?) -> LaunchSpec? {
+        LaunchSpec(command: binary ?? self.binary, args: ["debug", "agent", Self.namingAgent], cwd: home,
+                   env: Self.namingEnv, keepStdinOpen: false)
+    }
+
+    /// Every tool off, and a rule denying everything that only rules about
+    /// folders outside the project's follow (OpenCode adds its own there;
+    /// with no tools, nothing can use them). The last matching rule wins.
+    public func namingCheckPasses(_ output: String) -> Bool {
+        guard let object = ChatNaming.firstObject(in: output),
+              let agent = try? JSONDecoder().decode(JSONValue.self, from: Data(object.utf8)),
+              agent["name"]?.string == Self.namingAgent,
+              let tools = agent["tools"]?.object, !tools.isEmpty,
+              tools.values.allSatisfy({ $0 == .bool(false) }),
+              let rules = agent["permission"]?.array,
+              let deny = rules.lastIndex(where: { $0["permission"]?.string == "*" && $0["pattern"]?.string == "*"
+                                                     && $0["action"]?.string == "deny" }) else { return false }
+        return rules[(deny + 1)...].allSatisfy { $0["permission"]?.string == "external_directory" }
     }
 
     /// Every text part, in order. An error event means no answer.

@@ -122,6 +122,12 @@ public enum ChatNaming {
     public static func suggest(executor: any Executor, provider: any ProviderDefinition, binary: String?, model: String? = nil,
                                instructions: String, task: String, focus: String = "",
                                attempts: Int = 2, timeout: Duration = timeout) async -> Result<Suggestion, Failure> {
+        if let check = provider.namingCheck(home: executor.homeDirectory, binary: binary) {
+            guard let checked = try? await executor.run(check, timeout: timeout), checked.ok,
+                  provider.namingCheckPasses(checked.stdout) else {
+                return .failure(Failure("\(provider.name) couldn't be limited to naming the chat without using any tools, so it wasn't asked."))
+            }
+        }
         let request = prompt(instructions: instructions, task: task, focus: focus)
         var result = Result<Suggestion, Failure>.failure(Failure("\(provider.name) wasn't asked."))
         for _ in 0..<max(1, attempts) {

@@ -324,6 +324,13 @@ public protocol ProviderDefinition: Sendable {
     func namingAnswer(_ output: String) -> String?
     /// Why that call failed, in the agent's words, when its output says.
     func namingError(_ output: String) -> String?
+    /// Run before the naming call when its limits are set in a way the
+    /// agent could ignore: shows how the agent will really run. nil: the
+    /// limits are flags the CLI refuses to run without.
+    func namingCheck(home: String, binary: String?) -> LaunchSpec?
+    /// Whether that check's output shows the naming call can't act on
+    /// anything (no tools, nothing permitted). False asks nothing.
+    func namingCheckPasses(_ output: String) -> Bool
 }
 
 public extension ProviderDefinition {
@@ -339,4 +346,6 @@ public extension ProviderDefinition {
     func namingLaunch(prompt: String, home: String, binary: String?, model: String?) -> LaunchSpec? { nil }
     func namingAnswer(_ output: String) -> String? { nil }
     func namingError(_ output: String) -> String? { nil }
+    func namingCheck(home: String, binary: String?) -> LaunchSpec? { nil }
+    func namingCheckPasses(_ output: String) -> Bool { true }
 }
