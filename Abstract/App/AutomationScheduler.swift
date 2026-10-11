@@ -104,8 +104,9 @@ final class AutomationScheduler {
             }
             return id
         case .newWorktree:
-            let slug = "auto-\(WorktreeNaming.slugify(a.name))-\(Date().formatted(.iso8601.year().month().day().dateSeparator(.omitted)))"
-            return try await newChat(a, name: AutomationRunNaming.provisional(a.name, at: Date()), slug: slug)
+            let now = Date()
+            return try await newChat(a, name: AutomationRunNaming.provisional(a.name, at: now),
+                                     slug: WorktreeNaming.runBranch(automationName: a.name, at: now))
         }
     }
 

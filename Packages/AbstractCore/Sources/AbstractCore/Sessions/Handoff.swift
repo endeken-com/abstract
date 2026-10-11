@@ -98,6 +98,8 @@ public final class ChatStream {
             // handoff never got logged.
             isSummarizing = false
             return [.text(role: .user, text: line.line, blockId: nil, partial: false)]
+        case .note:
+            return [.notice(.info(line.line))]
         case .stdout, .stderr:
             let events = parser?.feed(line.line, stream: line.stream) ?? [.raw(line: line.line, stream: line.stream)]
             return isSummarizing ? summarizing(events) : events

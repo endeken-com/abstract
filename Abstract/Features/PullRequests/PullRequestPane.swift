@@ -247,6 +247,8 @@ struct PullRequestPane: View {
             }
         }
         .onChange(of: session.status) { Task { await load() } }
+        // The agent renamed its branch: its pull request is looked up again.
+        .onChange(of: session.branch) { Task { await load() } }
         // Pushed from here, a terminal or the git actions button: the pull
         // request has new commits, and its checks start over.
         .onChange(of: model.branchStates[session.id]?.ahead ?? 0) { old, new in

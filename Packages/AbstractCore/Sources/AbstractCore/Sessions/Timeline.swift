@@ -215,7 +215,7 @@ extension Timeline {
                 case .retrying: if entry.id != liveRetry { continue }
                 // A warning the turn then failed over is said once, as the error.
                 case let .warning(message): if errors.contains(message) { continue }
-                case .nearLimit, .limitReached: break
+                case .nearLimit, .limitReached, .info: break
                 }
                 out.append(.notice(id: entry.id, notice))
             case let .raw(line, stream):

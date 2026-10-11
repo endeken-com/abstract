@@ -125,8 +125,30 @@ extension AppModel {
         branchReads[sessionId] = read
         let state = await GitActions.state(exec, worktree: worktree, preferredBase: session.baseRef)
         guard branchReads[sessionId] == read else { return }
+        if let moved = state.movedBranch(from: session.branch) { followBranch(sessionId, to: moved) }
         if branchStates[sessionId] != state { branchStates[sessionId] = state }
         await refreshCurrentSubmodule(sessionId, worktree: worktree, exec: exec, fetch: fetch, read: read)
+    }
+
+    /// The chat's worktree is on another branch than it records (the agent
+    /// renamed it, or switched): the chat records that one, so Push and the
+    /// Pull Request tab use it. A chat on another Mac is that Mac's to update.
+    func followBranch(_ sessionId: String, to branch: String) {
+        guard !sessionId.hasPrefix(RemoteService.mirrorPrefix), var session = session(sessionId), session.branch != branch else { return }
+        session.branch = branch
+        try? store.save(session)
+        // The old branch's pull request isn't this one's.
+        pullRequests[sessionId] = nil
+        pinnedPullRequests[sessionId] = nil
+        reload()
+    }
+
+    /// Before the chat's branch is pushed or proposed: the one its worktree
+    /// is on now, should the agent have renamed it since the last read.
+    func followWorktreeBranch(_ sessionId: String) async {
+        guard let worktree = session(sessionId)?.worktreePath,
+              let current = try? await Git.currentBranch(executor(for: sessionId), root: worktree) else { return }
+        followBranch(sessionId, to: current)
     }
 
     func isOnGitHub(_ project: Project) async -> Bool {
@@ -150,6 +172,7 @@ extension AppModel {
     // MARK: Actions
 
     func createPullRequest(_ sessionId: String, title: String, body: String, base: String?, draft: Bool, commitFirst: Bool) async throws {
+        await followWorktreeBranch(sessionId)
         guard let session = session(sessionId), let branch = session.branch, let worktree = session.worktreePath,
               let project = project(session.projectId) else { return }
         // Its submodules committed and pushed first, and its pointers checked, before the branch goes.

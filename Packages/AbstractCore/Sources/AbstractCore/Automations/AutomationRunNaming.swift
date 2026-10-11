@@ -20,4 +20,92 @@ public enum AutomationRunNaming {
     public static func task(fromReport report: String) -> String {
         "Name this chat for the work the agent's report says it did, not for the instructions it followed.\n\n" + report
     }
+
+    /// Too little to name the work from: the agent hasn't said what it's
+    /// doing yet ("Let me look."), so its next reply is waited for.
+    public static func canName(fromReply reply: String) -> Bool {
+        reply.split(whereSeparator: \.isWhitespace).count >= 4
+    }
+
+    /// What the naming call summarizes as soon as the agent first replies:
+    /// what it says it's about to do. An empty title means it hasn't said yet.
+    public static func task(fromFirstReply reply: String) -> String {
+        "Name this chat for the work the agent says it is taking on, not for the instructions it follows. "
+            + "If the agent's words don't say what that work is yet, reply with an empty title.\n\n" + reply
+    }
+
+    /// What became of a run's branch.
+    public struct BranchRename: Sendable, Equatable {
+        /// The name Abstract gave it.
+        public var name: String
+        /// The branch the worktree is on afterwards: `name`, unless a commit
+        /// under way put the old name back under HEAD. nil on a detached HEAD.
+        public var head: String?
+    }
+
+    /// Renames a run's branch `from` for the naming call's `suggestion`
+    /// (behind `prefix`, as a new chat's branch; `-1`, `-2`… when taken).
+    /// Only a branch still named as the run started (never one its agent
+    /// renamed), with the worktree on it, never published (no upstream, no
+    /// copy on origin, no pull request) and no git lock held. While the agent
+    /// may be at work, `allowCommits` is false: the branch must hold nothing
+    /// beyond `base` either, so no commit can be under way on it. nil when it
+    /// keeps its name.
+    public static func renameBranch(
+        _ exec: any Executor, worktree: String, from: String, suggestion: String, prefix: String,
+        base: String?, allowCommits: Bool, hasPullRequest: @Sendable (String) async -> Bool
+    ) async -> BranchRename? {
+        await renameBranch(exec, worktree: worktree, from: from, suggestion: suggestion, prefix: prefix, base: base,
+                           allowCommits: allowCommits, hasPullRequest: hasPullRequest, racing: nil)
+    }
+
+    /// `racing` runs straight after the rename, as a commit under way would (tests).
+    static func renameBranch(
+        _ exec: any Executor, worktree: String, from: String, suggestion: String, prefix: String,
+        base: String?, allowCommits: Bool, hasPullRequest: @Sendable (String) async -> Bool,
+        racing: (@Sendable () async -> Void)?
+    ) async -> BranchRename? {
+        guard WorktreeNaming.isRunBranch(from), let slug = WorktreeNaming.branchSlug(suggestion),
+              "\(prefix)\(slug)" != from, await !hasPullRequest(from) else { return nil }
+        func out(_ args: [String]) async -> String? {
+            guard let r = try? await exec.run("git", args, cwd: worktree), r.ok else { return nil }
+            return r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        func isEmpty(_ branch: String) async -> Bool {
+            guard let base else { return false }
+            return await out(["rev-list", "--count", "\(base)..refs/heads/\(branch)"]) == "0"
+        }
+        // Checked as close to the rename as git allows.
+        if !allowCommits, await !isEmpty(from) { return nil }
+        guard await out(["symbolic-ref", "--quiet", "--short", "HEAD"]) == from,
+              await out(["config", "--get", "branch.\(from).remote"]) == nil,
+              await !Git.branchExists(exec, root: worktree, branch: "refs/remotes/origin/\(from)"),
+              let gitDir = await out(["rev-parse", "--absolute-git-dir"]),
+              let commonDir = await out(["rev-parse", "--path-format=absolute", "--git-common-dir"]) else { return nil }
+        let locks = [gitDir + "/index.lock", gitDir + "/HEAD.lock", commonDir + "/packed-refs.lock",
+                     commonDir + "/refs/heads/\(from).lock"]
+        guard !locks.contains(where: exec.fileExists) else { return nil }
+
+        var name: String?
+        for attempt in 0..<50 {
+            let candidate = prefix + (attempt == 0 ? slug : "\(slug)-\(attempt)")
+            if await Git.branchExists(exec, root: worktree, branch: "refs/heads/\(candidate)") { continue }
+            name = candidate
+            break
+        }
+        guard let name, await out(["branch", "-m", from, name]) != nil else { return nil }
+        await racing?()
+
+        // A commit that started before the rename may have written the old
+        // name again. The chat follows HEAD; whichever name it isn't on goes,
+        // if it holds nothing beyond the base.
+        let head = await out(["symbolic-ref", "--quiet", "--short", "HEAD"])
+        if let head, head == from || head == name {
+            let leftover = head == name ? from : name
+            if await Git.branchExists(exec, root: worktree, branch: "refs/heads/\(leftover)"), await isEmpty(leftover) {
+                _ = await out(["branch", "-D", leftover])
+            }
+        }
+        return BranchRename(name: name, head: head)
+    }
 }
