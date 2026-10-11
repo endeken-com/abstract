@@ -67,14 +67,22 @@ public struct OpenCodeProvider: ProviderDefinition {
         return json["small_model"]?.string
     }
 
-    /// Its small model when one is set, else the chat's. The plan agent
-    /// can't edit, and `run` declines the commands it would ask about.
+    /// The agent naming runs as: no tools at all, and every permission
+    /// denied. The task it names may carry instructions (from an agent's
+    /// reply, or a repository), so it must not read, fetch or run anything.
+    static let namingAgent = "abstract-naming"
+    static let namingConfig = #"{"agent":{"abstract-naming":{"mode":"primary","tools":{"*":false},"permission":{"*":"deny"}}}}"#
+
+    /// Its small model when one is set, else the chat's, as `namingAgent`,
+    /// given through the environment so the user's own config stays untouched.
     public func namingLaunch(prompt: String, home: String, binary: String?, model: String?) -> LaunchSpec? {
         let model = configuredSmallModel(home: home) ?? model
         return LaunchSpec(command: binary ?? self.binary,
-                          args: ["run", "--format", "json", "--agent", "plan", "--dir", home]
+                          args: ["run", "--format", "json", "--agent", Self.namingAgent, "--dir", home]
                               + (model.map { ["--model", $0] } ?? []) + (prompt.hasPrefix("-") ? ["--", prompt] : [prompt]),
-                          cwd: home, keepStdinOpen: false)
+                          cwd: home,
+                          env: ["OPENCODE_CONFIG_CONTENT": Self.namingConfig, "OPENCODE_PERMISSION": #"{"*":"deny"}"#],
+                          keepStdinOpen: false)
     }
 
     /// Every text part, in order. An error event means no answer.

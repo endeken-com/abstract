@@ -187,13 +187,20 @@ private struct ScriptedAgent {
         #expect(CodexProvider().namingError(#"{"type":"error","message":"Reconnecting…"}"#) == "Reconnecting…")
     }
 
-    @Test func openCodeNamesThroughRunWithThePlanAgent() throws {
+    @Test func openCodeNamesThroughRunWithAnAgentThatHasNoTools() throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
         defer { try? FileManager.default.removeItem(atPath: home) }
         let provider = OpenCodeProvider()
         let spec = try #require(provider.namingLaunch(prompt: "Name it", home: home, binary: nil, model: "anthropic/claude-sonnet-5"))
         #expect(spec.command == "opencode" && spec.cwd == home && !spec.keepStdinOpen)
-        #expect(spec.args == ["run", "--format", "json", "--agent", "plan", "--dir", home, "--model", "anthropic/claude-sonnet-5", "Name it"])
+        #expect(spec.args == ["run", "--format", "json", "--agent", "abstract-naming", "--dir", home, "--model", "anthropic/claude-sonnet-5", "Name it"])
+        // The naming agent can't read, fetch or run anything the task asks it to.
+        let config = try #require(spec.env["OPENCODE_CONFIG_CONTENT"])
+        let json = try #require(try JSONSerialization.jsonObject(with: Data(config.utf8)) as? [String: Any])
+        let agent = try #require((json["agent"] as? [String: Any])?["abstract-naming"] as? [String: Any])
+        #expect(agent["tools"] as? [String: Bool] == ["*": false])
+        #expect(agent["permission"] as? [String: String] == ["*": "deny"])
+        #expect(spec.env["OPENCODE_PERMISSION"] == #"{"*":"deny"}"#)
 
         // Its configured small model comes first.
         try FileManager.default.createDirectory(atPath: home + "/.config/opencode", withIntermediateDirectories: true)
