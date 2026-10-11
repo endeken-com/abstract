@@ -12,8 +12,12 @@ import Testing
     }
 
     @Test func theNamingCallReadsTheAgentsReport() {
-        let task = AutomationRunNaming.task(fromReport: "Opened #42: Shows each worktree's diff stat (ABS-7).")
-        #expect(task.hasSuffix("Opened #42: Shows each worktree's diff stat (ABS-7)."))
+        let prompt = ChatNaming.prompt(instructions: "", task: "Opened #42: Shows each worktree's diff stat (ABS-7).",
+                                       focus: AutomationRunNaming.reportFocus)
+        #expect(prompt.contains("<task>\nOpened #42: Shows each worktree's diff stat (ABS-7).\n</task>"))
+        // Abstract's direction comes before the task, never inside it.
+        let direction = try? #require(prompt.range(of: AutomationRunNaming.reportFocus))
+        #expect(direction.map { $0.upperBound < prompt.range(of: "<task>")!.lowerBound } == true)
     }
 
     @Test func theReportIsTheAgentsLatestReply() {
@@ -34,8 +38,8 @@ import Testing
         #expect(!AutomationRunNaming.canName(fromReply: "Let me look."))
         #expect(!AutomationRunNaming.canName(fromReply: "  \n "))
         #expect(AutomationRunNaming.canName(fromReply: "I'll take ABS-51: the sidebar shows each worktree's diff stat."))
-        let task = AutomationRunNaming.task(fromFirstReply: "I'll take ABS-51.")
-        #expect(task.hasSuffix("I'll take ABS-51."))
+        let prompt = ChatNaming.prompt(instructions: "", task: "I'll take ABS-51.", focus: AutomationRunNaming.firstReplyFocus)
+        #expect(prompt.contains(AutomationRunNaming.firstReplyFocus) && prompt.contains("<task>\nI'll take ABS-51.\n</task>"))
         // Told it can't tell yet, the naming call answers with no title: no name, so the next reply is tried.
         #expect(ChatNaming.parse(#"{"type":"result","is_error":false,"result":"{\"title\": \"\", \"branch\": \"\"}"}"#) == nil)
         #expect(ChatNaming.parse(#"{"type":"result","is_error":false,"result":"{\"title\": \"Show diff stats\", \"branch\": \"feat/diff-stats\"}"}"#)

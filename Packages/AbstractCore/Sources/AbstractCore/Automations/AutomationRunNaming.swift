@@ -16,10 +16,10 @@ public enum AutomationRunNaming {
         name.hasPrefix(automationName + separator)
     }
 
-    /// What the naming call summarizes: the agent's report, not the instructions it followed.
-    public static func task(fromReport report: String) -> String {
-        "Name this chat for the work the agent's report says it did, not for the instructions it followed.\n\n" + report
-    }
+    /// What the naming call is told to name when its task is the agent's
+    /// report: the work, not the instructions it followed.
+    public static let reportFocus =
+        "The task is a coding agent's report. Name the chat for the work it says it did, not for the instructions it followed."
 
     /// Too little to name the work from: the agent hasn't said what it's
     /// doing yet ("Let me look."), so its next reply is waited for.
@@ -27,12 +27,12 @@ public enum AutomationRunNaming {
         reply.split(whereSeparator: \.isWhitespace).count >= 4
     }
 
-    /// What the naming call summarizes as soon as the agent first replies:
-    /// what it says it's about to do. An empty title means it hasn't said yet.
-    public static func task(fromFirstReply reply: String) -> String {
-        "Name this chat for the work the agent says it is taking on, not for the instructions it follows. "
-            + "If the agent's words don't say what that work is yet, reply with an empty title.\n\n" + reply
-    }
+    /// What the naming call is told to name when its task is the agent's
+    /// first reply: what it says it's taking on. An empty title means it
+    /// hasn't said yet.
+    public static let firstReplyFocus =
+        "The task is what a coding agent first said. Name the chat for the work it says it is taking on, "
+            + "not for the instructions it follows. If it doesn't say what that work is yet, reply with an empty title."
 
     /// What became of a run's branch.
     public struct BranchRename: Sendable, Equatable {

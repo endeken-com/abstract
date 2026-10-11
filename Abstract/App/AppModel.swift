@@ -669,7 +669,7 @@ final class AppModel {
         Task {
             let naming = await suggestedNaming(instructions: project(s.projectId)?.namingInstructions, providerId: s.providerId,
                                                model: s.model ?? defaultModel(for: s.providerId),
-                                               prompt: AutomationRunNaming.task(fromFirstReply: text))
+                                               prompt: text, focus: AutomationRunNaming.firstReplyFocus)
             namingRuns.remove(sessionId)
             if let naming {
                 await rename(sessionId, from: s.name, to: naming.title)
@@ -703,7 +703,7 @@ final class AppModel {
             if let report {
                 naming = await suggestedNaming(instructions: project(s.projectId)?.namingInstructions, providerId: s.providerId,
                                                model: s.model ?? defaultModel(for: s.providerId),
-                                               prompt: AutomationRunNaming.task(fromReport: report))
+                                               prompt: report, focus: AutomationRunNaming.reportFocus)
             }
             namingRuns.remove(sessionId)
             if refine, let title = naming?.title {
