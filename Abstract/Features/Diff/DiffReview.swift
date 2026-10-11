@@ -263,12 +263,16 @@ final class DiffReview {
     /// A mode picked by hand holds while the worktree stays as dirty (or as
     /// clean) as it was when picked; then the review picks again.
     @ObservationIgnored private var pickedWhileDirty: Bool?
+    /// Nothing loaded for this repository yet: the review picks its mode afresh.
+    @ObservationIgnored private var picksAfresh = true
 
     private(set) var phase: Phase = .loading
     private(set) var files: [ReviewFile] = []
     private(set) var groups: [ReviewGroup] = []
     var selectedPath: String?
     private(set) var isRefreshing = false
+    /// The load in flight, if any.
+    @ObservationIgnored private var loadingGeneration: Int?
     /// The key of the accept/reject in flight; actions are serialized so git
     /// never races itself on the index.
     private(set) var workingOn: String?
@@ -315,6 +319,7 @@ final class DiffReview {
         selectedRepo = repo
         mode = .uncommitted
         pickedWhileDirty = nil
+        picksAfresh = true
         expansion = [:]
         focusAfterLoad = path
         await load(context)
@@ -341,6 +346,10 @@ final class DiffReview {
 
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var orderedPaths: [String] = []
+    /// The worktree as it looked when the review last read it in full.
+    @ObservationIgnored private var lastLook: WorktreeSnapshot?
+    /// Background refreshes: one at a time, at most one a second.
+    @ObservationIgnored private let refreshes = ReloadQueue()
 
     var selectedFile: ReviewFile? {
         guard let selectedPath else { return nil }
@@ -356,12 +365,48 @@ final class DiffReview {
     /// `git diff -w`: changes that only move whitespace don't show.
     var ignoreWhitespace = false
 
-    func load(_ context: DiffContext) async {
+    /// Refresh as files change: `reload` soon, merged with every other
+    /// change until it starts.
+    func refreshSoon(_ reload: @escaping @MainActor () async -> Void) { refreshes.soon(reload) }
+
+    /// Refresh now, or right after the refresh running.
+    func refreshNow(_ reload: @escaping @MainActor () async -> Void) async { await refreshes.now(reload) }
+
+    /// A look at the worktree, and a full read only if it changed since the last one.
+    func refresh(_ context: DiffContext) async {
+        guard phase == .loaded else { return await load(context) }
+        let look = await WorktreeSnapshot.take(context.reader, worktree: context.worktree)
+        if let look, look == lastLook { return }
+        await load(context, quietly: true, look: look)
+    }
+
+    /// Read the changes in full. `quietly`, the spinner shows only once it
+    /// takes more than a second.
+    func load(_ context: DiffContext, quietly: Bool = false) async {
+        await load(context, quietly: quietly, look: await WorktreeSnapshot.take(context.reader, worktree: context.worktree))
+    }
+
+    private func load(_ context: DiffContext, quietly: Bool, look: WorktreeSnapshot?) async {
         generation += 1
         let current = generation
-        accepted = AcceptedLedger.bySession[context.sessionId] ?? []
-        if phase == .loaded { isRefreshing = true } else { phase = .loading }
-        defer { if current == generation { isRefreshing = false } }
+        update(\.accepted, AcceptedLedger.bySession[context.sessionId] ?? [])
+        if phase != .loaded {
+            phase = .loading
+        } else if !quietly {
+            isRefreshing = true
+        } else {
+            Task {
+                try? await Task.sleep(for: .seconds(1))
+                if current == generation, loadingGeneration == current { isRefreshing = true }
+            }
+        }
+        loadingGeneration = current
+        defer {
+            if current == generation {
+                loadingGeneration = nil
+                update(\.isRefreshing, false)
+            }
+        }
         let exec = context.reader
         let repoList = await Submodules.list(exec, worktree: context.worktree)
         // A submodule that's gone (removed, or no longer checked out) gives way to the worktree's own.
@@ -369,6 +414,7 @@ final class DiffReview {
             selectedRepo = ""
             mode = .uncommitted
             pickedWhileDirty = nil
+            picksAfresh = true
         }
         let repo = repoList.first { $0.path == selectedRepo } ?? ChatRepo(path: "")
         // A submodule is measured from its own base branch, as its own pull request would be.
@@ -376,19 +422,23 @@ final class DiffReview {
                                            preferredBase: repo.isSubmodule ? nil : context.baseRef)
         let changed = repoList.count > 1 ? await Submodules.changedPaths(exec, worktree: context.worktree) : nil
         guard current == generation else { return }
-        self.repoList = repoList
+        update(\.repoList, repoList)
         let submodulePaths = Set(repoList.filter(\.isSubmodule).map(\.path))
         var marks = Set((changed ?? []).filter(submodulePaths.contains))
         if (changed ?? []).contains(where: { !submodulePaths.contains($0) }) || (repo.path.isEmpty && state.dirty) { marks.insert("") }
-        changedRepos = marks
-        dirty = state.dirty
-        base = state.base
-        commits = state.commits
-        // Uncommitted work while there is some, the branch's commits once it's all committed.
+        update(\.changedRepos, marks)
+        update(\.dirty, state.dirty)
+        update(\.base, state.base)
+        update(\.commits, state.commits)
+        // Uncommitted work while there is some, the branch's commits once it's
+        // all committed; a list in view stays until it's empty.
         if case .commit = mode {} else if pickedWhileDirty != dirty {
             pickedWhileDirty = nil
-            mode = dirty || base == nil ? .uncommitted : .committed
+            let committed = RepoReview.followsCommitted(showingCommitted: picksAfresh ? nil : mode == .committed, dirty: dirty,
+                                                        hasBase: base != nil, hasCommits: !commits.isEmpty)
+            update(\.mode, committed ? .committed : .uncommitted)
         }
+        picksAfresh = false
         let compare: DiffCompare = switch mode {
         case .uncommitted: .uncommitted
         case .committed: base.map { .committed(base: $0) } ?? .uncommitted
@@ -397,17 +447,23 @@ final class DiffReview {
         do {
             let changes = try await RepoReview.changes(exec, worktree: context.worktree, repo: repo, repos: repoList,
                                                        exclude: context.exclude, compare: compare, ignoreWhitespace: ignoreWhitespace)
-            let prepared = await ReviewFile.prepare(changes.files)
+            // Files whose diff didn't change keep their rows, so only the changed ones redraw.
+            let kept = RepoReview.unchanged(changes.files, previous: files, diff: \.diff)
+            let fresh = await ReviewFile.prepare(changes.files.filter { kept[$0.path] == nil })
             guard current == generation else { return }
-            pointers = changes.pointers
-            apply(prepared)
+            let byPath = Dictionary(fresh.map { ($0.path, $0) }, uniquingKeysWith: { a, _ in a })
+            let prepared = changes.files.compactMap { kept[$0.path] ?? byPath[$0.path] }
+            update(\.pointers, changes.pointers)
+            if fresh.isEmpty, prepared.map(\.path) == files.map(\.path) {} else { apply(prepared) }
             let nothing = prepared.isEmpty && changes.pointers.isEmpty
-            otherModeHasChanges = switch mode {
+            let other = switch mode {
             case .uncommitted: nothing && !commits.isEmpty
             case .committed: nothing && dirty
             case .commit: false
             }
-            phase = .loaded
+            update(\.otherModeHasChanges, other)
+            update(\.phase, .loaded)
+            lastLook = look
             if let path = focusAfterLoad {
                 focusAfterLoad = nil
                 if files.contains(where: { $0.path == path }) { focus(path) }
@@ -422,8 +478,13 @@ final class DiffReview {
         }
     }
 
+    /// Only what changed, so views of the rest don't redraw.
+    private func update<Value: Equatable>(_ keyPath: ReferenceWritableKeyPath<DiffReview, Value>, _ value: Value) {
+        if self[keyPath: keyPath] != value { self[keyPath: keyPath] = value }
+    }
+
     private func apply(_ prepared: [ReviewFile]) {
-        let previousIndex = selectedPath.flatMap { orderedPaths.firstIndex(of: $0) }
+        let before = orderedPaths
         let grouped = Dictionary(grouping: prepared, by: \.directory)
         groups = grouped.keys.sorted { a, b in
             // Top-level files first, then directories alphabetically.
@@ -433,12 +494,7 @@ final class DiffReview {
         }
         files = prepared
         orderedPaths = groups.flatMap { $0.files.map(\.path) }
-        if let selectedPath, orderedPaths.contains(selectedPath) { return }
-        if let previousIndex, !orderedPaths.isEmpty {
-            selectedPath = orderedPaths[min(previousIndex, orderedPaths.count - 1)]
-        } else {
-            selectedPath = orderedPaths.first
-        }
+        update(\.selectedPath, RepoReview.selection(selectedPath, before: before, after: orderedPaths))
     }
 
     func moveSelection(_ delta: Int) {
@@ -450,6 +506,7 @@ final class DiffReview {
     /// Show `mode`; it holds until the worktree's dirty state changes.
     func show(_ mode: ReviewMode, _ context: DiffContext) async {
         self.mode = mode
+        picksAfresh = false
         pickedWhileDirty = dirty
         expansion = [:]
         await load(context)

@@ -49,20 +49,29 @@ struct DiffView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.btCanvas)
         .environment(\.worktreeIsRemote, sessionId.hasPrefix(RemoteService.mirrorPrefix))
-        .task(id: sessionId) { await reload() }
-        .onChange(of: model.session(sessionId)?.status) { Task { await reload() } }
+        // Opened again (or in the other pane): a look first, a full read only if something changed.
+        .task(id: sessionId) { await reload(quietly: review.phase == .loaded) }
+        // Status flips several times a turn; what the agent changed is settled once it ends.
+        .onChange(of: model.session(sessionId)?.status) { old, new in
+            guard SessionStatus.endsTurn(from: old, to: new) else { return }
+            Task { await review.refreshNow { await reload(quietly: true) } }
+        }
         .onChange(of: model.pendingChangeSelection[sessionId]) { takePendingSelection() }
         .onChange(of: ignoreWhitespace) { Task { await reload() } }
         // The repository picked here, from the git actions button's side, or gone.
         .onChange(of: model.currentRepoPath(sessionId)) { Task { await reload() } }
     }
 
-    private func reload() async {
+    /// `quietly`: only when the worktree changed since the last read, and
+    /// without a spinner unless it takes a while.
+    private func reload(quietly: Bool = false) async {
         guard case .ready(let context) = model.diffAvailability(sessionId) else { return }
         review.ignoreWhitespace = ignoreWhitespace
         let wanted = model.currentRepoPath(sessionId)
         if review.selectedRepo != wanted {
             await review.select(wanted, context)
+        } else if quietly {
+            await review.refresh(context)
         } else {
             await review.load(context)
         }
@@ -76,12 +85,19 @@ struct DiffView: View {
         takePendingSelection()
     }
 
-    /// Refresh as the agent (or you) changes files, commits or switches branch.
+    /// Refresh as the agent (or you) changes files, commits or switches
+    /// branch: the worktree, its git folder and the shared refs, of which
+    /// only HEAD and the refs count, so git's own reads don't.
     private func watch(_ context: DiffContext) async {
-        let gitDir = (try? await context.reader.run("git", ["rev-parse", "--absolute-git-dir"], cwd: context.worktree))
-            .flatMap { $0.ok ? $0.stdout.trimmingCharacters(in: .whitespacesAndNewlines) : nil }
-        watcher = model.watch([context.worktree] + (gitDir.map { [$0] } ?? []), for: sessionId) {
-            Task { await reload() }
+        func dir(_ flag: String) async -> String? {
+            guard let out = try? await context.reader.run("git", ["rev-parse", flag], cwd: context.worktree), out.ok else { return nil }
+            return out.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let gitDir = await dir("--absolute-git-dir")
+        let refs = await dir("--git-common-dir").map { (($0 as NSString).isAbsolutePath ? $0 : context.worktree + "/" + $0) + "/refs" }
+        watcher = model.watch([context.worktree] + [gitDir, refs].compactMap { $0 }, for: sessionId,
+                              matters: { ReviewWatch.matters($0, gitDir: gitDir, refs: refs) }) {
+            review.refreshSoon { await reload(quietly: true) }
         }
     }
 
