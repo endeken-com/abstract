@@ -60,6 +60,45 @@ public struct OpenCodeProvider: ProviderDefinition {
         return json["model"]?.string
     }
 
+    /// `small_model` in its config, the model OpenCode itself names sessions with.
+    func configuredSmallModel(home: String) -> String? {
+        guard let data = FileManager.default.contents(atPath: home + "/.config/opencode/opencode.json"),
+              let json = try? JSONDecoder().decode(JSONValue.self, from: data) else { return nil }
+        return json["small_model"]?.string
+    }
+
+    /// Its small model when one is set, else the chat's. The plan agent
+    /// can't edit, and `run` declines the commands it would ask about.
+    public func namingLaunch(prompt: String, home: String, binary: String?, model: String?) -> LaunchSpec? {
+        let model = configuredSmallModel(home: home) ?? model
+        return LaunchSpec(command: binary ?? self.binary,
+                          args: ["run", "--format", "json", "--agent", "plan", "--dir", home]
+                              + (model.map { ["--model", $0] } ?? []) + (prompt.hasPrefix("-") ? ["--", prompt] : [prompt]),
+                          cwd: home, keepStdinOpen: false)
+    }
+
+    /// Every text part, in order. An error event means no answer.
+    public func namingAnswer(_ output: String) -> String? {
+        var texts: [String] = []
+        for line in output.split(separator: "\n") {
+            guard let event = try? JSONDecoder().decode(JSONValue.self, from: Data(line.utf8)) else { continue }
+            switch event["type"]?.string {
+            case "text": if let text = event["part"]?["text"]?.string { texts.append(text) }
+            case "error": return nil
+            default: continue
+            }
+        }
+        return texts.isEmpty ? nil : texts.joined(separator: "\n")
+    }
+
+    public func namingError(_ output: String) -> String? {
+        output.split(separator: "\n").compactMap { line -> String? in
+            guard let event = try? JSONDecoder().decode(JSONValue.self, from: Data(line.utf8)),
+                  event["type"]?.string == "error" else { return nil }
+            return event["error"]?["data"]?["message"]?.string ?? event["error"]?["message"]?.string ?? event["message"]?.string
+        }.last
+    }
+
     public var fallbackModels: ModelCatalog { .empty }
 
     public func discoverModels(executor: any Executor, binary: String?) async -> ModelCatalog? {

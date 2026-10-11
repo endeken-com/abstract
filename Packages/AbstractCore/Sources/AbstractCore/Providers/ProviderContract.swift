@@ -315,6 +315,15 @@ public protocol ProviderDefinition: Sendable {
     /// App commands only this agent gets in the `/` menu, and its own
     /// commands they take over.
     var commands: ProviderCommands { get }
+    /// A one-off call answering `prompt` (Abstract's naming request) on the
+    /// agent's fastest model, with no tools that change anything. `model` is
+    /// the chat's. nil: this agent can't name chats.
+    func namingLaunch(prompt: String, home: String, binary: String?, model: String?) -> LaunchSpec?
+    /// The answer's text in that call's output. nil when it holds none, or
+    /// says the call failed.
+    func namingAnswer(_ output: String) -> String?
+    /// Why that call failed, in the agent's words, when its output says.
+    func namingError(_ output: String) -> String?
 }
 
 public extension ProviderDefinition {
@@ -327,4 +336,7 @@ public extension ProviderDefinition {
     func buildBackground(toolUseId: String?, requestId: String) -> String? { nil }
     func permissionDetail(_ policy: PermissionPolicy) -> String { policy.detail }
     var commands: ProviderCommands { .none }
+    func namingLaunch(prompt: String, home: String, binary: String?, model: String?) -> LaunchSpec? { nil }
+    func namingAnswer(_ output: String) -> String? { nil }
+    func namingError(_ output: String) -> String? { nil }
 }

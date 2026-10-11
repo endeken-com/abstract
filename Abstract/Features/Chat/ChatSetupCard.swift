@@ -15,6 +15,14 @@ struct ChatSetupCard: View {
             ForEach(visibleSteps, id: \.self) { step in
                 SetupStepRow(session: session, setup: setup, step: step)
             }
+            if let note = setup.namingFailure {
+                Text(note)
+                    .font(.btChatCaption)
+                    .foregroundStyle(Color.btWarning)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 22)
+                    .padding(.top, Space.xs)
+            }
             if let failure = setup.failure {
                 FailureActions(session: session, setup: setup, message: failure.message, step: failure.step)
                     .padding(.top, Space.sm)

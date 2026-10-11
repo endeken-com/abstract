@@ -22,6 +22,8 @@ final class ChatSetup {
     private(set) var endedAt: [Step: Date] = [:]
     /// Where the worktree starts, once asked.
     var base: Workspace.Base?
+    /// Why the model couldn't name the chat, which keeps its prompt's name.
+    var namingFailure: String?
     /// What the setup script printed: its latest `logLimit` lines.
     private(set) var log: [String] = []
     static let logLimit = 2_000
@@ -36,7 +38,7 @@ final class ChatSetup {
     @ObservationIgnored var slug: String?
     /// The model's title and branch for the chat, still coming; the chat is
     /// renamed only if it still has `provisionalName`.
-    @ObservationIgnored var naming: Task<ChatNaming.Suggestion?, Never>?
+    @ObservationIgnored var naming: Task<Result<ChatNaming.Suggestion, ChatNaming.Failure>, Never>?
     @ObservationIgnored var provisionalName: String?
     @ObservationIgnored var task: Task<Void, Never>?
     /// Between asking for a run and its end, so it never runs twice at once.
@@ -214,8 +216,10 @@ extension AppModel {
 
         // Named by the model while fetching; the branch takes its name from it.
         if let naming = setup.naming {
-            let suggestion = await naming.value
+            let result = await naming.value
             setup.naming = nil
+            let suggestion = try? result.get()
+            if case .failure(let failure) = result { setup.namingFailure = namingFailureNote(failure, project: project) }
             if setup.slug == nil { setup.slug = suggestion?.branch }
             if let title = suggestion?.title, var s = session(id), s.name == setup.provisionalName {
                 s.name = title
@@ -304,6 +308,8 @@ extension AppModel {
         do {
             try launch(session, prompt: session.prompt ?? "", resume: false, images: setup.images)
             setups[id] = nil
+            // The card goes; the chat keeps saying why it has its prompt's name.
+            if let note = setup.namingFailure { engine.record(sessionId: id, OutputLine(stream: .note, line: note)) }
         } catch {
             failSetup(id, setup, .agent, error.localizedDescription)
         }

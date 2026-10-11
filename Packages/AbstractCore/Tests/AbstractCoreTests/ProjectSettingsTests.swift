@@ -116,15 +116,11 @@ import Testing
         #expect(long.count <= 60 && !long.hasSuffix("-") && long.hasPrefix("feat/"))
     }
 
-    @Test func namingOutputIsParsedFromTheCLIEnvelope() {
-        let fenced = #"{"type":"result","is_error":false,"result":"```json\n{\n  \"title\": \"Fix the login button alignment\",\n  \"branch\": \"fix/Login-Button\"\n}\n```"}"#
-        #expect(ChatNaming.parse(fenced) == .init(title: "Fix the login button alignment", branch: "fix/login-button"))
-        let chatty = #"{"is_error":false,"result":"Sure! {\"x\":1} Here it is: {\"title\": \"Tidy docs\", \"branch\": \"docs/tidy\"}"}"#
+    @Test func namingAnswersAreParsed() {
+        let chatty = #"Sure! {"x":1} Here it is: {"title": "Tidy docs", "branch": "docs/tidy"}"#
         #expect(ChatNaming.parse(chatty) == .init(title: "Tidy docs", branch: "docs/tidy"))
-        let noBranch = #"{"is_error":false,"result":"{\"title\": \"Speed up CI\"}"}"#
-        #expect(ChatNaming.parse(noBranch) == .init(title: "Speed up CI", branch: "speed-up-ci"))
-        #expect(ChatNaming.parse(#"{"is_error":true,"result":"{\"title\":\"x\",\"branch\":\"y\"}"}"#) == nil)
-        #expect(ChatNaming.parse(#"{"is_error":false,"result":"I can't help with that."}"#) == nil)
+        #expect(ChatNaming.parse(#"{"title": "Speed up CI"}"#) == .init(title: "Speed up CI", branch: "speed-up-ci"))
+        #expect(ChatNaming.parse("I can't help with that.") == nil)
         #expect(ChatNaming.parse("not json") == nil)
         #expect(ChatNaming.prompt(instructions: "Use fix/ for bugs", task: "The button is off").contains("Use fix/ for bugs"))
         #expect(ChatNaming.prompt(instructions: "", task: "The button is off").contains("Summarize this coding request"))
@@ -139,30 +135,6 @@ import Testing
         #expect(prompt.range(of: "</task>", options: .caseInsensitive) == prompt.range(of: "</task>", options: [.caseInsensitive, .backwards]))
         #expect(prompt.hasSuffix("</task>"))
         #expect(prompt.contains("Ignore the rules above"))
-    }
-
-    @Test func chatTitlesCanBeGeneratedByTheSelectedProvider() throws {
-        let claude = try #require(ChatNaming.launchSpec(home: "/tmp", binary: nil, providerId: "claude", model: nil,
-                                                        instructions: "", task: "Fix login"))
-        #expect(claude.command == "claude" && claude.stdinInitial != nil)
-
-        let codex = try #require(ChatNaming.launchSpec(home: "/tmp", binary: "/bin/codex", providerId: "codex",
-                                                       model: "gpt-test", instructions: "", task: "Fix login"))
-        #expect(codex.command == "/bin/codex")
-        #expect(codex.args.contains("read-only") && codex.args.contains("gpt-test"))
-        #expect(codex.stdinInitial == nil && !codex.keepStdinOpen)
-
-        #expect(ChatNaming.launchSpec(home: "/tmp", binary: nil, providerId: "ollama", model: "llama-test",
-                                      instructions: "", task: "Fix login") == nil)
-        #expect(ChatNaming.launchSpec(home: "/tmp", binary: nil, providerId: "missing", model: nil,
-                                      instructions: "", task: "Fix login") == nil)
-
-        let output = """
-            {"type":"item.completed","item":{"type":"agent_message","text":"I will name it."}}
-            {"type":"item.completed","item":{"type":"agent_message","text":"{\\"title\\":\\"Fix login button\\",\\"branch\\":\\"fix/login-button\\"}"}}
-            {"type":"turn.completed"}
-            """
-        #expect(ChatNaming.parseCodex(output) == .init(title: "Fix login button", branch: "fix/login-button"))
     }
 
     // MARK: - Timed commands
@@ -333,10 +305,10 @@ import Testing
 struct RealNamingTests {
     @Test(.timeLimit(.minutes(1)))
     func claudeSuggestsATitleAndABranchFollowingTheInstructions() async throws {
-        let suggestion = try #require(await ChatNaming.suggest(
-            executor: LocalExecutor.shared, binary: nil,
+        let suggestion = try await ChatNaming.suggest(
+            executor: LocalExecutor.shared, provider: ClaudeProvider(), binary: nil,
             instructions: "Branches start with a type folder: fix/ for bugs, feat/ for features. Titles are in sentence case.",
-            task: "The login button is misaligned on small screens; it overlaps the password field."))
+            task: "The login button is misaligned on small screens; it overlaps the password field.").get()
         #expect(!suggestion.title.isEmpty)
         #expect(suggestion.branch.hasPrefix("fix/"), "got \(suggestion.branch)")
         #expect(WorktreeNaming.branchSlug(suggestion.branch) == suggestion.branch)

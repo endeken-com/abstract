@@ -54,6 +54,42 @@ public struct CodexProvider: ProviderDefinition {
         return nil
     }
 
+    /// The chat's model at low effort, in a read-only sandbox.
+    public func namingLaunch(prompt: String, home: String, binary: String?, model: String?) -> LaunchSpec? {
+        LaunchSpec(command: binary ?? self.binary,
+                   args: ["exec", "--json", "-C", home, "--skip-git-repo-check", "-s", "read-only",
+                          "-c", "model_reasoning_effort=\"low\""] + (model.map { ["-m", $0] } ?? []) + ["--", prompt],
+                   cwd: home, keepStdinOpen: false)
+    }
+
+    /// Every agent message, in order: earlier ones may be commentary, and
+    /// the answer comes last.
+    public func namingAnswer(_ output: String) -> String? {
+        let messages = output.split(separator: "\n").compactMap { line -> String? in
+            guard let event = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+                  event["type"] as? String == "item.completed",
+                  let item = event["item"] as? [String: Any], item["type"] as? String == "agent_message" else { return nil }
+            return item["text"] as? String
+        }
+        return messages.isEmpty ? nil : messages.joined(separator: "\n")
+    }
+
+    /// The last error event's message; the API's own, when it wraps one as JSON.
+    public func namingError(_ output: String) -> String? {
+        var message: String?
+        for line in output.split(separator: "\n") {
+            guard let event = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else { continue }
+            switch event["type"] as? String {
+            case "error": message = event["message"] as? String ?? message
+            case "turn.failed": message = (event["error"] as? [String: Any])?["message"] as? String ?? message
+            default: continue
+            }
+        }
+        guard let message else { return nil }
+        let inner = (try? JSONSerialization.jsonObject(with: Data(message.utf8)) as? [String: Any])?["error"] as? [String: Any]
+        return inner?["message"] as? String ?? message
+    }
+
     public func buildLaunch(_ ctx: LaunchContext) -> LaunchSpec {
         launchSpec(ctx, head: ["exec"], resuming: false)
     }
