@@ -43,6 +43,8 @@ final class EditorDocument {
     var column = 1
     /// A line to show and put the caret on, once the editor has the text.
     var goToLine: Int?
+    /// What to select on that line, in UTF-16 units from its start: a search match.
+    var goToSelection: Range<Int>?
     /// Bumped when the text changes from outside the editor (reading or
     /// reloading the file), so the editor replaces what it shows.
     private(set) var revision = 0

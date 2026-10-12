@@ -120,6 +120,15 @@ struct RemoteAccessTests {
         #expect(RemoteAccess.refusal("gh", ["auth", "status"], cwd: nil, allowed: allowed) == nil)
     }
 
+    @Test func searchInFilesRunsForAChatOnAnotherMac() {
+        for options in [WorktreeSearch.Options(), .init(matchCase: true, wholeWord: true, regex: true)] {
+            for isGit in [true, false] {
+                let args = WorktreeSearch.arguments("-O3 refreshBranch", options, isGit: isGit)
+                #expect(RemoteAccess.refusal("git", args, cwd: "/work/repo/wt", allowed: allowed) == nil)
+            }
+        }
+    }
+
     @Test func anythingThatCouldRunAProgramIsRefused() {
         #expect(RemoteAccess.refusal("sh", ["-c", "id"], cwd: "/work/repo", allowed: allowed) != nil)
         #expect(RemoteAccess.refusal("/usr/bin/git", ["status"], cwd: "/work/repo", allowed: allowed) != nil)
@@ -132,6 +141,8 @@ struct RemoteAccessTests {
         #expect(RemoteAccess.refusal("gh", ["extension", "exec", "x"], cwd: "/work/repo", allowed: allowed) != nil)
         #expect(RemoteAccess.refusal("revund", ["review", "--repo", "/etc"], cwd: "/work/repo", allowed: allowed) != nil)
         #expect(RemoteAccess.refusal("git", ["status"], cwd: nil, allowed: allowed) != nil)
+        #expect(RemoteAccess.refusal("git", ["grep", "-Oid", "-e", "x"], cwd: "/work/repo", allowed: allowed) != nil)
+        #expect(RemoteAccess.refusal("git", ["grep", "--open-files-in-pager=id", "x"], cwd: "/work/repo", allowed: allowed) != nil)
     }
 
     @Test func onlyARevundKeyCrossesInTheEnvironment() {

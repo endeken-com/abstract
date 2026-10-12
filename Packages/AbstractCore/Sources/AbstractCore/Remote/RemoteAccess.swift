@@ -8,7 +8,7 @@ public enum RemoteAccess {
     /// Git settings Abstract itself passes; any other `-c` could run a program.
     static let gitSettings: Set<String> = ["core.quotepath", "user.email", "user.name", "color.ui"]
     static let gitOptions = ["-C", "--git-dir", "--work-tree", "--exec-path", "--upload-pack", "--receive-pack", "--config-env",
-                             "--output", "--ext-diff", "--textconv"]
+                             "--output", "--ext-diff", "--textconv", "--open-files-in-pager"]
 
     /// Why the command can't run, or nil when it can. `allowed` says whether
     /// a folder is inside one of this Mac's projects or worktrees.
@@ -20,6 +20,10 @@ public enum RemoteAccess {
         guard allowed(cwd) else { return "That folder isn't one of this Mac's projects." }
         switch name {
         case "git":
+            // `git grep -O<program>` opens what it finds in that program; Search in Files never asks for it.
+            if args.contains("grep"), grepOptions(args).contains(where: { $0.hasPrefix("-O") }) {
+                return "git grep -O isn't allowed from another Mac."
+            }
             for (i, arg) in args.enumerated() {
                 if gitOptions.contains(where: { arg == $0 || arg.hasPrefix($0 + "=") }) { return "git \(arg) isn't allowed from another Mac." }
                 if arg == "-c" {
@@ -37,6 +41,18 @@ public enum RemoteAccess {
             }
         }
         return nil
+    }
+
+    /// git grep's options: not the patterns after `-e`, nor anything after `--`.
+    private static func grepOptions(_ args: [String]) -> [String] {
+        var options: [String] = []
+        var i = 0
+        while i < args.count, args[i] != "--" {
+            if args[i] == "-e" { i += 2; continue }
+            options.append(args[i])
+            i += 1
+        }
+        return options
     }
 
     /// A process's environment from another device: variables like

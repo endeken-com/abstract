@@ -135,8 +135,10 @@ struct CodeTextView: NSViewRepresentable {
         func goToLine() {
             guard let line = document.goToLine, firstColumn == nil, revision == document.revision,
                   let textView, line >= 1, line <= lineStarts.count else { return }
-            let location = lineStarts[line - 1]
-            textView.setSelectedRange(NSRange(location: location, length: 0))
+            let length = (textView.string as NSString).length
+            let selection = document.goToSelection ?? 0..<0
+            let location = min(lineStarts[line - 1] + selection.lowerBound, length)
+            textView.setSelectedRange(NSRange(location: location, length: min(selection.count, length - location)))
             if let layout = textView.layoutManager {
                 let glyph = layout.glyphIndexForCharacter(at: min(location, max((textView.string as NSString).length - 1, 0)))
                 let rect = layout.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
@@ -145,7 +147,7 @@ struct CodeTextView: NSViewRepresentable {
             }
             textView.window?.makeFirstResponder(textView)
             let document = document
-            DispatchQueue.main.async { document.goToLine = nil }
+            DispatchQueue.main.async { document.goToLine = nil; document.goToSelection = nil }
         }
 
         init(document: EditorDocument, sessionId: String, model: AppModel) {
