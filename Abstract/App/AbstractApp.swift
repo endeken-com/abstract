@@ -155,15 +155,20 @@ struct AbstractCommands: Commands {
         CommandGroup(after: .textEditing) {
             // Looked up when chosen: the chat in front may have changed since the menu was built.
             let finding = model.chatInFront.map { model.feed($0).find.isOpen }
+            // ⌘G steps through the chat's find bar while it's open, else the Files tab's search.
+            let stepping = finding == true || model.fileSearchInFront != nil
             Button("Find in Chat…") { model.chatInFront.map { model.feed($0).find.open() } }
                 .keyboardShortcut("f")
                 .disabled(finding == nil)
-            Button("Find Next") { model.chatInFront.map { model.feed($0).find.next() } }
+            Button("Search in Files…") { if let s = model.selectedSession { model.searchInFiles(s.id) } }
+                .keyboardShortcut("f", modifiers: [.command, .shift])
+                .disabled(model.selectedSession == nil)
+            Button("Find Next") { findStep(1) }
                 .keyboardShortcut("g")
-                .disabled(finding != true)
-            Button("Find Previous") { model.chatInFront.map { model.feed($0).find.previous() } }
+                .disabled(!stepping)
+            Button("Find Previous") { findStep(-1) }
                 .keyboardShortcut("g", modifiers: [.command, .shift])
-                .disabled(finding != true)
+                .disabled(!stepping)
         }
         CommandGroup(after: .toolbar) {
             Button("Actual Size") { image?.zoomToActualSize() }
@@ -234,6 +239,16 @@ struct AbstractCommands: Commands {
             Button("Archive Chat") { if let s = model.selectedSession { model.requestArchive = s.id } }
                 .keyboardShortcut(.delete, modifiers: [.command, .shift])
                 .disabled(model.selectedSession == nil)
+        }
+    }
+}
+
+private extension AbstractCommands {
+    func findStep(_ delta: Int) {
+        if let id = model.chatInFront, model.feed(id).find.isOpen {
+            if delta > 0 { model.feed(id).find.next() } else { model.feed(id).find.previous() }
+        } else {
+            model.stepFileSearch(delta)
         }
     }
 }

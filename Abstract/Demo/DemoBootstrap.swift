@@ -72,6 +72,7 @@ final class DemoBootstrap {
         if let path = ProcessInfo.processInfo.environment["ABSTRACT_DEMO_HISTORY"] { Task { await self.loadHistory(path, model) } }
         RemoteProbe.runIfRequested(model)
         FindProbe.runIfRequested(model)
+        FileSearchProbe.runIfRequested(model)
 
         let running = abstract.map { p in Task { await self.chat(model, p, "Add a command palette with fuzzy search", .autoEdits) } }
         _ = running

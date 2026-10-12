@@ -8,7 +8,7 @@ public enum RemoteAccess {
     /// Git settings Abstract itself passes; any other `-c` could run a program.
     static let gitSettings: Set<String> = ["core.quotepath", "user.email", "user.name", "color.ui"]
     static let gitOptions = ["-C", "--git-dir", "--work-tree", "--exec-path", "--upload-pack", "--receive-pack", "--config-env",
-                             "--output", "--ext-diff", "--textconv"]
+                             "--output", "--ext-diff", "--textconv", "--open-files-in-pager"]
 
     /// Why the command can't run, or nil when it can. `allowed` says whether
     /// a folder is inside one of this Mac's projects or worktrees.
@@ -20,8 +20,18 @@ public enum RemoteAccess {
         guard allowed(cwd) else { return "That folder isn't one of this Mac's projects." }
         switch name {
         case "git":
+            // `git grep -O<program>` opens what it finds in that program, bundled
+            // (-nO…) or abbreviated (--open…) too: only Search in Files' own grep runs.
+            // Before the command, only options that take no value: one that does
+            // (--namespace x) would hide which command runs.
+            guard let command = gitCommand(args), !command.hasPrefix("-") else {
+                return "git \(gitCommand(args) ?? "") isn't allowed from another Mac."
+            }
+            if command == "grep" {
+                return isSearchInFiles(args) ? nil : "Only Search in Files runs git grep from another Mac."
+            }
             for (i, arg) in args.enumerated() {
-                if gitOptions.contains(where: { arg == $0 || arg.hasPrefix($0 + "=") }) { return "git \(arg) isn't allowed from another Mac." }
+                if gitOptions.contains(where: { matches(arg, $0) }) { return "git \(arg) isn't allowed from another Mac." }
                 if arg == "-c" {
                     let setting = i + 1 < args.count ? args[i + 1].split(separator: "=").first.map { $0.lowercased() } ?? "" : ""
                     if !gitSettings.contains(setting) { return "git -c \(setting) isn't allowed from another Mac." }
@@ -37,6 +47,37 @@ public enum RemoteAccess {
             }
         }
         return nil
+    }
+
+    /// The flags `WorktreeSearch.arguments` passes, then `-e <pattern> --` and nothing more.
+    static let searchFlags: Set<String> = ["-z", "-n", "--column", "-I", "--color=never", "--untracked", "--no-index",
+                                           "--exclude-standard", "--fixed-strings", "--extended-regexp", "--ignore-case",
+                                           "--word-regexp"]
+
+    /// git's own options, before the command, that take no value.
+    static let globalFlags: Set<String> = ["--no-pager", "--no-optional-locks", "--literal-pathspecs", "--glob-pathspecs",
+                                           "--noglob-pathspecs", "--icase-pathspecs", "--no-replace-objects", "--no-advice"]
+
+    /// The git command, past `-c` settings and `globalFlags` before it. Any
+    /// other option there comes back instead, and is refused.
+    static func gitCommand(_ args: [String]) -> String? {
+        var i = 0
+        while i < args.count, args[i] == "-c" || globalFlags.contains(args[i]) { i += args[i] == "-c" ? 2 : 1 }
+        return i < args.count ? args[i] : nil
+    }
+
+    static func isSearchInFiles(_ args: [String]) -> Bool {
+        guard args.count >= 4, args.first == "grep", args[args.count - 3] == "-e", args.last == "--" else { return false }
+        return args.dropFirst().dropLast(3).allSatisfy(searchFlags.contains)
+    }
+
+    /// `arg` is `option`, gives it a value, or, for a long option, abbreviates
+    /// it: git takes any unambiguous start of a long option's name.
+    static func matches(_ arg: String, _ option: String) -> Bool {
+        if arg == option || arg.hasPrefix(option + "=") { return true }
+        guard option.hasPrefix("--"), arg.hasPrefix("--") else { return false }
+        let name = arg.split(separator: "=", maxSplits: 1).first.map(String.init) ?? arg
+        return name.count > 2 && option.hasPrefix(name)
     }
 
     /// A process's environment from another device: variables like

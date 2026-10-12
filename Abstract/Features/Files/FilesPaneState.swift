@@ -25,6 +25,9 @@ final class FilesPaneState {
         return created
     }
 
+    /// The chat's state, if the pane has been used.
+    func existing(_ sessionId: String) -> FilesSession? { bySession[sessionId] }
+
     /// Forget a deleted chat.
     func discard(_ sessionId: String) {
         bySession[sessionId] = nil
@@ -47,11 +50,13 @@ extension AppModel {
         openFileTab(path, in: sessionId, preview: preview)
     }
 
-    /// The same, with the caret on `line`.
-    func openFile(_ relativePath: String, in sessionId: String, line: Int?, preview: Bool = false) {
+    /// The same, with the caret on `line`, or `selecting` part of it (UTF-16 units).
+    func openFile(_ relativePath: String, in sessionId: String, line: Int?, selecting: Range<Int>? = nil, preview: Bool = false) {
         openFile(relativePath, in: sessionId, preview: preview)
         guard let line, let root = session(sessionId)?.worktreePath else { return }
-        EditorStore.shared.document(root: root, path: relativePath, in: sessionId, model: self).goToLine = line
+        let document = EditorStore.shared.document(root: root, path: relativePath, in: sessionId, model: self)
+        document.goToSelection = selecting
+        document.goToLine = line
     }
 }
 
@@ -69,6 +74,13 @@ final class FilesSession {
     /// Visible rows of the tree, rebuilt when folders open or close.
     private(set) var rows: [FileTreeRow] = []
     private(set) var expanded: Set<String> = []
+
+    /// What the search box does: filter file names, or search inside files (⇧⌘F).
+    enum SearchMode { case names, contents }
+    var mode: SearchMode = .names
+    let contents = FileContentSearch()
+    /// Set to put the cursor in the search box once it shows.
+    var wantsFocus = false
 
     var filter = ""
     private(set) var matches: [FileEntry] = []
@@ -166,6 +178,18 @@ final class FilesSession {
     }
 
     // MARK: Actions
+
+    /// ⇧⌘F: search inside files, cursor in the box.
+    func searchContents() {
+        mode = .contents
+        wantsFocus = true
+    }
+
+    /// Back to filtering file names.
+    func filterNames() {
+        mode = .names
+        wantsFocus = true
+    }
 
     func isExpanded(_ path: String) -> Bool { expanded.contains(path) }
 
