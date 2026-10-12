@@ -491,24 +491,33 @@ private struct DescribeAutomation: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.xs) {
-            HStack(alignment: .bottom, spacing: Space.sm) {
-                GrowingTextEditor(text: $text, placeholder: "Describe it and AI drafts the rest, e.g. “Every weekday at 9, triage new issues in payments-api”",
-                                  font: .btInput, lineSpacing: 0, lines: 1...6, focused: focused)
+            // A text area like the chat composer: a description is several
+            // sentences, so it opens three lines tall, with its button inside.
+            VStack(alignment: .leading, spacing: Space.xs) {
+                GrowingTextEditor(text: $text, placeholder: "Describe it and AI drafts the rest: what to run, where, how often, and what to report. For example, “Every weekday at 9, triage new issues in payments-api and summarise what needs me.”",
+                                  font: .btInput, lineSpacing: 2, lines: 3...12, focused: focused)
                     .returnBreaksLine(commandReturn: run)
-                    .padding(.vertical, 5)
-                Button(action: run) {
-                    HStack(spacing: 5) {
-                        if drafting { ProgressView().controlSize(.mini) } else { Image(systemName: "sparkles") }
-                        Text(drafting ? "Drafting" : drafted ? "Draft Again" : "Draft with AI")
+                    .padding(.trailing, Field.inset - 5)
+                HStack(spacing: Space.sm) {
+                    Spacer(minLength: 0)
+                    Text("⌘↩ to draft")
+                        .font(.btCallout)
+                        .foregroundStyle(Color.btTextTertiary)
+                    Button(action: run) {
+                        HStack(spacing: 5) {
+                            if drafting { ProgressView().controlSize(.mini) } else { Image(systemName: "sparkles") }
+                            Text(drafting ? "Drafting" : drafted ? "Draft Again" : "Draft with AI")
+                        }
                     }
+                    .buttonStyle(.bt(.secondary, size: .small))
+                    .disabled(!canDraft)
+                    .help("Draft the automation from your description (⌘↩)")
                 }
-                .buttonStyle(.bt(.secondary, size: .small))
-                .disabled(!canDraft)
-                .help("Draft the automation from your description (⌘↩)")
             }
             .padding(.leading, Field.inset)
             .padding(.trailing, 5)
-            .padding(.vertical, 3)
+            .padding(.top, 8)
+            .padding(.bottom, 5)
             .btFieldChrome(focused: focused.wrappedValue)
             if let error {
                 Text(error)
