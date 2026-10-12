@@ -57,6 +57,8 @@ final class EditorDocument {
     /// Where the file is: this Mac, or the Mac a chat from another device runs on.
     @ObservationIgnored private let executor: any Executor
     @ObservationIgnored private let watch: @MainActor ([String], @escaping () -> Void) -> AnyObject?
+    /// The editor showing the text, for the Edit menu's Find items.
+    @ObservationIgnored weak var textView: NSTextView?
     /// Called on the first edit, so a preview tab is kept.
     @ObservationIgnored var onFirstEdit: (() -> Void)?
     /// How large an image shows: nil fits it to the tab, 1 is its actual size.

@@ -15,6 +15,12 @@ nonisolated struct NumberedLine: Sendable, Hashable {
     let text: String
 }
 
+/// A row of one file's diff, unique across the files, so the review can scroll to it.
+nonisolated struct DiffRowID: Hashable, Sendable {
+    let path: String
+    let index: Int
+}
+
 /// A row in the diff list. Unified layouts use `.hunk` and `.line`; split
 /// layouts use `.hunk` and `.pair`.
 nonisolated struct DiffRowItem: Identifiable, Sendable {
@@ -23,7 +29,7 @@ nonisolated struct DiffRowItem: Identifiable, Sendable {
         case line(NumberedLine)
         case pair(NumberedLine?, NumberedLine?)
     }
-    let id: Int
+    let id: DiffRowID
     let content: Content
 }
 
@@ -80,8 +86,8 @@ nonisolated struct ReviewFile: Identifiable, Sendable {
             let body = hunk.raw.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false).dropFirst().first ?? ""
             hunks.append(ReviewHunk(index: hunk.index, range: range, section: section,
                                     fingerprint: diff.path + "\u{0}" + body))
-            unified.append(DiffRowItem(id: unified.count, content: .hunk(position)))
-            split.append(DiffRowItem(id: split.count, content: .hunk(position)))
+            unified.append(DiffRowItem(id: DiffRowID(path: diff.path, index: unified.count), content: .hunk(position)))
+            split.append(DiffRowItem(id: DiffRowID(path: diff.path, index: split.count), content: .hunk(position)))
 
             var old = hunk.oldStart
             var new = hunk.newStart
@@ -91,7 +97,7 @@ nonisolated struct ReviewFile: Identifiable, Sendable {
 
             func flushRuns() {
                 for i in 0..<max(removedRun.count, addedRun.count) {
-                    split.append(DiffRowItem(id: split.count, content: .pair(
+                    split.append(DiffRowItem(id: DiffRowID(path: diff.path, index: split.count), content: .pair(
                         i < removedRun.count ? removedRun[i] : nil,
                         i < addedRun.count ? addedRun[i] : nil)))
                 }
@@ -107,15 +113,15 @@ nonisolated struct ReviewFile: Identifiable, Sendable {
                     let n = NumberedLine(kind: .context, old: String(old), new: String(new), text: text)
                     maxNumber = max(maxNumber, old, new)
                     old += 1; new += 1
-                    unified.append(DiffRowItem(id: unified.count, content: .line(n)))
+                    unified.append(DiffRowItem(id: DiffRowID(path: diff.path, index: unified.count), content: .line(n)))
                     flushRuns()
-                    split.append(DiffRowItem(id: split.count, content: .pair(n, n)))
+                    split.append(DiffRowItem(id: DiffRowID(path: diff.path, index: split.count), content: .pair(n, n)))
                     last = .context
                 case .removed:
                     let n = NumberedLine(kind: .removed, old: String(old), new: "", text: text)
                     maxNumber = max(maxNumber, old)
                     old += 1
-                    unified.append(DiffRowItem(id: unified.count, content: .line(n)))
+                    unified.append(DiffRowItem(id: DiffRowID(path: diff.path, index: unified.count), content: .line(n)))
                     if !addedRun.isEmpty { flushRuns() }
                     removedRun.append(n)
                     last = .removed
@@ -123,14 +129,14 @@ nonisolated struct ReviewFile: Identifiable, Sendable {
                     let n = NumberedLine(kind: .added, old: "", new: String(new), text: text)
                     maxNumber = max(maxNumber, new)
                     new += 1
-                    unified.append(DiffRowItem(id: unified.count, content: .line(n)))
+                    unified.append(DiffRowItem(id: DiffRowID(path: diff.path, index: unified.count), content: .line(n)))
                     addedRun.append(n)
                     last = .added
                 case .noNewline:
                     let n = NumberedLine(kind: .note, old: "", new: "", text: "No newline at end of file")
-                    unified.append(DiffRowItem(id: unified.count, content: .line(n)))
+                    unified.append(DiffRowItem(id: DiffRowID(path: diff.path, index: unified.count), content: .line(n)))
                     flushRuns()
-                    split.append(DiffRowItem(id: split.count, content: .pair(
+                    split.append(DiffRowItem(id: DiffRowID(path: diff.path, index: split.count), content: .pair(
                         last == .added ? nil : n, last == .removed ? nil : n)))
                 }
             }
@@ -154,11 +160,7 @@ nonisolated struct ReviewFile: Identifiable, Sendable {
     }
 
     /// Tabs become four spaces and a stray CR disappears, so columns line up.
-    static func display(_ content: String) -> String {
-        var text = content
-        if text.hasSuffix("\r") { text.removeLast() }
-        return text.contains("\t") ? text.replacingOccurrences(of: "\t", with: "    ") : text
-    }
+    static func display(_ content: String) -> String { Diff.display(content) }
 
     /// Approximate monospaced width: East Asian wide characters take two cells.
     static func columns(_ text: String) -> Int {
@@ -344,6 +346,22 @@ final class DiffReview {
         if let file = files.first(where: { $0.path == path }), !isExpanded(file) { toggle(file) }
     }
 
+    /// ⌘F in the Review tab: it searches every file shown, open or not.
+    let find = ReviewFind()
+    /// The match find last went to, for the diff to scroll to; the token repeats it.
+    private(set) var findTarget: DiffMatch?
+    private(set) var findToken = 0
+
+    init() {
+        find.reveal = { [unowned self] match in
+            // Its file opens, and draws even when it's long enough to wait for "Show Diff".
+            expansion[match.path] = true
+            revealedLargeFiles.insert(match.path)
+            findTarget = match
+            findToken += 1
+        }
+    }
+
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var orderedPaths: [String] = []
     /// The worktree as it looked when the review last read it in full.
@@ -495,6 +513,7 @@ final class DiffReview {
         files = prepared
         orderedPaths = groups.flatMap { $0.files.map(\.path) }
         update(\.selectedPath, RepoReview.selection(selectedPath, before: before, after: orderedPaths))
+        find.filesChanged(orderedFiles.map(\.diff))
     }
 
     func moveSelection(_ delta: Int) {

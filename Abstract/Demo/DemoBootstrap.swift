@@ -73,6 +73,7 @@ final class DemoBootstrap {
         RemoteProbe.runIfRequested(model)
         FindProbe.runIfRequested(model)
         FileSearchProbe.runIfRequested(model)
+        ReviewFindProbe.runIfRequested(model)
 
         let running = abstract.map { p in Task { await self.chat(model, p, "Add a command palette with fuzzy search", .autoEdits) } }
         _ = running

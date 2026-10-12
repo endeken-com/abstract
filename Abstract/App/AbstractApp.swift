@@ -153,22 +153,27 @@ struct AbstractCommands: Commands {
                 .keyboardShortcut("[", modifiers: [.command, .shift])
         }
         CommandGroup(after: .textEditing) {
-            // Looked up when chosen: the chat in front may have changed since the menu was built.
-            let finding = model.chatInFront.map { model.feed($0).find.isOpen }
-            // ⌘G steps through the chat's find bar while it's open, else the Files tab's search.
-            let stepping = finding == true || model.fileSearchInFront != nil
-            Button("Find in Chat…") { model.chatInFront.map { model.feed($0).find.open() } }
+            // Each goes where it's chosen: the chat, file or review in front, or
+            // the terminal while it has the keyboard, which the menu can't watch.
+            let noChat = model.selectedSessionId == nil
+            Button("Find…") { model.performFind(.find) }
                 .keyboardShortcut("f")
-                .disabled(finding == nil)
+                .disabled(noChat)
+            Button("Find and Replace…") { model.performFind(.replace) }
+                .keyboardShortcut("f", modifiers: [.command, .option])
+                .disabled(noChat)
             Button("Search in Files…") { if let s = model.selectedSession { model.searchInFiles(s.id) } }
                 .keyboardShortcut("f", modifiers: [.command, .shift])
                 .disabled(model.selectedSession == nil)
-            Button("Find Next") { findStep(1) }
+            Button("Find Next") { model.performFind(.next) }
                 .keyboardShortcut("g")
-                .disabled(!stepping)
-            Button("Find Previous") { findStep(-1) }
+                .disabled(noChat)
+            Button("Find Previous") { model.performFind(.previous) }
                 .keyboardShortcut("g", modifiers: [.command, .shift])
-                .disabled(!stepping)
+                .disabled(noChat)
+            Button("Use Selection for Find") { model.performFind(.useSelection) }
+                .keyboardShortcut("e")
+                .disabled(noChat)
         }
         CommandGroup(after: .toolbar) {
             Button("Actual Size") { image?.zoomToActualSize() }
@@ -239,16 +244,6 @@ struct AbstractCommands: Commands {
             Button("Archive Chat") { if let s = model.selectedSession { model.requestArchive = s.id } }
                 .keyboardShortcut(.delete, modifiers: [.command, .shift])
                 .disabled(model.selectedSession == nil)
-        }
-    }
-}
-
-private extension AbstractCommands {
-    func findStep(_ delta: Int) {
-        if let id = model.chatInFront, model.feed(id).find.isOpen {
-            if delta > 0 { model.feed(id).find.next() } else { model.feed(id).find.previous() }
-        } else {
-            model.stepFileSearch(delta)
         }
     }
 }
