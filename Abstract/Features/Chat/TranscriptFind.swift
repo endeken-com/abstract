@@ -146,9 +146,14 @@ enum FindMarks {
     /// Every appearance washed, the current one (by its place among them) brighter.
     static func mark(_ text: AttributedString, query: String, current: Int?) -> AttributedString {
         guard !query.isEmpty else { return text }
+        return mark(text, ranges: { TranscriptSearch.ranges(of: query, in: $0) }, current: current)
+    }
+
+    /// The same, for words found by other rules (a review's diff can match case).
+    static func mark(_ text: AttributedString, ranges: (String) -> [Range<String.Index>], current: Int?) -> AttributedString {
         var out = text
         let plain = String(text.characters)
-        for (i, range) in TranscriptSearch.ranges(of: query, in: plain).enumerated() {
+        for (i, range) in ranges(plain).enumerated() {
             let start = plain.distance(from: plain.startIndex, to: range.lowerBound)
             let length = plain.distance(from: range.lowerBound, to: range.upperBound)
             let lower = out.characters.index(out.startIndex, offsetBy: start)

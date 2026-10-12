@@ -48,10 +48,20 @@ struct DiffFileSections: View {
                 .textSelection(.enabled)
             }
             .environment(\.commentDrafting, drafting)
+            .environment(\.diffFind, review.find.rowFind)
             // "Show in Changes" from a tool row or the Files pane.
             .onChange(of: review.focusToken) {
                 guard let path = review.focusPath else { return }
                 withAnimation(.snappy(duration: 0.25)) { proxy.scrollTo(path, anchor: .top) }
+            }
+            // ⌘G and Return in the find bar: the match's line, once its file has opened.
+            .onChange(of: review.findToken) {
+                guard let match = review.findTarget, let file = review.files.first(where: { $0.path == match.path }),
+                      let row = file.row(of: match, split: layout == .split) else { return }
+                Task { @MainActor in
+                    await Task.yield()
+                    proxy.scrollTo(row, anchor: .center)
+                }
             }
         }
     }
@@ -301,7 +311,7 @@ private struct DiffUnifiedLine: View {
                             AddCommentButton { drafting?.ref = ref }.offset(x: 4)
                         }
                     }
-                DiffLineText(line: line, code: code)
+                DiffLineText(file: file, line: line, code: code)
                     .padding(.leading, 8)
             }
             .frame(minHeight: DiffMetrics.rowHeight, alignment: .topLeading)
@@ -374,7 +384,7 @@ private struct DiffSplitCell: View {
                             AddCommentButton { drafting?.ref = ref }.offset(x: 4)
                         }
                     }
-                DiffLineText(line: line, code: code).padding(.leading, 8)
+                DiffLineText(file: file, line: line, code: code).padding(.leading, 8)
             }
         }
         .frame(width: metrics.half, alignment: .topLeading)
@@ -391,6 +401,8 @@ private struct DiffSplitCell: View {
 /// A line's content, wrapping inside the pane; its colour says whether it was added or removed. Syntax colour
 /// arrives a moment after the line; unchanged lines sit a step back.
 private struct DiffLineText: View {
+    @Environment(\.diffFind) private var find
+    let file: ReviewFile
     let line: NumberedLine
     let code: AttributedString?
 
@@ -403,7 +415,8 @@ private struct DiffLineText: View {
                 .padding(.leading, DiffMetrics.markerWidth)
                 .frame(height: DiffMetrics.rowHeight)
         } else {
-            Text(code ?? AttributedString(line.text))
+            let text = code ?? AttributedString(line.text)
+            Text(find?.mark(text, line: line, in: file) ?? text)
                 .font(.btMono)
                 .foregroundStyle(line.kind == .context ? Color.btTextSecondary : Color.btText)
                 .opacity(line.kind == .context && code != nil ? 0.78 : 1)

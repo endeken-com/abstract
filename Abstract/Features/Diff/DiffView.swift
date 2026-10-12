@@ -146,6 +146,7 @@ struct DiffView: View {
                     }
                     if review.selected.isSubmodule { RepoAccessNotice(repo: review.selected) }
                     RevundStrip(sessionId: sessionId, review: review)
+                    if presentation == .document, review.find.isOpen { ReviewFindBar(find: review.find) }
                     if !review.hasChanges {
                         ReviewEmptyState(review: review, context: context)
                     } else if presentation == .list {
@@ -199,6 +200,8 @@ struct DiffView: View {
 final class ReviewStore {
     static let shared = ReviewStore()
     private var reviews: [String: DiffReview] = [:]
+
+    func existing(_ sessionId: String) -> DiffReview? { reviews[sessionId] }
 
     func review(_ sessionId: String) -> DiffReview {
         if let existing = reviews[sessionId] { return existing }

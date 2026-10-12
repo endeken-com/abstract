@@ -62,6 +62,7 @@ struct CodeTextView: NSViewRepresentable {
         scroll.rulersVisible = true
 
         c.textView = text
+        document.textView = text
         c.ruler = ruler
         c.show(document.text, editable: isEditable)
         c.startAtFirstColumn(scroll)
