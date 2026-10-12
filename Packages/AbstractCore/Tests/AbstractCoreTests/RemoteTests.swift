@@ -141,8 +141,16 @@ struct RemoteAccessTests {
         #expect(RemoteAccess.refusal("gh", ["extension", "exec", "x"], cwd: "/work/repo", allowed: allowed) != nil)
         #expect(RemoteAccess.refusal("revund", ["review", "--repo", "/etc"], cwd: "/work/repo", allowed: allowed) != nil)
         #expect(RemoteAccess.refusal("git", ["status"], cwd: nil, allowed: allowed) != nil)
-        #expect(RemoteAccess.refusal("git", ["grep", "-Oid", "-e", "x"], cwd: "/work/repo", allowed: allowed) != nil)
-        #expect(RemoteAccess.refusal("git", ["grep", "--open-files-in-pager=id", "x"], cwd: "/work/repo", allowed: allowed) != nil)
+        // git grep opens matches in a program with -O, bundled or abbreviated too.
+        for args in [["grep", "-Oid", "-e", "x", "--"], ["grep", "-nOid", "-e", "x", "--"], ["grep", "--open-files-in-pager=id", "-e", "x", "--"],
+                     ["grep", "--open-f=id", "-e", "x", "--"], ["grep", "-n", "-e", "x", "--", "-Oid"], ["grep", "-e", "x"],
+                     ["-c", "color.ui=never", "grep", "-Oid", "-e", "x", "--"]] {
+            #expect(RemoteAccess.refusal("git", args, cwd: "/work/repo", allowed: allowed) != nil, "\(args)")
+        }
+        // Long options git would take abbreviated.
+        #expect(RemoteAccess.refusal("git", ["diff", "--out=/tmp/x"], cwd: "/work/repo", allowed: allowed) != nil)
+        #expect(RemoteAccess.refusal("git", ["fetch", "--upload=evil"], cwd: "/work/repo", allowed: allowed) != nil)
+        #expect(RemoteAccess.refusal("git", ["diff", "--ext"], cwd: "/work/repo", allowed: allowed) != nil)
     }
 
     @Test func onlyARevundKeyCrossesInTheEnvironment() {

@@ -20,12 +20,13 @@ public enum RemoteAccess {
         guard allowed(cwd) else { return "That folder isn't one of this Mac's projects." }
         switch name {
         case "git":
-            // `git grep -O<program>` opens what it finds in that program; Search in Files never asks for it.
-            if args.contains("grep"), grepOptions(args).contains(where: { $0.hasPrefix("-O") }) {
-                return "git grep -O isn't allowed from another Mac."
+            // `git grep -O<program>` opens what it finds in that program, bundled
+            // (-nO…) or abbreviated (--open…) too: only Search in Files' own grep runs.
+            if gitCommand(args) == "grep" {
+                return isSearchInFiles(args) ? nil : "Only Search in Files runs git grep from another Mac."
             }
             for (i, arg) in args.enumerated() {
-                if gitOptions.contains(where: { arg == $0 || arg.hasPrefix($0 + "=") }) { return "git \(arg) isn't allowed from another Mac." }
+                if gitOptions.contains(where: { matches(arg, $0) }) { return "git \(arg) isn't allowed from another Mac." }
                 if arg == "-c" {
                     let setting = i + 1 < args.count ? args[i + 1].split(separator: "=").first.map { $0.lowercased() } ?? "" : ""
                     if !gitSettings.contains(setting) { return "git -c \(setting) isn't allowed from another Mac." }
@@ -43,16 +44,30 @@ public enum RemoteAccess {
         return nil
     }
 
-    /// git grep's options: not the patterns after `-e`, nor anything after `--`.
-    private static func grepOptions(_ args: [String]) -> [String] {
-        var options: [String] = []
+    /// The flags `WorktreeSearch.arguments` passes, then `-e <pattern> --` and nothing more.
+    static let searchFlags: Set<String> = ["-z", "-n", "--column", "-I", "--color=never", "--untracked", "--no-index",
+                                           "--exclude-standard", "--fixed-strings", "--extended-regexp", "--ignore-case",
+                                           "--word-regexp"]
+
+    /// The git command, past any `-c` settings before it.
+    static func gitCommand(_ args: [String]) -> String? {
         var i = 0
-        while i < args.count, args[i] != "--" {
-            if args[i] == "-e" { i += 2; continue }
-            options.append(args[i])
-            i += 1
-        }
-        return options
+        while i < args.count, args[i] == "-c" { i += 2 }
+        return i < args.count ? args[i] : nil
+    }
+
+    static func isSearchInFiles(_ args: [String]) -> Bool {
+        guard args.count >= 4, args.first == "grep", args[args.count - 3] == "-e", args.last == "--" else { return false }
+        return args.dropFirst().dropLast(3).allSatisfy(searchFlags.contains)
+    }
+
+    /// `arg` is `option`, gives it a value, or, for a long option, abbreviates
+    /// it: git takes any unambiguous start of a long option's name.
+    static func matches(_ arg: String, _ option: String) -> Bool {
+        if arg == option || arg.hasPrefix(option + "=") { return true }
+        guard option.hasPrefix("--"), arg.hasPrefix("--") else { return false }
+        let name = arg.split(separator: "=", maxSplits: 1).first.map(String.init) ?? arg
+        return name.count > 2 && option.hasPrefix(name)
     }
 
     /// A process's environment from another device: variables like
