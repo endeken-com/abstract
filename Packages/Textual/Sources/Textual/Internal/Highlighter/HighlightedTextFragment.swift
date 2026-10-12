@@ -37,12 +37,13 @@ struct HighlightedTextFragment: View {
           languageHint: languageHint
         )
       }
-      .onChange(of: Tuple(model.tokens, textEnvironment)) { _, newValue in
+      .onChange(of: Tuple(model.tokens, textEnvironment, content)) { _, newValue in
         model.highlight(
           tokens: newValue.values.0,
           presentationIntent: content.presentationIntent,
           using: theme,
-          environment: newValue.values.1
+          environment: newValue.values.1,
+          marks: newValue.values.2
         )
       }
   }
@@ -66,7 +67,8 @@ extension HighlightedTextFragment {
       tokens: [CodeToken],
       presentationIntent: PresentationIntent?,
       using theme: StructuredText.HighlighterTheme,
-      environment: TextEnvironmentValues
+      environment: TextEnvironmentValues,
+      marks: AttributedSubstring? = nil
     ) {
       var attributes = AttributeContainer()
       // Re-apply the presentation intent for pasteboard formatters
@@ -85,6 +87,20 @@ extension HighlightedTextFragment {
 
         content.mergeAttributes(tokenAttributes)
         highlightedCode.append(content)
+      }
+
+      // Added for Abstract: backgrounds the parser set on the code (find
+      // matches) carry over to the highlighted code, which has the same characters.
+      if let marks, marks.characters.count == highlightedCode.characters.count {
+        typealias Background = AttributeScopes.SwiftUIAttributes.BackgroundColorAttribute
+        for (color, range) in marks.runs[Background.self] {
+          guard let color else { continue }
+          let start = marks.characters.distance(from: marks.startIndex, to: range.lowerBound)
+          let length = marks.characters.distance(from: range.lowerBound, to: range.upperBound)
+          let lower = highlightedCode.characters.index(highlightedCode.startIndex, offsetBy: start)
+          let upper = highlightedCode.characters.index(lower, offsetBy: length)
+          highlightedCode[lower..<upper].backgroundColor = color
+        }
       }
 
       self.highlightedCode = highlightedCode

@@ -46,6 +46,16 @@ struct ConversationView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .animation(.snappy(duration: 0.25), value: permissions)
         }
+        .overlay(alignment: .top) {
+            if feed.find.isOpen {
+                TranscriptFindBar(find: feed.find)
+                    .frame(maxWidth: 520)
+                    .padding(.top, Space.sm)
+                    .padding(.horizontal, Space.lg)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.snappy(duration: 0.15), value: feed.find.isOpen)
         .overlay(alignment: .bottom) {
             if !atBottom {
                 Button {
@@ -329,7 +339,7 @@ private struct UserBubble: View {
             Spacer(minLength: 80)
             VStack(alignment: .leading, spacing: prose.lineSpacing - 1) {
                 if shownText.count <= 24_000 {
-                    AgentProse(markdown: long && !open ? MarkdownHealing.heal(shownText) : shownText)
+                    AgentProse(markdown: long && !open ? MarkdownHealing.heal(shownText) : shownText, findField: "user")
                 } else {
                     SelectableLines(shown.map { TextClip.line($0, max: 4_000) }, spacing: prose.lineSpacing - 1)
                         .font(prose.font(size: prose.points - 1))
@@ -373,9 +383,12 @@ private struct UserBubble: View {
 struct AgentProse: View {
     @Environment(\.proseStyle) private var prose
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.transcriptFind) private var find
     let markdown: String
     /// A reply as it streams: new text fades in. Nil for prose that never streams.
     var streaming: Bool?
+    /// Which of the row's texts this is, for ⌘F to mark its matches.
+    var findField: String?
     @State private var fade = StreamFade()
     @State private var tick = 0.0
 
@@ -383,18 +396,30 @@ struct AgentProse: View {
         if let streaming, !reduceMotion {
             Revealing(text: markdown, streaming: streaming) { shown, catchingUp in
                 let partial = streaming || catchingUp
-                styled(StructuredText(partial ? MarkdownHealing.heal(shown) : shown, parser: StreamFadeParser(fade: fade, live: partial)))
+                styled(StructuredText(partial ? MarkdownHealing.heal(shown) : shown, parser: marking(StreamFadeParser(fade: fade, live: partial))))
                     .textRenderer(StreamFadeRenderer(fade: fade, tick: tick))
                     // Redraws for as long as the newest characters take to fade in.
                     .onChange(of: shown) { withAnimation(.linear(duration: StreamFade.duration)) { tick += 1 } }
             }
         } else {
-            styled(StructuredText(markdown: markdown))
+            styled(StructuredText(markdown, parser: marking(AttributedStringMarkdownParser(baseURL: nil))))
         }
+    }
+
+    /// The parser, marking what ⌘F is finding when this text is one it looks through.
+    private func marking(_ parser: any MarkupParser) -> any MarkupParser {
+        guard let findField, let find else { return parser }
+        return FindMarkParser(base: parser, query: find.query, current: find.current(in: findField))
+    }
+
+    private var marks: FindMarkKey? {
+        guard let findField, let find else { return nil }
+        return FindMarkKey(query: find.query, current: find.current(in: findField))
     }
 
     private func styled(_ text: StructuredText) -> some View {
         text
+            .parsing(key: marks)
             .font(prose.body)
             .foregroundStyle(Color.btProse)
             .textual.structuredTextStyle(.gitHub)
@@ -460,6 +485,7 @@ private struct CodeBlockChrome: View {
 private struct ThinkingView: View {
     @Environment(\.proseStyle) private var prose
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.transcriptFind) private var find
     let text: String
     let streaming: Bool
     @State private var fade = StreamFade()
@@ -472,7 +498,7 @@ private struct ThinkingView: View {
                 .foregroundStyle(Color.btTextTertiary)
             if streaming, !reduceMotion {
                 Revealing(text: text.trimmingCharacters(in: .whitespacesAndNewlines), streaming: true) { shown, _ in
-                    Text(shown)
+                    Text(marked(shown))
                         .font(prose.font(size: prose.points - 1.5).italic())
                         .foregroundStyle(Color.btTextTertiary)
                         .lineSpacing(prose.lineSpacing - 2)
@@ -484,13 +510,18 @@ private struct ThinkingView: View {
                         }
                 }
             } else {
-                SelectableText(text.trimmingCharacters(in: .whitespacesAndNewlines))
+                SelectableText(marked(text.trimmingCharacters(in: .whitespacesAndNewlines)))
                     .font(prose.font(size: prose.points - 1.5).italic())
                     .foregroundStyle(Color.btTextTertiary)
                     .lineSpacing(prose.lineSpacing - 2)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func marked(_ text: String) -> AttributedString {
+        guard let find else { return AttributedString(text) }
+        return FindMarks.mark(AttributedString(text), query: find.query, current: find.current(in: "thinking"))
     }
 }
 

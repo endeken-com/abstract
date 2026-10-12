@@ -75,6 +75,12 @@ struct WithInlineStyle<Content: View>: View {
         style.link.apply(in: &attributes, environment: environment)
       }
 
+      // Added for Abstract: a background the parser set (a find match) shows
+      // over an inline style's own, such as inline code's.
+      if run.attributes[AttributeScopes.SwiftUIAttributes.BackgroundColorAttribute.self] != nil {
+        attributes[AttributeScopes.SwiftUIAttributes.BackgroundColorAttribute.self] = nil
+      }
+
       output[run.range].mergeAttributes(attributes, mergePolicy: .keepNew)
     }
 

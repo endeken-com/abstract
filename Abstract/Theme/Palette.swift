@@ -104,6 +104,10 @@ nonisolated extension Color {
     static let btAttention = dynamic(light: 0x1D1D1F, dark: 0xF2F2F4)
     static let btAddedWash = dynamic(light: 0x1A7F37, dark: 0x4CC38A, lightAlpha: 0.07, darkAlpha: 0.10)
     static let btRemovedWash = dynamic(light: 0xCF222E, dark: 0xEF6461, lightAlpha: 0.06, darkAlpha: 0.10)
+    /// Every match of the words being found, and, brighter, the one you're on:
+    /// find's yellow, the one place it's used, because that's how a Mac shows it.
+    static let btFindMatch = dynamic(light: 0x000000, dark: 0xFFFFFF, lightAlpha: 0.11, darkAlpha: 0.16)
+    static let btFindCurrent = dynamic(light: 0xF5D547, dark: 0xE2C044, lightAlpha: 0.8, darkAlpha: 0.55)
 
     private static func dynamic(light: UInt32, dark: UInt32, lightAlpha: CGFloat = 1, darkAlpha: CGFloat = 1) -> Color {
         Color(nsColor: NSColor(name: nil) { @Sendable appearance in

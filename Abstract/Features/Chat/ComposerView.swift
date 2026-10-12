@@ -197,6 +197,8 @@ struct ComposerView: View {
                 .allowsHitTesting(false)
         }
         .onAppear { focused = true }
+        // Closing ⌘F's bar hands the keyboard back here.
+        .onChange(of: model.feed(session.id).find.closings) { focused = true }
     }
 
     private func send() {
