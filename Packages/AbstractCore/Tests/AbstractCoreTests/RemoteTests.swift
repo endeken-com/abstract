@@ -118,6 +118,10 @@ struct RemoteAccessTests {
         #expect(RemoteAccess.refusal("revund", ["review", "--json", "--repo", "/work/repo"], cwd: "/work/repo", allowed: allowed) == nil)
         #expect(RemoteAccess.refusal("git", ["--version"], cwd: nil, allowed: allowed) == nil)
         #expect(RemoteAccess.refusal("gh", ["auth", "status"], cwd: nil, allowed: allowed) == nil)
+        // git's own options Abstract passes before the command.
+        #expect(RemoteAccess.refusal("git", ["--no-optional-locks", "status"], cwd: "/work/repo", allowed: allowed) == nil)
+        #expect(RemoteAccess.refusal("git", ["-c", "core.quotePath=false", "--no-pager", "diff", "HEAD"], cwd: "/work/repo", allowed: allowed) == nil)
+        #expect(RemoteAccess.refusal("git", ["--literal-pathspecs", "reset", "-q", "--", "a"], cwd: "/work/repo", allowed: allowed) == nil)
     }
 
     @Test func searchInFilesRunsForAChatOnAnotherMac() {
@@ -144,7 +148,8 @@ struct RemoteAccessTests {
         // git grep opens matches in a program with -O, bundled or abbreviated too.
         for args in [["grep", "-Oid", "-e", "x", "--"], ["grep", "-nOid", "-e", "x", "--"], ["grep", "--open-files-in-pager=id", "-e", "x", "--"],
                      ["grep", "--open-f=id", "-e", "x", "--"], ["grep", "-n", "-e", "x", "--", "-Oid"], ["grep", "-e", "x"],
-                     ["-c", "color.ui=never", "grep", "-Oid", "-e", "x", "--"]] {
+                     ["-c", "color.ui=never", "grep", "-Oid", "-e", "x", "--"], ["--no-pager", "grep", "-Oid", "-e", "x", "--"],
+                     ["--namespace", "x", "grep", "-Oid", "-e", "x", "--"], ["-p", "grep", "-Oid", "-e", "x", "--"]] {
             #expect(RemoteAccess.refusal("git", args, cwd: "/work/repo", allowed: allowed) != nil, "\(args)")
         }
         // Long options git would take abbreviated.

@@ -22,7 +22,12 @@ public enum RemoteAccess {
         case "git":
             // `git grep -O<program>` opens what it finds in that program, bundled
             // (-nO…) or abbreviated (--open…) too: only Search in Files' own grep runs.
-            if gitCommand(args) == "grep" {
+            // Before the command, only options that take no value: one that does
+            // (--namespace x) would hide which command runs.
+            guard let command = gitCommand(args), !command.hasPrefix("-") else {
+                return "git \(gitCommand(args) ?? "") isn't allowed from another Mac."
+            }
+            if command == "grep" {
                 return isSearchInFiles(args) ? nil : "Only Search in Files runs git grep from another Mac."
             }
             for (i, arg) in args.enumerated() {
@@ -49,10 +54,15 @@ public enum RemoteAccess {
                                            "--exclude-standard", "--fixed-strings", "--extended-regexp", "--ignore-case",
                                            "--word-regexp"]
 
-    /// The git command, past any `-c` settings before it.
+    /// git's own options, before the command, that take no value.
+    static let globalFlags: Set<String> = ["--no-pager", "--no-optional-locks", "--literal-pathspecs", "--glob-pathspecs",
+                                           "--noglob-pathspecs", "--icase-pathspecs", "--no-replace-objects", "--no-advice"]
+
+    /// The git command, past `-c` settings and `globalFlags` before it. Any
+    /// other option there comes back instead, and is refused.
     static func gitCommand(_ args: [String]) -> String? {
         var i = 0
-        while i < args.count, args[i] == "-c" { i += 2 }
+        while i < args.count, args[i] == "-c" || globalFlags.contains(args[i]) { i += args[i] == "-c" ? 2 : 1 }
         return i < args.count ? args[i] : nil
     }
 
