@@ -157,7 +157,10 @@ final class AppModel {
     // Navigation & transient UI
     var destination: Destination = .home { didSet { if destination != oldValue { syncLocks(); followCLIChat() } } }
     var collapsedProjects: Set<String> = []
-    var showArchived = false
+    /// Archived chats show in the sidebar too, dimmed. Kept across launches.
+    var showArchived = UserDefaults.standard.bool(forKey: "sidebar.showArchived") {
+        didSet { UserDefaults.standard.set(showArchived, forKey: "sidebar.showArchived") }
+    }
     var newChatProjectId: String?? = nil
     /// The next New Chat starts with no project.
     var newChatStandalone = false
@@ -278,6 +281,7 @@ final class AppModel {
         scheduler = AutomationScheduler(model: self)
         scheduler?.start()
         Task { await watchPullRequests() }
+        Task { await readEveryBranch() }
         if !isDemo { Task { await accounts.seedFromLogs(engine.logsURL) } }
         if !isDemo { remote.start(model: self) }
         Notifier.shared.requestAuthorization()
@@ -1390,10 +1394,15 @@ final class AppModel {
         if let s = session(sessionId), (s.status, s.statusDetail) == (status, detail) { return }
         try? store.updateSessionStatus(sessionId, status, detail: detail)
         guard var s = session(sessionId) else { return }
+        let wasWorking = [.running, .provisioning, .waitingInput].contains(s.status)
         s.status = status
         s.statusDetail = detail
         s.lastEventAt = Date()
         replaceSession(s)
+        // A turn that ended may have left changes: the sidebar files the chat by them.
+        if wasWorking, [.idle, .finished, .errored].contains(status), !sessionId.hasPrefix(RemoteService.mirrorPrefix) {
+            Task { await refreshBranch(sessionId) }
+        }
     }
 
     private func replaceSession(_ s: Session) {
