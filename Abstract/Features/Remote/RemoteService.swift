@@ -441,7 +441,8 @@ final class RemoteService {
                                       RemotePendingPermission(requestId: $0.requestId, toolName: $0.toolName, input: $0.input)
                                   })
                               }), turnStartedAt: model.turnStartedAt, pagedHistory: true, execInput: true,
-                              internetAddress: internetAddress)
+                              internetAddress: internetAddress,
+                              backgroundTasks: model.alive.filter { model.runningBackgroundTasks($0) > 0 }.sorted())
     }
 
     /// A chat's new output, to the Macs watching it.
@@ -1131,6 +1132,7 @@ final class RemoteLink {
         self.channel = channel
         outbox = AsyncStream<RemoteMessage>.makeStream()
         state = .online
+        firstSnapshot = true
         let stream = outbox.stream
         Task {
             for await message in stream {
@@ -1227,7 +1229,8 @@ final class RemoteLink {
         case .event(.snapshot(let snapshot)):
             self.snapshot = snapshot
             service?.rememberInternet(snapshot.internetAddress, for: device.id)
-            service?.model?.remoteSnapshotChanged(device: device.id, snapshot)
+            service?.model?.remoteSnapshotChanged(device: device.id, snapshot, fresh: firstSnapshot)
+            firstSnapshot = false
             for (session, lines) in early where snapshot.sessions.contains(where: { $0.id == session }) {
                 early[session] = nil
                 deliver(session, lines)
@@ -1243,6 +1246,10 @@ final class RemoteLink {
             break
         }
     }
+
+    /// The next snapshot is the first since connecting: what happened while
+    /// the link was down shouldn't notify as if it just had.
+    @ObservationIgnored private var firstSnapshot = true
 
     /// Output that arrived before the host said which agent the chat runs.
     @ObservationIgnored private var early: [String: [RemoteLine]] = [:]
