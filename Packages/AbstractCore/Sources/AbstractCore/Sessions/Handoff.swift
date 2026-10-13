@@ -100,6 +100,9 @@ public final class ChatStream {
             return [.text(role: .user, text: line.line, blockId: nil, partial: false)]
         case .note:
             return [.notice(.info(line.line))]
+        case .exit:
+            guard let marker = ExitMarker(line) else { return [] }
+            return onExit(code: marker.code, stopRequested: marker.stopped)
         case .stdout, .stderr:
             let events = parser?.feed(line.line, stream: line.stream) ?? [.raw(line: line.line, stream: line.stream)]
             return isSummarizing ? summarizing(events) : events
@@ -143,7 +146,7 @@ public final class ChatStream {
             for event in feed(line) {
                 // A question from before is either answered or gone.
                 if case .permissionRequest = event { continue }
-                timeline.append(event)
+                timeline.append(event, at: line.at)
             }
         }
         return timeline

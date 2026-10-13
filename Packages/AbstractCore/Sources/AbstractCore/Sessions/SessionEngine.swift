@@ -58,10 +58,10 @@ public final class SessionEngine: Sendable {
             spec,
             onLine: { [weak self] line in
                 let line = enricher?.enrich(line) ?? line
-                // The log is the single source of sequence numbers, so live
-                // streaming and replay always agree.
-                let n = writer.append(line)
-                self?.continuation.yield(.line(sessionId: sessionId, seq: n, line))
+                // The log is the single source of sequence numbers and times,
+                // so live streaming and replay always agree.
+                let (n, logged) = writer.append(line)
+                self?.continuation.yield(.line(sessionId: sessionId, seq: n, logged))
             },
             onExit: { [weak self] code in
                 guard let self else { return }
@@ -93,16 +93,16 @@ public final class SessionEngine: Sendable {
     @discardableResult
     public func record(sessionId: String, _ line: OutputLine) -> Int {
         let writer = state.withLock { $0[sessionId]?.writer }
-        let n: Int
+        let n: Int, logged: OutputLine
         if let writer {
-            n = writer.append(line)
+            (n, logged) = writer.append(line)
         } else {
             let url = logFile(sessionId)
             let once = LogWriter(url: url, startingAt: lineCount(url))
-            n = once.append(line)
+            (n, logged) = once.append(line)
             once.close()
         }
-        continuation.yield(.line(sessionId: sessionId, seq: n, line))
+        continuation.yield(.line(sessionId: sessionId, seq: n, logged))
         return n
     }
 
@@ -231,14 +231,17 @@ private final class LogWriter: @unchecked Sendable {
         _ = try? handle?.seekToEnd()
     }
 
-    /// Returns the line's number in the log.
-    func append(_ line: OutputLine) -> Int {
+    /// Returns the line's number in the log, and the line as logged: with the
+    /// time it was written, unless it came with one (from another Mac).
+    func append(_ line: OutputLine) -> (Int, OutputLine) {
+        var line = line
+        if line.at == nil { line.at = Date() }
         lock.lock(); defer { lock.unlock() }
-        guard let handle, var data = try? encoder.encode(line) else { return count }
+        guard let handle, var data = try? encoder.encode(line) else { return (count, line) }
         data.append(0x0A)
         try? handle.write(contentsOf: data)
         count += 1
-        return count
+        return (count, line)
     }
 
     func close() {

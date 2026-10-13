@@ -28,7 +28,7 @@ struct SessionEngineTests {
         _ = await collect(engine) { $0.contains { if case .exit = $0 { return true }; return false } }
         let replay = engine.replay(sessionId: "s1")
         #expect(replay.map(\.seq) == [1, 2])
-        #expect(replay[0].line == OutputLine(stream: .user, line: "Add a test"))
+        #expect(replay[0].line.untimed == OutputLine(stream: .user, line: "Add a test"))
         #expect(replay[1].line.line == "done")
     }
 
@@ -39,7 +39,7 @@ struct SessionEngineTests {
         let marker = HandoffMarker(phase: .handoff, from: "claude", to: "codex").line
         #expect(engine.record(sessionId: "s1", marker) == 2)
         engine.recordInput(sessionId: "s1", text: "second")
-        #expect(engine.replay(sessionId: "s1").map(\.line) == [OutputLine(stream: .user, line: "first"), marker,
+        #expect(engine.replay(sessionId: "s1").map(\.line.untimed) == [OutputLine(stream: .user, line: "first"), marker,
                                                                 OutputLine(stream: .user, line: "second")])
         #expect(engine.logLength(sessionId: "s1") == 3)
     }

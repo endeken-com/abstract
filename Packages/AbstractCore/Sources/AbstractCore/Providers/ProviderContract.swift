@@ -128,6 +128,9 @@ public enum OutputStreamKind: String, Sendable, Codable {
     /// A line of Abstract's own about the chat (its branch renamed, say),
     /// shown quietly between the agent's output.
     case note
+    /// The agent's process ended mid-turn (`ExitMarker`): stopped, failed or
+    /// done. The replay ends the turn here, as the chat did live.
+    case exit
 }
 
 public struct UsageTotals: Sendable, Hashable, Codable {

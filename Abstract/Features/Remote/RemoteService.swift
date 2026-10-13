@@ -1262,12 +1262,11 @@ final class RemoteLink {
         // A chat handed over reads each agent's part with its own parser.
         let stream = streams[session] ?? ChatStream(providerId: ChatStream.firstProvider(in: lines.map(\.line), current: providerId))
         streams[session] = stream
-        var events: [AgentEvent] = []
+        let mirror = RemoteService.mirrorId(device: device.id, session: session)
         for line in lines where line.seq > (lastSeq[session] ?? 0) {
             lastSeq[session] = line.seq
-            events += stream.feed(line.line)
+            service?.model?.applyRemote(stream.feed(line.line), at: line.line.at, to: mirror)
         }
-        service?.model?.applyRemote(events, to: RemoteService.mirrorId(device: device.id, session: session))
     }
 }
 

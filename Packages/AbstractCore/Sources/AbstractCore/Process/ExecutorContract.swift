@@ -11,7 +11,28 @@ public struct ExecResult: Sendable, Hashable, Codable {
 public struct OutputLine: Sendable, Hashable, Codable {
     public var stream: OutputStreamKind
     public var line: String
-    public init(stream: OutputStreamKind, line: String) { self.stream = stream; self.line = line }
+    /// When the line was logged, by the clock of the Mac that ran the agent.
+    /// Logs written before lines carried it have none.
+    public var at: Date?
+    public init(stream: OutputStreamKind, line: String, at: Date? = nil) { self.stream = stream; self.line = line; self.at = at }
+
+    private enum CodingKeys: String, CodingKey { case stream, line, at }
+
+    /// `at` is milliseconds since 1970, whatever date strategy the coder has,
+    /// so a log, another Mac and the phone all read the same number.
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        stream = try c.decode(OutputStreamKind.self, forKey: .stream)
+        line = try c.decode(String.self, forKey: .line)
+        at = try c.decodeIfPresent(Double.self, forKey: .at).map { Date(timeIntervalSince1970: $0 / 1000) }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(stream, forKey: .stream)
+        try c.encode(line, forKey: .line)
+        try c.encodeIfPresent(at.map { ($0.timeIntervalSince1970 * 1000).rounded() }, forKey: .at)
+    }
 }
 
 public enum AbstractError: Error, LocalizedError, Sendable, Equatable {

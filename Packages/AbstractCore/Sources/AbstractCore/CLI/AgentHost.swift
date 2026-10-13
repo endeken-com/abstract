@@ -261,6 +261,8 @@ final class AgentHost: @unchecked Sendable {
     private func handle(_ event: EngineEvent) {
         switch event {
         case let .line(_, _, line):
+            // Its own exit marker, logged below for replays; already applied.
+            if line.stream == .exit { return }
             lastActivity = Date()
             if line.stream == .stderr { stderrTail = Array((stderrTail + [line.line]).suffix(5)) }
             let events = stream.feed(line)
@@ -284,7 +286,10 @@ final class AgentHost: @unchecked Sendable {
             if status?.0 == .idle {
                 setStatus(.finished, nil)
             } else {
-                for event in stream.onExit(code: code) { apply(event, asked: false) }
+                // Mid-turn: the log says so, so the turn ends there on replay too.
+                // Stopped (`abstract stop`, or from the app) reads as stopped, not failed.
+                if status?.0.isActive ?? false { engine.record(sessionId: sessionId, ExitMarker(code: code, stopped: stopRequested).line) }
+                for event in stream.onExit(code: code, stopRequested: stopRequested) { apply(event, asked: false) }
                 if status?.0.isActive ?? true {
                     setStatus(code == 0 ? .finished : .errored, code == 0 ? nil : "Exited with code \(code.map(String.init) ?? "?")")
                 }

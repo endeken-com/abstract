@@ -582,10 +582,23 @@ private struct RailChatDetails: View {
                 row("Project") { Image(systemName: "folder") } content: {
                     value(model.project(session.projectId)?.name ?? "Standalone")
                 }
+                row("Time") { Image(systemName: "clock") } content: { value(timeText) }
             }
         }
         .padding(Space.md)
         .frame(width: 360, alignment: .leading)
+        // The chat's time comes from its log; a chat on another Mac fills in as it's opened.
+        .onAppear { if RemoteService.split(session.id) == nil { model.loadTimelineIfNeeded(session.id) } }
+    }
+
+    /// "47m working over 12 turns · started Oct 11, 14:02".
+    private var timeText: String {
+        let time = model.feed(session.id).time
+        guard time.turns > 0 else { return "No turns yet" }
+        let turns = time.turns == 1 ? "1 turn" : "\(time.turns) turns"
+        let working = time.workingMs > 0 ? "\(RelativeTime.duration(time.workingMs)) working over \(turns)" : turns
+        let started = time.started.map { " · started \($0.formatted(.dateTime.month(.abbreviated).day().hour().minute()))" } ?? ""
+        return working + started
     }
 
     @ViewBuilder private var prRow: some View {

@@ -40,6 +40,12 @@ final class ChatFeed {
     /// only when a call starts or ends, not as text streams.
     private(set) var calls: [ToolCall] = []
     private(set) var turns = 0
+    /// When the turn under way began, from the log: survives a relaunch.
+    private(set) var turnStart: Date?
+    /// How long the agent has worked in this chat, over how many turns.
+    private(set) var time = ChatTime()
+    /// The last turn's line, which adds the chat's total once it's idle.
+    private(set) var lastTurnId: Int?
     private(set) var last: AgentEvent?
     /// The agent's suggested next message, until you send one yourself.
     private(set) var suggestion: String?
@@ -74,8 +80,9 @@ final class ChatFeed {
     /// Row ids for a reply's blocks: the block id, then the part.
     static let partsPerBlock = 4096
 
-    func append(_ event: AgentEvent) {
-        timeline.append(event)
+    /// `at`: when the line it came from was logged, if known.
+    func append(_ event: AgentEvent, at: Date?) {
+        timeline.append(event, at: at)
         guard flush == nil else { return }
         flush = Task { [weak self] in
             try? await Task.sleep(for: Self.interval)
@@ -104,6 +111,11 @@ final class ChatFeed {
         if calls != self.calls { self.calls = calls }
         let turns = blocks.count { if case .turn = $0 { true } else { false } }
         if turns != self.turns { self.turns = turns }
+        let time = ChatTime(blocks: blocks, started: timeline.startedAt)
+        if time != self.time { self.time = time }
+        let lastTurnId = blocks.last { if case .turn = $0 { true } else { false } }?.id
+        if lastTurnId != self.lastTurnId { self.lastTurnId = lastTurnId }
+        if timeline.turnStart != turnStart { turnStart = timeline.turnStart }
         if timeline.last != last { last = timeline.last }
         if timeline.pendingSuggestion != suggestion { suggestion = timeline.pendingSuggestion }
         if timeline.latestCommands != commands { commands = timeline.latestCommands }

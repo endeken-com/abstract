@@ -1133,16 +1133,18 @@ final class AppModel {
     // MARK: Chats on other Macs
 
     /// Output from a chat on another Mac, parsed here: questions for you
-    /// wait like local ones; the rest joins its transcript.
-    func applyRemote(_ events: [AgentEvent], to mirrorId: String) {
+    /// wait like local ones; the rest joins its transcript. `at` is when the
+    /// other Mac logged it. Statuses and usage end its turns there too, though
+    /// the chat's own status comes with the other Mac's list of chats.
+    func applyRemote(_ events: [AgentEvent], at: Date? = Date(), to mirrorId: String) {
         for event in events {
             switch event {
             case let .permissionRequest(requestId, toolName, input):
                 permissions[mirrorId, default: []].append(PendingPermission(requestId: requestId, toolName: toolName, input: input))
-            case .status, .sessionId, .usage:
+            case .sessionId:
                 continue
             default:
-                feed(mirrorId).append(event)
+                feed(mirrorId).append(event, at: at)
             }
         }
     }
@@ -1253,6 +1255,8 @@ final class AppModel {
             guard seq > (seenSeq[sessionId] ?? 0) else { return }
             seenSeq[sessionId] = seq
             tailPositions[sessionId] = nil
+            // The exit marker this chat logged as its agent ended; already applied.
+            if line.stream == .exit { return }
             // Claude reports its account's limits as it goes; Usage shows the latest.
             if line.line.contains("rate_limit_event"), let quota = ClaudeAccounts.quota(fromLine: line.line) {
                 accounts.record(quota, profile: sessionProfiles[sessionId] ?? accounts.standardProfilePath)
@@ -1269,7 +1273,7 @@ final class AppModel {
                     if case let .permissionRequest(requestId, _, _) = e { respond(sessionId, requestId: requestId, allow: false, input: nil); continue }
                     if case .sessionId = e { continue }
                 }
-                apply(e, to: sessionId)
+                apply(e, to: sessionId, at: line.at)
             }
             remote.forward(sessionId: sessionId, seq: seq, line: line)
         case let .exit(sessionId, code):
@@ -1302,11 +1306,13 @@ final class AppModel {
             // waits for your next message. Not forwarded: another Mac would
             // read the exit as a failure, and its status comes with the chat.
             if stopRequested {
+                logExit(sessionId, code: code, stopped: true)
                 for e in stream(for: sessionId)?.onExit(code: code, stopRequested: true) ?? [] { append(e, to: sessionId) }
                 setStatus(sessionId, .idle)
                 permissions[sessionId] = nil
                 return
             }
+            if session(sessionId)?.status.isActive == true { logExit(sessionId, code: code, stopped: false) }
             if let stream = streams[sessionId] {
                 for e in stream.onExit(code: code) { apply(e, to: sessionId) }
             }
@@ -1323,6 +1329,12 @@ final class AppModel {
         }
     }
 
+    /// The agent ended mid-turn: the log says so, so the turn ends there when
+    /// the chat is read back too. `handle` skips it, as it's applied here.
+    private func logExit(_ sessionId: String, code: Int32?, stopped: Bool) {
+        engine.record(sessionId: sessionId, ExitMarker(code: code, stopped: stopped).line)
+    }
+
     /// Until a handoff is logged, output is still the outgoing agent's.
     private func stream(for sessionId: String) -> ChatStream? {
         if let s = streams[sessionId] { return s }
@@ -1332,7 +1344,9 @@ final class AppModel {
         return stream
     }
 
-    private func apply(_ event: AgentEvent, to sessionId: String) {
+    /// `at`: when the line it came from was logged; now, for what Abstract
+    /// works out itself.
+    private func apply(_ event: AgentEvent, to sessionId: String, at: Date? = Date()) {
         switch event {
         case .sessionId(let id):
             if var s = session(sessionId), s.providerSessionId != id {
@@ -1377,11 +1391,11 @@ final class AppModel {
         default:
             break
         }
-        append(event, to: sessionId)
+        append(event, to: sessionId, at: at)
     }
 
-    private func append(_ event: AgentEvent, to sessionId: String) {
-        feed(sessionId).append(event)
+    private func append(_ event: AgentEvent, to sessionId: String, at: Date? = Date()) {
+        feed(sessionId).append(event, at: at)
     }
 
     func setStatus(_ sessionId: String, _ status: SessionStatus, detail: String? = nil) {
@@ -1424,7 +1438,7 @@ final class AppModel {
         for (seq, line) in lines where seq > (seenSeq[sessionId] ?? 0) {
             seenSeq[sessionId] = seq
             guard let stream = stream(for: sessionId) else { return }
-            for event in stream.feed(line) { append(event, to: sessionId) }
+            for event in stream.feed(line) { append(event, to: sessionId, at: line.at) }
         }
     }
 

@@ -104,7 +104,7 @@ enum TranscriptRows {
                 let target = ToolPresentation.command(call).map { TextClip.line($0) } ?? ToolPresentation.path(call) ?? ""
                 return [ToolPresentation.verb(call.name), target].filter { !$0.isEmpty }.joined(separator: " ")
             }.joined(separator: "\n")
-        case let .turn(_, summary, _, _, _): return summary ?? ""
+        case let .turn(_, recap): return recap.label(RelativeTime.duration)
         case let .error(_, message): return message
         case let .notice(_, notice): return notice.message(agent: "The agent")
         case let .handoff(_, from, to, summary, _):
@@ -157,8 +157,8 @@ struct BlockView: View, Equatable {
         case .system:
             // The model and mode are in the composer footer already.
             EmptyView()
-        case let .turn(_, summary, duration, usage, cost):
-            TurnSummary(summary: summary, durationMs: duration, usage: usage, cost: cost)
+        case let .turn(id, recap):
+            TurnSummary(id: id, recap: recap, sessionId: sessionId)
         case let .error(_, message):
             VStack(alignment: .leading, spacing: Space.sm) {
                 HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
@@ -525,34 +525,53 @@ private struct ThinkingView: View {
     }
 }
 
-/// The end of a turn as a quiet rule: what was done and how long it took.
-/// Token counts and cost are subscription noise, so they wait in the tooltip.
+/// The end of a turn as a quiet rule: how it ended and how long it took, and
+/// under the chat's last turn, once it's idle, how long the agent worked in
+/// all. When it started and ended, tokens and cost wait in the tooltip.
 private struct TurnSummary: View {
-    let summary: String?
-    let durationMs: Int?
-    let usage: UsageTotals?
-    let cost: Double?
+    @Environment(AppModel.self) private var model
+    let id: Int
+    let recap: TurnRecap
+    let sessionId: String
 
     var body: some View {
-        let label = [summary, durationMs.map { RelativeTime.duration($0) }].compactMap { $0 }.joined(separator: " · ")
-        let details = [
-            usage.map { "\(RelativeTime.tokens($0.inputTokens + $0.cacheRead + $0.cacheWrite)) in, \(RelativeTime.tokens($0.outputTokens)) out" },
-            cost.flatMap { $0 > 0 ? String(format: "$%.2f", $0) : nil },
-        ].compactMap { $0 }.joined(separator: " · ")
-        if !label.isEmpty {
-            HStack(spacing: Space.md) {
-                Hairline()
-                Text(label)
-                    .font(.btChatCaption)
-                    .foregroundStyle(Color.btTextTertiary)
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .fixedSize()
-                Hairline()
-            }
-            .padding(.vertical, Space.xs)
-            .help(details)
+        HStack(spacing: Space.md) {
+            Hairline()
+            Text(recap.label(RelativeTime.duration) + total)
+                .font(.btChatCaption)
+                .foregroundStyle(Color.btTextTertiary)
+                .monospacedDigit()
+                .lineLimit(1)
+                .fixedSize()
+            Hairline()
         }
+        .padding(.vertical, Space.xs)
+        .help(details)
+    }
+
+    /// "· 47m in total", under the last turn of an idle chat that had more than one.
+    private var total: String {
+        let feed = model.feed(sessionId)
+        guard feed.lastTurnId == id, model.session(sessionId)?.status.isActive != true,
+              feed.time.turns > 1, feed.time.workingMs > 0 else { return "" }
+        return " · \(RelativeTime.duration(feed.time.workingMs)) in total"
+    }
+
+    private var details: String {
+        let times = recap.start.map { start in
+            recap.end.map { "\(start.formatted(date: .omitted, time: .standard)) to \($0.formatted(date: .omitted, time: .standard))" }
+                ?? "Started \(start.formatted(date: .omitted, time: .standard))"
+        }
+        // What the agent itself reported, when it differs from the measured time by a second or more.
+        let reported = recap.reportedMs.flatMap { reported in
+            recap.durationMs.flatMap { abs($0 - reported) >= 1000 ? "\(RelativeTime.duration(reported)) by the agent's count" : nil }
+        }
+        return [
+            times,
+            reported,
+            recap.usage.map { "\(RelativeTime.tokens($0.inputTokens + $0.cacheRead + $0.cacheWrite)) in, \(RelativeTime.tokens($0.outputTokens)) out" },
+            recap.costUsd.flatMap { $0 > 0 ? String(format: "$%.2f", $0) : nil },
+        ].compactMap { $0 }.joined(separator: " · ")
     }
 }
 
@@ -599,7 +618,9 @@ private struct WorkingIndicator: View {
                 HStack(spacing: Space.sm) {
                     DotLoader()
                     Text(label).font(.btChatCallout.weight(.regular)).foregroundStyle(Color.btTextSecondary)
-                    if let start = model.turnStartedAt[session.id] {
+                    // From the log, so it keeps counting after a relaunch and
+                    // for chats `abstract` or another Mac runs.
+                    if let start = feed.turnStart ?? model.turnStartedAt[session.id] {
                         Text(RelativeTime.duration(Int(context.date.timeIntervalSince(start) * 1000)))
                             .font(.btChatCallout).foregroundStyle(Color.btTextTertiary).monospacedDigit()
                     }
