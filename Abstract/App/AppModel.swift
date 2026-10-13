@@ -66,6 +66,8 @@ final class AppModel {
     /// has been asked again. See `refreshModels`.
     private(set) var modelCatalogs: [String: ModelCatalog] = [:]
     @ObservationIgnored private var feeds: [String: ChatFeed] = [:]
+    /// What each paired Mac's chats have notified here, by device.
+    @ObservationIgnored private var remoteNotices: [String: RemoteNotices] = [:]
     private(set) var permissions: [String: [PendingPermission]] = [:]
     private(set) var alive: Set<String> = []
     /// New chats still being set up, or whose setup failed; see AppModel+Setup.
@@ -1095,7 +1097,11 @@ final class AppModel {
     /// the next message; any other ends its process. Either way the turn
     /// reads as stopped, not failed.
     func stop(_ sessionId: String) {
-        if sessionId.hasPrefix(RemoteService.mirrorPrefix) { remote.stop(sessionId); return }
+        if let (device, host) = RemoteService.split(sessionId) {
+            remoteNotices[device]?.stopRequested(host)
+            remote.stop(sessionId)
+            return
+        }
         if setups[sessionId]?.active == true { cancelSetup(sessionId); return }
         if stopCLIAgent(sessionId) { return }
         guard engine.isAlive(sessionId), let session = session(sessionId) else { return }
@@ -1141,11 +1147,20 @@ final class AppModel {
         }
     }
 
-    /// A question answered on the other Mac itself leaves nothing to answer here.
-    func remoteSnapshotChanged(device: String, _ snapshot: RemoteSnapshot) {
+    /// A question answered on the other Mac itself leaves nothing to answer
+    /// here. Its chats notify here like this Mac's own.
+    func remoteSnapshotChanged(device: String, _ snapshot: RemoteSnapshot, fresh: Bool) {
         for session in snapshot.sessions where session.status != .waitingInput {
             let id = RemoteService.mirrorId(device: device, session: session.id)
             if permissions[id]?.isEmpty == false { permissions[id] = nil }
+        }
+        let onScreen = NSApp.isActive ? selectedSessionId.flatMap(RemoteService.split).flatMap { $0.device == device ? $0.session : nil } : nil
+        let notices = remoteNotices[device, default: RemoteNotices()].next(snapshot, fresh: fresh, notifyAttention: notifyAttention,
+                                                                         notifyFinished: notifyFinished, onScreen: onScreen)
+        let mac = remote.links[device]?.device.peer.name ?? "another Mac"
+        for notice in notices {
+            guard let s = session(RemoteService.mirrorId(device: device, session: notice.sessionId)) else { continue }
+            post(s, notice.status, body: [project(s.projectId)?.name, "on \(mac)"].compactMap { $0 }.joined(separator: " "))
         }
     }
 
@@ -1438,7 +1453,11 @@ final class AppModel {
         default: break
         }
         if NSApp.isActive, case .session(let id) = destination, id == sessionId { return }
+        post(s, status, body: detail ?? project(s.projectId)?.name ?? "")
+    }
+
+    private func post(_ s: Session, _ status: SessionStatus, body: String) {
         let title = status == .waitingInput ? "\(s.name) needs you" : status == .errored ? "\(s.name) hit an error" : "\(s.name) is done"
-        Notifier.shared.post(title: title, body: detail ?? project(s.projectId)?.name ?? "", sessionId: sessionId)
+        Notifier.shared.post(title: title, body: body, sessionId: s.id)
     }
 }
