@@ -55,7 +55,8 @@
     "@babel/core": "^7.25.2",
     "@types/react": "~19.2.10",
     "babel-preset-expo": "~55.0.8",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "yoga-layout": "^3.2.1"
   },
   "overrides": {
     "markdown-it": "14.3.1",
