@@ -125,8 +125,8 @@ struct RemoteAccessTests {
         // What Accept runs: a binary diff of the file there, then its patch applied from input.
         #expect(RemoteAccess.refusal("git", ["--no-pager", "--literal-pathspecs", "diff", "HEAD", "--binary", "--no-color", "--no-ext-diff",
                                              "--ignore-submodules=all", "-M", "--", "a.png"], cwd: "/work/repo", allowed: allowed) == nil)
-        for args in [["apply", "--check", "-"], ["apply", "-"], ["apply", "--3way", "-"]] {
-            #expect(RemoteAccess.refusal("git", args, cwd: "/work/repo", allowed: allowed) == nil)
+        for args in [["apply", "--check", "-"], ["apply", "-"], ["apply", "--3way", "-"], ["apply", "-R", "--3way", "-"]] {
+            #expect(RemoteAccess.refusal("git", args, cwd: "/work/repo", input: true, allowed: allowed) == nil)
         }
     }
 
@@ -162,6 +162,15 @@ struct RemoteAccessTests {
         #expect(RemoteAccess.refusal("git", ["diff", "--out=/tmp/x"], cwd: "/work/repo", allowed: allowed) != nil)
         #expect(RemoteAccess.refusal("git", ["fetch", "--upload=evil"], cwd: "/work/repo", allowed: allowed) != nil)
         #expect(RemoteAccess.refusal("git", ["diff", "--ext"], cwd: "/work/repo", allowed: allowed) != nil)
+        // A patch from another Mac writes only inside the repository, and nothing else takes input.
+        for args in [["apply", "--unsafe-paths", "-"], ["apply", "--unsafe", "-"], ["apply", "--directory=../..", "-"],
+                     ["apply", "--dir", "..", "-"], ["apply", "--include=*", "-"]] {
+            #expect(RemoteAccess.refusal("git", args, cwd: "/work/repo", input: true, allowed: allowed) != nil, "\(args)")
+        }
+        #expect(RemoteAccess.refusal("git", ["apply", "--unsafe-paths", "p.diff"], cwd: "/work/repo", allowed: allowed) != nil)
+        for (command, args) in [("git", ["hash-object", "-w", "--stdin"]), ("git", ["apply", "x.diff"]), ("gh", ["api", "--input", "-"])] {
+            #expect(RemoteAccess.refusal(command, args, cwd: "/work/repo", input: true, allowed: allowed) != nil, "\(args)")
+        }
     }
 
     @Test func onlyARevundKeyCrossesInTheEnvironment() {

@@ -8,13 +8,22 @@ public enum RemoteAccess {
     /// Git settings Abstract itself passes; any other `-c` could run a program.
     static let gitSettings: Set<String> = ["core.quotepath", "user.email", "user.name", "color.ui"]
     static let gitOptions = ["-C", "--git-dir", "--work-tree", "--exec-path", "--upload-pack", "--receive-pack", "--config-env",
-                             "--output", "--ext-diff", "--textconv", "--open-files-in-pager"]
+                             "--output", "--ext-diff", "--textconv", "--open-files-in-pager",
+                             // `git apply` writing outside the repository.
+                             "--unsafe-paths", "--directory"]
+    /// The only command that takes input from another Mac: Accept's `git apply`.
+    static let applyFlags: Set<String> = ["--check", "--3way", "-R"]
 
     /// Why the command can't run, or nil when it can. `allowed` says whether
-    /// a folder is inside one of this Mac's projects or worktrees.
-    public static func refusal(_ command: String, _ args: [String], cwd: String?, allowed: (String?) -> Bool) -> String? {
+    /// a folder is inside one of this Mac's projects or worktrees. `input`:
+    /// the command comes with stdin, which only Accept's patch does.
+    public static func refusal(_ command: String, _ args: [String], cwd: String?, input: Bool = false,
+                               allowed: (String?) -> Bool) -> String? {
         let name = (command as NSString).lastPathComponent
         guard commands.contains(name), command == name else { return "Only git, gh and revund run for another Mac." }
+        if input, !(name == "git" && args.first == "apply" && args.last == "-" && args.dropFirst().dropLast().allSatisfy(applyFlags.contains)) {
+            return "Only accepting a patch sends input from another Mac."
+        }
         // Outside a folder, only asking what's installed and signed in.
         if cwd == nil, args == ["--version"] || (name == "gh" && args == ["auth", "status"]) { return nil }
         guard allowed(cwd) else { return "That folder isn't one of this Mac's projects." }

@@ -195,12 +195,12 @@ extension HostedPeer {
         }
     }
 
-    func refusal(_ command: String, _ args: [String], cwd: String?) -> String? {
-        RemoteAccess.refusal(command, args, cwd: cwd, allowed: allowed)
+    func refusal(_ command: String, _ args: [String], cwd: String?, input: Bool = false) -> String? {
+        RemoteAccess.refusal(command, args, cwd: cwd, input: input, allowed: allowed)
     }
 
     func exec(_ command: String, _ args: [String], cwd: String?, stdin: Data?) async -> RemoteResponse {
-        if let why = refusal(command, args, cwd: cwd) { return .failed(why) }
+        if let why = refusal(command, args, cwd: cwd, input: stdin != nil) { return .failed(why) }
         guard let model = service?.model else { return .failed("This Mac stopped sharing its agents.") }
         do { return .exec(try await model.executor.run(command, args, cwd: cwd, stdin: stdin)) } catch { return .failed(error.localizedDescription) }
     }
