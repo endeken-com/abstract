@@ -78,12 +78,13 @@ require.extensions['.ts'] = (module, path) => {
   const source = fs.readFileSync(path, 'utf8');
   module._compile(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText, path);
 };
-const { RemoteClient } = require('../src/remote.ts');
+const { RemoteClient, RemoteStore } = require('../src/remote.ts');
 Module._load = originalLoad;
 
 test('discovery replaces a stale dial and waits for snapshot before bounded chat replay', async () => {
-  const client = new RemoteClient();
-  await client.load();
+  const store = new RemoteStore();
+  await store.load();
+  const client = store.client('mac-1');
   assert.equal(client.status, 'connecting');
   browser.emit('resolved', { name: 'Mac', txt: { id: 'mac-1' }, addresses: ['192.0.2.2'], port: 52000 });
   await new Promise(resolve => setTimeout(resolve, 20));
@@ -93,7 +94,7 @@ test('discovery replaces a stale dial and waits for snapshot before bounded chat
   await client.subscribeChat('chat-1');
   assert.deepEqual(requests, ['snapshot', 'subscribeRecent']);
   assert.equal(client.error, null);
-  client.disconnect();
+  store.disconnect();
 });
 
 test('a newly paired Mac reaches online after the snapshot', async () => {

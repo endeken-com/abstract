@@ -29,7 +29,8 @@ function CommandKey({ label, onPress, selected, signal, disabled }: { label: str
   return <Pressable accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected: !!selected, disabled: !!disabled }} disabled={disabled} onPress={onPress} style={({ pressed }) => [styles.key, selected && styles.keySelected, signal && styles.signalKey, pressed && styles.keyPressed, disabled && styles.keyDisabled]}><Text style={[styles.keyText, selected && styles.keyTextSelected, signal && styles.signalKeyText]}>{label}</Text></Pressable>;
 }
 
-export function TerminalView({ id, root }: { id: number | null; root: string }) {
+export function TerminalView({ hostId, id, root }: { hostId: string; id: number | null; root: string }) {
+  const mac = remote.client(hostId);
   const web = useRef<WebView>(null);
   const sent = useRef(0);
   const [ready, setReady] = useState(false);
@@ -39,7 +40,7 @@ export function TerminalView({ id, root }: { id: number | null; root: string }) 
   const safeArea = useSafeAreaInsets();
   const [, render] = useState(0);
   useEffect(() => remote.subscribe(() => render(value => value + 1)), []);
-  const output = id === null ? '' : remote.terminals[id] || '';
+  const output = id === null ? '' : mac.terminals[id] || '';
   useEffect(() => { sent.current = 0; setReady(false); setRevision(value => value + 1); }, [id]);
   useEffect(() => {
     if (!ready || !web.current) return;
@@ -52,7 +53,7 @@ export function TerminalView({ id, root }: { id: number | null; root: string }) 
     if (id === null) return;
     if (signal) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     else Haptics.selectionAsync().catch(() => {});
-    remote.terminalInput(id, data).catch(() => {});
+    mac.terminalInput(id, data).catch(() => {});
     setCtrl(false);
   };
   return <View style={{ flex: 1, backgroundColor: '#1E1E21', paddingBottom: Platform.OS === 'ios' ? Math.max(0, keyboard - safeArea.bottom) : 0 }}>
@@ -67,9 +68,9 @@ export function TerminalView({ id, root }: { id: number | null; root: string }) 
           if (character >= 64 && character <= 95) data = String.fromCharCode(character & 31);
           setCtrl(false);
         }
-        remote.terminalInput(id, data).catch(() => {});
+        mac.terminalInput(id, data).catch(() => {});
       }
-      if (message.type === 'resize' && message.cols > 0 && message.rows > 0) remote.request('resizeTerminal', { id, cols: message.cols, rows: message.rows }).catch(() => {});
+      if (message.type === 'resize' && message.cols > 0 && message.rows > 0) mac.request('resizeTerminal', { id, cols: message.cols, rows: message.rows }).catch(() => {});
     }} />}
     <ScrollView horizontal keyboardShouldPersistTaps="always" showsHorizontalScrollIndicator={false} style={styles.commandRail} contentContainerStyle={styles.commandRailContent}>
       <View style={styles.keyGroup}><Text style={styles.groupLabel}>MODIFIER</Text><View style={styles.keyGroupRow}><CommandKey label="Ctrl" selected={ctrl} disabled={id === null} onPress={() => { Haptics.selectionAsync().catch(() => {}); setCtrl(!ctrl); }} /></View></View>
