@@ -37,6 +37,9 @@ targets:
     platform: macOS
     sources:
       - path: Abstract
+        # The app icon's source art; scripts/make-icons.sh makes AppIcon.icon from it.
+        excludes:
+          - Resources/Brand
     dependencies:
       - package: AbstractCore
       - package: AbstractInternet

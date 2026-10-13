@@ -31,7 +31,11 @@ jobs:
         run: |
           sh scripts/tests/next-version-test.sh
           sh scripts/tests/notarize-test.sh
+          sh scripts/tests/make-icons-test.sh
           python3 -m unittest discover -s scripts/tests -v
+
+      - name: App icons
+        run: scripts/make-icons.sh --check
 
       - name: AbstractCore tests
         working-directory: Packages/AbstractCore
