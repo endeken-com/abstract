@@ -362,6 +362,10 @@ struct Snapshotter {
                 await shot("\(t)-16-automation-page", settle: 1.0)
                 UserDefaults.standard.set("", forKey: "automations.open")
             }
+            // A new automation's page, opening on its describe box. Leaving
+            // Automations below drops the page, so the next theme starts on the list.
+            model.newAutomationRequest += 1
+            await shot("\(t)-36-new-automation", settle: 1.0)
             model.destination = .worktrees
             await shot("\(t)-09-worktrees", settle: 1.2)
             model.destination = .pullRequests

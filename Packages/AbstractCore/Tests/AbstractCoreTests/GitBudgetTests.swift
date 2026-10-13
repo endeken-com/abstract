@@ -165,8 +165,8 @@ private func isAlive(_ pid: pid_t) -> Bool { kill(pid, 0) == 0 || errno != ESRCH
         #expect(counts.peak <= 4)
         #expect(counts.peakPerFolder == 1)
         #expect(counts.started < 1000)
-        #expect(await eventually { git.snapshot().live == 0 })
-        #expect(budget.running == 0)
+        // A read's slot frees only after its process has ended, so wait for both.
+        #expect(await eventually { git.snapshot().live == 0 && budget.running == 0 })
         #expect(budget.queued == 0)
     }
 
