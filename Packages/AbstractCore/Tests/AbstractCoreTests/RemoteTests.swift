@@ -122,6 +122,12 @@ struct RemoteAccessTests {
         #expect(RemoteAccess.refusal("git", ["--no-optional-locks", "status"], cwd: "/work/repo", allowed: allowed) == nil)
         #expect(RemoteAccess.refusal("git", ["-c", "core.quotePath=false", "--no-pager", "diff", "HEAD"], cwd: "/work/repo", allowed: allowed) == nil)
         #expect(RemoteAccess.refusal("git", ["--literal-pathspecs", "reset", "-q", "--", "a"], cwd: "/work/repo", allowed: allowed) == nil)
+        // What Accept runs: a binary diff of the file there, then its patch applied from input.
+        #expect(RemoteAccess.refusal("git", ["--no-pager", "--literal-pathspecs", "diff", "HEAD", "--binary", "--no-color", "--no-ext-diff",
+                                             "--ignore-submodules=all", "-M", "--", "a.png"], cwd: "/work/repo", allowed: allowed) == nil)
+        for args in [["apply", "--check", "-"], ["apply", "-"], ["apply", "--3way", "-"]] {
+            #expect(RemoteAccess.refusal("git", args, cwd: "/work/repo", allowed: allowed) == nil)
+        }
     }
 
     @Test func searchInFilesRunsForAChatOnAnotherMac() {
@@ -177,6 +183,19 @@ struct RemoteAccessTests {
             Issue.record("wrong response"); return
         }
         #expect(r.stdout == "ok")
+        // A patch to accept goes as the command's input.
+        let patch = Data("diff --git a/x b/x\n".utf8)
+        let exec = RemoteMessage.request(id: 6, .exec(command: "git", args: ["apply", "-"], cwd: "/w", stdin: patch))
+        guard case let .request(_, .exec(command, args, cwd, stdin)) = try JSONDecoder().decode(RemoteMessage.self, from: JSONEncoder().encode(exec)) else {
+            Issue.record("wrong request"); return
+        }
+        #expect(command == "git" && args == ["apply", "-"] && cwd == "/w" && stdin == patch)
+        // Without input, the request is the one older Macs send and read.
+        let plain = try JSONEncoder().encode(RemoteMessage.request(id: 7, .exec(command: "git", args: ["status"], cwd: "/w")))
+        #expect(!String(decoding: plain, as: UTF8.self).contains("stdin"))
+        guard case .request(_, .exec(_, _, _, nil)) = try JSONDecoder().decode(RemoteMessage.self, from: plain) else {
+            Issue.record("plain exec failed to decode"); return
+        }
         let mobileRequests: [RemoteRequest] = [
             .subscribeRecent(sessionId: "chat", limit: 160),
             .history(sessionId: "chat", beforeSeq: 320, limit: 160),

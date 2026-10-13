@@ -71,7 +71,9 @@ public enum RemoteRequest: Codable, Sendable {
     // The host's worktrees, so a chat there reviews, browses and edits here
     // as it would on the host. Only inside its projects and worktrees; only
     // git, gh and revund run.
-    case exec(command: String, args: [String], cwd: String?)
+    /// `stdin` is the command's whole input; older Macs ignore it, so only
+    /// send it to one whose snapshot says `execInput`.
+    case exec(command: String, args: [String], cwd: String?, stdin: Data? = nil)
     /// Output streams back as `.process` events under the request's id.
     case spawn(LaunchSpec)
     case stopProcess(id: Int)
@@ -177,6 +179,8 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
     public var turnStartedAt: [String: Date]?
     /// A host advertising bounded chat history requests.
     public var pagedHistory: Bool?
+    /// A host that gives `exec` its `stdin`.
+    public var execInput: Bool?
     /// Exchanged only inside an authenticated, encrypted session.
     public var internetAddress: InternetAddress?
 
@@ -185,7 +189,8 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
                 defaultModelNames: [String: String]? = nil,
                 pullRequests: [String: RemotePullRequest]? = nil, automations: [Automation]? = nil,
                 pendingPermissions: [String: [RemotePendingPermission]]? = nil,
-                turnStartedAt: [String: Date]? = nil, pagedHistory: Bool? = nil, internetAddress: InternetAddress? = nil) {
+                turnStartedAt: [String: Date]? = nil, pagedHistory: Bool? = nil, execInput: Bool? = nil,
+                internetAddress: InternetAddress? = nil) {
         self.projects = projects; self.sessions = sessions; self.providers = providers; self.alive = alive
         self.home = home; self.modelCatalogs = modelCatalogs; self.defaultModelNames = defaultModelNames
         self.pullRequests = pullRequests
@@ -193,6 +198,7 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
         self.pendingPermissions = pendingPermissions
         self.turnStartedAt = turnStartedAt
         self.pagedHistory = pagedHistory
+        self.execInput = execInput
         self.internetAddress = internetAddress
     }
 }

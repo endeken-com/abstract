@@ -31,8 +31,10 @@ final class RemoteExecutor: Executor, @unchecked Sendable {
         return response
     }
 
-    func run(_ command: String, _ args: [String], cwd: String?) async throws -> ExecResult {
-        guard case .exec(let result) = try await ask(.exec(command: command, args: args, cwd: cwd)) else {
+    func run(_ command: String, _ args: [String], cwd: String?, stdin: Data?) async throws -> ExecResult {
+        // An older Mac would run it with no input at all.
+        if stdin != nil, let why = await MainActor.run(body: { service?.inputRefusal(device) }) { throw AbstractError.message(why) }
+        guard case .exec(let result) = try await ask(.exec(command: command, args: args, cwd: cwd, stdin: stdin)) else {
             throw AbstractError.message("The other Mac didn't run \(command).")
         }
         return result
@@ -197,10 +199,10 @@ extension HostedPeer {
         RemoteAccess.refusal(command, args, cwd: cwd, allowed: allowed)
     }
 
-    func exec(_ command: String, _ args: [String], cwd: String?) async -> RemoteResponse {
+    func exec(_ command: String, _ args: [String], cwd: String?, stdin: Data?) async -> RemoteResponse {
         if let why = refusal(command, args, cwd: cwd) { return .failed(why) }
         guard let model = service?.model else { return .failed("This Mac stopped sharing its agents.") }
-        do { return .exec(try await model.executor.run(command, args, cwd: cwd)) } catch { return .failed(error.localizedDescription) }
+        do { return .exec(try await model.executor.run(command, args, cwd: cwd, stdin: stdin)) } catch { return .failed(error.localizedDescription) }
     }
 
     func spawn(_ id: Int, _ spec: LaunchSpec) -> RemoteResponse {
@@ -283,6 +285,14 @@ extension RemoteService {
         let executor = RemoteExecutor(device: device, home: home, service: self)
         executors[device] = executor
         return executor
+    }
+
+    /// Why commands given input can't run on a paired Mac yet: one running
+    /// an older Abstract would run them without it. Nil when they can.
+    func inputRefusal(_ device: String) -> String? {
+        // Not connected yet: the request itself will say so.
+        guard let link = links[device], let snapshot = link.snapshot, snapshot.execInput != true else { return nil }
+        return "Update Abstract on \(link.device.peer.name) to accept from here."
     }
 
     /// A project on a paired Mac.

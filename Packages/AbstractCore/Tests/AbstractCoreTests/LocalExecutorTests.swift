@@ -96,6 +96,23 @@ private final class Recorder: Sendable {
         #expect(out.stderr.split(separator: "\n").count == 200_000)
     }
 
+    @Test(.timeLimit(.minutes(1)))
+    func runGivesTheCommandItsInput() async throws {
+        // More than a pipe holds, so writing and reading must overlap.
+        let input = Data((1...200_000).map { "\($0)\n" }.joined().utf8)
+        let out = try await exec.run("cat", [], cwd: nil, stdin: input)
+        #expect(out.ok)
+        #expect(Data(out.stdout.utf8) == input)
+        // Without input it reads nothing, rather than waiting for some.
+        #expect(try await exec.run("cat", [], cwd: nil).stdout == "")
+        #expect(try await exec.run("cat", [], cwd: nil, stdin: Data()).stdout == "")
+    }
+
+    @Test func runIgnoresInputTheCommandNeverReads() async throws {
+        let out = try await exec.run("true", [], cwd: nil, stdin: Data(repeating: 65, count: 1 << 20))
+        #expect(out.ok)
+    }
+
     @Test func runMissingCommandThrowsNotFound() async {
         await #expect(throws: AbstractError.notFound("abstract-no-such-binary")) {
             try await self.exec.run("abstract-no-such-binary", [], cwd: nil)

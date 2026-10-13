@@ -276,22 +276,14 @@ public enum Diff {
     }
 
     /// Apply a patch. `reverse` undoes it (used to reject a hunk in the worktree).
+    /// The patch goes in on stdin, so it works wherever `exec` runs git.
     public static func apply(_ exec: any Executor, cwd: String, patch: String, reverse: Bool = false,
                              threeWay: Bool = false) async throws {
-        let file = FileManager.default.temporaryDirectory
-            .appendingPathComponent("abstract-patch-\(UUID().uuidString).diff")
-        do {
-            try Data(patch.utf8).write(to: file)
-        } catch {
-            throw AbstractError.message("write patch file: \(error.localizedDescription)")
-        }
-        defer { try? FileManager.default.removeItem(at: file) }
-
         var args = ["apply"]
         if reverse { args.append("-R") }
         if threeWay { args.append("--3way") }
-        args.append(file.path)
-        let out = try await Git.git(exec, cwd: cwd, args)
+        args.append("-")
+        let out = try await Git.git(exec, cwd: cwd, args, stdin: Data(patch.utf8))
         guard out.ok else {
             throw AbstractError.command(code: out.code, stderr: "git apply: \(GitText.trimmed(out.stderr))")
         }
@@ -314,19 +306,15 @@ public enum Diff {
     /// `--3way`, which git always records in the index.
     @discardableResult
     public static func accept(_ exec: any Executor, root: String, patch: String) async throws -> AcceptOutcome {
-        let file = FileManager.default.temporaryDirectory.appendingPathComponent("abstract-accept-\(UUID().uuidString).diff")
-        do { try Data(patch.utf8).write(to: file) } catch {
-            throw AbstractError.message("write patch file: \(error.localizedDescription)")
-        }
-        defer { try? FileManager.default.removeItem(at: file) }
-
-        let check = try await Git.git(exec, cwd: root, ["apply", "--check", file.path])
+        // On stdin rather than in a file: for a chat on another Mac, git runs there.
+        let input = Data(patch.utf8)
+        let check = try await Git.git(exec, cwd: root, ["apply", "--check", "-"], stdin: input)
         if check.ok {
-            let out = try await Git.git(exec, cwd: root, ["apply", file.path])
+            let out = try await Git.git(exec, cwd: root, ["apply", "-"], stdin: input)
             guard out.ok else { throw AbstractError.command(code: out.code, stderr: "git apply: \(GitText.trimmed(out.stderr))") }
             return .applied
         }
-        let merged = try await Git.git(exec, cwd: root, ["apply", "--3way", file.path])
+        let merged = try await Git.git(exec, cwd: root, ["apply", "--3way", "-"], stdin: input)
         if merged.ok { return .mergedAndStaged }
         if merged.stderr.contains("with conflicts") { return .conflicts }
         let reason = GitText.trimmed(merged.stderr).isEmpty ? GitText.trimmed(check.stderr) : GitText.trimmed(merged.stderr)
@@ -334,6 +322,38 @@ public enum Diff {
             throw AbstractError.message("This file has uncommitted edits in your working tree that overlap the agent's change. Commit or stash them, then accept again.")
         }
         throw AbstractError.command(code: merged.code, stderr: "git apply: \(reason)")
+    }
+
+    /// Land one file of a review in the project's checkout at `root`, as
+    /// `compare` shows it in the chat's `worktree`. Text goes as the review's
+    /// own patch; a binary file as git's binary patch for it, so adding,
+    /// changing, deleting and renaming one get git's usual checks. Every step
+    /// runs through `exec`, so this works the same for a chat on another Mac.
+    @discardableResult
+    public static func accept(_ exec: any Executor, file: FileDiff, worktree: String, root: String,
+                              compare: DiffCompare) async throws -> AcceptOutcome {
+        func inRepo(_ base: String) -> String { file.repo.isEmpty ? base : GitText.trimTrailingSlashes(base) + "/" + file.repo }
+        let patch = file.isBinary
+            ? try await binaryPatch(exec, repo: inRepo(worktree), file: file, compare: compare)
+            : buildPatch(file, hunks: [])
+        return try await accept(exec, root: inRepo(root), patch: patch)
+    }
+
+    /// `git diff --binary` for one file in the repository at `repo`, the
+    /// same comparison the review made.
+    static func binaryPatch(_ exec: any Executor, repo: String, file: FileDiff, compare: DiffCompare) async throws -> String {
+        let paths = [file.repoOldPath, file.repoPath].compactMap { $0 }
+        let options = ["--binary", "--no-color", "--no-ext-diff", "--ignore-submodules=all", "-M", "--"] + paths
+        let args: [String] = switch compare {
+        case .uncommitted: ["diff", "HEAD"] + options
+        case .committed(let base): ["diff", await mergeBase(exec, worktree: repo, base: base) ?? base, "HEAD"] + options
+        case .commit(let sha, _): ["show", sha, "--format=", "--diff-merges=first-parent"] + options
+        }
+        let patch = try await Git.gitOK(exec, cwd: repo, ["--no-pager", "--literal-pathspecs"] + args)
+        guard !GitText.trimmed(patch).isEmpty else {
+            throw AbstractError.message("\(file.path) no longer differs in the chat's worktree. Refresh and try again.")
+        }
+        return patch
     }
 
     /// The file as committed at HEAD; empty when it did not exist there.

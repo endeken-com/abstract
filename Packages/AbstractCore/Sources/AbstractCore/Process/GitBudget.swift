@@ -306,10 +306,11 @@ public struct BudgetedExecutor: Executor {
 
     public var homeDirectory: String { base.homeDirectory }
 
-    public func run(_ command: String, _ args: [String], cwd: String?) async throws -> ExecResult {
+    public func run(_ command: String, _ args: [String], cwd: String?, stdin: Data?) async throws -> ExecResult {
         let what = "`" + ([command] + args.prefix(2)).joined(separator: " ") + "`"
-        return try await budget.run(in: cwd ?? "", what: what, coalescing: [command] + args) { [base] in
-            try await base.run(command, args, cwd: cwd)
+        // Given input, the same arguments needn't be the same command.
+        return try await budget.run(in: cwd ?? "", what: what, coalescing: stdin == nil ? [command] + args : nil) { [base] in
+            try await base.run(command, args, cwd: cwd, stdin: stdin)
         }
     }
 

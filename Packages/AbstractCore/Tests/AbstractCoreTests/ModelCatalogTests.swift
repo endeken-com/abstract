@@ -32,7 +32,7 @@ private let codexCache = #"""
 private struct HomeExecutor: Executor {
     let homeDirectory: String
     let base = LocalExecutor.shared
-    func run(_ command: String, _ args: [String], cwd: String?) async throws -> ExecResult { try await base.run(command, args, cwd: cwd) }
+    func run(_ command: String, _ args: [String], cwd: String?, stdin: Data?) async throws -> ExecResult { try await base.run(command, args, cwd: cwd, stdin: stdin) }
     func spawn(_ spec: LaunchSpec, onLine: @escaping @Sendable (OutputLine) -> Void,
                onExit: @escaping @Sendable (Int32?) -> Void) throws -> RunningProcess {
         try base.spawn(spec, onLine: onLine, onExit: onExit)

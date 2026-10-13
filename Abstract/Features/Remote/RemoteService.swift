@@ -440,7 +440,8 @@ final class RemoteService {
                                   (session.id, model.pendingPermissions(session.id).map {
                                       RemotePendingPermission(requestId: $0.requestId, toolName: $0.toolName, input: $0.input)
                                   })
-                              }), turnStartedAt: model.turnStartedAt, pagedHistory: true, internetAddress: internetAddress)
+                              }), turnStartedAt: model.turnStartedAt, pagedHistory: true, execInput: true,
+                              internetAddress: internetAddress)
     }
 
     /// A chat's new output, to the Macs watching it.
@@ -990,8 +991,8 @@ final class HostedPeer {
         case .closePullRequest(let session):
             do { try await model.closePullRequest(session); return .ok }
             catch { return .failed(error.localizedDescription) }
-        case let .exec(command, args, cwd):
-            return await exec(command, args, cwd: cwd)
+        case let .exec(command, args, cwd, stdin):
+            return await exec(command, args, cwd: cwd, stdin: stdin)
         case .spawn(let spec):
             return spawn(id, spec)
         case .stopProcess(let process):

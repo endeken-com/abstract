@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 @testable import AbstractCore
 
@@ -58,4 +59,153 @@ struct DiffAcceptTests {
         #expect(result.hasPrefix("AGENT\n"), "the agent's change landed")
         #expect(result.contains("MINE"), "the developer's edit survived")
     }
+
+    private func edit(_ path: String, line: Int, to text: String) throws {
+        var lines = try String(contentsOfFile: path, encoding: .utf8).components(separatedBy: "\n")
+        lines[line] = text
+        try lines.joined(separator: "\n").write(toFile: path, atomically: true, encoding: .utf8)
+    }
+
+    @Test func aPatchThatNoLongerFitsMergesThreeWaysAndIsStaged() async throws {
+        let (root, wt) = try await makeRepoWithWorktree()
+        defer { try? FileManager.default.removeItem(atPath: root); try? FileManager.default.removeItem(atPath: wt) }
+        // The project moved on inside the agent's context, so the patch no longer fits.
+        try edit(root + "/app.txt", line: 2, to: "PROJECT")
+        _ = try await git(root, "commit", "-qam", "project")
+        try edit(wt + "/app.txt", line: 0, to: "AGENT")
+
+        let file = try #require(try await Diff.collect(exec, worktree: wt, exclude: []).first)
+        let outcome = try await Diff.accept(exec, root: root, patch: Diff.buildPatch(file, hunks: []))
+        #expect(outcome == .mergedAndStaged)
+        #expect(try String(contentsOfFile: root + "/app.txt", encoding: .utf8).hasPrefix("AGENT\nline 2\nPROJECT\n"))
+    }
+
+    @Test func overlappingEditsLandAsConflicts() async throws {
+        let (root, wt) = try await makeRepoWithWorktree()
+        defer { try? FileManager.default.removeItem(atPath: root); try? FileManager.default.removeItem(atPath: wt) }
+        try edit(root + "/app.txt", line: 0, to: "PROJECT")
+        _ = try await git(root, "commit", "-qam", "project")
+        try edit(wt + "/app.txt", line: 0, to: "AGENT")
+
+        let file = try #require(try await Diff.collect(exec, worktree: wt, exclude: []).first)
+        let outcome = try await Diff.accept(exec, root: root, patch: Diff.buildPatch(file, hunks: []))
+        #expect(outcome == .conflicts)
+        #expect(try String(contentsOfFile: root + "/app.txt", encoding: .utf8).contains("<<<<<<<"))
+    }
+
+    /// Bytes no text diff would show.
+    private func binary(_ seed: UInt8) -> Data { Data([0, 1, 2, seed, 0, 255] + Array(repeating: seed, count: 64)) }
+
+    /// A worktree whose agent changed, deleted, renamed and added binary files.
+    private func makeBinaryChanges() async throws -> (root: String, worktree: String) {
+        let (root, wt) = try await makeRepoWithWorktree()
+        try binary(1).write(to: URL(fileURLWithPath: root + "/changed.bin"))
+        try binary(2).write(to: URL(fileURLWithPath: root + "/deleted.bin"))
+        try binary(3).write(to: URL(fileURLWithPath: root + "/old.bin"))
+        _ = try await git(root, "add", "-A")
+        _ = try await git(root, "commit", "-qm", "binaries")
+        _ = try await git(wt, "merge", "-q", "--ff-only", "main")
+        try binary(9).write(to: URL(fileURLWithPath: wt + "/changed.bin"))
+        try FileManager.default.removeItem(atPath: wt + "/deleted.bin")
+        try FileManager.default.moveItem(atPath: wt + "/old.bin", toPath: wt + "/new.bin")
+        try FileManager.default.createDirectory(atPath: wt + "/assets", withIntermediateDirectories: true)
+        try binary(7).write(to: URL(fileURLWithPath: wt + "/assets/added.bin"))
+        return (root, wt)
+    }
+
+    @Test func binaryFilesLandAsBinaryPatches() async throws {
+        let (root, wt) = try await makeBinaryChanges()
+        defer { try? FileManager.default.removeItem(atPath: root); try? FileManager.default.removeItem(atPath: wt) }
+        let files = try await Diff.collect(exec, worktree: wt, exclude: [])
+        #expect(Set(files.map(\.status)) == [.added, .modified, .deleted, .renamed])
+        // A rename with nothing changed is only its header.
+        #expect(files.allSatisfy { $0.isBinary || $0.status == .renamed })
+        for file in files {
+            #expect(try await Diff.accept(exec, file: file, worktree: wt, root: root, compare: .uncommitted) == .applied, "\(file.path)")
+        }
+        let fm = FileManager.default
+        #expect(fm.contents(atPath: root + "/changed.bin") == binary(9))
+        #expect(!fm.fileExists(atPath: root + "/deleted.bin"))
+        #expect(!fm.fileExists(atPath: root + "/old.bin"))
+        #expect(fm.contents(atPath: root + "/new.bin") == binary(3))
+        #expect(fm.contents(atPath: root + "/assets/added.bin") == binary(7))
+        #expect(try await git(root, "diff", "--cached", "--name-only").stdout.isEmpty, "nothing is staged")
+    }
+
+    @Test func aBinaryThatChangedInTheProjectTooIsLeftAlone() async throws {
+        let (root, wt) = try await makeBinaryChanges()
+        defer { try? FileManager.default.removeItem(atPath: root); try? FileManager.default.removeItem(atPath: wt) }
+        // The developer's own copy differs from what the agent started from.
+        try binary(5).write(to: URL(fileURLWithPath: root + "/deleted.bin"))
+        let files = try await Diff.collect(exec, worktree: wt, exclude: [])
+        let deleted = try #require(files.first { $0.status == .deleted })
+        await #expect(throws: (any Error).self) {
+            try await Diff.accept(exec, file: deleted, worktree: wt, root: root, compare: .uncommitted)
+        }
+        #expect(FileManager.default.contents(atPath: root + "/deleted.bin") == binary(5), "the developer's file is kept")
+    }
+
+    @Test func committedBinariesLandFromTheBranch() async throws {
+        let (root, wt) = try await makeBinaryChanges()
+        defer { try? FileManager.default.removeItem(atPath: root); try? FileManager.default.removeItem(atPath: wt) }
+        _ = try await git(wt, "add", "-A")
+        _ = try await git(wt, "commit", "-qm", "agent")
+        let files = try await Diff.collect(exec, worktree: wt, compare: .committed(base: "main"))
+        #expect(files.count == 4)
+        for file in files { try await Diff.accept(exec, file: file, worktree: wt, root: root, compare: .committed(base: "main")) }
+        #expect(FileManager.default.contents(atPath: root + "/changed.bin") == binary(9))
+        #expect(FileManager.default.contents(atPath: root + "/new.bin") == binary(3))
+    }
+
+    /// For a chat on another Mac, accepting must go through its executor only:
+    /// this Mac's files, temporary ones included, are never touched.
+    @Test func acceptRunsOnlyThroughTheExecutor() async throws {
+        let (root, wt) = try await makeBinaryChanges()
+        defer { try? FileManager.default.removeItem(atPath: root); try? FileManager.default.removeItem(atPath: wt) }
+        try edit(wt + "/app.txt", line: 0, to: "AGENT")
+        let files = try await Diff.collect(exec, worktree: wt, exclude: [])
+        #expect(files.count == 5)
+
+        let remote = ElsewhereExecutor()
+        for file in files { try await Diff.accept(remote, file: file, worktree: wt, root: root, compare: .uncommitted) }
+        #expect(remote.fileCalls.isEmpty, "touched files directly: \(remote.fileCalls)")
+        let temporary = FileManager.default.temporaryDirectory.path
+        for call in remote.runs {
+            #expect(call.command == "git")
+            #expect(!call.args.contains { $0.hasPrefix(temporary) || $0.hasPrefix("/var/folders") }, "\(call.args)")
+            if call.args.first == "apply" { #expect(call.args.last == "-" && call.stdin?.isEmpty == false) }
+        }
+        #expect(try String(contentsOfFile: root + "/app.txt", encoding: .utf8).hasPrefix("AGENT\n"))
+        #expect(FileManager.default.contents(atPath: root + "/new.bin") == binary(3))
+    }
+}
+
+/// Stands in for another Mac's executor: commands run (here, for the test),
+/// and any direct file call is noted as one this Mac must not make.
+private final class ElsewhereExecutor: Executor {
+    let base = LocalExecutor.shared
+    private let log = Mutex<(runs: [(command: String, args: [String], stdin: Data?)], files: [String])>(([], []))
+
+    var runs: [(command: String, args: [String], stdin: Data?)] { log.withLock { $0.runs } }
+    var fileCalls: [String] { log.withLock { $0.files } }
+    private func touched(_ what: String) { log.withLock { $0.files.append(what) } }
+
+    var homeDirectory: String { "/elsewhere" }
+    func run(_ command: String, _ args: [String], cwd: String?, stdin: Data?) async throws -> ExecResult {
+        log.withLock { $0.runs.append((command, args, stdin)) }
+        return try await base.run(command, args, cwd: cwd, stdin: stdin)
+    }
+    func spawn(_ spec: LaunchSpec, onLine: @escaping @Sendable (OutputLine) -> Void,
+               onExit: @escaping @Sendable (Int32?) -> Void) throws -> RunningProcess {
+        touched("spawn \(spec.command)")
+        return try base.spawn(spec, onLine: onLine, onExit: onExit)
+    }
+    func fileExists(_ path: String) -> Bool { touched("fileExists \(path)"); return false }
+    func readFile(_ path: String) throws -> String { touched("readFile \(path)"); throw AbstractError.notFound(path) }
+    func createDirectory(_ path: String) throws { touched("createDirectory \(path)") }
+    func removeItem(_ path: String) throws { touched("removeItem \(path)") }
+    func which(_ binary: String) async -> String? { "git" }
+    func readData(_ path: String) async throws -> Data { touched("readData \(path)"); throw AbstractError.notFound(path) }
+    func writeData(_ data: Data, to path: String) async throws { touched("writeData \(path)") }
+    func fileInfo(_ path: String) async -> FileInfo? { touched("fileInfo \(path)"); return nil }
 }
