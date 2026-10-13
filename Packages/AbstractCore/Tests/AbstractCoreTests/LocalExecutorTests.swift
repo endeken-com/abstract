@@ -32,21 +32,22 @@ private final class Recorder: Sendable {
 
     /// `.some(code)` once onExit fired, nil on timeout.
     func waitForExit(timeout: Duration = .seconds(10)) async -> Int32?? {
-        let deadline = ContinuousClock.now + timeout
-        while ContinuousClock.now < deadline {
-            if let first = state.withLock({ $0.exits.first }) { return .some(first) }
-            try? await Task.sleep(for: .milliseconds(10))
-        }
-        return nil
+        await poll(timeout) { self.state.withLock { $0.exits.first } }
     }
 
     func waitForLine(timeout: Duration = .seconds(10), _ match: (OutputLine) -> Bool) async -> OutputLine? {
+        await poll(timeout) { self.lines.first(where: match) }
+    }
+
+    /// Looks once more after the deadline: on a busy machine this task can
+    /// wake past it, and what it waited for may have come meanwhile.
+    private func poll<T>(_ timeout: Duration, _ look: () -> T?) async -> T? {
         let deadline = ContinuousClock.now + timeout
         while ContinuousClock.now < deadline {
-            if let line = lines.first(where: match) { return line }
+            if let found = look() { return found }
             try? await Task.sleep(for: .milliseconds(10))
         }
-        return nil
+        return look()
     }
 }
 
@@ -98,18 +99,18 @@ private final class Recorder: Sendable {
 
     @Test(.timeLimit(.minutes(1)))
     func runGivesTheCommandItsInput() async throws {
-        // More than a pipe holds, so writing and reading must overlap.
-        let input = Data((1...200_000).map { "\($0)\n" }.joined().utf8)
-        let out = try await exec.run("cat", [], cwd: nil, stdin: input)
+        // Four times what a pipe holds, so writing and reading must overlap.
+        let input = String(repeating: "0123456789abcde\n", count: 16_384)
+        let out = try await exec.run("cat", [], cwd: nil, stdin: Data(input.utf8))
         #expect(out.ok)
-        #expect(Data(out.stdout.utf8) == input)
+        #expect(out.stdout == input)
         // Without input it reads nothing, rather than waiting for some.
         #expect(try await exec.run("cat", [], cwd: nil).stdout == "")
         #expect(try await exec.run("cat", [], cwd: nil, stdin: Data()).stdout == "")
     }
 
     @Test func runIgnoresInputTheCommandNeverReads() async throws {
-        let out = try await exec.run("true", [], cwd: nil, stdin: Data(repeating: 65, count: 1 << 20))
+        let out = try await exec.run("true", [], cwd: nil, stdin: Data(repeating: 65, count: 256 << 10))
         #expect(out.ok)
     }
 

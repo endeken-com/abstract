@@ -11,7 +11,7 @@ struct DiffAcceptTests {
         try await exec.run("git", args, cwd: cwd)
     }
 
-    private func makeRepoWithWorktree() async throws -> (root: String, worktree: String) {
+    private func makeRepoWithWorktree(binaries: [String: Data] = [:]) async throws -> (root: String, worktree: String) {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("accept-\(UUID().uuidString)").path
         try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
         _ = try await git(root, "init", "-q", "-b", "main")
@@ -19,6 +19,7 @@ struct DiffAcceptTests {
         _ = try await git(root, "config", "user.name", "t")
         let body = (1...30).map { "line \($0)" }.joined(separator: "\n") + "\n"
         try body.write(toFile: root + "/app.txt", atomically: true, encoding: .utf8)
+        for (name, data) in binaries { try data.write(to: URL(fileURLWithPath: root + "/" + name)) }
         _ = try await git(root, "add", "-A")
         _ = try await git(root, "commit", "-qm", "init")
         let wt = root + "-wt"
@@ -98,13 +99,7 @@ struct DiffAcceptTests {
 
     /// A worktree whose agent changed, deleted, renamed and added binary files.
     private func makeBinaryChanges() async throws -> (root: String, worktree: String) {
-        let (root, wt) = try await makeRepoWithWorktree()
-        try binary(1).write(to: URL(fileURLWithPath: root + "/changed.bin"))
-        try binary(2).write(to: URL(fileURLWithPath: root + "/deleted.bin"))
-        try binary(3).write(to: URL(fileURLWithPath: root + "/old.bin"))
-        _ = try await git(root, "add", "-A")
-        _ = try await git(root, "commit", "-qm", "binaries")
-        _ = try await git(wt, "merge", "-q", "--ff-only", "main")
+        let (root, wt) = try await makeRepoWithWorktree(binaries: ["changed.bin": binary(1), "deleted.bin": binary(2), "old.bin": binary(3)])
         try binary(9).write(to: URL(fileURLWithPath: wt + "/changed.bin"))
         try FileManager.default.removeItem(atPath: wt + "/deleted.bin")
         try FileManager.default.moveItem(atPath: wt + "/old.bin", toPath: wt + "/new.bin")
@@ -120,6 +115,16 @@ struct DiffAcceptTests {
         #expect(Set(files.map(\.status)) == [.added, .modified, .deleted, .renamed])
         // A rename with nothing changed is only its header.
         #expect(files.allSatisfy { $0.isBinary || $0.status == .renamed })
+
+        // While the developer's own copy differs from what the agent started from, it's left alone.
+        try binary(5).write(to: URL(fileURLWithPath: root + "/deleted.bin"))
+        let deleted = try #require(files.first { $0.status == .deleted })
+        await #expect(throws: (any Error).self) {
+            try await Diff.accept(exec, file: deleted, worktree: wt, root: root, compare: .uncommitted)
+        }
+        #expect(FileManager.default.contents(atPath: root + "/deleted.bin") == binary(5), "the developer's file is kept")
+        try binary(2).write(to: URL(fileURLWithPath: root + "/deleted.bin"))
+
         for file in files {
             #expect(try await Diff.accept(exec, file: file, worktree: wt, root: root, compare: .uncommitted) == .applied, "\(file.path)")
         }
@@ -130,19 +135,6 @@ struct DiffAcceptTests {
         #expect(fm.contents(atPath: root + "/new.bin") == binary(3))
         #expect(fm.contents(atPath: root + "/assets/added.bin") == binary(7))
         #expect(try await git(root, "diff", "--cached", "--name-only").stdout.isEmpty, "nothing is staged")
-    }
-
-    @Test func aBinaryThatChangedInTheProjectTooIsLeftAlone() async throws {
-        let (root, wt) = try await makeBinaryChanges()
-        defer { try? FileManager.default.removeItem(atPath: root); try? FileManager.default.removeItem(atPath: wt) }
-        // The developer's own copy differs from what the agent started from.
-        try binary(5).write(to: URL(fileURLWithPath: root + "/deleted.bin"))
-        let files = try await Diff.collect(exec, worktree: wt, exclude: [])
-        let deleted = try #require(files.first { $0.status == .deleted })
-        await #expect(throws: (any Error).self) {
-            try await Diff.accept(exec, file: deleted, worktree: wt, root: root, compare: .uncommitted)
-        }
-        #expect(FileManager.default.contents(atPath: root + "/deleted.bin") == binary(5), "the developer's file is kept")
     }
 
     @Test func committedBinariesLandFromTheBranch() async throws {
