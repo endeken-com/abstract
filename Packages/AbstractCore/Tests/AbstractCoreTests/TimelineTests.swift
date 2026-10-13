@@ -56,11 +56,11 @@ struct TimelineTests {
         t.append(.usage(UsageTotals(inputTokens: 5, outputTokens: 50), costUsd: 0.2, durationMs: 1200, turns: 2))
         let blocks = t.blocks
         #expect(blocks.count == 2)
-        guard case let .turn(_, summary, duration, usage, cost) = blocks[1] else { Issue.record("expected a turn"); return }
-        #expect(summary == "Did the thing")
-        #expect(duration == 1200)
-        #expect(usage?.outputTokens == 50)
-        #expect(cost == 0.2)
+        guard case let .turn(_, info) = blocks[1] else { Issue.record("expected a turn"); return }
+        #expect(info.summary == "Did the thing")
+        #expect(info.durationMs == 1200)
+        #expect(info.usage?.outputTokens == 50)
+        #expect(info.costUsd == 0.2)
     }
 
     @Test func assistantHeaderOnlyOpensATurn() {

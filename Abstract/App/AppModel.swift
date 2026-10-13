@@ -77,8 +77,16 @@ final class AppModel {
     var workingSessionIds: [String] {
         alive.filter { id in session(id).map { $0.status.isActive && $0.status != .idle } ?? false }
     }
-    /// When each session's current turn started, for the "working for 12s" label.
+    /// When each session's current turn started, for the "working for 12s"
+    /// label, as this app saw it. The chat's log says too: see `turnStarts`.
     private(set) var turnStartedAt: [String: Date] = [:]
+    /// When each chat's current turn started: from its log where it says
+    /// (after a relaunch, for chats `abstract` runs), else when it was sent here.
+    var turnStarts: [String: Date] {
+        var out = turnStartedAt
+        for (id, feed) in feeds { if let start = feed.turnStartedAt { out[id] = start } }
+        return out
+    }
     /// Panel layouts by chat id; see AppModel+Panes.
     var layouts: [String: PanelLayout] = [:]
     /// A chat waiting on "Archive?" (⇧⌘⌫, or the git actions menu).
@@ -1134,15 +1142,18 @@ final class AppModel {
 
     /// Output from a chat on another Mac, parsed here: questions for you
     /// wait like local ones; the rest joins its transcript.
-    func applyRemote(_ events: [AgentEvent], to mirrorId: String) {
+    /// `at`: when the other Mac logged the line they came from.
+    func applyRemote(_ events: [AgentEvent], at: Date? = Date(), to mirrorId: String) {
         for event in events {
             switch event {
             case let .permissionRequest(requestId, toolName, input):
                 permissions[mirrorId, default: []].append(PendingPermission(requestId: requestId, toolName: toolName, input: input))
-            case .status, .sessionId, .usage:
+            case .sessionId:
                 continue
+            // The chat's status comes with the other Mac's snapshot; here it
+            // only ends a turn, so its line and length show.
             default:
-                feed(mirrorId).append(event)
+                feed(mirrorId).append(event, at: at)
             }
         }
     }
@@ -1269,7 +1280,7 @@ final class AppModel {
                     if case let .permissionRequest(requestId, _, _) = e { respond(sessionId, requestId: requestId, allow: false, input: nil); continue }
                     if case .sessionId = e { continue }
                 }
-                apply(e, to: sessionId)
+                apply(e, to: sessionId, at: line.at)
             }
             remote.forward(sessionId: sessionId, seq: seq, line: line)
         case let .exit(sessionId, code):
@@ -1332,7 +1343,8 @@ final class AppModel {
         return stream
     }
 
-    private func apply(_ event: AgentEvent, to sessionId: String) {
+    /// `at`: when the event's line was logged; now, for what the agent's exit says.
+    private func apply(_ event: AgentEvent, to sessionId: String, at: Date? = Date()) {
         switch event {
         case .sessionId(let id):
             if var s = session(sessionId), s.providerSessionId != id {
@@ -1377,11 +1389,11 @@ final class AppModel {
         default:
             break
         }
-        append(event, to: sessionId)
+        append(event, to: sessionId, at: at)
     }
 
-    private func append(_ event: AgentEvent, to sessionId: String) {
-        feed(sessionId).append(event)
+    private func append(_ event: AgentEvent, to sessionId: String, at: Date? = Date()) {
+        feed(sessionId).append(event, at: at)
     }
 
     func setStatus(_ sessionId: String, _ status: SessionStatus, detail: String? = nil) {
@@ -1424,7 +1436,7 @@ final class AppModel {
         for (seq, line) in lines where seq > (seenSeq[sessionId] ?? 0) {
             seenSeq[sessionId] = seq
             guard let stream = stream(for: sessionId) else { return }
-            for event in stream.feed(line) { append(event, to: sessionId) }
+            for event in stream.feed(line) { append(event, to: sessionId, at: line.at) }
         }
     }
 

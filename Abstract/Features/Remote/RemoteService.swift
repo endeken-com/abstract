@@ -440,7 +440,7 @@ final class RemoteService {
                                   (session.id, model.pendingPermissions(session.id).map {
                                       RemotePendingPermission(requestId: $0.requestId, toolName: $0.toolName, input: $0.input)
                                   })
-                              }), turnStartedAt: model.turnStartedAt, pagedHistory: true, internetAddress: internetAddress,
+                              }), turnStartedAt: model.turnStarts, pagedHistory: true, internetAddress: internetAddress,
                               backgroundTasks: model.alive.filter { model.runningBackgroundTasks($0) > 0 }.sorted())
     }
 
@@ -1262,12 +1262,11 @@ final class RemoteLink {
         // A chat handed over reads each agent's part with its own parser.
         let stream = streams[session] ?? ChatStream(providerId: ChatStream.firstProvider(in: lines.map(\.line), current: providerId))
         streams[session] = stream
-        var events: [AgentEvent] = []
         for line in lines where line.seq > (lastSeq[session] ?? 0) {
             lastSeq[session] = line.seq
-            events += stream.feed(line.line)
+            service?.model?.applyRemote(stream.feed(line.line), at: line.line.at,
+                                        to: RemoteService.mirrorId(device: device.id, session: session))
         }
-        service?.model?.applyRemote(events, to: RemoteService.mirrorId(device: device.id, session: session))
     }
 }
 
