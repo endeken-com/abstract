@@ -48,6 +48,8 @@ final class AppModel {
     let engine: SessionEngine
     let executor: any Executor
     let isDemo: Bool
+    /// Keeps what each turn changed and why (`TurnRecord`).
+    let turnRecorder: TurnRecorder
 
     // Data
     var projects: [Project] = []
@@ -252,6 +254,7 @@ final class AppModel {
         self.engine = engine
         self.executor = executor
         self.isDemo = isDemo
+        turnRecorder = TurnRecorder(store: store)
         remote = RemoteService(dataDirectory: engine.logsURL.deletingLastPathComponent())
         AttachmentStore.root = engine.logsURL.deletingLastPathComponent().appendingPathComponent("attachments")
         AttachmentStore.prune()
@@ -1447,10 +1450,20 @@ final class AppModel {
         s.statusDetail = detail
         s.lastEventAt = Date()
         replaceSession(s)
+        guard !sessionId.hasPrefix(RemoteService.mirrorPrefix) else { return }
+        if status == .running { turnRecorder.begin(sessionId, worktree: s.worktreePath, exec: executor(for: sessionId)) }
         // A turn that ended may have left changes: the sidebar files the chat by them.
-        if wasWorking, [.idle, .finished, .errored].contains(status), !sessionId.hasPrefix(RemoteService.mirrorPrefix) {
+        if wasWorking, [.idle, .finished, .errored].contains(status) {
             Task { await refreshBranch(sessionId) }
+            Task { await recordTurn(sessionId) }
         }
+    }
+
+    /// Saves what the turn that just ended changed and why.
+    private func recordTurn(_ sessionId: String) async {
+        guard let s = session(sessionId) else { return }
+        let pr = pullRequests[sessionId].map { (number: $0.number, body: $0.body) }
+        await turnRecorder.end(s, engine: engine, exec: executor(for: sessionId), pullRequest: pr)
     }
 
     private func replaceSession(_ s: Session) {

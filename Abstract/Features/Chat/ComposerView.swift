@@ -218,6 +218,7 @@ struct ComposerView: View {
         do {
             // The review goes with the message, after it, then the attachments.
             try model.sendFollowUp(session.id, text: model.messageWithReview(session.id, text: text), attachments: pending)
+            model.keepCommentsAsNotes(session.id)
             model.discardComments(session.id)
         } catch {
             draft = text

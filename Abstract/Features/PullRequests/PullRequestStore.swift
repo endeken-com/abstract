@@ -26,6 +26,7 @@ extension AppModel {
             projectPullRequests[project.id] = list
             pullRequestsListedAt[project.id] = .now
             for session in sessions where session.projectId == project.id {
+                defer { if let pr = pullRequests[session.id] { recordPullRequest(session, pr) } }
                 let matches = pullRequestsForChat(session.id)
                 let current = pullRequests[session.id]
                 // An open pull request before a finished one; a newer one
@@ -47,6 +48,13 @@ extension AppModel {
                 pullRequests[session.id] = known.refreshingSummary(with: summary)
             }
         }
+    }
+
+    /// The chat's turns belong to its pull request, and, once it's merged,
+    /// so does the commit it became on its base branch.
+    private func recordPullRequest(_ session: Session, _ pr: PullRequest) {
+        turnRecorder.notePullRequest(session.id, number: pr.number, body: pr.body, branch: session.branch)
+        if pr.state == .merged, let sha = pr.mergeCommit { turnRecorder.linkMerge(session.id, number: pr.number, sha: sha) }
     }
 
     /// Lists the project's pull requests again unless that happened in the last `interval`.
@@ -250,8 +258,10 @@ extension AppModel {
         let reviews = pr.reviews.filter { !$0.body.isEmpty && $0.verdict != .approved }
             .map { "**\($0.author)** (\($0.verdict == .changesRequested ? "requested changes" : "commented")):\n\($0.body)" }
         let comments = pr.comments.filter { !$0.isBot && !$0.body.isEmpty }.map { "**\($0.author)**:\n\($0.body)" }
-        let threads = pr.threads.filter { !$0.isResolved }.map(Self.describe)
+        let open = pr.threads.filter { !$0.isResolved }
+        let threads = open.map(Self.describe)
         guard !(reviews + comments + threads).isEmpty else { return }
+        keepAsNotes(sessionId, open)
         send(sessionId, """
         Reviewers left feedback on pull request #\(pr.number). Address it, then tell me what you changed.
 
@@ -262,6 +272,7 @@ extension AppModel {
     /// Hands one thread on the code to the chat's agent.
     func askToAddressThread(_ sessionId: String, _ thread: PullRequest.ReviewThread) {
         guard let pr = pullRequests[sessionId] else { return }
+        keepAsNotes(sessionId, [thread])
         send(sessionId, "A review thread on pull request #\(pr.number) needs a change. Address it, then tell me what you did.\n\n" + Self.describe(thread))
     }
 
@@ -269,6 +280,16 @@ extension AppModel {
         let place = "`\(thread.path)" + ((thread.line ?? thread.originalLine).map { ":\($0)" } ?? "") + "`"
         let conversation = thread.comments.map { "**\($0.author)**: \($0.body)" }.joined(separator: "\n\n")
         return place + (thread.isOutdated ? " (on code that has changed since)" : "") + "\n" + conversation
+    }
+
+    /// Review threads going to the agent are kept as notes on their lines,
+    /// for the turn they lead to.
+    private func keepAsNotes(_ sessionId: String, _ threads: [PullRequest.ReviewThread]) {
+        for thread in threads {
+            let conversation = thread.comments.map { "\($0.author): \($0.body)" }.joined(separator: "\n\n")
+            try? store.save(CodeNote(sessionId: sessionId, kind: .reviewComment, path: thread.path, line: thread.line ?? thread.originalLine,
+                                     commit: thread.commit, body: conversation, author: thread.comments.first?.author))
+        }
     }
 
     private func send(_ sessionId: String, _ text: String) {
