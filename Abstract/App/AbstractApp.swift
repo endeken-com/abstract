@@ -19,6 +19,7 @@ struct AbstractApp: App {
                 .environment(delegate.model)
                 .environment(delegate.updater)
                 .preferredColorScheme(theme.colorScheme)
+                .onChange(of: theme, initial: true) { ThemeState.apply(theme) }
         }
         .windowToolbarStyle(.unified)
         // Abstract draws its own title band, so the toolbar's Icon and Text /
