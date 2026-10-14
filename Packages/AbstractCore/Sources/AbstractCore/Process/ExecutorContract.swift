@@ -11,7 +11,10 @@ public struct ExecResult: Sendable, Hashable, Codable {
 public struct OutputLine: Sendable, Hashable, Codable {
     public var stream: OutputStreamKind
     public var line: String
-    public init(stream: OutputStreamKind, line: String) { self.stream = stream; self.line = line }
+    /// When it was logged, on the Mac that ran the agent. Lines logged before
+    /// times were kept have none.
+    public var at: Date?
+    public init(stream: OutputStreamKind, line: String, at: Date? = nil) { self.stream = stream; self.line = line; self.at = at }
 }
 
 public enum AbstractError: Error, LocalizedError, Sendable, Equatable {

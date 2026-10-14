@@ -143,7 +143,7 @@ public final class ChatStream {
             for event in feed(line) {
                 // A question from before is either answered or gone.
                 if case .permissionRequest = event { continue }
-                timeline.append(event)
+                timeline.append(event, at: line.at)
             }
         }
         return timeline

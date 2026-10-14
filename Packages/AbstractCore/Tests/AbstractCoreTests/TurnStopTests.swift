@@ -77,11 +77,12 @@ struct TurnStopTests {
         let blocks = timeline.blocks
         // The reply so far, then one quiet rule; not the CLI's note as a message of yours.
         #expect(blocks.count == 2)
-        guard case .assistant = blocks.first, case let .turn(_, summary, duration, _, _) = blocks.last else {
+        guard case .assistant = blocks.first, case let .turn(_, info) = blocks.last else {
             Issue.record("Expected the reply and a Stopped rule, got \(blocks)"); return
         }
-        #expect(summary == "Stopped")
-        #expect(duration == 6268)
+        #expect(info.ending == .stopped)
+        #expect(info.summary == nil)
+        #expect(info.durationMs == 6268)
     }
 
     @Test func anInterruptedCommandEndsQuietlyToo() {
