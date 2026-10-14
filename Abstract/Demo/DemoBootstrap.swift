@@ -275,6 +275,10 @@ struct Snapshotter {
                 }
                 seedPullRequests(model, for: idle)
                 await shot("\(t)-03-chat-done", settle: 1.2)
+                // The sidebar groups chats by what they need; then by project, as it used to.
+                UserDefaults.standard.set(SidebarChats.Arrangement.project.rawValue, forKey: "sidebar.arrangement")
+                await shot("\(t)-37-sidebar-by-project", settle: 0.8)
+                UserDefaults.standard.set(SidebarChats.Arrangement.status.rawValue, forKey: "sidebar.arrangement")
                 // Every tool row opens at once: rows must grow into their new height.
                 UserDefaults.standard.set(TranscriptMode.verbose.rawValue, forKey: "chat.transcript")
                 await shot("\(t)-03b-chat-verbose", settle: 1.2)

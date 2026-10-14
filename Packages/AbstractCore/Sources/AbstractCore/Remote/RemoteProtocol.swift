@@ -181,6 +181,9 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
     public var internetAddress: InternetAddress?
     /// Chats with tasks still at work in the background. Optional for older peers.
     public var backgroundTasks: [String]?
+    /// Whether each chat's branch has work not merged anywhere yet, for the
+    /// chats whose branch that Mac has read. Optional for older peers.
+    public var unmergedWork: [String: Bool]?
 
     public init(projects: [Project], sessions: [Session], providers: [String], alive: [String],
                 home: String? = nil, modelCatalogs: [String: ModelCatalog]? = nil,
@@ -188,7 +191,7 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
                 pullRequests: [String: RemotePullRequest]? = nil, automations: [Automation]? = nil,
                 pendingPermissions: [String: [RemotePendingPermission]]? = nil,
                 turnStartedAt: [String: Date]? = nil, pagedHistory: Bool? = nil, internetAddress: InternetAddress? = nil,
-                backgroundTasks: [String]? = nil) {
+                backgroundTasks: [String]? = nil, unmergedWork: [String: Bool]? = nil) {
         self.projects = projects; self.sessions = sessions; self.providers = providers; self.alive = alive
         self.home = home; self.modelCatalogs = modelCatalogs; self.defaultModelNames = defaultModelNames
         self.pullRequests = pullRequests
@@ -198,6 +201,7 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
         self.pagedHistory = pagedHistory
         self.internetAddress = internetAddress
         self.backgroundTasks = backgroundTasks
+        self.unmergedWork = unmergedWork
     }
 }
 

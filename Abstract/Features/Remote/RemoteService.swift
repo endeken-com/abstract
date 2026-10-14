@@ -441,7 +441,8 @@ final class RemoteService {
                                       RemotePendingPermission(requestId: $0.requestId, toolName: $0.toolName, input: $0.input)
                                   })
                               }), turnStartedAt: model.turnStarts, pagedHistory: true, internetAddress: internetAddress,
-                              backgroundTasks: model.alive.filter { model.runningBackgroundTasks($0) > 0 }.sorted())
+                              backgroundTasks: model.alive.filter { model.runningBackgroundTasks($0) > 0 }.sorted(),
+                              unmergedWork: model.branchStates.mapValues(\.hasUnmergedWork))
     }
 
     /// A chat's new output, to the Macs watching it.
