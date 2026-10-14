@@ -14,6 +14,8 @@ import { uuid } from './secure';
 import { attachmentPayload, pickAttachments, type PickedAttachment } from './attachments';
 import { chatTimeline, type ChatItem } from './chatTimeline';
 import { sendPhoneDraft, visiblePhoneMessages, type PendingPhoneMessage } from './chatSending';
+import { TranscriptFollow } from './transcriptFollow';
+import { composerInputHeights } from './composerLayout';
 import { IssueIcon, PullRequestIcon } from './PullRequestIcon';
 import { ContextPill } from './ContextPill';
 import { chatContext } from './chatContext';
@@ -215,9 +217,10 @@ export function ChatWorkspace({ route, navigation }: any) {
   const [syncing, setSyncing] = useState(false);
   const keyboardHeight = useKeyboardHeight();
   const safeArea = useSafeAreaInsets();
-  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const { width: windowWidth, height: windowHeight, fontScale } = useWindowDimensions();
   const blurTarget = useRef<View>(null);
   const [previewingMarkdown, setPreviewingMarkdown] = useState(false);
+  const [composerFocused, setComposerFocused] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
   const [attachments, setAttachments] = useState<PickedAttachment[]>([]);
   const [menu, setMenu] = useState<'manage' | null>(null);
@@ -230,8 +233,9 @@ export function ChatWorkspace({ route, navigation }: any) {
   const [diff, setDiff] = useState({ files: 0, added: 0, removed: 0 });
   const [bottomPanelHeight, setBottomPanelHeight] = useState(180);
   const scroll = useRef<FlatList<ChatItem | TranscriptGroupItem>>(null);
-  const following = useRef(true);
-  const userDragged = useRef(false);
+  const follow = useRef(new TranscriptFollow());
+  const followFrames = useRef<Array<number>>([]);
+  const followTimers = useRef<Array<ReturnType<typeof setTimeout>>>([]);
   const mayLoadOlder = useRef(false);
   const lines = mac.lines[id] || [];
   const hasOlder = mac.hasOlder(id);
@@ -253,30 +257,45 @@ export function ChatWorkspace({ route, navigation }: any) {
   const transcriptFooter = useMemo(() => <View style={s.transcriptFooter}>{visibleSends.map(item => <View key={item.id} style={s.userRow}><View style={s.userBubble}>{!!item.text && <Text style={s.prose}>{item.text}</Text>}{item.attachments.map(attachment => <Text key={attachment.id} style={s.pendingAttachment}>{attachment.reference ? `${attachment.reference} ` : ''}{attachment.title}</Text>)}</View><Text style={s.pendingStatus}>{item.status === 'sending' ? 'Sending…' : 'Sent'}</Text></View>)}{(pendingPermissions || []).map(request => <PermissionCard key={request.requestId} mac={mac} sessionId={id} request={request} />)}{syncing && <Text style={s.thinkingLabel}>Syncing chat from Mac…</Text>}{showWorkingRow && <WorkingStatus label={workingLabel} startedAt={turnStartedAt} />}</View>, [visibleSends, mac, pendingPermissions, id, syncing, showWorkingRow, workingLabel, turnStartedAt]);
   const loadEarlier = React.useCallback(() => {
     mayLoadOlder.current = false;
-    following.current = false;
-    userDragged.current = true;
+    follow.current.stopFollowing();
     setAtBottom(false);
     mac.loadOlder(id).catch(() => {});
   }, [id]);
-  const onTranscriptScroll = React.useCallback((event: any) => {
+  const cancelFollow = React.useCallback(() => {
+    followFrames.current.forEach(cancelAnimationFrame);
+    followTimers.current.forEach(clearTimeout);
+    followFrames.current = [];
+    followTimers.current = [];
+  }, []);
+  const scheduleFollow = React.useCallback(() => {
+    cancelFollow();
+    if (!follow.current.shouldFollow) return;
+    const reachEnd = () => { if (follow.current.shouldFollow) scroll.current?.scrollToEnd({ animated: false }); };
+    reachEnd();
+    followFrames.current.push(requestAnimationFrame(reachEnd));
+    followTimers.current.push(setTimeout(reachEnd, 100), setTimeout(reachEnd, 300));
+  }, [cancelFollow]);
+  useEffect(() => cancelFollow, [cancelFollow]);
+  useEffect(() => { scheduleFollow(); }, [keyboardHeight, bottomPanelHeight, attachments.length, scheduleFollow]);
+  const updateScroll = React.useCallback((event: any, ended = false) => {
     const { contentOffset, layoutMeasurement, contentSize } = event.nativeEvent;
-    const next = contentOffset.y + layoutMeasurement.height >= contentSize.height - 80;
-    // Layout changes during replay can move the visible offset away from the
-    // end even though the reader has not scrolled. Keep following until a drag.
-    if (!userDragged.current && !next) return;
-    following.current = next;
+    const next = ended
+      ? follow.current.endGesture(contentOffset.y, layoutMeasurement.height, contentSize.height)
+      : follow.current.scroll(contentOffset.y, layoutMeasurement.height, contentSize.height);
     setAtBottom(previous => previous === next ? previous : next);
-    if (mayLoadOlder.current && contentOffset.y < 180 && mac.hasOlder(id)) loadEarlier();
+    if (follow.current.isGestureActive && mayLoadOlder.current && contentOffset.y < 180 && mac.hasOlder(id)) loadEarlier();
   }, [id, loadEarlier]);
-  const onTranscriptSize = React.useCallback(() => { if (following.current) scroll.current?.scrollToEnd({ animated: false }); }, []);
-  const onTranscriptDrag = React.useCallback(() => { userDragged.current = true; mayLoadOlder.current = true; }, []);
+  const onTranscriptScroll = React.useCallback((event: any) => {
+    updateScroll(event);
+  }, [updateScroll]);
+  const onTranscriptSize = React.useCallback(() => scheduleFollow(), [scheduleFollow]);
+  const onTranscriptDrag = React.useCallback(() => { cancelFollow(); follow.current.beginGesture(); mayLoadOlder.current = true; }, [cancelFollow]);
   useEffect(() => {
-    following.current = true;
-    userDragged.current = false;
+    follow.current.jump();
     mayLoadOlder.current = false;
     setAtBottom(true);
-    scroll.current?.scrollToEnd({ animated: false });
-  }, [id]);
+    scheduleFollow();
+  }, [id, scheduleFollow]);
   useEffect(() => {
     if (!chat) return;
     const chatRoot = chat.worktreePath || mac.snapshot?.projects.find(x => x.id === chat.projectId)?.rootPath || '';
@@ -316,19 +335,17 @@ export function ChatWorkspace({ route, navigation }: any) {
     setSyncing(true);
     mac.subscribeChat(id).then(() => {
       if (active) setSyncing(false);
-      if (!active || userDragged.current) return;
-      following.current = true;
-      setAtBottom(true);
+      if (!active || !follow.current.shouldFollow) return;
       // The list's content size callback follows later row measurements.
-      scroll.current?.scrollToEnd({ animated: false });
-      retries.push(setTimeout(() => { if (active && !userDragged.current) scroll.current?.scrollToEnd({ animated: false }); }, 250));
+      scheduleFollow();
+      retries.push(setTimeout(() => { if (active) scheduleFollow(); }, 250));
     }).catch(() => { if (active) setSyncing(false); });
     return () => {
       active = false;
       retries.forEach(clearTimeout);
       mac.unsubscribeChat(id).catch(() => {});
     };
-  }, [hostId, id, mac.status]);
+  }, [hostId, id, mac.status, scheduleFollow]);
   useEffect(() => { if (!chat) return; const root = chat.worktreePath || mac.snapshot?.projects.find(x => x.id === chat.projectId)?.rootPath; if (!root || mac.status !== 'online') { setDiff({ files: 0, added: 0, removed: 0 }); return; } let active = true; const refresh = () => mac.exec(root, ['diff', 'HEAD', '--numstat']).then(result => { if (!active) return; const counts = result.stdout.split('\n').filter(line => line.includes('\t')).reduce((n, line) => { const [a, d] = line.split('\t'); return { files: n.files + 1, added: n.added + (Number(a) || 0), removed: n.removed + (Number(d) || 0) }; }, { files: 0, added: 0, removed: 0 }); setDiff(counts); }).catch(() => {}); const timer = setTimeout(refresh, 400); const interval = setInterval(refresh, 15000); return () => { active = false; clearTimeout(timer); clearInterval(interval); }; }, [hostId, id, chat?.status, chat?.worktreePath, chat?.projectId, mac.status]);
   if (!chat) return <View style={s.waiting}><Text style={s.faint}>Waiting for this chat on the Mac…</Text></View>;
   const root = chat.worktreePath || mac.snapshot?.projects.find(x => x.id === chat.projectId)?.rootPath || '';
@@ -426,8 +443,14 @@ export function ChatWorkspace({ route, navigation }: any) {
   const slashPopupOpen = !previewingMarkdown && (slashChoosing !== null || slashQuery !== null);
   const keyboardOffset = Platform.OS === 'ios' ? keyboardHeight : 0;
   const slashPopupHeight = Math.max(150, Math.min(365, windowHeight - keyboardOffset - bottomPanelHeight - safeArea.top - 22));
+  const { minHeight: composerMinHeight, maxHeight: composerMaxHeight } = composerInputHeights(windowHeight, keyboardOffset, safeArea.top, fontScale);
+  const jumpToLatest = () => {
+    follow.current.jump();
+    setAtBottom(true);
+    scheduleFollow();
+  };
   return <SafeAreaView edges={['left', 'right']} style={s.root}>
-    <SwipeForward onSwipe={() => navigation.navigate('Review', { hostId, sessionId: id })} onBack={() => navigation.goBack()}><BlurTargetView ref={blurTarget} style={{ flex: 1 }}><FlatList ref={scroll} style={s.transcript} contentInsetAdjustmentBehavior="automatic" contentContainerStyle={[s.transcriptContent, { paddingBottom: bottomPanelHeight + keyboardOffset + 20 }]} data={transcriptRows} keyExtractor={transcriptKey} renderItem={renderTranscriptItem} initialNumToRender={14} maxToRenderPerBatch={12} windowSize={7} updateCellsBatchingPeriod={30} maintainVisibleContentPosition={{ minIndexForVisible: 1 }} ListHeaderComponent={hasOlder || loadingHistory ? <Pressable accessibilityRole="button" accessibilityLabel="Load older messages" disabled={loadingHistory} onPress={loadEarlier} style={{ alignItems: 'center', paddingVertical: 10 }}>{loadingHistory ? <ActivityIndicator size="small" color={muted} /> : <Text style={s.thinkingLabel}>Load older messages</Text>}</Pressable> : null} ListFooterComponent={transcriptFooter} onContentSizeChange={onTranscriptSize} onScroll={onTranscriptScroll} onScrollBeginDrag={onTranscriptDrag} scrollEventThrottle={100} keyboardShouldPersistTaps="handled" />{mac.status !== 'online' && <Pressable accessibilityRole="button" accessibilityLabel={macName ? `Reconnect to ${macName}` : 'Connect to a Mac'} onPress={() => macName ? remote.reconnect(hostId).catch(() => {}) : navigation.navigate('Settings')} style={[s.hostPill, { top: safeArea.top + 54 }]}>{mac.status === 'connecting' ? <ActivityIndicator size="small" color={ink} /> : <Glyph name="terminal" size={15} color={ink} />}<Text style={s.hostPillText}>{mac.status === 'connecting' ? `Connecting to ${macName || 'Mac'}` : macName ? `Reconnect to ${macName}` : 'Connect to a Mac'}</Text></Pressable>}{!atBottom && <Pressable accessibilityLabel="Jump to latest" style={[s.jump, { bottom: bottomPanelHeight + keyboardOffset + 12 }]} onPress={() => { following.current = true; userDragged.current = false; setAtBottom(true); scroll.current?.scrollToEnd({ animated: true }); }}><Glyph name="arrow.down" size={14} color={ink} /></Pressable>}</BlurTargetView></SwipeForward>
+    <SwipeForward onSwipe={() => navigation.navigate('Review', { hostId, sessionId: id })} onBack={() => navigation.goBack()}><BlurTargetView ref={blurTarget} style={{ flex: 1 }}><FlatList ref={scroll} style={s.transcript} contentInsetAdjustmentBehavior="automatic" contentContainerStyle={[s.transcriptContent, { paddingBottom: bottomPanelHeight + keyboardOffset + 20 }]} data={transcriptRows} keyExtractor={transcriptKey} renderItem={renderTranscriptItem} initialNumToRender={14} maxToRenderPerBatch={12} windowSize={7} updateCellsBatchingPeriod={30} maintainVisibleContentPosition={{ minIndexForVisible: 1 }} ListHeaderComponent={hasOlder || loadingHistory ? <Pressable accessibilityRole="button" accessibilityLabel="Load older messages" disabled={loadingHistory} onPress={loadEarlier} style={{ alignItems: 'center', paddingVertical: 10 }}>{loadingHistory ? <ActivityIndicator size="small" color={muted} /> : <Text style={s.thinkingLabel}>Load older messages</Text>}</Pressable> : null} ListFooterComponent={transcriptFooter} onContentSizeChange={onTranscriptSize} onLayout={scheduleFollow} onScroll={onTranscriptScroll} onScrollBeginDrag={onTranscriptDrag} onScrollEndDrag={event => updateScroll(event, true)} onMomentumScrollBegin={() => follow.current.beginGesture()} onMomentumScrollEnd={event => updateScroll(event, true)} scrollEventThrottle={16} keyboardShouldPersistTaps="handled" />{mac.status !== 'online' && <Pressable accessibilityRole="button" accessibilityLabel={macName ? `Reconnect to ${macName}` : 'Connect to a Mac'} onPress={() => macName ? remote.reconnect(hostId).catch(() => {}) : navigation.navigate('Settings')} style={[s.hostPill, { top: safeArea.top + 54 }]}>{mac.status === 'connecting' ? <ActivityIndicator size="small" color={ink} /> : <Glyph name="terminal" size={15} color={ink} />}<Text style={s.hostPillText}>{mac.status === 'connecting' ? `Connecting to ${macName || 'Mac'}` : macName ? `Reconnect to ${macName}` : 'Connect to a Mac'}</Text></Pressable>}{!atBottom && <Pressable accessibilityLabel="Jump to latest" style={[s.jump, { bottom: bottomPanelHeight + keyboardOffset + 12 }]} onPress={jumpToLatest}><Glyph name="arrow.down" size={14} color={ink} /></Pressable>}</BlurTargetView></SwipeForward>
     <ProgressiveBlur edge="bottom" blurTarget={blurTarget} style={[s.bottomBlur, { bottom: keyboardOffset, height: bottomPanelHeight + 24 }]} />
     <View style={[s.bottomPanel, { bottom: keyboardOffset }]} onLayout={event => {
       const measuredHeight = event?.nativeEvent?.layout?.height;
@@ -446,9 +469,9 @@ export function ChatWorkspace({ route, navigation }: any) {
     <View style={[s.composerWrap, { paddingBottom: keyboardHeight ? 7 : safeArea.bottom + 7 }]}>
       {!!sendError && <Text accessibilityRole="alert" style={s.sendError}>{sendError}</Text>}
       {attachments.length > 0 && <ScrollView horizontal style={s.attachments} contentContainerStyle={{ gap: 5 }}>{attachments.map(item => <Chip key={item.id} label={`${item.reference ? `${item.reference} ` : ''}${item.title} ×`} onPress={() => setAttachments(attachments.filter(x => x.id !== item.id))} />)}</ScrollView>}
-      <View style={s.composerBox}>
+      <View style={[s.composerBox, composerFocused && s.composerBoxFocused]}>
         <View style={s.composerTextRow}>
-          {previewingMarkdown ? <ScrollView style={s.composerInput}><Markdown style={markdownStyles} rules={codeRules}>{message}</Markdown></ScrollView> : <TextInput value={message} editable={!sending} onChangeText={value => { setMessage(value); setSendError(null); setSlashChoosing(null); }} multiline style={s.composerInput} placeholder="Type / for commands" placeholderTextColor={tertiary} textAlignVertical="top" />}
+          {previewingMarkdown ? <ScrollView style={[s.composerInput, { minHeight: composerMinHeight, maxHeight: composerMaxHeight }]}><Markdown style={markdownStyles} rules={codeRules}>{message}</Markdown></ScrollView> : <TextInput value={message} editable={!sending} onChangeText={value => { setMessage(value); setSendError(null); setSlashChoosing(null); }} multiline scrollEnabled style={[s.composerInput, { minHeight: composerMinHeight, maxHeight: composerMaxHeight }]} onFocus={() => setComposerFocused(true)} onBlur={() => setComposerFocused(false)} placeholder="Type / for commands" placeholderTextColor={tertiary} textAlignVertical="top" />}
         </View>
         <View style={s.composerActionRow}>
           <Pressable accessibilityLabel="Attach files" disabled={sending} style={s.attachControl} onPress={() => pickAttachments(attachments).then(setAttachments).catch(e => Alert.alert('Attachment', String(e)))}><Glyph name="attach" size={18} color={muted} /></Pressable>
@@ -485,8 +508,9 @@ const s = StyleSheet.create({
   prContext: { flexShrink: 0, minHeight: 32, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, borderRadius: 16, backgroundColor: raised, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.16)' },
   prContextLabel: { color: muted, fontFamily: 'Inter', fontSize: 11, fontWeight: '600' },
   composerBox: { borderRadius: 11, borderWidth: 1, borderColor: '#424249', backgroundColor: panel, paddingHorizontal: 8, paddingTop: 4, paddingBottom: 3 },
-  composerTextRow: { minHeight: 44, flexDirection: 'row' },
-  composerInput: { flex: 1, minHeight: 44, maxHeight: 160, color: ink, fontFamily: 'Inter', fontSize: 15, paddingHorizontal: 4, paddingTop: 9, paddingBottom: 4 },
+  composerBoxFocused: { borderColor: '#91B8F6' },
+  composerTextRow: { flexDirection: 'row' },
+  composerInput: { flex: 1, color: ink, fontFamily: 'Inter', fontSize: 15, lineHeight: 22, paddingHorizontal: 4, paddingTop: 6, paddingBottom: 6 },
   composerActionRow: { height: 38, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   composerTrailingActions: { flexDirection: 'row', alignItems: 'center' },
   composerAction: { width: 36, height: 38, alignItems: 'center', justifyContent: 'center' },
