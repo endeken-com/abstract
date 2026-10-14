@@ -73,6 +73,9 @@ final class AgentHost: @unchecked Sendable {
     private var stopRequested = false
     /// The app asked for the chat (SIGUSR1): it's the app's once the agent is idle.
     private var handOver = false
+    /// Keeps each turn's record (`TurnRecord`); the host waits for them before it goes.
+    private let turns: TurnRecorder
+    private let recording = DispatchGroup()
 
     private var sessionId: String { session.id }
 
@@ -89,6 +92,7 @@ final class AgentHost: @unchecked Sendable {
         agent = AgentRecord(id: request.agentId, sessionId: sessionId, providerId: provider.id)
         engine = SessionEngine(executor: LocalExecutor.shared, logDirectory: SessionEngine.defaultLogDirectory())
         stream = ChatStream(providerId: provider.id)
+        turns = TurnRecorder(store: store)
     }
 
     // MARK: - Starting one (the command's side)
@@ -221,6 +225,7 @@ final class AgentHost: @unchecked Sendable {
         stopWhenIdle()
 
         exitSignal.wait()
+        _ = recording.wait(timeout: .now() + 30)
         // The socket first: once the lock is free, a respawn's host may make its own.
         unlink(HostSocket.name(sessionId))
         lock.release()
@@ -318,7 +323,18 @@ final class AgentHost: @unchecked Sendable {
     private func setStatus(_ new: SessionStatus, _ detail: String?) {
         if let status, status == (new, detail) { return }
         try? store.updateSessionStatus(sessionId, new, detail: detail)
+        let wasWorking = [.running, .provisioning, .waitingInput].contains(status?.0)
         status = (new, detail)
+        // Each turn's record, as the app keeps them (AppModel.setStatus).
+        if new == .running { turns.begin(sessionId, worktree: session.worktreePath, exec: LocalExecutor.shared) }
+        if wasWorking, [.idle, .finished, .errored].contains(new) {
+            let session = (try? store.session(sessionId)) ?? session
+            recording.enter()
+            Task { [turns, engine, recording] in
+                await turns.end(session, engine: engine, exec: LocalExecutor.shared)
+                recording.leave()
+            }
+        }
         StoreChanges.post(storePath: storePath)
         stopIfHandedOver()
     }

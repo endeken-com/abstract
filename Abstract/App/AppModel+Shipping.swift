@@ -27,12 +27,17 @@ extension AppModel {
         guard let branch = session.branch else {
             // A submodule's commits would land on no branch at all.
             guard path.isEmpty else { throw AbstractError.message("This chat has no branch to commit it on.") }
+            let before = await TurnGit.head(exec, worktree: worktree)
             try await Git.commitAll(exec, worktree: worktree, message: message)
+            await turnRecorder.linkCommitted(sessionId, exec: exec, worktree: worktree, from: before)
             return
         }
         let root = try await shippingRoot(exec, worktree: worktree, path: path)
         if root.repo.isSubmodule { try await putOnBranch(exec, root, branch) }
+        // The worktree's own commit goes to the turns whose work it holds.
+        let before = path.isEmpty ? await TurnGit.head(exec, worktree: worktree) : nil
         try await Shipping.commit(exec, worktree: root.dir, repos: root.repos, branch: branch, readOnly: root.readOnly, message: message)
+        if path.isEmpty { await turnRecorder.linkCommitted(sessionId, exec: exec, worktree: worktree, from: before) }
     }
 
     /// Before the repository at `path` is pushed: pushes the repositories

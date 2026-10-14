@@ -70,6 +70,22 @@ extension AppModel {
 
     func discardComments(_ sessionId: String) { lineComments[sessionId] = nil }
 
+    /// The comments going to the agent are kept as notes on their lines,
+    /// at the commit the review showed, for the turn they lead to.
+    func keepCommentsAsNotes(_ sessionId: String) {
+        let comments = comments(sessionId)
+        guard !comments.isEmpty, let worktree = session(sessionId)?.worktreePath else { return }
+        let exec = executor(for: sessionId)
+        Task {
+            let head = await TurnGit.head(exec, worktree: worktree)
+            for c in comments {
+                let reviewed = c.source.flatMap { $0.count >= 7 && $0.allSatisfy(\.isHexDigit) ? $0 : nil }
+                try? store.save(CodeNote(sessionId: sessionId, kind: .lineComment, path: c.ref.path, line: c.ref.line,
+                                         commit: reviewed ?? head, body: c.text))
+            }
+        }
+    }
+
     /// Your message with the review attached after it, as the agent gets it.
     /// Sending clears the comments.
     func messageWithReview(_ sessionId: String, text: String) -> String {
