@@ -25,6 +25,7 @@ permissions:
 jobs:
   prepare:
     runs-on: ubuntu-latest
+    timeout-minutes: 125
     outputs:
       skip: ${{ steps.nightly.outputs.skip }}
       sha: ${{ steps.nightly.outputs.sha }}
@@ -53,7 +54,7 @@ jobs:
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          scripts/require-tested.sh "$GITHUB_SHA"
+          scripts/require-tested.sh "$GITHUB_SHA" 7200
           OUT=$(scripts/next-version.sh nightly "$GITHUB_RUN_NUMBER")
           read -r VERSION BUILD <<< "$OUT"
           LATEST=$(scripts/next-version.sh latest)
