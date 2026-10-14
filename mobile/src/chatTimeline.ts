@@ -2,6 +2,8 @@ import type { RemoteLine } from './types';
 import { toolTarget, toolVerb } from './toolPresentation';
 import { editPreviewFromInput, editPreviewFromResult, editPreviewsFromChanges, type EditPreview } from './editPreview';
 
+export type TurnEnding = 'done' | 'stopped' | 'failed';
+
 export type ChatItem = {
   id: string;
   kind: 'prose' | 'thinking' | 'turn' | 'tool' | 'user' | 'error';
@@ -12,7 +14,18 @@ export type ChatItem = {
   path?: string;
   pending?: boolean;
   failed?: boolean;
+  /** A turn's length: measured from the log's times, else the agent's own count. */
   durationMs?: number;
+  ending?: TurnEnding;
+  /** What the agent says the turn did (Claude's turn summary). */
+  summary?: string;
+  /** Swift reference-date seconds, as the Mac logs them. */
+  startedAt?: number;
+  endedAt?: number;
+  measuredMs?: number;
+  reportedMs?: number;
+  /** On the newest turn line of an idle chat: all its turns added up. */
+  totalMs?: number;
   additions?: number;
   deletions?: number;
   edits?: EditPreview[];
@@ -43,8 +56,25 @@ function editCounts(value: any): { additions: number; deletions: number } | unde
 }
 
 type Block = { type: string; id?: string; name?: string; input: string; row?: ChatItem };
+/**
+ * The turn under way, as the Mac's Timeline follows it: from your message (or
+ * the agent's first step in a turn it takes on its own) to the agent's turn
+ * end, a stop or a failure, or your next message.
+ */
+type TurnState = {
+  active: boolean;
+  startedAt?: number;
+  lastAt?: number;
+  /** The agent did something in it, beyond your message arriving. */
+  worked: boolean;
+  /** Its line, once the agent reported an end or its usage. */
+  row?: ChatItem;
+  /** Claude noted the turn was stopped; its result follows. */
+  interrupted: boolean;
+};
 type TimelineCache = {
   lines: RemoteLine[];
+  turn: TurnState;
   rows: ChatItem[];
   tools: Map<string, ChatItem>;
   codexItems: Map<string, ChatItem>;
@@ -52,15 +82,91 @@ type TimelineCache = {
 };
 const caches = new Map<string, TimelineCache>();
 
-/** Rebuild semantic transcript rows from provider wire events. */
-export function chatTimeline(lines: RemoteLine[], cacheKey = 'default'): ChatItem[] {
+/** "2m 14s", as the Mac writes lengths. */
+export function duration(ms: number) {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return seconds % 60 ? `${minutes}m ${seconds % 60}s` : `${minutes}m`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
+/** "2m 14s", "Did the thing · Done in 2m 14s", "Stopped after 1m 12s", "Failed after 40s"; "—" when the log doesn't say. */
+export function turnLabel(row: ChatItem) {
+  const length = row.durationMs == null ? undefined : duration(row.durationMs);
+  const label = row.ending === 'stopped' ? (length ? `Stopped after ${length}` : 'Stopped')
+    : row.ending === 'failed' ? (length ? `Failed after ${length}` : 'Failed')
+    : row.summary ? [row.summary, length && `Done in ${length}`].filter(Boolean).join(' · ')
+    : length ?? '—';
+  return row.totalMs == null ? label : `${label} · ${duration(row.totalMs)} in total`;
+}
+
+/** A Claude result for a turn you stopped: it reports itself as an error, but isn't one. */
+const stopped = (value: any) => typeof value.terminal_reason === 'string' && value.terminal_reason.startsWith('aborted');
+
+/**
+ * Rebuild semantic transcript rows from provider wire events. `status` is the
+ * chat's: once it's no longer working, a turn whose end never reached the log
+ * still gets its line, and the newest line adds the chat's total.
+ */
+export function chatTimeline(lines: RemoteLine[], cacheKey = 'default', status?: string): ChatItem[] {
   const previous = caches.get(cacheKey);
   const continues = previous && lines.length >= previous.lines.length
     && (previous.lines.length === 0 || lines[previous.lines.length - 1] === previous.lines[previous.lines.length - 1]);
   const state: TimelineCache = continues ? previous : {
-    lines: [], rows: [], tools: new Map(), codexItems: new Map(), blocks: new Map(),
+    lines: [], turn: { active: false, worked: false, interrupted: false }, rows: [], tools: new Map(), codexItems: new Map(), blocks: new Map(),
   };
-  const { rows, tools, codexItems, blocks } = state;
+  const { rows, tools, codexItems, blocks, turn } = state;
+  const begin = (at?: number) => Object.assign(turn, { active: true, startedAt: at, lastAt: at, worked: false, row: undefined });
+  const step = (at?: number) => {
+    if (!turn.active) begin(at);
+    turn.worked = true;
+    if (at != null) turn.lastAt = at;
+  };
+  /** The agent reported the turn's end or usage. With nothing before it, its start isn't known. */
+  const report = (id: string, at?: number) => {
+    if (!turn.active) begin(undefined);
+    if (at != null) turn.lastAt = at;
+    return turn.row ??= { id: `turn-${id}`, kind: 'turn', text: '', ending: 'done' };
+  };
+  const finished = (row: ChatItem): ChatItem => {
+    const measuredMs = turn.startedAt != null && turn.lastAt != null && turn.lastAt >= turn.startedAt
+      ? Math.round((turn.lastAt - turn.startedAt) * 1000) : undefined;
+    return { ...row, startedAt: turn.startedAt, endedAt: turn.lastAt, measuredMs, durationMs: measuredMs ?? row.reportedMs };
+  };
+  /** Ends the turn under way. One that ended without a word from the agent still gets a line when its length is known. */
+  const close = (id: string, implicitly: boolean, ending?: TurnEnding) => {
+    if (!turn.active) return;
+    if (ending && ending !== 'done') report(id).ending = ending;
+    if (turn.row) rows.push(finished(turn.row));
+    else if (turn.worked) {
+      const line = finished({ id: `turn-${id}`, kind: 'turn', text: '', ending: 'done' });
+      if (!implicitly || line.measuredMs != null) rows.push(line);
+    }
+    Object.assign(turn, { active: false, worked: false, row: undefined });
+  };
+  const readTurnEnd = (value: any, id: string, at?: number) => {
+    if (value.type === 'system' && value.subtype === 'post_turn_summary') {
+      const row = report(id, at);
+      if (value.status_detail) row.summary = value.status_detail;
+    } else if (value.type === 'result') {
+      const ending: TurnEnding = turn.interrupted || stopped(value) ? 'stopped' : value.is_error ? 'failed' : 'done';
+      turn.interrupted = false;
+      const row = report(id, at);
+      if (typeof value.duration_ms === 'number') row.reportedMs = value.duration_ms;
+      close(id, false, ending);
+    } else if (value.type === 'turn.completed') {
+      report(id, at);
+      close(id, false);
+    } else if (value.type === 'turn.failed' || (value.type === 'error' && value.sessionID)) {
+      // Codex's own `error` is a warning it carries on past; OpenCode's ends the turn.
+      if (turn.active && at != null) turn.lastAt = at;
+      close(id, false, 'failed');
+    } else if (value.type === 'step_finish') {
+      // OpenCode reports each step; they add up into one line for the turn.
+      report(id, at);
+    }
+  };
   const append = (kind: ChatItem['kind'], text: string, id: string) => {
     if (text.trim()) rows.push({ id, kind, text });
   };
@@ -75,15 +181,8 @@ export function chatTimeline(lines: RemoteLine[], cacheKey = 'default'): ChatIte
     rows.push(row);
     return row;
   };
-  for (let position = continues ? previous.lines.length : 0; position < lines.length; position++) {
-    const record = lines[position];
-    if (record.line.stream === 'user') {
-      append('user', record.line.line, String(record.seq));
-      continue;
-    }
-    let value: any;
-    try { value = JSON.parse(record.line.line); } catch { continue; }
-    const id = String(record.seq);
+  /** One parsed line's rows. */
+  const read = (value: any, id: string) => {
     // Codex item IDs are scoped to a turn. Reusing a map across turns makes
     // later messages and commands overwrite rows from earlier turns.
     if (value.type === 'turn.started') codexItems.clear();
@@ -114,7 +213,7 @@ export function chatTimeline(lines: RemoteLine[], cacheKey = 'default'): ChatIte
         }
         if (block?.row) block.row.pending = false;
       }
-      continue;
+      return;
     }
     if (value.type === 'assistant') {
       // Reconcile completed content by block index. A partial stream must not
@@ -132,7 +231,7 @@ export function chatTimeline(lines: RemoteLine[], cacheKey = 'default'): ChatIte
         }
       });
       blocks.clear();
-      continue;
+      return;
     }
     if (value.type === 'user' && value.message?.content?.some?.((x: any) => x.type === 'tool_result')) {
       for (const content of value.message.content) if (content.type === 'tool_result') {
@@ -147,12 +246,17 @@ export function chatTimeline(lines: RemoteLine[], cacheKey = 'default'): ChatIte
           if (edits.length) row.edits = edits;
         }
       }
-      continue;
+      return;
     }
     if (value.type === 'user') {
       const content = value.message?.content;
+      // The CLI's note that the turn was stopped, which its result shows.
+      if (Array.isArray(content) && content.some((x: any) => typeof x.text === 'string' && x.text.startsWith('[Request interrupted by user'))) {
+        state.turn.interrupted = true;
+        return;
+      }
       append('user', typeof content === 'string' ? content : Array.isArray(content) ? content.filter((x: any) => x.type === 'text').map((x: any) => x.text).join('\n') : '', id);
-      continue;
+      return;
     }
     if (['item.started', 'item.updated', 'item.completed'].includes(value.type)) {
       const item = value.item || {};
@@ -178,14 +282,33 @@ export function chatTimeline(lines: RemoteLine[], cacheKey = 'default'): ChatIte
           if (edits.length) row.edits = edits;
         }
       }
-      continue;
+      return;
     }
     if (value.type === 'reasoning') append('thinking', value.part?.text || value.text || '', id);
     if (value.type === 'text') append('prose', value.part?.text || value.text || '', id);
     if (value.type === 'agent_message') append('prose', value.text || '', id);
-    if (value.type === 'result' && !value.is_error && typeof value.duration_ms === 'number')
-      rows.push({ id, kind: 'turn', text: '', durationMs: value.duration_ms });
+    if (value.type === 'result' && value.is_error && !turn.interrupted && !stopped(value)) append('error', value.result || value.subtype || 'Agent reported an error', id);
     if (value.type === 'error' || value.type === 'turn.failed') append('error', value.message || value.error?.message || value.error || 'Agent error', id);
+  };
+  for (let position = continues ? previous.lines.length : 0; position < lines.length; position++) {
+    const record = lines[position];
+    const at = record.line.at;
+    const id = String(record.seq);
+    if (record.line.stream === 'user') {
+      // Your message starts a turn; one logged twice before the agent answers is still one.
+      if (!turn.active || turn.worked || turn.row) { close(id, true); begin(at); }
+      append('user', record.line.line, id);
+      continue;
+    }
+    if (record.line.stream === 'handoff') { close(id, true); continue; }
+    let value: any;
+    try { value = JSON.parse(record.line.line); } catch { continue; }
+    const before = rows.length;
+    read(value, id);
+    const added = rows.slice(before);
+    if (added.some(row => row.kind === 'prose' || row.kind === 'thinking' || row.kind === 'tool')) step(at);
+    else if (turn.active) { if (added.length) turn.worked = true; if (at != null) turn.lastAt = at; }
+    readTurnEnd(value, id, at);
   }
   state.lines = lines.slice();
   caches.delete(cacheKey);
@@ -193,5 +316,19 @@ export function chatTimeline(lines: RemoteLine[], cacheKey = 'default'): ChatIte
   if (caches.size > 8) caches.delete(caches.keys().next().value!);
   // New row objects keep VirtualizedList's change tracking sound when a live
   // event completes a previously visible message or command.
-  return rows.filter(row => row.kind === 'tool' || row.kind === 'turn' || row.text.trim()).map(row => ({ ...row }));
+  const out = rows.filter(row => row.kind === 'tool' || row.kind === 'turn' || row.text.trim()).map(row => ({ ...row }));
+  const idle = !!status && !['created', 'provisioning', 'running', 'waiting_input'].includes(status);
+  if (turn.active) {
+    // A turn still under way that has a line already (OpenCode's steps), or
+    // one that ended without its end reaching the log.
+    const ending: TurnEnding | undefined = idle && status === 'errored' ? 'failed' : undefined;
+    if (turn.row) out.push(finished({ ...turn.row, ending: ending ?? turn.row.ending }));
+    else if (idle && turn.worked) {
+      const line = finished({ id: `turn-${lines.at(-1)?.seq ?? 0}`, kind: 'turn', text: '', ending: ending ?? 'done' });
+      if (line.measuredMs != null) out.push(line);
+    }
+  }
+  const turnRows = out.filter(row => row.kind === 'turn');
+  if (idle && turnRows.length > 1) turnRows[turnRows.length - 1].totalMs = turnRows.reduce((total, row) => total + (row.durationMs ?? 0), 0);
+  return out;
 }

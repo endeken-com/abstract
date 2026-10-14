@@ -12,7 +12,7 @@ import { ScrollingTitle } from './ScrollingTitle';
 import { remote } from './remote';
 import { uuid } from './secure';
 import { attachmentPayload, pickAttachments, type PickedAttachment } from './attachments';
-import { chatTimeline, type ChatItem } from './chatTimeline';
+import { chatTimeline, duration, turnLabel, type ChatItem } from './chatTimeline';
 import { IssueIcon, PullRequestIcon } from './PullRequestIcon';
 import { FileIcon } from './FileIcon';
 import { toolKind, toolSymbol } from './toolPresentation';
@@ -116,7 +116,7 @@ function ToolEditPreview({ edit }: { edit: EditPreview }) {
 function TranscriptRow({ row }: { row: ChatItem }) {
   const [expanded, setExpanded] = useState(false);
   if (row.kind === 'thinking') return <View style={s.thinkingRow}><Text style={s.thinkingLabel}>{row.pending ? 'Thinking' : 'Thought'}</Text><Text style={s.thinkingText}>{row.text.trim()}</Text></View>;
-  if (row.kind === 'turn') return <View style={s.turnRow}><View style={s.turnRule} /><Text style={s.thinkingLabel}>{duration(row.durationMs || 0)}</Text><View style={s.turnRule} /></View>;
+  if (row.kind === 'turn') return <View style={s.turnRow}><View style={s.turnRule} /><Text style={s.thinkingLabel}>{turnLabel(row)}</Text><View style={s.turnRule} /></View>;
   if (row.kind === 'user') return <View style={s.userRow}><View style={s.userBubble}><Text style={s.prose}>{row.text}</Text></View></View>;
   if (row.kind === 'tool') return <View><Pressable accessibilityRole="button" accessibilityLabel={`${row.text} ${row.target || ''}`} onPress={() => setExpanded(!expanded)} style={s.toolRow}>
     <View style={s.toolIcon}>{row.failed ? <Glyph name="exclamationmark.triangle" size={15} color="#EF6461" /> : row.path && toolKind(row.toolName || '') === 'edit' ? <FileIcon path={row.path} size={17} /> : <Glyph name={toolSymbol(row.toolName || '')} size={15} color={tertiary} />}</View>
@@ -132,13 +132,6 @@ const codeRules = {
   fence: (node: any) => <SyntaxCode key={node.key} code={String(node.content || '').replace(/\n$/, '')} language={node.sourceInfo?.trim().split(/\s+/)[0]} block />,
   code_block: (node: any) => <SyntaxCode key={node.key} code={String(node.content || '').replace(/\n$/, '')} block />,
 };
-function duration(ms: number) {
-  const seconds = Math.max(0, Math.floor(ms / 1000));
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return seconds % 60 ? `${minutes}m ${seconds % 60}s` : `${minutes}m`;
-  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
-}
 function DotLoader() {
   const [step, setStep] = useState(0);
   useEffect(() => { const timer = setInterval(() => setStep(value => (value + 1) % 6), 158); return () => clearInterval(timer); }, []);
@@ -226,7 +219,7 @@ export function ChatWorkspace({ route, navigation }: any) {
   const lines = remote.lines[id] || [];
   const hasOlder = remote.hasOlder(id);
   const loadingHistory = remote.loadingHistory.has(id);
-  const rows = useMemo(() => chatTimeline(lines, id), [id, lines]);
+  const rows = useMemo(() => chatTimeline(lines, id, chat?.status), [id, lines, chat?.status]);
   const displayRows = useMemo(() => groupToolRows(rows), [rows]);
   const transcriptRows = useMemo(() => chat?.prompt && !lines.length
     ? [{ id: 'prompt', kind: 'user' as const, text: chat.prompt }, ...displayRows] : displayRows, [chat?.prompt, lines.length, displayRows]);
