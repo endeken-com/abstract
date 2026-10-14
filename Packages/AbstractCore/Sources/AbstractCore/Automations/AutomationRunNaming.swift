@@ -1,8 +1,9 @@
 import Foundation
 
 /// A fresh-worktree automation run's chat: named for its automation and
-/// start time until its agent's first turn ends, then for what the agent
-/// says it worked on. The prompt is the same every run, so it can't name one.
+/// start time until its agent says what it's taking on. The prompt is the
+/// same every run, so it can't name one. Only a run still named for its
+/// automation when its turn ends is named from the agent's report.
 public enum AutomationRunNaming {
     static let separator = " · "
 
@@ -16,10 +17,32 @@ public enum AutomationRunNaming {
         name.hasPrefix(automationName + separator)
     }
 
+    /// Whether the end of a turn names the chat from its agent's report:
+    /// only while nothing better than the run's placeholder has, never over
+    /// a name from the agent's first reply, its pull request or you.
+    public static func namesFromReport(_ name: String, source: ChatNameSource, automationName: String) -> Bool {
+        source == .fallback && isProvisional(name, automationName: automationName)
+    }
+
     /// What the naming call is told to name when its task is the agent's
-    /// report: the work, not the instructions it followed.
+    /// report: the goal of the work, not the checks that ended it.
     public static let reportFocus =
-        "The task is a coding agent's report. Name the chat for the work it says it did, not for the instructions it followed."
+        "The task holds what a coding agent was asked, its first reply and its final report. Name the chat for the goal "
+            + "of the work, what it delivers, not for the checks it ran at the end or the instructions it followed."
+
+    /// The report's naming task: the request and the agent's first reply
+    /// come with it, each clipped so none crowds the others out.
+    public static func reportTask(request: String?, firstReply: String?, report: String) -> String {
+        func clip(_ text: String, _ limit: Int) -> String {
+            let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return text.count > limit ? String(text.prefix(limit)) + "…" : text
+        }
+        let parts: [(String, String?, Int)] = [("Asked", request, 500), ("First reply", firstReply, 600), ("Final report", report, 800)]
+        return parts.compactMap { label, text, limit in
+            guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            return label + ":\n" + clip(text, limit)
+        }.joined(separator: "\n\n")
+    }
 
     /// Too little to name the work from: the agent hasn't said what it's
     /// doing yet ("Let me look."), so its next reply is waited for.

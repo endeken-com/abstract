@@ -3,11 +3,11 @@ import Testing
 @testable import AbstractCore
 
 /// The Abstract project's own naming instructions, as the ticket quotes them.
-private let abstractInstructions =
+let abstractInstructions =
     "Start branches with bugfix/, feature/. Keep titles short, for commit messages always do it one line message"
 
 /// A naming answer in `claude --output-format json`'s envelope.
-private func claudeAnswer(title: String, branch: String) -> String {
+func claudeAnswer(title: String, branch: String) -> String {
     let inner = #"{"title": "\#(title)", "branch": "\#(branch)"}"#
     let data = try! JSONSerialization.data(withJSONObject: ["type": "result", "is_error": false, "result": inner])
     return String(decoding: data, as: UTF8.self)
@@ -15,7 +15,7 @@ private func claudeAnswer(title: String, branch: String) -> String {
 
 /// A stand-in `claude` that answers each naming call with the next of
 /// `answers` (nil: it fails), keeping each prompt it was sent.
-private struct ScriptedAgent {
+struct ScriptedAgent {
     let dir: String
     var binary: String { dir + "/agent" }
 
@@ -40,9 +40,10 @@ private struct ScriptedAgent {
     var calls: Int { Int((try? String(contentsOfFile: dir + "/count", encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "") ?? 0 }
     func prompt(_ n: Int) -> String { (try? String(contentsOfFile: "\(dir)/prompt-\(n)", encoding: .utf8)) ?? "" }
 
-    func suggest(instructions: String = abstractInstructions, timeout: Duration = .seconds(10)) async -> Result<ChatNaming.Suggestion, ChatNaming.Failure> {
+    func suggest(instructions: String = abstractInstructions, task: String = "The relay image push fails", focus: String = "",
+                 attempts: Int = 2, timeout: Duration = .seconds(10)) async -> Result<ChatNaming.Suggestion, ChatNaming.Failure> {
         await ChatNaming.suggest(executor: LocalExecutor.shared, provider: ClaudeProvider(), binary: binary,
-                                 instructions: instructions, task: "The relay image push fails", timeout: timeout)
+                                 instructions: instructions, task: task, focus: focus, attempts: attempts, timeout: timeout)
     }
 }
 

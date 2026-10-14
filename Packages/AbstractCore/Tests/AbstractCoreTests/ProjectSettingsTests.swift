@@ -123,7 +123,7 @@ import Testing
         #expect(ChatNaming.parse("I can't help with that.") == nil)
         #expect(ChatNaming.parse("not json") == nil)
         #expect(ChatNaming.prompt(instructions: "Use fix/ for bugs", task: "The button is off").contains("Use fix/ for bugs"))
-        #expect(ChatNaming.prompt(instructions: "", task: "The button is off").contains("Summarize this coding request"))
+        #expect(ChatNaming.prompt(instructions: "", task: "The button is off").contains("Name this coding chat for what its work delivers"))
     }
 
     @Test func theNamingCallIsToldNotToFollowTheTask() {

@@ -105,16 +105,17 @@ final class AutomationScheduler {
             return id
         case .newWorktree:
             let now = Date()
-            return try await newChat(a, name: AutomationRunNaming.provisional(a.name, at: now),
+            // A placeholder: the agent's first reply or its pull request names it.
+            return try await newChat(a, name: AutomationRunNaming.provisional(a.name, at: now), nameSource: .fallback,
                                      slug: WorktreeNaming.runBranch(automationName: a.name, at: now))
         }
     }
 
     /// In its project, set up fresh in a worktree of its own; with no
     /// project, a standalone chat.
-    private func newChat(_ a: Automation, name: String, slug: String? = nil) async throws -> String {
+    private func newChat(_ a: Automation, name: String, nameSource: ChatNameSource = .manual, slug: String? = nil) async throws -> String {
         try await model.startChat(projectId: a.projectId, providerId: a.providerId, prompt: a.prompt, baseRef: nil,
                                   policy: a.permissionPolicy, model: a.model, effort: a.effort,
-                                  name: name, slug: a.projectId == nil ? nil : slug, automationId: a.id, select: false)
+                                  name: name, nameSource: nameSource, slug: a.projectId == nil ? nil : slug, automationId: a.id, select: false)
     }
 }
