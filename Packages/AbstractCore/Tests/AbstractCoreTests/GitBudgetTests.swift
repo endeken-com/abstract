@@ -77,192 +77,194 @@ private func eventually(_ timeout: Duration = .seconds(5), _ condition: () -> Bo
 
 private func isAlive(_ pid: pid_t) -> Bool { kill(pid, 0) == 0 || errno != ESRCH }
 
-@Suite(.serialized) struct GitBudgetTests {
-    private func budget(timeout: Duration = .seconds(10), census: @escaping @Sendable () -> Int = { 0 },
-                        recheck: Duration = .milliseconds(20)) -> GitBudget {
-        GitBudget(limits: .init(readTimeout: timeout, recheck: recheck), census: census, log: { _ in })
-    }
+extension GitHeavy {
+    @Suite(.serialized) struct GitBudgetTests {
+        private func budget(timeout: Duration = .seconds(10), census: @escaping @Sendable () -> Int = { 0 },
+                            recheck: Duration = .milliseconds(20)) -> GitBudget {
+            GitBudget(limits: .init(readTimeout: timeout, recheck: recheck), census: census, log: { _ in })
+        }
 
-    @Test(.timeLimit(.minutes(1)))
-    func neverMoreThanFourAtOnceOrOnePerFolder() async throws {
-        let git = FakeGit(hold: .milliseconds(20))
-        let exec = BudgetedExecutor(git, budget: budget())
-        try await withThrowingTaskGroup(of: ExecResult.self) { group in
-            for i in 0..<40 {
-                group.addTask { try await exec.run("git", ["status", "\(i)"], cwd: "/wt/\(i % 6)") }
+        @Test(.timeLimit(.minutes(1)))
+        func neverMoreThanFourAtOnceOrOnePerFolder() async throws {
+            let git = FakeGit(hold: .milliseconds(20))
+            let exec = BudgetedExecutor(git, budget: budget())
+            try await withThrowingTaskGroup(of: ExecResult.self) { group in
+                for i in 0..<40 {
+                    group.addTask { try await exec.run("git", ["status", "\(i)"], cwd: "/wt/\(i % 6)") }
+                }
+                for try await result in group { #expect(result.ok) }
             }
-            for try await result in group { #expect(result.ok) }
+            let counts = git.snapshot()
+            #expect(counts.started == 40)
+            #expect(counts.peak <= 4)
+            #expect(counts.peak > 1)
+            #expect(counts.peakPerFolder == 1)
         }
-        let counts = git.snapshot()
-        #expect(counts.started == 40)
-        #expect(counts.peak <= 4)
-        #expect(counts.peak > 1)
-        #expect(counts.peakPerFolder == 1)
-    }
 
-    @Test(.timeLimit(.minutes(1)))
-    func aReadAskedForWhileTheSameIsQueuedJoinsIt() async throws {
-        let gate = AsyncStream<Void>.makeStream()
-        let git = FakeGit(hold: .milliseconds(20), firstRunGate: gate.stream)
-        let budget = budget()
-        let exec = BudgetedExecutor(git, budget: budget)
-        // The first holds the folder; the rest wait behind it, as one.
-        try await withThrowingTaskGroup(of: ExecResult.self) { group in
-            group.addTask { try await exec.run("git", ["status"], cwd: "/wt") }
-            #expect(await eventually { git.snapshot().started == 1 })
-            for _ in 0..<10 { group.addTask { try await exec.run("git", ["status"], cwd: "/wt") } }
-            let allJoined = await eventually { budget.waiterCount == 11 }
-            gate.continuation.yield(())
-            gate.continuation.finish()
-            #expect(allJoined)
-            for try await result in group { #expect(result.stdout == "status") }
-        }
-        #expect(git.snapshot().started == 2)
-    }
-
-    @Test(.timeLimit(.minutes(1)))
-    func aStuckReadIsStoppedAtItsTimeLimit() async throws {
-        let git = FakeGit(hold: nil)
-        let budget = budget(timeout: .milliseconds(100))
-        let exec = BudgetedExecutor(git, budget: budget)
-        let started = ContinuousClock.now
-        await #expect(throws: TimeLimitExceeded.self) { try await exec.run("git", ["status"], cwd: "/wt") }
-        #expect(ContinuousClock.now - started < .seconds(2))
-        #expect(await eventually { git.snapshot().live == 0 && budget.running == 0 })
-        #expect(git.snapshot().killed == 1)
-    }
-
-    @Test(.timeLimit(.minutes(1)))
-    func aStuckGitProcessIsKilledAtItsTimeLimit() async throws {
-        let dir = NSTemporaryDirectory() + "budget-\(UUID().uuidString)"
-        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(atPath: dir) }
-        let local = LocalExecutor.shared
-        _ = await local.searchPath
-        let exec = BudgetedExecutor(local, budget: budget(timeout: .seconds(2)))
-        // A git that never exits, and the shell it waits on.
-        let alias = "alias.hang=!f() { echo $$ > \"\(dir)/pid\"; sleep 60; }; f"
-        await #expect(throws: TimeLimitExceeded.self) {
-            try await exec.run("git", ["-c", alias, "hang"], cwd: dir)
-        }
-        let pid = try #require(pid_t(GitText.trimmed(try String(contentsOfFile: dir + "/pid", encoding: .utf8))))
-        #expect(await eventually { !isAlive(pid) })
-    }
-
-    @Test(.timeLimit(.minutes(1)))
-    func aThousandTriggersAgainstAHungGitLeaveNothingBehind() async throws {
-        let git = FakeGit(hold: nil)
-        let budget = budget(timeout: .milliseconds(5))
-        let exec = BudgetedExecutor(git, budget: budget)
-        await withTaskGroup(of: Void.self) { group in
-            for i in 0..<1000 {
-                // Half of them repeats of a read that's waiting already.
-                let args = i.isMultiple(of: 2) ? ["status"] : ["rev-list", "\(i)"]
-                group.addTask { _ = try? await exec.run("git", args, cwd: "/wt/\(i % 10)") }
+        @Test(.timeLimit(.minutes(1)))
+        func aReadAskedForWhileTheSameIsQueuedJoinsIt() async throws {
+            let gate = AsyncStream<Void>.makeStream()
+            let git = FakeGit(hold: .milliseconds(20), firstRunGate: gate.stream)
+            let budget = budget()
+            let exec = BudgetedExecutor(git, budget: budget)
+            // The first holds the folder; the rest wait behind it, as one.
+            try await withThrowingTaskGroup(of: ExecResult.self) { group in
+                group.addTask { try await exec.run("git", ["status"], cwd: "/wt") }
+                #expect(await eventually { git.snapshot().started == 1 })
+                for _ in 0..<10 { group.addTask { try await exec.run("git", ["status"], cwd: "/wt") } }
+                let allJoined = await eventually { budget.waiterCount == 11 }
+                gate.continuation.yield(())
+                gate.continuation.finish()
+                #expect(allJoined)
+                for try await result in group { #expect(result.stdout == "status") }
             }
+            #expect(git.snapshot().started == 2)
         }
-        let counts = git.snapshot()
-        #expect(counts.peak <= 4)
-        #expect(counts.peakPerFolder == 1)
-        #expect(counts.started < 1000)
-        // A read's slot frees only after its process has ended, so wait for both.
-        #expect(await eventually { git.snapshot().live == 0 && budget.running == 0 })
-        #expect(budget.queued == 0)
-    }
 
-    @Test(.timeLimit(.minutes(1)))
-    func cancellingTheCallerEndsItsRead() async throws {
-        let git = FakeGit(hold: nil)
-        let budget = budget()
-        let exec = BudgetedExecutor(git, budget: budget)
-        let running = Task { try await exec.run("git", ["status"], cwd: "/wt") }
-        #expect(await eventually { git.snapshot().live == 1 })
-        // Queued behind it, in the same folder.
-        let waiting = Task { try await exec.run("git", ["diff"], cwd: "/wt") }
-        #expect(await eventually { budget.queued == 1 })
-        waiting.cancel()
-        await #expect(throws: CancellationError.self) { try await waiting.value }
-        #expect(budget.queued == 0)
-        running.cancel()
-        await #expect(throws: CancellationError.self) { try await running.value }
-        #expect(await eventually { git.snapshot().live == 0 && budget.running == 0 })
-        #expect(git.snapshot().started == 1)
-    }
+        @Test(.timeLimit(.minutes(1)))
+        func aStuckReadIsStoppedAtItsTimeLimit() async throws {
+            let git = FakeGit(hold: nil)
+            let budget = budget(timeout: .milliseconds(100))
+            let exec = BudgetedExecutor(git, budget: budget)
+            let started = ContinuousClock.now
+            await #expect(throws: TimeLimitExceeded.self) { try await exec.run("git", ["status"], cwd: "/wt") }
+            #expect(ContinuousClock.now - started < .seconds(2))
+            #expect(await eventually { git.snapshot().live == 0 && budget.running == 0 })
+            #expect(git.snapshot().killed == 1)
+        }
 
-    @Test(.timeLimit(.minutes(1)))
-    func oneCallerGivingUpDoesNotStopAJoinedRead() async throws {
-        let git = FakeGit(hold: .milliseconds(200))
-        let exec = BudgetedExecutor(git, budget: budget())
-        let first = Task { try await exec.run("git", ["status"], cwd: "/wt") }
-        #expect(await eventually { git.snapshot().live == 1 })
-        let a = Task { try await exec.run("git", ["diff"], cwd: "/wt") }
-        let b = Task { try await exec.run("git", ["diff"], cwd: "/wt") }
-        try await Task.sleep(for: .milliseconds(20))
-        a.cancel()
-        #expect(try await b.value.stdout == "diff")
-        _ = try await first.value
-        #expect(git.snapshot().started == 2)
-    }
+        @Test(.timeLimit(.minutes(1)))
+        func aStuckGitProcessIsKilledAtItsTimeLimit() async throws {
+            let dir = NSTemporaryDirectory() + "budget-\(UUID().uuidString)"
+            try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(atPath: dir) }
+            let local = LocalExecutor.shared
+            _ = await local.searchPath
+            let exec = BudgetedExecutor(local, budget: budget(timeout: .seconds(2)))
+            // A git that never exits, and the shell it waits on.
+            let alias = "alias.hang=!f() { echo $$ > \"\(dir)/pid\"; sleep 60; }; f"
+            await #expect(throws: TimeLimitExceeded.self) {
+                try await exec.run("git", ["-c", alias, "hang"], cwd: dir)
+            }
+            let pid = try #require(pid_t(GitText.trimmed(try String(contentsOfFile: dir + "/pid", encoding: .utf8))))
+            #expect(await eventually { !isAlive(pid) })
+        }
 
-    @Test(.timeLimit(.minutes(1)))
-    func theGuardPausesAt32AndResumesUnder8() async throws {
-        let alive = Mutex(0)
-        let git = FakeGit(hold: nil)
-        let budget = budget(census: { alive.withLock { $0 } })
-        let exec = BudgetedExecutor(git, budget: budget)
+        @Test(.timeLimit(.minutes(1)))
+        func aThousandTriggersAgainstAHungGitLeaveNothingBehind() async throws {
+            let git = FakeGit(hold: nil)
+            let budget = budget(timeout: .milliseconds(5))
+            let exec = BudgetedExecutor(git, budget: budget)
+            await withTaskGroup(of: Void.self) { group in
+                for i in 0..<1000 {
+                    // Half of them repeats of a read that's waiting already.
+                    let args = i.isMultiple(of: 2) ? ["status"] : ["rev-list", "\(i)"]
+                    group.addTask { _ = try? await exec.run("git", args, cwd: "/wt/\(i % 10)") }
+                }
+            }
+            let counts = git.snapshot()
+            #expect(counts.peak <= 4)
+            #expect(counts.peakPerFolder == 1)
+            #expect(counts.started < 1000)
+            // A read's slot frees only after its process has ended, so wait for both.
+            #expect(await eventually { git.snapshot().live == 0 && budget.running == 0 })
+            #expect(budget.queued == 0)
+        }
 
-        let oldest = Task { try await exec.run("git", ["status"], cwd: "/a") }
-        #expect(await eventually { git.snapshot().live == 1 })
+        @Test(.timeLimit(.minutes(1)))
+        func cancellingTheCallerEndsItsRead() async throws {
+            let git = FakeGit(hold: nil)
+            let budget = budget()
+            let exec = BudgetedExecutor(git, budget: budget)
+            let running = Task { try await exec.run("git", ["status"], cwd: "/wt") }
+            #expect(await eventually { git.snapshot().live == 1 })
+            // Queued behind it, in the same folder.
+            let waiting = Task { try await exec.run("git", ["diff"], cwd: "/wt") }
+            #expect(await eventually { budget.queued == 1 })
+            waiting.cancel()
+            await #expect(throws: CancellationError.self) { try await waiting.value }
+            #expect(budget.queued == 0)
+            running.cancel()
+            await #expect(throws: CancellationError.self) { try await running.value }
+            #expect(await eventually { git.snapshot().live == 0 && budget.running == 0 })
+            #expect(git.snapshot().started == 1)
+        }
 
-        alive.withLock { $0 = 32 }
-        let held = Task { try await exec.run("git", ["status"], cwd: "/b") }
-        // Paused: nothing new starts, and the oldest read is stopped.
-        await #expect(throws: AbstractError.self) { try await oldest.value }
-        #expect(budget.isPaused)
-        #expect(await eventually { git.snapshot().live == 0 })
-        try await Task.sleep(for: .milliseconds(100))
-        #expect(git.snapshot().started == 1)
-        #expect(budget.queued == 1)
+        @Test(.timeLimit(.minutes(1)))
+        func oneCallerGivingUpDoesNotStopAJoinedRead() async throws {
+            let git = FakeGit(hold: .milliseconds(200))
+            let exec = BudgetedExecutor(git, budget: budget())
+            let first = Task { try await exec.run("git", ["status"], cwd: "/wt") }
+            #expect(await eventually { git.snapshot().live == 1 })
+            let a = Task { try await exec.run("git", ["diff"], cwd: "/wt") }
+            let b = Task { try await exec.run("git", ["diff"], cwd: "/wt") }
+            try await Task.sleep(for: .milliseconds(20))
+            a.cancel()
+            #expect(try await b.value.stdout == "diff")
+            _ = try await first.value
+            #expect(git.snapshot().started == 2)
+        }
 
-        // Still above 8: stays paused.
-        alive.withLock { $0 = 8 }
-        try await Task.sleep(for: .milliseconds(100))
-        #expect(budget.isPaused)
+        @Test(.timeLimit(.minutes(1)))
+        func theGuardPausesAt32AndResumesUnder8() async throws {
+            let alive = Mutex(0)
+            let git = FakeGit(hold: nil)
+            let budget = budget(census: { alive.withLock { $0 } })
+            let exec = BudgetedExecutor(git, budget: budget)
 
-        alive.withLock { $0 = 7 }
-        #expect(await eventually { !budget.isPaused && git.snapshot().live == 1 })
-        held.cancel()
-        _ = try? await held.value
-    }
+            let oldest = Task { try await exec.run("git", ["status"], cwd: "/a") }
+            #expect(await eventually { git.snapshot().live == 1 })
 
-    @Test func theCensusCountsGitAbstractStartedNotAnAgents() {
-        let me: pid_t = 100
-        let table: [(pid: pid_t, parent: pid_t, name: String)] = [
-            (100, 1, "Abstract"),
-            (200, 100, "git"),            // a read
-            (201, 200, "sh"),             // submodule foreach's shell
-            (202, 201, "git"),            //   and its git
-            (203, 202, "git-remote-https"),
-            (300, 100, "claude"),         // an agent
-            (301, 300, "git"),            //   and the agent's own git
-            (400, 1, "git"),              // someone else's
-        ]
-        #expect(ProcessCensus.gitProcesses(in: table, root: me) == 3)
-    }
+            alive.withLock { $0 = 32 }
+            let held = Task { try await exec.run("git", ["status"], cwd: "/b") }
+            // Paused: nothing new starts, and the oldest read is stopped.
+            await #expect(throws: AbstractError.self) { try await oldest.value }
+            #expect(budget.isPaused)
+            #expect(await eventually { git.snapshot().live == 0 })
+            try await Task.sleep(for: .milliseconds(100))
+            #expect(git.snapshot().started == 1)
+            #expect(budget.queued == 1)
 
-    @Test(.timeLimit(.minutes(1)))
-    func theCensusSeesALiveGit() async throws {
-        let exec = LocalExecutor.shared
-        let task = Task { try await exec.run("git", ["-c", "alias.hang=!sleep 30", "hang"], cwd: NSTemporaryDirectory()) }
-        #expect(await eventually { ProcessCensus.gitProcesses() >= 1 })
-        task.cancel()
-        _ = try? await task.value
-    }
+            // Still above 8: stays paused.
+            alive.withLock { $0 = 8 }
+            try await Task.sleep(for: .milliseconds(100))
+            #expect(budget.isPaused)
 
-    @Test func aTimeLimitReturnsTheResultInTime() async throws {
-        #expect(try await withTimeLimit(.seconds(5), what: "quick") { 42 } == 42)
-        await #expect(throws: TimeLimitExceeded(what: "slow", limit: .milliseconds(50))) {
-            try await withTimeLimit(.milliseconds(50), what: "slow") { try await Task.sleep(for: .seconds(30)) }
+            alive.withLock { $0 = 7 }
+            #expect(await eventually { !budget.isPaused && git.snapshot().live == 1 })
+            held.cancel()
+            _ = try? await held.value
+        }
+
+        @Test func theCensusCountsGitAbstractStartedNotAnAgents() {
+            let me: pid_t = 100
+            let table: [(pid: pid_t, parent: pid_t, name: String)] = [
+                (100, 1, "Abstract"),
+                (200, 100, "git"),            // a read
+                (201, 200, "sh"),             // submodule foreach's shell
+                (202, 201, "git"),            //   and its git
+                (203, 202, "git-remote-https"),
+                (300, 100, "claude"),         // an agent
+                (301, 300, "git"),            //   and the agent's own git
+                (400, 1, "git"),              // someone else's
+            ]
+            #expect(ProcessCensus.gitProcesses(in: table, root: me) == 3)
+        }
+
+        @Test(.timeLimit(.minutes(1)))
+        func theCensusSeesALiveGit() async throws {
+            let exec = LocalExecutor.shared
+            let task = Task { try await exec.run("git", ["-c", "alias.hang=!sleep 30", "hang"], cwd: NSTemporaryDirectory()) }
+            #expect(await eventually { ProcessCensus.gitProcesses() >= 1 })
+            task.cancel()
+            _ = try? await task.value
+        }
+
+        @Test func aTimeLimitReturnsTheResultInTime() async throws {
+            #expect(try await withTimeLimit(.seconds(5), what: "quick") { 42 } == 42)
+            await #expect(throws: TimeLimitExceeded(what: "slow", limit: .milliseconds(50))) {
+                try await withTimeLimit(.milliseconds(50), what: "slow") { try await Task.sleep(for: .seconds(30)) }
+            }
         }
     }
 }
