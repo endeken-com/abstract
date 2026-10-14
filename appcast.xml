@@ -5,10 +5,10 @@
     <link>https://endeken-com.github.io/abstract/appcast.xml</link>
     <language>en</language>
     <item>
-      <title>Abstract 0.11.0-nightly.30</title>
-      <pubDate>Wed, 14 Oct 2026 19:33:36 GMT</pubDate>
-      <sparkle:version>0.11.0.30</sparkle:version>
-      <sparkle:shortVersionString>0.11.0-nightly.30</sparkle:shortVersionString>
+      <title>Abstract 0.11.0-nightly.32</title>
+      <pubDate>Wed, 14 Oct 2026 20:46:27 GMT</pubDate>
+      <sparkle:version>0.11.0.32</sparkle:version>
+      <sparkle:shortVersionString>0.11.0-nightly.32</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
       <sparkle:channel>nightly</sparkle:channel>
       <sparkle:fullReleaseNotesLink>https://github.com/endeken-com/abstract/releases/tag/nightly</sparkle:fullReleaseNotesLink>
@@ -45,9 +45,11 @@
 &lt;ul dir="auto"&gt;
 &lt;li&gt;CI runs the git-heavy test suites one at a time, so timing tests stop failing at random by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/wesguirra/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/wesguirra"&gt;@wesguirra&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5840925210" data-permission-text="Title is private" data-url="https://github.com/endeken-com/abstract/issues/55" data-hovercard-type="pull_request" data-hovercard-url="/endeken-com/abstract/pull/55/hovercard" href="https://github.com/endeken-com/abstract/pull/55"&gt;#55&lt;/a&gt;&lt;/li&gt;
 &lt;li&gt;Abstract records what each turn changed and why, and links every commit back to its chat and turn by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/wesguirra/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/wesguirra"&gt;@wesguirra&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5852422101" data-permission-text="Title is private" data-url="https://github.com/endeken-com/abstract/issues/57" data-hovercard-type="pull_request" data-hovercard-url="/endeken-com/abstract/pull/57/hovercard" href="https://github.com/endeken-com/abstract/pull/57"&gt;#57&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;Wait for tests before preparing nightly builds by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/wesguirra/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/wesguirra"&gt;@wesguirra&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5853895520" data-permission-text="Title is private" data-url="https://github.com/endeken-com/abstract/issues/61" data-hovercard-type="pull_request" data-hovercard-url="/endeken-com/abstract/pull/61/hovercard" href="https://github.com/endeken-com/abstract/pull/61"&gt;#61&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;Build nightly without waiting for tests by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/wesguirra/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/wesguirra"&gt;@wesguirra&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5854583410" data-permission-text="Title is private" data-url="https://github.com/endeken-com/abstract/issues/62" data-hovercard-type="pull_request" data-hovercard-url="/endeken-com/abstract/pull/62/hovercard" href="https://github.com/endeken-com/abstract/pull/62"&gt;#62&lt;/a&gt;&lt;/li&gt;
 &lt;/ul&gt;
-&lt;p dir="auto"&gt;&lt;strong&gt;Full Changelog&lt;/strong&gt;: &lt;a class="commit-link" href="https://github.com/endeken-com/abstract/compare/v0.10.0...ddffdd58772e0cccd748a3d260774f3cd34fb08c"&gt;&lt;tt&gt;v0.10.0...ddffdd5&lt;/tt&gt;&lt;/a&gt;&lt;/p&gt;</description>
-      <enclosure url="https://github.com/endeken-com/abstract/releases/download/nightly/Abstract-0.11.0-nightly.30.dmg" length="54325714" type="application/octet-stream" sparkle:edSignature="AMDQ5cidSdUrmSXVdTkXVoGkqM68rPIUPZtfzxIMuWct6UvIUcBFP/vzBP8pMPzUJ6/eMHDMtiZPGUVPs03wCA==" />
+&lt;p dir="auto"&gt;&lt;strong&gt;Full Changelog&lt;/strong&gt;: &lt;a class="commit-link" href="https://github.com/endeken-com/abstract/compare/v0.10.0...354afd6bb983614e2a63306c6aab7304ad9e96d1"&gt;&lt;tt&gt;v0.10.0...354afd6&lt;/tt&gt;&lt;/a&gt;&lt;/p&gt;</description>
+      <enclosure url="https://github.com/endeken-com/abstract/releases/download/nightly/Abstract-0.11.0-nightly.32.dmg" length="54325739" type="application/octet-stream" sparkle:edSignature="HlNFk20ofK+mKZ+OBiAkFxOBVZ5iaAredUegsZdMBSv7Tpr9mQlQIdZskI+DU8eo+nG+ez3L0JPzZdPcFV1xDQ==" />
     </item>
     <item>
       <title>Abstract 0.10.0</title>
