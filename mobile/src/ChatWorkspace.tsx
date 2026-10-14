@@ -14,6 +14,8 @@ import { uuid } from './secure';
 import { attachmentPayload, pickAttachments, type PickedAttachment } from './attachments';
 import { chatTimeline, type ChatItem } from './chatTimeline';
 import { IssueIcon, PullRequestIcon } from './PullRequestIcon';
+import { ContextPill } from './ContextPill';
+import { chatContext } from './chatContext';
 import { FileIcon } from './FileIcon';
 import { toolKind, toolSymbol } from './toolPresentation';
 import { SwipeForward } from './SwipeForward';
@@ -38,8 +40,8 @@ const editStyles = StyleSheet.create({
   more: { paddingHorizontal: 10, paddingVertical: 7 },
   moreText: { color: muted, fontFamily: 'Inter', fontSize: 11 },
 });
-const iconMap: Record<string, string> = { menu: 'sidebar.left', review: 'plusminus', files: 'doc.text', terminal: 'terminal', pr: 'arrow.triangle.pull', manage: 'ellipsis', attach: 'plus', send: 'arrow.up', stop: 'stop.fill', branch: 'arrow.triangle.branch', chevron: 'chevron.down', close: 'xmark' };
-const androidIcons: Record<string, string> = { menu: 'menu', review: 'difference', files: 'description', terminal: 'terminal', pr: 'merge', manage: 'more_horiz', attach: 'add', send: 'arrow_upward', stop: 'stop', branch: 'account_tree', chevron: 'keyboard_arrow_down', close: 'close', 'arrow.down': 'arrow_downward', sparkles: 'auto_awesome', 'doc.text': 'description', 'doc.badge.plus': 'note_add', pencil: 'edit', magnifyingglass: 'search', globe: 'public', checklist: 'checklist', 'list.bullet.clipboard': 'assignment', 'person.2': 'group', 'book.closed': 'menu_book', 'questionmark.bubble': 'help', 'puzzlepiece.extension': 'extension', 'wrench.and.screwdriver': 'build', 'exclamationmark.triangle': 'warning' };
+const iconMap: Record<string, string> = { menu: 'sidebar.left', review: 'plusminus', files: 'doc.text', terminal: 'terminal', pr: 'arrow.triangle.pull', manage: 'ellipsis', attach: 'plus', send: 'arrow.up', stop: 'stop.fill', chevron: 'chevron.down', close: 'xmark' };
+const androidIcons: Record<string, string> = { menu: 'menu', review: 'difference', files: 'description', terminal: 'terminal', pr: 'merge', manage: 'more_horiz', attach: 'add', send: 'arrow_upward', stop: 'stop', chevron: 'keyboard_arrow_down', close: 'close', 'arrow.down': 'arrow_downward', sparkles: 'auto_awesome', 'doc.text': 'description', 'doc.badge.plus': 'note_add', pencil: 'edit', magnifyingglass: 'search', globe: 'public', checklist: 'checklist', 'list.bullet.clipboard': 'assignment', 'person.2': 'group', 'book.closed': 'menu_book', 'questionmark.bubble': 'help', 'puzzlepiece.extension': 'extension', 'wrench.and.screwdriver': 'build', 'exclamationmark.triangle': 'warning' };
 function Glyph({ name, size = 14, color = muted }: { name: string; size?: number; color?: string }) { return <SymbolView name={{ ios: iconMap[name] || name, android: androidIcons[name] || (name === 'checkmark' ? 'check' : name), web: androidIcons[name] || (name === 'checkmark' ? 'check' : name) } as any} size={size} tintColor={color} style={{ width: size, height: size }} />; }
 function Chip({ icon, label, onPress, active }: { icon?: string; label?: string; onPress: () => void; active?: boolean }) { return <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={() => { Haptics.selectionAsync().catch(() => {}); onPress(); }} style={[s.chip, active && s.chipActive]}>{icon && <Glyph name={icon} size={14} color={active ? ink : muted} />}{label && <Text numberOfLines={1} style={[s.chipLabel, active && { color: ink }]}>{label}</Text>}</Pressable>; }
 function ToolbarAction({ label, onPress, children }: { label: string; onPress: () => void; children: React.ReactNode }) {
@@ -318,8 +320,7 @@ export function ChatWorkspace({ route, navigation }: any) {
   useEffect(() => { if (!chat) return; const root = chat.worktreePath || remote.snapshot?.projects.find(x => x.id === chat.projectId)?.rootPath; if (!root || remote.status !== 'online') { setDiff({ files: 0, added: 0, removed: 0 }); return; } let active = true; const refresh = () => remote.exec(root, ['diff', 'HEAD', '--numstat']).then(result => { if (!active) return; const counts = result.stdout.split('\n').filter(line => line.includes('\t')).reduce((n, line) => { const [a, d] = line.split('\t'); return { files: n.files + 1, added: n.added + (Number(a) || 0), removed: n.removed + (Number(d) || 0) }; }, { files: 0, added: 0, removed: 0 }); setDiff(counts); }).catch(() => {}); const timer = setTimeout(refresh, 400); const interval = setInterval(refresh, 15000); return () => { active = false; clearTimeout(timer); clearInterval(interval); }; }, [id, chat?.status, chat?.worktreePath, chat?.projectId, remote.status]);
   if (!chat) return <View style={s.waiting}><Text style={s.faint}>Waiting for this chat on the Mac…</Text></View>;
   const root = chat.worktreePath || remote.snapshot?.projects.find(x => x.id === chat.projectId)?.rootPath || '';
-  const worktreeLabel = chat.branch || chat.worktreePath?.split('/').at(-1) || (chat.projectId ? remote.snapshot?.projects.find(x => x.id === chat.projectId)?.name : null) || 'No worktree';
-  const worktreeKind = chat.worktreePath ? 'WORKTREE' : chat.projectId ? 'PROJECT' : 'STANDALONE';
+  const context = chatContext(chat, chat.projectId ? remote.snapshot?.projects.find(x => x.id === chat.projectId)?.name : null);
   const catalog = remote.snapshot?.modelCatalogs?.[chat.providerId];
   const modelOption = catalog?.models.find(x => x.id === chat.model) || catalog?.versions.find(x => x.id === chat.model);
   const defaultModelLabel = remote.snapshot?.defaultModelNames?.[chat.providerId] || catalog?.accountDefault?.label;
@@ -394,10 +395,7 @@ export function ChatWorkspace({ route, navigation }: any) {
       setBottomPanelHeight(height => Math.abs(height - measuredHeight) < 1 ? height : measuredHeight);
     }}>
       <View style={s.contextRow}>
-        <Pressable accessibilityRole="button" accessibilityLabel={`${worktreeKind.toLowerCase()} ${worktreeLabel}`} onPress={chat.projectId ? () => navigation.navigate('Worktrees', { projectId: chat.projectId }) : undefined} style={s.worktreeIndicator}>
-          <Glyph name="branch" size={15} color={chat.worktreePath ? ink : tertiary} />
-          <View style={s.worktreeText}><Text style={s.worktreeCaption}>{worktreeKind}</Text><Text style={s.worktreeName} numberOfLines={1} ellipsizeMode="middle">{worktreeLabel}</Text></View>
-        </Pressable>
+        <ContextPill context={context} onPress={chat.projectId ? () => navigation.navigate('Worktrees', { projectId: chat.projectId }) : undefined} />
         {pr && <Pressable accessibilityRole="button" accessibilityLabel={`Pull request #${pr.number}`} onPress={() => navigation.navigate('PullRequest', { sessionId: id })} style={s.prContext}><PullRequestIcon pr={pr} size={14} /><Text style={s.prContextLabel}>#{pr.number}</Text></Pressable>}
         {diff.files > 0 && <Pressable accessibilityRole="button" accessibilityLabel={`Review ${diff.files} changed ${diff.files === 1 ? 'file' : 'files'}`} onPress={() => { Haptics.selectionAsync().catch(() => {}); navigation.navigate('Review', { sessionId: id }); }} style={s.changesPill}>
           <Glyph name="review" size={13} color={ink} /><Text style={s.changesPillLabel}>{diff.files} {diff.files === 1 ? 'file' : 'files'}</Text>{diff.added > 0 && <Text style={s.changesAdded}>+{diff.added}</Text>}{diff.removed > 0 && <Text style={s.changesRemoved}>−{diff.removed}</Text>}
@@ -436,15 +434,11 @@ const s = StyleSheet.create({
   bottomBlur: { top: undefined, bottom: 0, zIndex: 1 },
   bottomPanel: { position: 'absolute', left: 0, right: 0, zIndex: 2 },
   contextRow: { height: 40, marginHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 6 },
-  worktreeIndicator: { flex: 1, minWidth: 0, height: 32, flexDirection: 'row', alignItems: 'center', gap: 7, paddingHorizontal: 8, borderRadius: 16, backgroundColor: raised, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.16)' },
-  worktreeText: { flex: 1, minWidth: 0, justifyContent: 'center' },
-  worktreeCaption: { color: tertiary, fontFamily: 'Inter', fontSize: 9, fontWeight: '600', letterSpacing: 0.5, lineHeight: 11 },
-  worktreeName: { color: ink, fontFamily: 'Inter', fontSize: 12, fontWeight: '600', lineHeight: 15 },
-  changesPill: { minHeight: 32, flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 9, borderRadius: 16, backgroundColor: raised, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.16)' },
+  changesPill: { flexShrink: 0, minHeight: 32, flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 9, borderRadius: 16, backgroundColor: raised, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.16)' },
   changesPillLabel: { color: ink, fontFamily: 'Inter', fontSize: 11, fontWeight: '600' },
   changesAdded: { color: '#4CC38A', fontFamily: 'JetBrainsMono', fontSize: 10 },
   changesRemoved: { color: '#EF6461', fontFamily: 'JetBrainsMono', fontSize: 10 },
-  prContext: { minHeight: 32, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, borderRadius: 16, backgroundColor: raised, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.16)' },
+  prContext: { flexShrink: 0, minHeight: 32, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, borderRadius: 16, backgroundColor: raised, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.16)' },
   prContextLabel: { color: muted, fontFamily: 'Inter', fontSize: 11, fontWeight: '600' },
   composerBox: { borderRadius: 11, borderWidth: 1, borderColor: '#424249', backgroundColor: panel, paddingHorizontal: 8, paddingTop: 4, paddingBottom: 3 },
   composerTextRow: { minHeight: 44, flexDirection: 'row' },

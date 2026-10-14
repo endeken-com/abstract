@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import AbstractCore
 @preconcurrency import SwiftTerm
 
 /// The terminal's colours and type, resolved for one appearance.
@@ -7,8 +8,9 @@ import SwiftUI
 /// Surfaces and text come from the app palette, so a terminal pane reads as
 /// part of the window rather than a black box dropped into it. The 16 ANSI
 /// colours are tuned per theme: on Graphite they are bright enough to read
-/// on #1E1E21, on Paper they are deep enough to read on white (so "yellow"
-/// is amber and "white" is a readable gray, the way light editor themes do).
+/// on #1E1E21, on Ink brighter still on black, on Paper they are deep enough
+/// to read on white (so "yellow" is amber and "white" is a readable gray, the
+/// way light editor themes do).
 struct TerminalTheme {
     let isDark: Bool
     let background: NSColor
@@ -23,7 +25,8 @@ struct TerminalTheme {
     static let font = BTFont.nsMono(12.5)
 
     static func resolve(for appearance: NSAppearance) -> TerminalTheme {
-        let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        let palette = ThemeState.shared.theme(for: appearance)
+        let isDark = palette != .paper
         var background = NSColor.white, foreground = NSColor.black, accent = NSColor.systemBlue
         appearance.performAsCurrentDrawingAppearance {
             background = srgb(NSColor(SwiftUI.Color.btCanvas))
@@ -31,12 +34,16 @@ struct TerminalTheme {
             accent = srgb(NSColor(SwiftUI.Color.btAccent))
         }
         let selection = blend(accent, over: background, amount: isDark ? 0.28 : 0.2)
-        let hexes = isDark ? graphite : paper
+        let hexes = switch palette {
+        case .graphite: graphite
+        case .paper: paper
+        case .ink: ink
+        }
         return TerminalTheme(
             isDark: isDark, background: background, foreground: foreground, cursor: accent,
             cursorText: background, selection: selection,
             ansi: hexes.map(terminalColor),
-            key: [isDark ? "dark" : "light", hex(background), hex(foreground), hex(accent)].joined(separator: "-"))
+            key: [palette.rawValue, hex(background), hex(foreground), hex(accent)].joined(separator: "-"))
     }
 
     // MARK: Palettes (black, red, green, yellow, blue, magenta, cyan, white, then bright)
@@ -46,6 +53,13 @@ struct TerminalTheme {
     private static let graphite: [UInt32] = [
         0x3E3E46, 0xEF6461, 0x4CC38A, 0xE5A33A, 0x5B9CF6, 0xC080E8, 0x4EBFC7, 0xC8C8CE,
         0x74747E, 0xFF8A86, 0x72DBA6, 0xF5C26B, 0x88B9FF, 0xD8A8F8, 0x7DD8DE, 0xF4F4F6,
+    ]
+
+    /// On Ink (#000000). Normal colours clear 8:1, black aside (it stays dark,
+    /// for backgrounds); bright black, the dim one, still clears 7:1.
+    private static let ink: [UInt32] = [
+        0x3A3A40, 0xFF7A75, 0x5BE49B, 0xFFC857, 0x7AB4FF, 0xD79CFF, 0x6EE0E8, 0xE6E6EA,
+        0x9E9EA8, 0xFF9C98, 0x8AF0BA, 0xFFD98A, 0xA3CBFF, 0xE6BEFF, 0xA0ECF0, 0xFFFFFF,
     ]
 
     /// On Paper (#FFFFFF). Normal colours clear 4.8:1. Bold text is drawn with

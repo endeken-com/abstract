@@ -4,6 +4,11 @@ import Foundation
 public struct TimelineEntry: Sendable, Identifiable, Hashable {
     public let id: Int
     public var event: AgentEvent
+    /// When its line was logged (the latest, for text that streamed in); nil
+    /// in logs from before times were kept.
+    public var at: Date?
+
+    public init(id: Int, event: AgentEvent, at: Date? = nil) { self.id = id; self.event = event; self.at = at }
 }
 
 /// A chat's events, assembled for reading.
@@ -16,7 +21,8 @@ public struct Timeline: Sendable {
     /// Streaming text arrives as chunks sharing a block id, then once more
     /// complete. Both collapse into one entry, so the chat reads like a
     /// document rather than a stutter.
-    public mutating func append(_ event: AgentEvent) {
+    /// `at`: when the event's line was logged.
+    public mutating func append(_ event: AgentEvent, at: Date? = nil) {
         // An edit's diff is worked out once, as it arrives, not on every read.
         var event = event
         if case let .toolUse(id, name, input, nil) = event {
@@ -24,14 +30,15 @@ public struct Timeline: Sendable {
         }
         if let blockId = event.blockId, let index = entries.lastIndex(where: { $0.event.blockId == blockId && $0.event.sameKind(as: event) }) {
             entries[index].event = entries[index].event.merged(with: event)
+            entries[index].at = at ?? entries[index].at
             return
         }
         nextId += 1
-        entries.append(TimelineEntry(id: nextId, event: event))
+        entries.append(TimelineEntry(id: nextId, event: event, at: at))
     }
 
-    public mutating func append(contentsOf events: [AgentEvent]) {
-        for e in events { append(e) }
+    public mutating func append(contentsOf events: [AgentEvent], at: Date? = nil) {
+        for e in events { append(e, at: at) }
     }
 
     public var isEmpty: Bool { entries.isEmpty }
@@ -107,7 +114,8 @@ public enum TimelineBlock: Sendable, Identifiable, Hashable {
     case thinking(id: Int, text: String)
     case tools(id: Int, calls: [ToolCall])
     case system(id: Int, model: String?, permissionMode: String?)
-    case turn(id: Int, summary: String?, durationMs: Int?, usage: UsageTotals?, costUsd: Double?)
+    /// The end of a turn: how it ended and how long it took.
+    case turn(id: Int, TurnInfo)
     case error(id: Int, message: String)
     /// A retry, a usage limit or a warning, on one line.
     case notice(id: Int, AgentNotice)
@@ -118,7 +126,7 @@ public enum TimelineBlock: Sendable, Identifiable, Hashable {
     public var id: Int {
         switch self {
         case .user(let id, _), .assistant(let id, _, _, _), .thinking(let id, _), .tools(let id, _),
-             .system(let id, _, _), .turn(let id, _, _, _, _), .error(let id, _), .notice(let id, _), .raw(let id, _),
+             .system(let id, _, _), .turn(let id, _), .error(let id, _), .notice(let id, _), .raw(let id, _),
              .handoff(let id, _, _, _, _): id
         }
     }
@@ -166,9 +174,13 @@ extension Timeline {
 
         var out: [TimelineBlock] = []
         var assistantOpen = false
-        var pendingTurn: Int?
+        var turns = TurnTracker()
 
         for entry in entries {
+            if let line = turns.read(entry) {
+                out.append(line)
+                assistantOpen = false
+            }
             switch entry.event {
             case let .text(role, text, _, partial):
                 if role == .user {
@@ -195,19 +207,6 @@ extension Timeline {
                 assistantOpen = true
             case let .system(model, _, mode, _):
                 out.append(.system(id: entry.id, model: model, permissionMode: mode))
-            case let .turnEnd(duration, cost, usage, summary):
-                out.append(.turn(id: entry.id, summary: summary, durationMs: duration, usage: usage, costUsd: cost))
-                pendingTurn = out.count - 1
-                assistantOpen = false
-            case let .usage(usage, cost, duration, _):
-                // Usage lands right after the turn summary: fold it into that rule.
-                if let i = pendingTurn, case let .turn(id, summary, d, u, c) = out[i], u == nil {
-                    out[i] = .turn(id: id, summary: summary, durationMs: d ?? duration, usage: usage, costUsd: c ?? cost)
-                } else {
-                    out.append(.turn(id: entry.id, summary: nil, durationMs: duration, usage: usage, costUsd: cost))
-                }
-                pendingTurn = nil
-                assistantOpen = false
             case let .error(message):
                 out.append(.error(id: entry.id, message: message))
             case let .notice(notice):
@@ -227,11 +226,22 @@ extension Timeline {
             case let .handoff(from, to, summary, source):
                 out.append(.handoff(id: entry.id, from: from, to: to, summary: summary, source: source))
                 assistantOpen = false
-            // Tasks and what subagents did are listed apart from the conversation.
-            case .status, .sessionId, .toolResult, .toolImages, .permissionRequest, .promptSuggestion, .commands, .task, .subagent:
+            // Tasks and what subagents did are listed apart from the conversation;
+            // a turn's end and usage make its line, above.
+            case .status, .sessionId, .toolResult, .toolImages, .permissionRequest, .promptSuggestion, .commands, .task, .subagent,
+                 .turnEnd, .usage:
                 break
             }
         }
+        if let line = turns.pendingLine { out.append(line) }
         return out
+    }
+
+    /// When the turn under way started, read from the log, so a relaunch or
+    /// another Mac knows it too. nil between turns, or when the log doesn't say.
+    public var turnStartedAt: Date? {
+        var turns = TurnTracker()
+        for entry in entries { _ = turns.read(entry) }
+        return turns.active ? turns.startedAt : nil
     }
 }

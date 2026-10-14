@@ -243,7 +243,7 @@ struct CommandLineTests {
         #expect(try await box.branches().contains("fix/login"))
         // The prompt opens the chat's log, then the agent's output, as when the app starts a chat.
         try await waitUntil { box.log(id).count >= 3 }
-        #expect(box.log(id).first == OutputLine(stream: .user, line: "Fix the login button"))
+        #expect(box.log(id).first?.untimed == OutputLine(stream: .user, line: "Fix the login button"))
         try await waitUntil { try box.store.session(id)?.status == .idle }
         #expect(try box.store.session(id)?.providerSessionId == "fake-session")
         #expect(!box.argsLog.contains("--resume"))
@@ -497,7 +497,7 @@ struct CommandLineTests {
         let out = try await box.run(["agent", "send", "--session", id, "--agent", agentId, "--text-file", box.file("Now add a test\n")])
         #expect(out.status == 0)
         #expect(out.object["id"] as? String == agentId)
-        try await waitUntil { box.log(id).contains(OutputLine(stream: .user, line: "Now add a test")) }
+        try await waitUntil { box.log(id).map(\.untimed).contains(OutputLine(stream: .user, line: "Now add a test")) }
         // Two answers: the prompt's and the message's.
         try await waitUntil { box.log(id).filter { $0.line.contains(#""type":"result""#) }.count == 2 }
     }
@@ -569,7 +569,7 @@ struct CommandLineTests {
         #expect(after.prompt == "Start over")
         // No earlier context: launched fresh, never resumed.
         #expect(!box.argsLog.contains("--resume"))
-        try await waitUntil { box.log(id).contains(OutputLine(stream: .user, line: "Start over")) }
+        try await waitUntil { box.log(id).map(\.untimed).contains(OutputLine(stream: .user, line: "Start over")) }
     }
 
     @Test func agentAlreadyRunning() async throws {

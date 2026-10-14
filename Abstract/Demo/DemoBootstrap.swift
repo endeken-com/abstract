@@ -253,7 +253,7 @@ struct Snapshotter {
         let idle = model.sessions.first { $0.status == .idle }
         let needsYou = model.sessions.first { $0.status == .waitingInput }
 
-        let themes: [ThemeChoice] = ProcessInfo.processInfo.arguments.contains("--quick") ? [.graphite] : [.graphite, .paper]
+        let themes: [ThemeChoice] = ProcessInfo.processInfo.arguments.contains("--quick") ? [.graphite] : [.graphite, .paper, .ink]
         for theme in themes {
             UserDefaults.standard.set(theme.rawValue, forKey: "theme")
             try? await Task.sleep(for: .milliseconds(500))

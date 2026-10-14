@@ -43,6 +43,8 @@ final class TerminalContainerView: NSView {
         applyTheme()
         NotificationCenter.default.addObserver(self, selector: #selector(systemColorsChanged),
                                                name: NSColor.systemColorsDidChangeNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(systemColorsChanged),
+                                               name: ThemeState.didChange, object: nil)
     }
 
     @available(*, unavailable)
