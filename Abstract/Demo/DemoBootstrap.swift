@@ -253,6 +253,8 @@ struct Snapshotter {
         let idle = model.sessions.first { $0.status == .idle }
         let needsYou = model.sessions.first { $0.status == .waitingInput }
 
+        shootAppIcon()
+
         let themes: [ThemeChoice] = ProcessInfo.processInfo.arguments.contains("--quick") ? [.graphite] : [.graphite, .paper, .ink]
         for theme in themes {
             UserDefaults.standard.set(theme.rawValue, forKey: "theme")
@@ -621,6 +623,29 @@ struct Snapshotter {
         }
         log("demo: background tasks " + model.backgroundTasks(sessionId).map { "\($0.description)=\($0.status.rawValue)" }.joined(separator: ", "))
         model.tasksOpen = nil
+    }
+
+    /// The app's icon as Finder and the Dock draw it, at Dock and list sizes. macOS
+    /// picks its version from the icon style in System Settings › Appearance (lunar
+    /// for Default, planetario for Dark), not from the app's appearance, so a run
+    /// captures whichever that Mac is set to.
+    private func shootAppIcon() {
+        let icon = NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath)
+        let sizes: [CGFloat] = [256, 64, 32, 16]
+        let image = NSImage(size: NSSize(width: sizes.reduce(0, +) + 24 * CGFloat(sizes.count + 1), height: 304), flipped: false) { rect in
+            NSColor.windowBackgroundColor.setFill()
+            rect.fill()
+            var x: CGFloat = 24
+            for size in sizes {
+                icon.draw(in: NSRect(x: x, y: (rect.height - size) / 2, width: size, height: size))
+                x += size + 24
+            }
+            return true
+        }
+        guard let tiff = image.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { return }
+        let url = URL(fileURLWithPath: directory).appendingPathComponent("00-app-icon.png")
+        try? png.write(to: url)
+        log("snapshot: \(url.path)")
     }
 
     /// Other interface and editor fonts, applied to a file tab.

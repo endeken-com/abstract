@@ -31,7 +31,11 @@ jobs:
         run: |
           sh scripts/tests/next-version-test.sh
           sh scripts/tests/notarize-test.sh
+          sh scripts/tests/make-icons-test.sh
           python3 -m unittest discover -s scripts/tests -v
+
+      - name: App icons
+        run: scripts/make-icons.sh --check
 
       # Tests that wait on processes against a deadline run on their own first:
       # alongside the git-heavy suites, the 3-core runner starves them past it.
