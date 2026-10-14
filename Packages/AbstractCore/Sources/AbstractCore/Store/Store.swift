@@ -7,7 +7,7 @@ import GRDB
 /// GRDB's default format (`yyyy-MM-dd HH:mm:ss.SSS`, UTC), so they round-trip
 /// at millisecond precision.
 public final class Store: Sendable {
-    private let writer: any DatabaseWriter
+    let writer: any DatabaseWriter
 
     /// Opens (or creates) the database at `path` in WAL mode and runs migrations.
     public convenience init(path: String) throws {
@@ -517,6 +517,62 @@ public final class Store: Sendable {
         // prompt's, so its pull request can still name it.
         migrator.registerMigration("v9-name-source") { db in
             try db.execute(sql: "ALTER TABLE sessions ADD COLUMN name_source TEXT NOT NULL DEFAULT 'request'")
+        }
+        // What each turn changed and why, and the commits and notes that lead
+        // back to it. No reference to `sessions`: a deleted chat's turns stay.
+        migrator.registerMigration("v10-turn-records") { db in
+            try db.execute(sql: """
+                CREATE TABLE turn_records (
+                  id           TEXT PRIMARY KEY NOT NULL,
+                  project_id   TEXT,
+                  session_id   TEXT NOT NULL,
+                  chat_name    TEXT NOT NULL,
+                  provider_id  TEXT NOT NULL,
+                  number       INTEGER NOT NULL,
+                  started_at   DATETIME,
+                  ended_at     DATETIME,
+                  request      TEXT,
+                  corrections  TEXT NOT NULL DEFAULT '[]',
+                  summary      TEXT,
+                  files        TEXT NOT NULL DEFAULT '[]',
+                  uncommitted  TEXT NOT NULL DEFAULT '[]',
+                  head_before  TEXT,
+                  head_after   TEXT,
+                  branch       TEXT,
+                  pull_request INTEGER,
+                  ticket       TEXT,
+                  log_start    INTEGER NOT NULL DEFAULT 0,
+                  log_end      INTEGER NOT NULL DEFAULT 0,
+                  UNIQUE (session_id, number)
+                );
+                CREATE INDEX turn_records_branch ON turn_records(project_id, branch);
+                CREATE INDEX turn_records_pull_request ON turn_records(project_id, pull_request);
+
+                CREATE TABLE turn_commits (
+                  sha      TEXT NOT NULL,
+                  turn_id  TEXT NOT NULL REFERENCES turn_records(id) ON DELETE CASCADE,
+                  link     TEXT NOT NULL,
+                  patch_id TEXT,
+                  PRIMARY KEY (sha, turn_id)
+                );
+                CREATE INDEX turn_commits_turn ON turn_commits(turn_id);
+                CREATE INDEX turn_commits_patch ON turn_commits(patch_id);
+
+                CREATE TABLE code_notes (
+                  id         TEXT PRIMARY KEY NOT NULL,
+                  session_id TEXT NOT NULL,
+                  turn_id    TEXT REFERENCES turn_records(id) ON DELETE SET NULL,
+                  kind       TEXT NOT NULL,
+                  path       TEXT NOT NULL,
+                  line       INTEGER,
+                  commit_sha TEXT,
+                  body       TEXT NOT NULL,
+                  author     TEXT,
+                  created_at DATETIME NOT NULL
+                );
+                CREATE INDEX code_notes_session ON code_notes(session_id, turn_id);
+                CREATE INDEX code_notes_turn ON code_notes(turn_id);
+                """)
         }
         return migrator
     }

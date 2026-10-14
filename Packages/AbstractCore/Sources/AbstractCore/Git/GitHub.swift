@@ -56,6 +56,8 @@ public struct PullRequest: Sendable, Hashable, Identifiable {
         /// The diff lines the thread was started on, ending at its line.
         public var diffHunk: String?
         public var comments: [Comment]
+        /// The commit its first comment was written on.
+        public var commit: String? = nil
     }
 
     public struct ChecksSummary: Sendable, Hashable {
@@ -82,6 +84,8 @@ public struct PullRequest: Sendable, Hashable, Identifiable {
     public var createdAt: Date?
     public var updatedAt: Date?
     public var body: String?
+    /// The commit a merged pull request became on its base branch.
+    public var mergeCommit: String?
     public var checks: [Check]
     public var reviews: [Review]
     public var comments: [Comment]
@@ -116,6 +120,7 @@ public struct PullRequest: Sendable, Hashable, Identifiable {
         updated.reviews = reviews
         updated.comments = comments
         updated.threads = threads
+        updated.mergeCommit = summary.mergeCommit ?? mergeCommit
         return updated
     }
 }
@@ -149,7 +154,7 @@ public enum RepoAccess: String, Sendable, Hashable {
 
 /// Pull requests through the GitHub CLI, over an `Executor`.
 public enum GitHub {
-    static let summaryFields = "number,title,state,isDraft,url,headRefName,baseRefName,author,reviewDecision,updatedAt,statusCheckRollup,additions,deletions"
+    static let summaryFields = "number,title,state,isDraft,url,headRefName,baseRefName,author,reviewDecision,updatedAt,statusCheckRollup,additions,deletions,mergeCommit"
     static let detailFields = summaryFields + ",mergeable,mergeStateStatus,changedFiles,createdAt,body,reviews,comments"
 
     public static func access(_ exec: any Executor) async -> GitHubAccess {
@@ -212,7 +217,7 @@ public enum GitHub {
         let query = """
         query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) {
           reviewThreads(first: 100) { nodes { id isResolved isOutdated path line originalLine
-            comments(first: 50) { nodes { id author { login avatarUrl } body createdAt url diffHunk } } } } } } }
+            comments(first: 50) { nodes { id author { login avatarUrl } body createdAt url diffHunk originalCommit { oid } } } } } } } }
         """
         let out = try await exec.run("gh", ["api", "graphql", "-F", "owner={owner}", "-F", "name={repo}", "-F", "number=\(number)",
                                             "-f", "query=\(query)"], cwd: root)
@@ -255,10 +260,10 @@ public enum GitHub {
                              createdAt: c["createdAt"]?.string.flatMap { ISO8601DateFormatter().date(from: $0) },
                              url: c["url"]?.string.flatMap(URL.init(string:)))
             }
-            let hunk = (t["comments"]?["nodes"]?.array?.first?["diffHunk"]?.string)
+            let first = t["comments"]?["nodes"]?.array?.first
             return .init(id: id, path: path, line: t["line"]?.int, originalLine: t["originalLine"]?.int,
                          isResolved: t["isResolved"]?.bool ?? false, isOutdated: t["isOutdated"]?.bool ?? false,
-                         diffHunk: hunk, comments: comments)
+                         diffHunk: first?["diffHunk"]?.string, comments: comments, commit: first?["originalCommit"]?["oid"]?.string)
         }
     }
 
@@ -289,6 +294,7 @@ extension PullRequest {
         createdAt = json["createdAt"]?.string.flatMap(Self.date)
         updatedAt = json["updatedAt"]?.string.flatMap(Self.date)
         body = json["body"]?.string
+        mergeCommit = json["mergeCommit"]?["oid"]?.string
         checks = (json["statusCheckRollup"]?.array ?? []).compactMap(Self.check)
         reviews = (json["reviews"]?.array ?? []).compactMap { r in
             guard let verdict = r["state"]?.string.flatMap(Review.Verdict.init(rawValue:)) else { return nil }

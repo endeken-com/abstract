@@ -60,11 +60,12 @@ struct GitHubTests {
     }
 
     @Test func aListSkipsEntriesItCannotRead() throws {
-        let list = #"[{"number": 3, "title": "A", "state": "MERGED", "headRefName": "x", "baseRefName": "main"}, {"oops": true}]"#
+        let list = #"[{"number": 3, "title": "A", "state": "MERGED", "headRefName": "x", "baseRefName": "main", "mergeCommit": {"oid": "abc123"}}, {"oops": true}]"#
         let prs = try GitHub.decodeList(Data(list.utf8))
         #expect(prs.map(\.number) == [3])
         #expect(prs.first?.state == .merged)
         #expect(prs.first?.checks.isEmpty == true)
+        #expect(prs.first?.mergeCommit == "abc123")
     }
 
     @Test func reviewThreadsKeepTheirRepliesInOrder() throws {
@@ -72,7 +73,7 @@ struct GitHubTests {
         {"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": [
           {"id": "T1", "isResolved": false, "isOutdated": true, "path": "app/layout.tsx", "line": null, "originalLine": 37,
            "comments": {"nodes": [
-             {"id": "C1", "author": {"login": "ana", "avatarUrl": "https://avatars.githubusercontent.com/u/1"}, "body": "Blocker.", "createdAt": "2026-09-22T14:30:25Z", "diffHunk": "@@ -15,3 +15,4 @@"},
+             {"id": "C1", "author": {"login": "ana", "avatarUrl": "https://avatars.githubusercontent.com/u/1"}, "body": "Blocker.", "createdAt": "2026-09-22T14:30:25Z", "diffHunk": "@@ -15,3 +15,4 @@", "originalCommit": {"oid": "def456"}},
              {"id": "C2", "author": {"login": "wes", "avatarUrl": "https://avatars.githubusercontent.com/u/2"}, "body": "Fixed.", "createdAt": "2026-09-23T04:41:00Z"}
            ]}},
           {"id": "T2", "isResolved": true, "isOutdated": false, "path": "a.swift", "line": 4, "comments": {"nodes": []}}
@@ -84,6 +85,7 @@ struct GitHubTests {
         #expect(threads[0].comments.map(\.author) == ["ana", "wes"])
         #expect(threads[0].comments[0].avatar?.host == "avatars.githubusercontent.com")
         #expect(threads[0].diffHunk == "@@ -15,3 +15,4 @@")
+        #expect(threads[0].commit == "def456" && threads[1].commit == nil)
         #expect(threads[1].isResolved)
     }
 
