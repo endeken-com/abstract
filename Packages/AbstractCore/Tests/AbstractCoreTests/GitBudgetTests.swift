@@ -28,7 +28,7 @@ private final class FakeGit: Executor {
 
     var homeDirectory: String { "/home/test" }
 
-    func run(_ command: String, _ args: [String], cwd: String?) async throws -> ExecResult {
+    func run(_ command: String, _ args: [String], cwd: String?, stdin: Data?) async throws -> ExecResult {
         let folder = cwd ?? ""
         let runNumber = counts.withLock { c in
             c.live += 1

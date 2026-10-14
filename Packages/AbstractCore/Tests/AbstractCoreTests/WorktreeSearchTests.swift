@@ -198,7 +198,7 @@ private final class HangingGit: Executor {
     }
 
     var homeDirectory: String { "/home/test" }
-    func run(_ command: String, _ args: [String], cwd: String?) async throws -> ExecResult {
+    func run(_ command: String, _ args: [String], cwd: String?, stdin: Data?) async throws -> ExecResult {
         throw AbstractError.message("not here")
     }
     func spawn(_ spec: LaunchSpec, onLine: @escaping @Sendable (OutputLine) -> Void,

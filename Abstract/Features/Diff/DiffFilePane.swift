@@ -129,7 +129,8 @@ private struct DiffFileHeader: View {
             if !remote { Button("Reveal in Finder") { reveal() } }
             Divider()
             Button("Apply to \(context.projectName)") { Task { await review.acceptFile(file, context, model: model) } }
-                .disabled(review.isAccepted(file) || review.isWorking)
+                .disabled(review.isAccepted(file) || review.isWorking || context.acceptBlocked != nil)
+            if let blocked = context.acceptBlocked { Text(blocked) }
             if review.mode == .uncommitted {
                 Button("Discard Changes…", role: .destructive, action: onDiscard)
                     .disabled(review.isWorking)

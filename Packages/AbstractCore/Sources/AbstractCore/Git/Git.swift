@@ -21,8 +21,8 @@ public struct WorktreeInfo: Sendable, Hashable, Identifiable {
 public enum Git {
     // MARK: Running git
 
-    static func git(_ exec: any Executor, cwd: String?, _ args: [String]) async throws -> ExecResult {
-        try await exec.run("git", args, cwd: cwd)
+    static func git(_ exec: any Executor, cwd: String?, _ args: [String], stdin: Data? = nil) async throws -> ExecResult {
+        try await exec.run("git", args, cwd: cwd, stdin: stdin)
     }
 
     /// Stdout of a git command that must succeed.

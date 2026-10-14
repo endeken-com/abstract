@@ -440,7 +440,8 @@ final class RemoteService {
                                   (session.id, model.pendingPermissions(session.id).map {
                                       RemotePendingPermission(requestId: $0.requestId, toolName: $0.toolName, input: $0.input)
                                   })
-                              }), turnStartedAt: model.turnStarts, pagedHistory: true, internetAddress: internetAddress,
+                              }), turnStartedAt: model.turnStarts, pagedHistory: true, execInput: true,
+                              internetAddress: internetAddress,
                               backgroundTasks: model.alive.filter { model.runningBackgroundTasks($0) > 0 }.sorted(),
                               unmergedWork: model.branchStates.mapValues(\.hasUnmergedWork))
     }
@@ -992,8 +993,8 @@ final class HostedPeer {
         case .closePullRequest(let session):
             do { try await model.closePullRequest(session); return .ok }
             catch { return .failed(error.localizedDescription) }
-        case let .exec(command, args, cwd):
-            return await exec(command, args, cwd: cwd)
+        case let .exec(command, args, cwd, stdin):
+            return await exec(command, args, cwd: cwd, stdin: stdin)
         case .spawn(let spec):
             return spawn(id, spec)
         case .stopProcess(let process):

@@ -45,7 +45,9 @@ public protocol RunningProcess: AnyObject, Sendable {
 /// the same protocol so git and session code never change.
 public protocol Executor: Sendable {
     var homeDirectory: String { get }
-    func run(_ command: String, _ args: [String], cwd: String?) async throws -> ExecResult
+    /// Run to completion. `stdin`, when given, is the command's whole input;
+    /// otherwise it reads nothing.
+    func run(_ command: String, _ args: [String], cwd: String?, stdin: Data?) async throws -> ExecResult
     /// Spawn with line-buffered output. Callbacks arrive on a background queue.
     func spawn(
         _ spec: LaunchSpec,
@@ -80,6 +82,12 @@ public struct FileInfo: Sendable, Hashable, Codable {
         guard let a = try? FileManager.default.attributesOfItem(atPath: path) else { return nil }
         return FileInfo(size: (a[.size] as? NSNumber)?.int64Value ?? 0, modified: a[.modificationDate] as? Date,
                         isDirectory: a[.type] as? FileAttributeType == .typeDirectory)
+    }
+}
+
+public extension Executor {
+    func run(_ command: String, _ args: [String], cwd: String?) async throws -> ExecResult {
+        try await run(command, args, cwd: cwd, stdin: nil)
     }
 }
 

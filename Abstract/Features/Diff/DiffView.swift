@@ -268,7 +268,8 @@ private struct ReviewToolbar: View {
                 Toggle("Hide Whitespace Changes", isOn: $ignoreWhitespace)
                 Divider()
                 Button("Apply All to \(context.projectName)…", action: onApplyAll)
-                    .disabled(count == 0 || review.isWorking)
+                    .disabled(count == 0 || review.isWorking || context.acceptBlocked != nil)
+                if let blocked = context.acceptBlocked { Text(blocked) }
                 if review.mode == .uncommitted {
                     Button("Discard All Changes…", role: .destructive, action: onDiscardAll)
                         .disabled(count == 0 || review.isWorking)

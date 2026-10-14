@@ -27,7 +27,7 @@ public final class LocalExecutor: Executor, Sendable {
 
     // MARK: Executor
 
-    public func run(_ command: String, _ args: [String], cwd: String?) async throws -> ExecResult {
+    public func run(_ command: String, _ args: [String], cwd: String?, stdin: Data?) async throws -> ExecResult {
         let path = await LoginShell.path()
         guard let executable = Self.resolveExecutable(command, searchPath: path, home: homeDirectory, cwd: cwd) else {
             throw AbstractError.notFound(command)
@@ -47,11 +47,14 @@ public final class LocalExecutor: Executor, Sendable {
                 do {
                     child = try Spawner.launch(
                         executable: executable, arguments: [executable] + args, environment: environment, cwd: cwd,
-                        stdin: .null, stdout: .pipe, stderr: .pipe)
+                        stdin: stdin == nil ? .null : .pipe, stdout: .pipe, stderr: .pipe)
                 } catch {
                     collector.fail(AbstractError.message("failed to run `\(command)`: \(error.localizedDescription)"))
                     return
                 }
+                // Written beside the reads below, so a child answering before
+                // it has read everything can't leave both sides waiting.
+                if let stdin { Thread.detachNewThread { Self.feed(stdin, to: child.stdin) } }
                 // Both pipes drain concurrently, so a child filling one while we
                 // wait on the other can never deadlock.
                 for (fd, kind) in [(child.stdout, OutputStreamKind.stdout), (child.stderr, .stderr)] {
@@ -136,6 +139,19 @@ public final class LocalExecutor: Executor, Sendable {
     }
 
     // MARK: Helpers
+
+    /// All of `data` into a child's stdin, then end it. A child that exits
+    /// first just stops the writing.
+    static func feed(_ data: Data, to fd: Int32) {
+        defer { close(fd) }
+        data.withUnsafeBytes { buffer in
+            var offset = 0
+            while offset < buffer.count {
+                let n = Darwin.write(fd, buffer.baseAddress! + offset, buffer.count - offset)
+                if n > 0 { offset += n } else if n < 0 && errno == EINTR { continue } else { return }
+            }
+        }
+    }
 
     static func childEnvironment(path: String) -> [String: String] {
         var environment = ProcessInfo.processInfo.environment

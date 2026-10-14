@@ -196,6 +196,8 @@ struct DiffContext: Sendable {
     let exclude: [String]
     /// The ref the chat's branch was made from.
     let baseRef: String?
+    /// Why nothing can be accepted from here, when it can't.
+    var acceptBlocked: String? = nil
 }
 
 enum DiffAvailability {
@@ -219,7 +221,8 @@ extension AppModel {
         guard remote || FileManager.default.fileExists(atPath: worktree) else { return .worktreeMissing(worktree) }
         return .ready(DiffContext(executor: executor(for: sessionId), reader: reader(for: sessionId), sessionId: sessionId,
                                   worktree: worktree, root: project.rootPath,
-                                  projectName: project.name, exclude: project.nestedRepos, baseRef: session.baseRef))
+                                  projectName: project.name, exclude: project.nestedRepos, baseRef: session.baseRef,
+                                  acceptBlocked: RemoteService.split(sessionId).flatMap { self.remote.inputRefusal($0.device) }))
     }
 }
 
@@ -457,11 +460,6 @@ final class DiffReview {
             update(\.mode, committed ? .committed : .uncommitted)
         }
         picksAfresh = false
-        let compare: DiffCompare = switch mode {
-        case .uncommitted: .uncommitted
-        case .committed: base.map { .committed(base: $0) } ?? .uncommitted
-        case .commit(let c): .commit(sha: c.sha, repo: c.repo)
-        }
         do {
             let changes = try await RepoReview.changes(exec, worktree: context.worktree, repo: repo, repos: repoList,
                                                        exclude: context.exclude, compare: compare, ignoreWhitespace: ignoreWhitespace)
@@ -564,7 +562,7 @@ final class DiffReview {
     /// Apply a whole file onto the project's main working tree.
     func acceptFile(_ file: ReviewFile, _ context: DiffContext, model: AppModel) async {
         await perform("file:\(file.path)", context, model: model) {
-            let outcome = try await Self.accept(file, context)
+            let outcome = try await Self.accept(file, context, compare: self.compare)
             self.markAccepted(file.hunks.map(\.fingerprint) + [file.fileFingerprint], session: context.sessionId)
             return "Applied \(file.name) to \(context.projectName)" + Self.note(outcome)
         }
@@ -595,7 +593,7 @@ final class DiffReview {
         var failures: [String] = []
         for file in pending {
             do {
-                try await Self.accept(file, context)
+                try await Self.accept(file, context, compare: compare)
                 markAccepted(file.hunks.map(\.fingerprint) + [file.fileFingerprint], session: context.sessionId)
             } catch {
                 failures.append("\(file.path): \(Self.explain(error).0)")
@@ -610,6 +608,15 @@ final class DiffReview {
             model.flash("\(failures.count) file\(failures.count == 1 ? "" : "s") couldn't be accepted", isError: true)
         }
         await load(context)
+    }
+
+    /// What the files shown compare.
+    var compare: DiffCompare {
+        switch mode {
+        case .uncommitted: .uncommitted
+        case .committed: base.map { .committed(base: $0) } ?? .uncommitted
+        case .commit(let c): .commit(sha: c.sha, repo: c.repo)
+        }
     }
 
     func isWorking(on key: String) -> Bool { workingOn == key || workingOn == "all" }
@@ -646,19 +653,14 @@ final class DiffReview {
     // MARK: Git
 
     @discardableResult
-    private static func accept(_ file: ReviewFile, _ context: DiffContext) async throws -> Diff.AcceptOutcome {
+    private static func accept(_ file: ReviewFile, _ context: DiffContext, compare: DiffCompare) async throws -> Diff.AcceptOutcome {
+        if let blocked = context.acceptBlocked { throw AbstractError.message(blocked) }
         let repo = file.diff.repo
-        let root = repoDirectory(context.root, repo)
         // Applied from an empty submodule folder, git would patch the parent instead.
-        if !repo.isEmpty, !(await Submodules.isCheckedOut(context.executor, directory: root)) {
+        if !repo.isEmpty, !(await Submodules.isCheckedOut(context.executor, directory: repoDirectory(context.root, repo))) {
             throw AbstractError.message("\(repo) isn't checked out in \(context.projectName). Run `git submodule update --init` there.")
         }
-        if file.diff.isBinary {
-            try copyBinary(file, from: context.worktree, to: context.root)
-            return .applied
-        }
-        let patch = Diff.buildPatch(file.diff, hunks: [])
-        return try await Diff.accept(context.executor, root: root, patch: patch)
+        return try await Diff.accept(context.executor, file: file.diff, worktree: context.worktree, root: context.root, compare: compare)
     }
 
     /// Plain words for the rare cases where git had to merge.
@@ -667,26 +669,6 @@ final class DiffReview {
         case .applied: ""
         case .mergedAndStaged: " (merged three ways and staged)"
         case .conflicts: " with conflicts; resolve the markers in your editor"
-        }
-    }
-
-    private static func copyBinary(_ file: ReviewFile, from worktree: String, to root: String) throws {
-        let fm = FileManager.default
-        let target = URL(fileURLWithPath: join(root, file.path))
-        do {
-            if file.diff.status == .renamed, let old = file.diff.oldPath {
-                let oldURL = URL(fileURLWithPath: join(root, old))
-                if fm.fileExists(atPath: oldURL.path) { try fm.removeItem(at: oldURL) }
-            }
-            if file.diff.status == .deleted {
-                if fm.fileExists(atPath: target.path) { try fm.removeItem(at: target) }
-                return
-            }
-            try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
-            if fm.fileExists(atPath: target.path) { try fm.removeItem(at: target) }
-            try fm.copyItem(at: URL(fileURLWithPath: join(worktree, file.path)), to: target)
-        } catch {
-            throw AbstractError.message("Couldn't copy \(file.path): \(error.localizedDescription)")
         }
     }
 

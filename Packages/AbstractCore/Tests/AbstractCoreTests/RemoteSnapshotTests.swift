@@ -17,11 +17,13 @@ struct RemoteSnapshotTests {
                                                                            comments: [RemotePullRequestComment(author: "reviewer", body: "Align this.", createdAt: nil, isBot: false)])])
         let turnStart = Date(timeIntervalSinceReferenceDate: 800_000_000)
         let snapshot = RemoteSnapshot(projects: [], sessions: [], providers: [], alive: [],
-                                      pullRequests: ["chat-id": request], turnStartedAt: ["chat-id": turnStart], pagedHistory: true)
+                                      pullRequests: ["chat-id": request], turnStartedAt: ["chat-id": turnStart], pagedHistory: true,
+                                      execInput: true)
         let decoded = try JSONDecoder().decode(RemoteSnapshot.self, from: JSONEncoder().encode(snapshot))
         #expect(decoded.pullRequests?["chat-id"] == request)
         #expect(decoded.turnStartedAt?["chat-id"] == turnStart)
         #expect(decoded.pagedHistory == true)
+        #expect(decoded.execInput == true)
 
         let oldData = Data(#"{"projects":[],"sessions":[],"providers":[],"alive":[]}"#.utf8)
         let oldSnapshot = try JSONDecoder().decode(RemoteSnapshot.self, from: oldData)
@@ -30,6 +32,7 @@ struct RemoteSnapshotTests {
         #expect(oldSnapshot.pendingPermissions == nil)
         #expect(oldSnapshot.turnStartedAt == nil)
         #expect(oldSnapshot.pagedHistory == nil)
+        #expect(oldSnapshot.execInput == nil, "an older Mac can't take input to accept a patch")
 
         let olderRequest = Data(#"{"number":42,"title":"Improve sidebar","state":"OPEN","isDraft":false}"#.utf8)
         let decodedOlderRequest = try JSONDecoder().decode(RemotePullRequest.self, from: olderRequest)
