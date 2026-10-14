@@ -37,9 +37,15 @@ jobs:
       - name: App icons
         run: scripts/make-icons.sh --check
 
+      # Tests that wait on processes against a deadline run on their own first:
+      # alongside the git-heavy suites, the 3-core runner starves them past it.
       - name: AbstractCore tests
         working-directory: Packages/AbstractCore
-        run: swift test
+        env:
+          TIMED: LocalExecutorTests|ClaudeModelCatalogTests|ProjectSettingsTests|ChatNamingTests
+        run: |
+          swift test --filter "$TIMED"
+          swift test --skip "$TIMED"
 
       - uses: actions/cache/restore@v4
         id: iroh-cache

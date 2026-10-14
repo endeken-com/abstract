@@ -167,13 +167,15 @@ private struct AppearanceSettingsPane: View {
         Form {
             Section {
                 HStack(spacing: Space.md) {
-                    ForEach([ThemeChoice.graphite, .paper, .system]) { choice in
+                    ForEach([ThemeChoice.graphite, .paper, .ink, .system]) { choice in
                         ThemeCard(choice: choice, selected: theme == choice) { theme = choice }
                     }
                 }
                 .padding(.vertical, Space.xs)
             } header: {
                 Text("Theme")
+            } footer: {
+                SettingsCaption("Ink is true black with high contrast. Match System uses it when macOS is in Dark mode with Increase contrast turned on (System Settings → Accessibility → Display).")
             }
             InterfaceFontSection()
             EditorFontSection()
@@ -446,14 +448,16 @@ private struct ThemeCard: View {
     private var preview: some View {
         switch choice {
         case .graphite:
-            WindowMock().environment(\.colorScheme, .dark)
+            WindowMock(theme: .graphite)
         case .paper:
-            WindowMock().environment(\.colorScheme, .light)
+            WindowMock(theme: .paper)
+        case .ink:
+            WindowMock(theme: .ink)
         case .system:
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
-                    WindowMock().environment(\.colorScheme, .light)
-                    WindowMock().environment(\.colorScheme, .dark)
+                    WindowMock(theme: .paper)
+                    WindowMock(theme: .graphite)
                         .mask(alignment: .trailing) { Rectangle().frame(width: geo.size.width / 2) }
                 }
             }
@@ -461,48 +465,52 @@ private struct ThemeCard: View {
     }
 }
 
-/// Sidebar, a heading, a few lines and an accent button, in theme colours.
+/// Sidebar, a heading, a few lines and an accent button, in one theme's colours.
 private struct WindowMock: View {
+    let theme: Theme
+
     var body: some View {
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 3) {
-                    ForEach(0..<3, id: \.self) { _ in Circle().fill(Color.btTextTertiary.opacity(0.6)).frame(width: 5, height: 5) }
+                    ForEach(0..<3, id: \.self) { _ in Circle().fill(c(.textTertiary).opacity(0.6)).frame(width: 5, height: 5) }
                 }
                 .padding(.bottom, 4)
-                bar(Color.btTextTertiary.opacity(0.5), width: 30)
-                bar(Color.btText.opacity(0.55), width: 38)
+                bar(c(.textTertiary).opacity(0.5), width: 30)
+                bar(c(.text).opacity(0.55), width: 38)
                     .padding(.vertical, 3)
                     .padding(.horizontal, 3)
-                    .background(Color.btSelection, in: RoundedRectangle(cornerRadius: 2.5, style: .continuous))
+                    .background(c(.selection), in: RoundedRectangle(cornerRadius: 2.5, style: .continuous))
                     .padding(.horizontal, -3)
-                bar(Color.btTextTertiary.opacity(0.5), width: 26)
-                bar(Color.btTextTertiary.opacity(0.5), width: 34)
+                bar(c(.textTertiary).opacity(0.5), width: 26)
+                bar(c(.textTertiary).opacity(0.5), width: 34)
             }
             .padding(7)
             .frame(width: 58, alignment: .topLeading)
             .frame(maxHeight: .infinity, alignment: .top)
-            .background(Color.btSidebar)
+            .background(c(.sidebar))
 
-            Rectangle().fill(Color.btBorder).frame(width: 0.5)
+            Rectangle().fill(c(.border)).frame(width: 0.5)
 
             VStack(alignment: .leading, spacing: 5) {
-                bar(Color.btText.opacity(0.8), width: 48, height: 4.5)
-                bar(Color.btTextSecondary.opacity(0.45), width: 70)
-                Rectangle().fill(Color.btBorder).frame(height: 0.5).padding(.vertical, 2)
-                bar(Color.btTextSecondary.opacity(0.5), width: 58)
-                bar(Color.btTextTertiary.opacity(0.45), width: 44)
+                bar(c(.text).opacity(0.8), width: 48, height: 4.5)
+                bar(c(.textSecondary).opacity(0.45), width: 70)
+                Rectangle().fill(c(.border)).frame(height: 0.5).padding(.vertical, 2)
+                bar(c(.textSecondary).opacity(0.5), width: 58)
+                bar(c(.textTertiary).opacity(0.45), width: 44)
                 Spacer(minLength: 0)
                 HStack {
                     Spacer()
-                    Capsule().fill(Color.btAccent).frame(width: 22, height: 7)
+                    Capsule().fill(c(.accent)).frame(width: 22, height: 7)
                 }
             }
             .padding(8)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(Color.btCanvas)
+            .background(c(.canvas))
         }
     }
+
+    private func c(_ role: PaletteRole) -> Color { .bt(role, in: theme) }
 
     private func bar(_ color: Color, width: CGFloat, height: CGFloat = 3.5) -> some View {
         Capsule().fill(color).frame(width: width, height: height)

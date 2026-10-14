@@ -1,15 +1,9 @@
 import Foundation
+import AbstractCore
 
 /// Short relative times and durations for dense UI ("3m", "in 2h", "4m 12s").
 enum RelativeTime {
-    static func short(_ date: Date, now: Date = Date()) -> String {
-        let s = now.timeIntervalSince(date)
-        if abs(s) < 45 { return "now" }
-        let future = s < 0
-        let a = abs(s)
-        let text: String = a < 3600 ? "\(Int(a / 60))m" : a < 86_400 ? "\(Int(a / 3600))h" : a < 604_800 ? "\(Int(a / 86_400))d" : "\(Int(a / 604_800))w"
-        return future ? "in \(text)" : text
-    }
+    static func short(_ date: Date, now: Date = Date()) -> String { RelativeAge.short(date, now: now) }
 
     static func duration(_ ms: Int) -> String {
         let s = ms / 1000

@@ -200,7 +200,8 @@ private struct DiffFileBody: View {
                 }
             }
             Color.clear.frame(height: Space.md)
-                .task(id: file.id) { await highlights.load(file) }
+                // Coloured again in a new theme: SwiftUI keeps the colours it drew text in.
+                .task(id: [file.id, ThemeState.shared.choice.rawValue]) { await highlights.load(file) }
         }
     }
 
@@ -471,7 +472,7 @@ final class DiffHighlights {
     }
 
     func load(_ file: ReviewFile) async {
-        let signature = file.hunks.map(\.fingerprint)
+        let signature = file.hunks.map(\.fingerprint) + [ThemeState.shared.current.rawValue]
         guard byFile[file.path]?.signature != signature, !loading.contains(file.path),
               file.lineCount <= 20_000, let language = CodeHighlighter.language(for: file.path) else { return }
         loading.insert(file.path)
