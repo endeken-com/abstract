@@ -104,7 +104,7 @@ enum TranscriptRows {
                 let target = ToolPresentation.command(call).map { TextClip.line($0) } ?? ToolPresentation.path(call) ?? ""
                 return [ToolPresentation.verb(call.name), target].filter { !$0.isEmpty }.joined(separator: " ")
             }.joined(separator: "\n")
-        case let .turn(_, summary, _, _, _): return summary ?? ""
+        case let .turn(_, info): return TurnSummary.label(info)
         case let .error(_, message): return message
         case let .notice(_, notice): return notice.message(agent: "The agent")
         case let .handoff(_, from, to, summary, _):
@@ -157,8 +157,8 @@ struct BlockView: View, Equatable {
         case .system:
             // The model and mode are in the composer footer already.
             EmptyView()
-        case let .turn(_, summary, duration, usage, cost):
-            TurnSummary(summary: summary, durationMs: duration, usage: usage, cost: cost)
+        case let .turn(id, info):
+            TurnSummary(id: id, info: info, sessionId: sessionId)
         case let .error(_, message):
             VStack(alignment: .leading, spacing: Space.sm) {
                 HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
@@ -526,33 +526,64 @@ private struct ThinkingView: View {
 }
 
 /// The end of a turn as a quiet rule: what was done and how long it took.
-/// Token counts and cost are subscription noise, so they wait in the tooltip.
+/// Token counts and cost are subscription noise, so they wait in the
+/// tooltip. The newest one adds the chat's total once it's idle.
 private struct TurnSummary: View {
-    let summary: String?
-    let durationMs: Int?
-    let usage: UsageTotals?
-    let cost: Double?
+    @Environment(AppModel.self) private var model
+    let id: Int
+    let info: TurnInfo
+    let sessionId: String
 
     var body: some View {
-        let label = [summary, durationMs.map { RelativeTime.duration($0) }].compactMap { $0 }.joined(separator: " · ")
-        let details = [
-            usage.map { "\(RelativeTime.tokens($0.inputTokens + $0.cacheRead + $0.cacheWrite)) in, \(RelativeTime.tokens($0.outputTokens)) out" },
-            cost.flatMap { $0 > 0 ? String(format: "$%.2f", $0) : nil },
-        ].compactMap { $0 }.joined(separator: " · ")
-        if !label.isEmpty {
-            HStack(spacing: Space.md) {
-                Hairline()
-                Text(label)
-                    .font(.btChatCaption)
-                    .foregroundStyle(Color.btTextTertiary)
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .fixedSize()
-                Hairline()
-            }
-            .padding(.vertical, Space.xs)
-            .help(details)
+        HStack(spacing: Space.md) {
+            Hairline()
+            Text([Self.label(info), total].compactMap { $0 }.joined(separator: " · "))
+                .font(.btChatCaption)
+                .foregroundStyle(Color.btTextTertiary)
+                .monospacedDigit()
+                .lineLimit(1)
+                .fixedSize()
+            Hairline()
         }
+        .padding(.vertical, Space.xs)
+        .help(details)
+    }
+
+    /// "2m 14s", "Did the thing · Done in 2m 14s", "Stopped after 1m 12s",
+    /// "Failed after 40s"; "—" when the log doesn't say.
+    static func label(_ info: TurnInfo) -> String {
+        let length = info.durationMs.map { RelativeTime.duration($0) }
+        switch info.ending {
+        case .stopped: return length.map { "Stopped after \($0)" } ?? "Stopped"
+        case .failed: return length.map { "Failed after \($0)" } ?? "Failed"
+        case .done:
+            guard let summary = info.summary, !summary.isEmpty else { return length ?? "—" }
+            return [summary, length.map { "Done in \($0)" }].compactMap { $0 }.joined(separator: " · ")
+        }
+    }
+
+    /// The whole chat's working time, once the chat is idle and has had more than one turn.
+    private var total: String? {
+        let feed = model.feed(sessionId)
+        guard feed.lastTurnId == id, feed.time.turns > 1,
+              let status = model.session(sessionId)?.status, status != .running, status != .waitingInput, status != .provisioning
+        else { return nil }
+        return "\(RelativeTime.duration(feed.time.workingMs)) in total"
+    }
+
+    private var details: String {
+        let times = info.startedAt.flatMap { start in
+            info.endedAt.map { "\(start.formatted(date: .omitted, time: .standard)) – \($0.formatted(date: .omitted, time: .standard))" }
+        }
+        let reported = info.reportedMs.flatMap { reported in
+            info.measuredMs.flatMap { abs($0 - reported) >= 1000 ? "the agent counted \(RelativeTime.duration(reported)) itself" : nil }
+        }
+        return [
+            times,
+            reported,
+            info.usage.map { "\(RelativeTime.tokens($0.inputTokens + $0.cacheRead + $0.cacheWrite)) in, \(RelativeTime.tokens($0.outputTokens)) out" },
+            info.costUsd.flatMap { $0 > 0 ? String(format: "$%.2f", $0) : nil },
+        ].compactMap { $0 }.joined(separator: " · ")
     }
 }
 
@@ -599,7 +630,8 @@ private struct WorkingIndicator: View {
                 HStack(spacing: Space.sm) {
                     DotLoader()
                     Text(label).font(.btChatCallout.weight(.regular)).foregroundStyle(Color.btTextSecondary)
-                    if let start = model.turnStartedAt[session.id] {
+                    // The log knows when the turn started, after a relaunch too.
+                    if let start = feed.turnStartedAt ?? model.turnStartedAt[session.id] {
                         Text(RelativeTime.duration(Int(context.date.timeIntervalSince(start) * 1000)))
                             .font(.btChatCallout).foregroundStyle(Color.btTextTertiary).monospacedDigit()
                     }

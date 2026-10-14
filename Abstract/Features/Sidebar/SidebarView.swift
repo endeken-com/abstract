@@ -578,6 +578,7 @@ private struct RailChatDetails: View {
                     value(ProviderRegistry.name(session.providerId))
                 }
                 row("Model") { Image(systemName: "cpu") } content: { value(modelName) }
+                row("Time") { Image(systemName: "clock") } content: { value(timeSummary) }
                 row("Device") { Image(systemName: "laptopcomputer") } content: { value(deviceName) }
                 row("Project") { Image(systemName: "folder") } content: {
                     value(model.project(session.projectId)?.name ?? "Standalone")
@@ -586,6 +587,17 @@ private struct RailChatDetails: View {
         }
         .padding(Space.md)
         .frame(width: 360, alignment: .leading)
+        // The working time is read from the chat's log.
+        .onAppear { if RemoteService.split(session.id) == nil { model.loadTimelineIfNeeded(session.id) } }
+    }
+
+    /// "47m working over 12 turns · started Oct 11, 14:02": the turns added
+    /// up, not the time spent waiting for you between them.
+    private var timeSummary: String {
+        let time = model.feed(session.id).time
+        let started = "started \(session.createdAt.formatted(.dateTime.month(.abbreviated).day().hour().minute()))"
+        guard time.turns > 0 else { return "No turns yet · \(started)" }
+        return "\(RelativeTime.duration(time.workingMs)) working over \(time.turns) turn\(time.turns == 1 ? "" : "s") · \(started)"
     }
 
     @ViewBuilder private var prRow: some View {

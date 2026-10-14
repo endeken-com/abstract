@@ -57,7 +57,7 @@ public final class SessionEngine: Sendable {
         let process = try executor.spawn(
             spec,
             onLine: { [weak self] line in
-                let line = enricher?.enrich(line) ?? line
+                let line = Self.stamped(enricher?.enrich(line) ?? line)
                 // The log is the single source of sequence numbers, so live
                 // streaming and replay always agree.
                 let n = writer.append(line)
@@ -92,6 +92,7 @@ public final class SessionEngine: Sendable {
     /// like any other. Returns its number in the log.
     @discardableResult
     public func record(sessionId: String, _ line: OutputLine) -> Int {
+        let line = Self.stamped(line)
         let writer = state.withLock { $0[sessionId]?.writer }
         let n: Int
         if let writer {
@@ -104,6 +105,14 @@ public final class SessionEngine: Sendable {
         }
         continuation.yield(.line(sessionId: sessionId, seq: n, line))
         return n
+    }
+
+    /// Every logged line keeps when it was written, so a turn's length can be
+    /// worked out again after a relaunch.
+    private static func stamped(_ line: OutputLine) -> OutputLine {
+        var line = line
+        if line.at == nil { line.at = Date() }
+        return line
     }
 
     /// Lines in the session's log so far.
