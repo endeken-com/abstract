@@ -14,8 +14,8 @@ Releases are cut on purpose, never on merge:
 - **Patch**: merge the fix into `main` first, then cherry-pick it onto `vX.Y.x` in a pull
   request against that branch. Once that merges: Actions → *Patch release* → `vX.Y.x`,
   which tags `vX.Y.(n+1)`.
-- **Nightly**: checks `main` at 06:00 UTC and builds once tests pass, when `main` changed
-  since the last nightly (Actions → *Nightly* → force, to build one now).
+- **Nightly**: `main` builds every day at 06:00 UTC when it changed (Actions → *Nightly*
+  → force, to build one now).
 
 A release branch only ever receives cherry-picked fixes, and is never merged back into
 `main`.
