@@ -21,6 +21,8 @@ import { SwipeForward } from './SwipeForward';
 import { useKeyboardHeight } from './useKeyboardVisible';
 import { NativeSelect } from './NativeSelect';
 import { ProviderLogo, providerMenuImage } from './ProviderLogo';
+import { ChatListHeader, ChatRow, NoMatches, StatusGroups, useChatListPrefs, useTicking } from './ChatList';
+import { chatsFromMacs, filterIsEmpty, narrow, type ChatFacts } from './chatGroups';
 import { KeyboardAwareScrollView } from './KeyboardAwareScrollView';
 import { ProgressiveBlur } from './ProgressiveBlur';
 import { SyntaxCode, highlightDiffLines } from './SyntaxCode';
@@ -121,43 +123,57 @@ function RailAction({ icon, title, detail, onPress }: { icon: IconName; title: s
     {detail ? <Text style={styles.railDetail}>{detail}</Text> : null}
   </Pressable>;
 }
-function RailChat({ mac, chat, selected, navigate }: { mac: MacView; chat: Session; selected: boolean; navigate: (name: string, params?: Record<string, unknown>) => void }) {
-  const pr = mac.snapshot?.pullRequests?.[chat.id];
-  return <Pressable onPress={() => navigate('Chat', { hostId: mac.id, sessionId: chat.id })} style={[styles.railChat, selected && styles.railChatSelected]}>
-    {pr ? <PullRequestIcon pr={pr} size={13} /> : <View style={[styles.statusDiamond, chat.status === 'running' && styles.statusRunning]} />}<Text numberOfLines={1} style={styles.railChatTitle}>{chat.name}</Text>
-    {chat.status === 'running' ? <Text style={styles.railDetail}>•••</Text> : null}
-  </Pressable>;
-}
 function WorkspaceRail({ navigate, selectedChat }: { navigate: (name: string, params?: Record<string, unknown>) => void; selectedChat?: { hostId?: string; sessionId?: string } }) {
   const state = useRemote();
   const macs = state.macs();
   const prs = macPullRequests(macs).length;
   const online = macs.filter(mac => mac.state === 'online').length;
   const footer = !macs.length ? 'Offline' : online === macs.length ? 'Connected' : online ? `${online} of ${macs.length} connected` : macs.some(mac => mac.state === 'connecting') ? 'Connecting' : 'Offline';
+  const [prefs, setPrefs] = useChatListPrefs();
+  const [searching, setSearching] = useState(false);
+  const [query, setQuery] = useState('');
+  const now = useTicking();
+  const all = chatsFromMacs(macs);
+  const visible = narrow(all, prefs, query);
+  const narrowing = !filterIsEmpty(prefs.filter) || !!query.trim();
+  const isSelected = (chat: ChatFacts) => selectedChat?.hostId === chat.hostId && selectedChat.sessionId === chat.session.id;
+  const openChat = (chat: ChatFacts) => navigate('Chat', { hostId: chat.hostId, sessionId: chat.session.id });
+  const row = (chat: ChatFacts) => <ChatRow key={chat.session.id} chat={chat} showProject={false} now={now} selected={isSelected(chat)} onPress={() => openChat(chat)} />;
+  const macRow = (mac: MacView) => <View key={`host-${mac.id}`}>
+    <Pressable onPress={() => navigate('Settings')} style={styles.railHost}><Icon name="devices" size={14} color={tertiary} /><Text numberOfLines={1} style={styles.railHostTitle}>{mac.name}</Text><View style={[styles.connectionDot, mac.state !== 'online' && { backgroundColor: tertiary }]} /></Pressable>
+    {mac.state !== 'online' && <Text style={styles.railMacStatus}>{macStatus(mac)}</Text>}
+  </View>;
   return <View style={styles.rail}>
     <HeaderScrollView contentContainerStyle={styles.railContent}>
       <RailAction icon="plus" title="New" onPress={() => navigate('NewChat', {})} />
       <RailAction icon="clock" title="Automations" onPress={() => navigate('Automations')} />
       <RailAction icon="worktree" title="Worktrees" onPress={() => navigate('Worktrees')} />
       <RailAction icon="pull" title="Pull Requests" detail={prs ? String(prs) : undefined} onPress={() => navigate('PullRequests')} />
-      {macs.map(mac => {
-        const sessions = (mac.snapshot?.sessions || []).filter(x => !x.archivedAt).sort((a, b) => b.createdAt - a.createdAt);
-        const standalone = sessions.filter(x => !x.projectId);
-        const isSelected = (chat: Session) => selectedChat?.hostId === mac.id && selectedChat.sessionId === chat.id;
-        return <View key={mac.id}>
-          <Pressable onPress={() => navigate('Settings')} style={styles.railHost}><Icon name="devices" size={14} color={tertiary} /><Text numberOfLines={1} style={styles.railHostTitle}>{mac.name}</Text><View style={[styles.connectionDot, mac.state !== 'online' && { backgroundColor: tertiary }]} /></Pressable>
-          {mac.state !== 'online' && <Text style={styles.railMacStatus}>{macStatus(mac)}</Text>}
-          <View style={mac.state === 'unreachable' && styles.unreachable}>
-            {(mac.snapshot?.projects || []).map(project => <View key={project.id} style={styles.railGroup}>
-              <Pressable onPress={() => navigate('Project', { hostId: mac.id, projectId: project.id })} style={styles.railGroupHeader}>
-                <Text numberOfLines={1} style={styles.railGroupTitle}>{project.name}</Text><Icon name="chevron" size={12} color={tertiary} />
-              </Pressable>
-              {sessions.filter(x => x.projectId === project.id).map(chat => <RailChat key={chat.id} mac={mac} chat={chat} selected={isSelected(chat)} navigate={navigate} />)}
-            </View>)}
-            {standalone.length > 0 && <View style={styles.railGroup}><Text style={[styles.railGroupTitle, styles.railGroupHeader]}>Standalone</Text>{standalone.map(chat => <RailChat key={chat.id} mac={mac} chat={chat} selected={isSelected(chat)} navigate={navigate} />)}</View>}
-          </View>
-        </View>;
-      })}
+      {macs.length > 0 && prefs.arrangement === 'status' && macs.map(macRow)}
+      {macs.length > 0 && <ChatListHeader all={all} prefs={prefs} setPrefs={setPrefs} searching={searching} setSearching={setSearching} query={query} setQuery={setQuery} />}
+      {prefs.arrangement === 'status'
+        ? <StatusGroups chats={visible} now={now} showMac={macs.length > 1} isSelected={isSelected} openChat={openChat} />
+        : macs.map(mac => {
+          const chats = visible.filter(c => c.hostId === mac.id).sort((a, b) => b.session.createdAt - a.session.createdAt);
+          const standalone = chats.filter(c => !c.session.projectId);
+          return <View key={mac.id}>
+            {macRow(mac)}
+            <View style={mac.state === 'unreachable' && styles.unreachable}>
+              {(mac.snapshot?.projects || []).map(project => {
+                const rows = chats.filter(c => c.session.projectId === project.id);
+                if (narrowing && !rows.length) return null;
+                return <View key={project.id} style={styles.railGroup}>
+                  <Pressable onPress={() => navigate('Project', { hostId: mac.id, projectId: project.id })} style={styles.railGroupHeader}>
+                    <Text numberOfLines={1} style={styles.railGroupTitle}>{project.name}</Text><Icon name="chevron" size={12} color={tertiary} />
+                  </Pressable>
+                  {rows.map(row)}
+                </View>;
+              })}
+              {standalone.length > 0 && <View style={styles.railGroup}><Text style={[styles.railGroupTitle, styles.railGroupHeader]}>Standalone</Text>{standalone.map(row)}</View>}
+            </View>
+          </View>;
+        })}
+      {narrowing && !visible.length && <NoMatches />}
       {!macs.length && <Text style={styles.railEmpty}>Pair a Mac to see its projects and chats.</Text>}
     </HeaderScrollView>
     <Pressable onPress={() => navigate('Settings')} style={styles.railFooter}><Icon name="settings" /><Text numberOfLines={1} style={styles.railFooterTitle}>Settings</Text><Text numberOfLines={1} style={styles.railDetail}>{footer}</Text><View style={[styles.connectionDot, !online && { backgroundColor: tertiary }]} /></Pressable>
@@ -660,7 +676,7 @@ const styles = StyleSheet.create({
   launcherRecentMeta: { color: tertiary, fontFamily: 'Inter', fontSize: 11, maxWidth: 110 },
   headerAction: { width: 42, height: 44, alignItems: 'center', justifyContent: 'center' },
   page: { flex: 1, backgroundColor: bg }, content: { padding: 18, gap: 16, paddingBottom: 32 }, title: { color: ink, fontFamily: 'Inter', fontSize: 25, fontWeight: '600' }, lead: { color: muted, fontFamily: 'Inter', fontSize: 14, lineHeight: 21 }, section: { backgroundColor: panel, borderRadius: 8, padding: 14, gap: 9, borderWidth: StyleSheet.hairlineWidth, borderColor: border }, sectionTitle: { color: muted, fontFamily: 'Inter', fontSize: 13.5, fontWeight: '600' }, label: { color: muted, fontFamily: 'Inter', fontSize: 12, fontWeight: '600', marginTop: 8 }, value: { color: ink, fontFamily: 'Inter', fontSize: 15 }, row: { minHeight: 56, paddingVertical: 11, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border, flexDirection: 'row', alignItems: 'center', gap: 10 }, rowTitle: { color: ink, fontFamily: 'Inter', fontSize: 15.5, fontWeight: '500' }, subtitle: { color: muted, fontFamily: 'Inter', fontSize: 12.5, marginTop: 4 }, subtitleRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4 }, subtitleText: { marginTop: 0, flexShrink: 1 }, trailing: { color: tertiary, fontFamily: 'Inter', fontSize: 11 }, button: { backgroundColor: accent, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 11, alignSelf: 'flex-start', marginRight: 5, marginBottom: 5 }, buttonText: { color: bg, fontFamily: 'Inter', fontSize: 14, fontWeight: '600' }, secondary: { backgroundColor: inset }, danger: { backgroundColor: '#9B3F43' }, input: { backgroundColor: inset, color: ink, borderRadius: 7, borderWidth: StyleSheet.hairlineWidth, borderColor: border, paddingHorizontal: 12, paddingVertical: 10, fontFamily: 'Inter', fontSize: 15, minHeight: 48 }, multiline: { minHeight: 120, textAlignVertical: 'top' }, actions: { flexDirection: 'row', flexWrap: 'wrap', marginVertical: 5 }, choices: { flexDirection: 'row', flexWrap: 'wrap' }, empty: { color: muted, fontFamily: 'Inter', fontSize: 14, lineHeight: 21 }, error: { color: '#EF6461' }, callout: { backgroundColor: raised, borderRadius: 8, borderColor: border, borderWidth: StyleSheet.hairlineWidth, padding: 15 }, code: { color: ink, fontFamily: 'JetBrainsMonoMedium', fontSize: 32, letterSpacing: 3 }, bubble: { backgroundColor: raised, padding: 13, borderRadius: 8, marginBottom: 8 }, bubbleLabel: { color: muted, fontFamily: 'Inter', fontSize: 11, marginBottom: 5 }, body: { color: ink, fontFamily: 'Inter', fontSize: 14.5, lineHeight: 22 }, mono: { color: ink, fontSize: 11, fontFamily: 'JetBrainsMono', lineHeight: 17 }, hint: { color: tertiary, fontFamily: 'Inter', fontSize: 11 }, composer: { backgroundColor: panel, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: border, padding: 10, flexDirection: 'row', alignItems: 'flex-end' }, codeScroll: { padding: 16 }, codeText: { color: ink, fontFamily: 'JetBrainsMono', fontSize: 11, textAlignVertical: 'top', minHeight: 500 },
-  rail: { flex: 1, backgroundColor: sidebar }, railContent: { paddingTop: 10, paddingBottom: 24 }, railAction: { height: 50, paddingHorizontal: 18, flexDirection: 'row', alignItems: 'center', gap: 12 }, railActionTitle: { color: ink, fontFamily: 'Inter', fontSize: 15.5, flex: 1 }, railDetail: { color: tertiary, fontFamily: 'Inter', fontSize: 12 }, railHost: { marginTop: 18, marginHorizontal: 14, height: 48, paddingHorizontal: 5, flexDirection: 'row', alignItems: 'center', gap: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: border }, railHostTitle: { color: muted, fontFamily: 'Inter', fontSize: 12, fontWeight: '600', flex: 1 }, railGroup: { paddingTop: 12 }, railGroupHeader: { paddingHorizontal: 18, height: 38, flexDirection: 'row', alignItems: 'center', gap: 6 }, railGroupTitle: { color: muted, fontFamily: 'Inter', fontSize: 14, fontWeight: '600', flex: 1 }, railChat: { height: 44, paddingLeft: 24, paddingRight: 18, flexDirection: 'row', alignItems: 'center', gap: 9 }, railChatSelected: { backgroundColor: raised }, railChatTitle: { color: ink, fontFamily: 'Inter', fontSize: 14.5, flex: 1 }, statusDiamond: { width: 6, height: 6, backgroundColor: tertiary, transform: [{ rotate: '45deg' }] }, statusRunning: { backgroundColor: '#4CC38A' }, railMacStatus: { color: tertiary, fontFamily: 'Inter', fontSize: 12, marginHorizontal: 19, marginTop: -6, marginBottom: 4 }, unreachable: { opacity: 0.45 }, railEmpty: { color: muted, fontFamily: 'Inter', fontSize: 12, lineHeight: 18, margin: 18 }, railFooter: { minHeight: 60, paddingHorizontal: 18, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: border, flexDirection: 'row', alignItems: 'center', gap: 10 }, railFooterTitle: { color: ink, fontFamily: 'Inter', fontSize: 15, flex: 1 }, connectionDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#4CC38A' },
+  rail: { flex: 1, backgroundColor: sidebar }, railContent: { paddingTop: 10, paddingBottom: 24 }, railAction: { height: 50, paddingHorizontal: 18, flexDirection: 'row', alignItems: 'center', gap: 12 }, railActionTitle: { color: ink, fontFamily: 'Inter', fontSize: 15.5, flex: 1 }, railDetail: { color: tertiary, fontFamily: 'Inter', fontSize: 12 }, railHost: { marginTop: 18, marginHorizontal: 14, height: 48, paddingHorizontal: 5, flexDirection: 'row', alignItems: 'center', gap: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: border }, railHostTitle: { color: muted, fontFamily: 'Inter', fontSize: 12, fontWeight: '600', flex: 1 }, railGroup: { paddingTop: 12 }, railGroupHeader: { paddingHorizontal: 18, height: 38, flexDirection: 'row', alignItems: 'center', gap: 6 }, railGroupTitle: { color: muted, fontFamily: 'Inter', fontSize: 14, fontWeight: '600', flex: 1 }, railMacStatus: { color: tertiary, fontFamily: 'Inter', fontSize: 12, marginHorizontal: 19, marginTop: -6, marginBottom: 4 }, unreachable: { opacity: 0.45 }, railEmpty: { color: muted, fontFamily: 'Inter', fontSize: 12, lineHeight: 18, margin: 18 }, railFooter: { minHeight: 60, paddingHorizontal: 18, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: border, flexDirection: 'row', alignItems: 'center', gap: 10 }, railFooterTitle: { color: ink, fontFamily: 'Inter', fontSize: 15, flex: 1 }, connectionDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#4CC38A' },
   paneToolbar: { height: 45, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border, backgroundColor: bg },
   paneIconButton: { width: 42, height: 42, alignItems: 'center', justifyContent: 'center' },
   paneContent: { paddingBottom: 30 },
