@@ -1,10 +1,14 @@
-# Builds main every day when it changed since the last nightly, for the Nightly update channel.
+# Builds main daily after its tests pass, for the Nightly update channel.
 # Scheduled workflows stop after 60 days without repository activity; re-enable them in Actions.
 name: Nightly
 
 on:
   schedule:
     - cron: "0 6 * * *"
+  workflow_run:
+    workflows: [Test]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       force:
@@ -24,8 +28,12 @@ permissions:
 
 jobs:
   prepare:
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
-    timeout-minutes: 125
     outputs:
       skip: ${{ steps.nightly.outputs.skip }}
       sha: ${{ steps.nightly.outputs.sha }}
@@ -47,20 +55,43 @@ jobs:
         env:
           FORCE: ${{ inputs.force }}
           GH_TOKEN: ${{ github.token }}
+          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
-          LAST=$(git rev-parse -q --verify "refs/tags/nightly^{commit}" || true)
-          if [ "$FORCE" != true ] && [ "$LAST" = "$GITHUB_SHA" ]; then
-            echo "main hasn't changed since the last nightly." >> "$GITHUB_STEP_SUMMARY"
+          skip() {
+            echo "$1" >> "$GITHUB_STEP_SUMMARY"
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
+          }
+          SHA=$(git rev-parse HEAD)
+          if [ "$GITHUB_EVENT_NAME" = workflow_run ] && [ "$SHA" != "$TESTED_SHA" ]; then
+            skip "main moved since tests passed on $TESTED_SHA; a newer test run will trigger Nightly."
           fi
-          scripts/require-tested.sh "$GITHUB_SHA" 7200
+          LAST=$(git rev-parse -q --verify "refs/tags/nightly^{commit}" || true)
+          if [ "$FORCE" != true ] && [ "$LAST" = "$SHA" ]; then
+            skip "main hasn't changed since the last nightly."
+          fi
+          if [ "$GITHUB_EVENT_NAME" = workflow_run ]; then
+            if [ "$(date -u +%H)" -lt 6 ]; then
+              skip "Nightly starts at 06:00 UTC."
+            fi
+            LAST_BUILD=$(gh release view nightly --json assets \
+              --jq '[.assets[] | select(.name | endswith(".dmg")) | .createdAt] | max // ""' 2>/dev/null || true)
+            if [ "${LAST_BUILD%%T*}" = "$(date -u +%F)" ]; then
+              skip "A nightly was already built today."
+            fi
+          else
+            STATE=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/check-runs?check_name=test" \
+              --jq 'if .check_runs | length == 0 then "missing" else (.check_runs | max_by(.id).conclusion // "pending") end')
+            if [ "$STATE" != success ]; then
+              skip "The test check on $SHA is $STATE. No nightly build started."
+            fi
+          fi
           OUT=$(scripts/next-version.sh nightly "$GITHUB_RUN_NUMBER")
           read -r VERSION BUILD <<< "$OUT"
           LATEST=$(scripts/next-version.sh latest)
           {
             echo "skip=false"
-            echo "sha=$GITHUB_SHA"
+            echo "sha=$SHA"
             echo "version=$VERSION"
             echo "build=$BUILD"
             echo "previous-tag=${LATEST:+v$LATEST}"
@@ -68,7 +99,7 @@ jobs:
 
   build:
     needs: prepare
-    if: needs.prepare.outputs.skip != 'true'
+    if: needs.prepare.result == 'success' && needs.prepare.outputs.skip != 'true'
     uses: ./.github/workflows/build.yml
     secrets: inherit
     with:
