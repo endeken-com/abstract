@@ -3,6 +3,21 @@ import Testing
 import AbstractCore
 
 @Suite struct PanelLayoutTests {
+    @Test func sideChromeMovesIntoThePanelAndBackAsTheWindowResizes() {
+        var layout = PanelLayout.standard()
+        let files = layout.side.tabs[1].id
+        layout.activate(files)
+
+        #expect(!SidePanelChrome.usesPanelHeader(mainColumnWidth: 700, sideIsOpen: layout.side.isOpen))
+        #expect(SidePanelChrome.usesPanelHeader(mainColumnWidth: 380, sideIsOpen: layout.side.isOpen))
+        #expect(SidePanelChrome.usesPanelHeader(mainColumnWidth: 280, sideIsOpen: layout.side.isOpen))
+        #expect(!SidePanelChrome.usesPanelHeader(mainColumnWidth: 700, sideIsOpen: layout.side.isOpen))
+        #expect(layout.side.active?.id == files)
+
+        layout.setOpen(.side, false)
+        #expect(!SidePanelChrome.usesPanelHeader(mainColumnWidth: 280, sideIsOpen: layout.side.isOpen))
+    }
+
     @Test func standardHasChangesAndFilesBesideTheChat() {
         let layout = PanelLayout.standard()
         #expect(layout.side.isOpen)

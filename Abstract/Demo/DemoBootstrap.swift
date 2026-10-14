@@ -277,6 +277,7 @@ struct Snapshotter {
                 }
                 seedPullRequests(model, for: idle)
                 await shot("\(t)-03-chat-done", settle: 1.2)
+                if t != "ink" { await shootNarrowSidePanel(in: idle.id, theme: t) }
                 // The sidebar groups chats by what they need; then by project, as it used to.
                 UserDefaults.standard.set(SidebarChats.Arrangement.project.rawValue, forKey: "sidebar.arrangement")
                 await shot("\(t)-37-sidebar-by-project", settle: 0.8)
@@ -393,6 +394,25 @@ struct Snapshotter {
         window.setFrame(NSRect(x: frame.minX, y: frame.maxY - 1500, width: frame.width, height: 1500), display: true)
         await shot(name, settle: 1.2)
         window.setFrame(frame, display: true)
+    }
+
+    /// Keep a screenshot of the side panel at the smallest useful window width.
+    /// The Run action is available in this demo project, and Review makes a
+    /// third tab so the strip must scroll while New tab stays in view.
+    private func shootNarrowSidePanel(in sessionId: String, theme: String) async {
+        guard let window = NSApp.windows.first(where: { $0.canBecomeMain && $0.isVisible }) else { return }
+        let frame = window.frame
+        let targetId = model.sessions.first { session in
+            session.worktreePath != nil && Project.nonBlank(model.project(session.projectId)?.runScript) != nil
+        }?.id ?? sessionId
+        let activeId = model.layout(for: targetId).side.active?.id
+        model.open(targetId)
+        model.showPane(.review, in: targetId)
+        window.setFrame(NSRect(x: frame.minX, y: frame.minY, width: 820, height: frame.height), display: true)
+        await shot("\(theme)-03c-chat-narrow", settle: 1.2)
+        window.setFrame(frame, display: true)
+        if let activeId { model.updateLayout(targetId) { $0.activate(activeId) } }
+        model.open(sessionId)
     }
 
     /// A new chat in payments-api is set up before its agent starts (its
@@ -767,4 +787,3 @@ enum WindowCapture {
 func log(_ message: String) {
     FileHandle.standardError.write(Data((message + "\n").utf8))
 }
-
