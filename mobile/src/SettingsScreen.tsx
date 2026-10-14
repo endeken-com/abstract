@@ -46,7 +46,7 @@ export function SettingsScreen() {
   const [address, setAddress] = useState('');
   const [advanced, setAdvanced] = useState(false);
   const nearby = state.nearby.filter(mac => !state.devices.some(device => device.peer.id === mac.id));
-  const active = state.active;
+  const macs = state.macs();
   const connect = (endpoint: string, device?: Device) => {
     Haptics.selectionAsync().catch(() => {});
     state.connect(endpoint.trim(), device).catch(() => {});
@@ -55,7 +55,10 @@ export function SettingsScreen() {
     { text: 'Cancel', style: 'cancel' },
     { text: 'Forget', style: 'destructive', onPress: () => state.forget(device.peer.id).catch(error => Alert.alert('Abstract', String(error))) }
   ]);
-  const status = state.status === 'online' ? 'Connected' : state.status === 'connecting' ? 'Connecting…' : state.status === 'pairing' ? 'Pairing…' : 'Not connected';
+  const reconnect = (hostId: string) => {
+    Haptics.selectionAsync().catch(() => {});
+    state.reconnect(hostId).catch(() => {});
+  };
 
   return <KeyboardAwareScrollView style={styles.page} contentContainerStyle={[styles.content, { paddingTop: headerHeight + 24 }]} keyboardShouldPersistTaps="handled">
     <View style={styles.intro}><Text style={styles.title}>Settings</Text><Text style={styles.lead}>Manage your phone and Mac connections.</Text></View>
@@ -67,27 +70,25 @@ export function SettingsScreen() {
       </View>
     </Group>
 
-    <Group title="CONNECTION">
-      <View style={styles.identityRow}>
-        <View style={styles.largeIcon}><Icon name="laptopcomputer" size={25} color={ink} /></View>
-        <View style={styles.flex}><Text style={styles.name} numberOfLines={1}>{active?.peer.name || 'No Mac connected'}</Text><Text style={styles.detail}>{status}</Text></View>
-        {state.status === 'connecting' || state.status === 'pairing' ? <ActivityIndicator size="small" color={muted} /> : <View style={[styles.dot, state.status !== 'online' && styles.dotOffline]} />}
-      </View>
-      {active ? <Action title={state.status === 'online' ? 'Disconnect' : 'Reconnect'} onPress={() => state.status === 'online' ? state.disconnectFromMac() : connect(state.nearby.find(mac => mac.id === active.peer.id)?.address || active.address, active)} /> : null}
-    </Group>
     {state.error ? <View style={styles.error}><Icon name="exclamationmark.circle" size={17} color="#EF8582" /><Text style={styles.errorText}>{state.error}</Text></View> : null}
     {state.pairingCode ? <View style={styles.pairing}><Text style={styles.name}>Approve on your Mac</Text><Text style={styles.detail}>Check that this code matches the one in Abstract.</Text><Text style={styles.code}>{state.pairingCode}</Text></View> : null}
 
-    <Group title="PAIRED MACS">
-      {state.devices.length ? state.devices.map((device, index) => <View key={device.peer.id} style={index > 0 && styles.divider}>
-        <View style={styles.deviceRow}>
-          <Pressable accessibilityRole="button" accessibilityLabel={`Connect to ${device.peer.name}`} onPress={() => connect(state.nearby.find(mac => mac.id === device.peer.id)?.address || device.address, device)} style={({ pressed }) => [styles.deviceMain, pressed && styles.pressed]}>
-            <Icon name="laptopcomputer" size={18} /><View style={styles.flex}><Text style={styles.name} numberOfLines={1}>{device.peer.name}</Text><Text style={styles.detail} numberOfLines={1}>{state.status === 'online' && active?.peer.id === device.peer.id ? 'Connected now' : state.nearby.some(mac => mac.id === device.peer.id) ? 'Nearby · Tap to connect' : 'Tap to connect'}</Text></View>
-            <Icon name={state.status === 'online' && active?.peer.id === device.peer.id ? 'checkmark' : 'chevron.right'} size={13} color={state.status === 'online' && active?.peer.id === device.peer.id ? '#8EDBAD' : tertiary} />
-          </Pressable>
-          <MenuView actions={[{ id: 'forget', title: 'Forget Mac', image: Platform.OS === 'ios' ? 'trash' : undefined, attributes: { destructive: true } }]} onPressAction={() => forget(device)}><View accessibilityLabel={`More options for ${device.peer.name}`} style={styles.more}><Icon name="ellipsis" size={17} /></View></MenuView>
-        </View>
-      </View>) : <Text style={styles.empty}>Macs you pair will appear here.</Text>}
+    <Group title="PAIRED MACS" caption={macs.length > 1 ? 'Your phone stays connected to every paired Mac at once.' : undefined}>
+      {macs.length ? macs.map((mac, index) => {
+        const device = state.devices.find(x => x.peer.id === mac.id)!;
+        const isNearby = state.nearby.some(x => x.id === mac.id);
+        const status = mac.state === 'online' ? 'Connected' : mac.state === 'connecting' ? 'Connecting…' : "Isn't reachable";
+        return <View key={mac.id} style={index > 0 && styles.divider}>
+          <View style={styles.deviceRow}>
+            <View style={styles.deviceMain}>
+              <Icon name="laptopcomputer" size={18} /><View style={styles.flex}><Text style={styles.name} numberOfLines={1}>{mac.name}</Text><Text style={styles.detail} numberOfLines={1}>{isNearby ? `${status} · Nearby` : status}</Text></View>
+              {mac.state === 'connecting' ? <ActivityIndicator size="small" color={muted} /> : <View style={[styles.dot, mac.state !== 'online' && styles.dotOffline]} />}
+            </View>
+            <MenuView actions={[{ id: 'forget', title: 'Forget Mac', image: Platform.OS === 'ios' ? 'trash' : undefined, attributes: { destructive: true } }]} onPressAction={() => forget(device)}><View accessibilityLabel={`More options for ${mac.name}`} style={styles.more}><Icon name="ellipsis" size={17} /></View></MenuView>
+          </View>
+          {mac.state !== 'online' ? <Action title={`Reconnect to ${mac.name}`} onPress={() => reconnect(mac.id)} /> : null}
+        </View>;
+      }) : <Text style={styles.empty}>Macs you pair will appear here.</Text>}
     </Group>
 
     <Group title="NEARBY MACS">

@@ -6,9 +6,17 @@ import { PermissionsAndroid, Platform } from 'react-native';
 import { beginHandshake, Cipher, identity } from './secure';
 import { FrameDecoder } from './framing';
 import { InternetSocket, parseInvitation, validInternetAddress, type FramedConnection } from './internet';
-import type { Device, Nearby, Peer, RemoteLine, Snapshot } from './types';
+import { macState, type MacView } from './macs';
+import type { Device, Nearby, RemoteLine, Snapshot } from './types';
 
-type Listener = (state: RemoteClient) => void;
+type Listener<T> = (state: T) => void;
+// What a connection to one Mac needs from the store that owns it.
+type ClientHooks = {
+  changed?: () => void;
+  paired?: (device: Device) => Promise<void> | void;
+  persist?: () => Promise<void>;
+  nearbyAddress?: (peerId: string) => string | undefined;
+};
 type Reply = Record<string, any>;
 
 function endpoint(address: string) {
@@ -58,24 +66,24 @@ class FramedSocket {
   }
 }
 
+// One connection to one paired Mac: its socket, encryption, snapshot and reconnect.
 export class RemoteClient {
-  devices: Device[] = [];
-  nearby: Nearby[] = [];
   active: Device | null = null;
   snapshot: Snapshot | null = null;
   status = 'offline';
+  // The last attempt to reach this Mac failed; its snapshot is the last one it sent.
+  unreachable = false;
   pairingCode: string | null = null;
   error: string | null = null;
   lines: Record<string, RemoteLine[]> = {};
   historyBefore: Record<string, number | null> = {};
   loadingHistory = new Set<string>();
   terminals: Record<number, string> = {};
-  private listeners = new Set<Listener>();
+  private listeners = new Set<Listener<RemoteClient>>();
   private socket: FramedConnection | null = null;
   private cipher: Cipher | null = null;
   private nextId = 1;
   private pending = new Map<number, { resolve: (value: Reply) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
-  private browser: Zeroconf | null = null;
   private reconnect: ReturnType<typeof setTimeout> | null = null;
   private connectionEpoch = 0;
   private connectingAddress: string | null = null;
@@ -87,53 +95,16 @@ export class RemoteClient {
   private subscribing = new Map<string, Promise<void>>();
   private replayBuffers = new Map<string, RemoteLine[]>();
   private snapshotHostId: string | null = null;
-  private reconnectPaused = false;
 
-  subscribe(listener: Listener) { this.listeners.add(listener); listener(this); return () => { this.listeners.delete(listener); }; }
-  private changed() { this.listeners.forEach(listener => listener(this)); }
+  constructor(private hooks: ClientHooks = {}) {}
+  subscribe(listener: Listener<RemoteClient>) { this.listeners.add(listener); listener(this); return () => { this.listeners.delete(listener); }; }
+  private changed() { this.listeners.forEach(listener => listener(this)); this.hooks.changed?.(); }
   private linesChanged() {
     if (this.lineNotification) return;
     this.lineNotification = setTimeout(() => {
       this.lineNotification = null;
       this.changed();
     }, 80);
-  }
-  async load() {
-    try { this.devices = JSON.parse(await AsyncStorage.getItem('paired-macs') || '[]'); } catch { this.devices = []; }
-    this.changed();
-    this.discover().catch(() => {});
-    if (this.devices[0]) this.connect(this.devices[0].address, this.devices[0]).catch(() => {});
-  }
-  async discover() {
-    if (this.browser) return;
-    try {
-      if (Platform.OS === 'android' && Number(Platform.Version) >= 33) {
-        const permission = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.NEARBY_WIFI_DEVICES);
-        if (permission !== PermissionsAndroid.RESULTS.GRANTED) throw Error('Nearby Wi-Fi permission is needed to discover Macs.');
-      }
-      const browser = new Zeroconf();
-      this.browser = browser;
-      browser.on('resolved', (service: any) => {
-        const id = service.txt?.id || service.txtRecord?.id || service.name;
-        const host = service.addresses?.find((x: string) => /^\d+\.\d+\.\d+\.\d+$/.test(x)) || service.host;
-        if (!host || !service.port) return;
-        this.nearby = [...this.nearby.filter(x => x.id !== id), { id, name: service.name, address: `${host}:${service.port}` }];
-        this.changed();
-        const paired = this.devices.find(x => x.peer.id === id || x.peer.name === service.name);
-        const address = `${host}:${service.port}`;
-        if (paired && !this.reconnectPaused && (!this.active || this.active.peer.id === paired.peer.id) && this.status !== 'online' && (this.connectingAddress !== address || this.connectingPeerId !== paired.peer.id)) {
-          this.connect(address, paired).catch(() => {});
-        }
-      });
-      browser.on('remove', (name: string) => { this.nearby = this.nearby.filter(x => x.name !== name); this.changed(); });
-      browser.scan('abstract', 'tcp', 'local.');
-    } catch (error) { if (!this.active && !this.devices.length) { this.error = String(error); this.changed(); } }
-  }
-  private async persist() { await AsyncStorage.setItem('paired-macs', JSON.stringify(this.devices)); }
-  async forget(id: string) {
-    if (this.active?.peer.id === id) this.disconnect(true);
-    this.devices = this.devices.filter(x => x.peer.id !== id);
-    await this.persist(); this.changed();
   }
   disconnect(clearSnapshot = false) {
     this.connectionEpoch++;
@@ -151,18 +122,16 @@ export class RemoteClient {
     this.terminals = {};
     const socket = this.socket; this.socket = null; socket?.close(); this.cipher = null; this.changed();
   }
-  disconnectFromMac() {
-    this.reconnectPaused = true;
-    this.disconnect(true);
+  // Discovery found this Mac at `address`; a dial already heading there is left alone.
+  dialing(address: string) {
+    return this.status === 'connecting' && this.connectingAddress === address && this.connectingPeerId === (this.active?.peer.id || null);
   }
+  private address(device: Device) { return this.hooks.nearbyAddress?.(device.peer.id) || device.address; }
   private scheduleReconnect() {
     if (!this.active || this.reconnect) return;
     this.reconnect = setTimeout(() => {
       this.reconnect = null;
-      if (this.active) {
-        const nearby = this.nearby.find(x => x.id === this.active?.peer.id);
-        this.connect(nearby?.address || this.active.address, this.active).catch(() => {});
-      }
+      if (this.active) this.connect(this.address(this.active), this.active).catch(() => {});
     }, 1500);
   }
   async resume() {
@@ -176,10 +145,9 @@ export class RemoteClient {
         this.disconnect();
       }
     }
-    await this.connect(this.nearby.find(x => x.id === active.peer.id)?.address || active.address, active);
+    await this.connect(this.address(active), active);
   }
   connect(address: string, paired?: Device): Promise<void> {
-    this.reconnectPaused = false;
     if (this.status === 'online' && this.active?.peer.id === paired?.peer.id && this.active?.address === address) return Promise.resolve();
     if (this.status === 'connecting' && this.connectingAddress === address && this.connectingPeerId === (paired?.peer.id || null) && this.connectingTask) return this.connectingTask;
     this.disconnect(!paired || paired.peer.id !== this.snapshotHostId); this.active = paired || null; this.error = null; this.status = 'connecting'; this.changed();
@@ -252,10 +220,9 @@ export class RemoteClient {
         if (epoch !== this.connectionEpoch) { socket.close(); return; }
         if (answer.event?._0?.paired?._0 !== true) throw Error('Pairing was declined on the Mac.');
         paired = { peer: outcome.peer, address: internetAddress ? '' : address, internetAddress, pairedAt: Date.now() };
-        this.devices = [...this.devices.filter(x => x.peer.id !== paired!.peer.id), paired];
-        await this.persist();
+        await this.hooks.paired?.(paired);
       } else if (!internetAddress && paired.address !== address) {
-        paired.address = address; await this.persist();
+        paired.address = address; await this.hooks.persist?.();
       }
       if (epoch !== this.connectionEpoch) { socket.close(); return; }
       this.active = paired; this.connectingPeerId = paired?.peer.id || null;
@@ -271,7 +238,7 @@ export class RemoteClient {
       this.receive(socket);
       await this.request('snapshot');
       if (epoch !== this.connectionEpoch) return;
-      this.status = 'online'; this.pairingCode = null; this.changed();
+      this.status = 'online'; this.unreachable = false; this.pairingCode = null; this.changed();
       await Promise.all([...this.watched].map(sessionId => this.subscribeChat(sessionId)));
     } catch (error) {
       socket?.close();
@@ -281,7 +248,7 @@ export class RemoteClient {
       if (paired?.internetAddress && !address.startsWith('iroh:') && !address.startsWith('abstract://')) {
         return this.connectAttempt('iroh:' + paired.internetAddress.endpointId, paired, epoch);
       }
-      this.error = String(error); this.status = 'offline'; this.pairingCode = null; this.changed();
+      this.error = String(error); this.status = 'offline'; this.unreachable = !!paired; this.pairingCode = null; this.changed();
       if (paired) this.scheduleReconnect();
       throw error;
     }
@@ -322,7 +289,7 @@ export class RemoteClient {
               const address = validInternetAddress(this.snapshot?.internetAddress) ? this.snapshot.internetAddress : undefined;
               if (this.active.internetAddress?.endpointId !== address?.endpointId) {
                 this.active.internetAddress = address;
-                this.persist().catch(() => {});
+                this.hooks.persist?.().catch(() => {});
               }
             }
           }
@@ -458,4 +425,121 @@ export class RemoteClient {
   }
 }
 
-export const remote = new RemoteClient();
+// Every paired Mac at once: one RemoteClient each, kept connected side by side.
+export class RemoteStore {
+  devices: Device[] = [];
+  nearby: Nearby[] = [];
+  // The connection still waiting for a new Mac to approve pairing.
+  pairing: RemoteClient | null = null;
+  error: string | null = null;
+  private clients = new Map<string, RemoteClient>();
+  private listeners = new Set<Listener<RemoteStore>>();
+  private browser: Zeroconf | null = null;
+  // Stands in for a Mac that is no longer paired, so a stale screen shows "unavailable".
+  private nowhere = new RemoteClient();
+
+  subscribe(listener: Listener<RemoteStore>) { this.listeners.add(listener); listener(this); return () => { this.listeners.delete(listener); }; }
+  private changed() { this.listeners.forEach(listener => listener(this)); }
+  get pairingCode() { return this.pairing?.pairingCode || null; }
+  private makeClient(): RemoteClient {
+    const client: RemoteClient = new RemoteClient({
+      changed: () => this.changed(),
+      persist: () => this.persist(),
+      nearbyAddress: id => this.nearby.find(x => x.id === id)?.address,
+      paired: device => this.adopt(device, client),
+    });
+    return client;
+  }
+  private device(hostId?: string | null) { return this.devices.find(x => x.peer.id === hostId); }
+  // The connection to one paired Mac. Every action on a chat, project or pull
+  // request goes through the connection of the Mac that owns it.
+  client(hostId?: string | null): RemoteClient {
+    const device = this.device(hostId);
+    if (!device) return this.nowhere;
+    let client = this.clients.get(device.peer.id);
+    if (!client) { client = this.makeClient(); this.clients.set(device.peer.id, client); }
+    return client;
+  }
+  macs(): MacView[] {
+    return this.devices.map(device => {
+      const client = this.client(device.peer.id);
+      return { id: device.peer.id, name: device.peer.name, state: macState(client), snapshot: client.snapshot };
+    });
+  }
+  mac(hostId?: string | null) { return this.macs().find(x => x.id === hostId); }
+  async load() {
+    try { this.devices = JSON.parse(await AsyncStorage.getItem('paired-macs') || '[]'); } catch { this.devices = []; }
+    this.changed();
+    this.discover().catch(() => {});
+    for (const device of this.devices) this.reconnect(device.peer.id).catch(() => {});
+  }
+  async discover() {
+    if (this.browser) return;
+    try {
+      if (Platform.OS === 'android' && Number(Platform.Version) >= 33) {
+        const permission = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.NEARBY_WIFI_DEVICES);
+        if (permission !== PermissionsAndroid.RESULTS.GRANTED) throw Error('Nearby Wi-Fi permission is needed to discover Macs.');
+      }
+      const browser = new Zeroconf();
+      this.browser = browser;
+      browser.on('resolved', (service: any) => {
+        const id = service.txt?.id || service.txtRecord?.id || service.name;
+        const host = service.addresses?.find((x: string) => /^\d+\.\d+\.\d+\.\d+$/.test(x)) || service.host;
+        if (!host || !service.port) return;
+        const address = `${host}:${service.port}`;
+        this.nearby = [...this.nearby.filter(x => x.id !== id), { id, name: service.name, address }];
+        this.changed();
+        const paired = this.devices.find(x => x.peer.id === id || x.peer.name === service.name);
+        if (!paired) return;
+        const client = this.client(paired.peer.id);
+        if (client.status !== 'online' && !client.dialing(address)) client.connect(address, paired).catch(() => {});
+      });
+      browser.on('remove', (name: string) => { this.nearby = this.nearby.filter(x => x.name !== name); this.changed(); });
+      browser.scan('abstract', 'tcp', 'local.');
+    } catch (error) { if (!this.devices.length) { this.error = String(error); this.changed(); } }
+  }
+  private async persist() { await AsyncStorage.setItem('paired-macs', JSON.stringify(this.devices)); }
+  private async adopt(device: Device, client: RemoteClient) {
+    const previous = this.clients.get(device.peer.id);
+    if (previous && previous !== client) previous.disconnect(true);
+    this.clients.set(device.peer.id, client);
+    this.devices = [...this.devices.filter(x => x.peer.id !== device.peer.id), device];
+    if (this.pairing === client) this.pairing = null;
+    await this.persist(); this.changed();
+  }
+  // Reach a paired Mac, or pair a new one when no device is given.
+  connect(address: string, device?: Device): Promise<void> {
+    if (device) return this.client(device.peer.id).connect(address, device);
+    this.pairing?.disconnect(true);
+    const client = this.makeClient();
+    this.pairing = client; this.error = null; this.changed();
+    return client.connect(address).catch(error => {
+      if (this.pairing === client) { this.error = client.error || String(error); this.pairing = null; this.changed(); }
+      throw error;
+    });
+  }
+  reconnect(hostId: string) {
+    const device = this.device(hostId);
+    if (!device) return Promise.resolve();
+    return this.client(hostId).connect(this.nearby.find(x => x.id === hostId)?.address || device.address, device);
+  }
+  async forget(hostId: string) {
+    this.clients.get(hostId)?.disconnect(true);
+    this.clients.delete(hostId);
+    this.devices = this.devices.filter(x => x.peer.id !== hostId);
+    await this.persist(); this.changed();
+  }
+  // Coming back to the front: check every Mac, and reach the ones that dropped.
+  async resume() {
+    await Promise.all(this.devices.map(device => {
+      const client = this.client(device.peer.id);
+      return (client.active ? client.resume() : this.reconnect(device.peer.id)).catch(() => {});
+    }));
+  }
+  disconnect() {
+    this.pairing?.disconnect(true); this.pairing = null;
+    for (const client of this.clients.values()) client.disconnect();
+  }
+}
+
+export const remote = new RemoteStore();

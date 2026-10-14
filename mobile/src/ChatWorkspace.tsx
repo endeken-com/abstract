@@ -9,7 +9,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { ProviderLogo, providerMenuImage } from './ProviderLogo';
 import { ProgressiveBlur } from './ProgressiveBlur';
 import { ScrollingTitle } from './ScrollingTitle';
-import { remote } from './remote';
+import { remote, type RemoteClient } from './remote';
 import { uuid } from './secure';
 import { attachmentPayload, pickAttachments, type PickedAttachment } from './attachments';
 import { chatTimeline, type ChatItem } from './chatTimeline';
@@ -92,10 +92,10 @@ function LinkPickerSheet({ kind, query, setQuery, results, loading, search, sele
     </KeyboardAvoidingView>
   </Modal>;
 }
-function PermissionCard({ sessionId, request }: { sessionId: string; request: PendingPermission }) {
+function PermissionCard({ mac, sessionId, request }: { mac: RemoteClient; sessionId: string; request: PendingPermission }) {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const questions = request.toolName === 'AskUserQuestion' ? request.input?.questions || [] : [];
-  const submit = (allow: boolean) => remote.request(questions.length && allow ? 'answerQuestion' : 'answer', questions.length && allow ? { sessionId, requestId: request.requestId, answers } : { sessionId, requestId: request.requestId, allow }).catch(e => Alert.alert('Abstract', String(e)));
+  const submit = (allow: boolean) => mac.request(questions.length && allow ? 'answerQuestion' : 'answer', questions.length && allow ? { sessionId, requestId: request.requestId, answers } : { sessionId, requestId: request.requestId, allow }).catch(e => Alert.alert('Abstract', String(e)));
   return <View style={s.permission}><Text style={s.permissionTitle}>{questions.length ? 'Question from agent' : `Permission · ${request.toolName}`}</Text>{questions.length ? questions.map((q: any) => <View key={q.question}><Text style={s.prose}>{q.question}</Text>{q.options?.map((o: any) => <Chip key={o.label} label={o.label} active={answers[q.question] === o.label} onPress={() => setAnswers({ ...answers, [q.question]: o.label })} />)}<TextInput value={answers[q.question] || ''} onChangeText={v => setAnswers({ ...answers, [q.question]: v })} placeholder="Your answer" placeholderTextColor={tertiary} style={s.permissionInput} /></View>) : <Text style={s.toolDetail}>{JSON.stringify(request.input, null, 2)}</Text>}<View style={s.permissionActions}><Chip label={questions.length ? 'Send answers' : 'Allow'} onPress={() => submit(true)} /><Chip label={questions.length ? 'Skip' : 'Deny'} onPress={() => submit(false)} /></View></View>;
 }
 function ToolEditPreview({ edit }: { edit: EditPreview }) {
@@ -200,9 +200,12 @@ const transcriptKey = (row: ChatItem | TranscriptGroupItem) => row.id;
 export function ChatWorkspace({ route, navigation }: any) {
   const [, force] = useState(0);
   useEffect(() => remote.subscribe(() => force(x => x + 1)), []);
+  const hostId = route.params.hostId as string;
+  const mac = remote.client(hostId);
+  const macName = remote.mac(hostId)?.name;
   const id = route.params.sessionId as string;
-  const chat = remote.snapshot?.sessions.find(x => x.id === id);
-  const pr = remote.snapshot?.pullRequests?.[id];
+  const chat = mac.snapshot?.sessions.find(x => x.id === id);
+  const pr = mac.snapshot?.pullRequests?.[id];
   const [message, setMessage] = useState('');
   const [syncing, setSyncing] = useState(false);
   const keyboardHeight = useKeyboardHeight();
@@ -225,9 +228,9 @@ export function ChatWorkspace({ route, navigation }: any) {
   const following = useRef(true);
   const userDragged = useRef(false);
   const mayLoadOlder = useRef(false);
-  const lines = remote.lines[id] || [];
-  const hasOlder = remote.hasOlder(id);
-  const loadingHistory = remote.loadingHistory.has(id);
+  const lines = mac.lines[id] || [];
+  const hasOlder = mac.hasOlder(id);
+  const loadingHistory = mac.loadingHistory.has(id);
   const rows = useMemo(() => chatTimeline(lines, id), [id, lines]);
   const displayRows = useMemo(() => groupToolRows(rows), [rows]);
   const transcriptRows = useMemo(() => chat?.prompt && !lines.length
@@ -236,15 +239,15 @@ export function ChatWorkspace({ route, navigation }: any) {
   const showWorking = chat?.status === 'running' || chat?.status === 'provisioning';
   const showWorkingRow = showWorking && !(lastRow?.pending && ['tool', 'prose', 'thinking'].includes(lastRow.kind));
   const workingLabel = lastRow && (lastRow.kind === 'thinking' || (lastRow.kind === 'tool' && !lastRow.pending)) ? 'Thinking…' : 'Working…';
-  const pendingPermissions = remote.snapshot?.pendingPermissions?.[id];
-  const turnStartedAt = remote.snapshot?.turnStartedAt?.[id] ?? chat?.lastEventAt ?? undefined;
-  const transcriptFooter = useMemo(() => <View style={s.transcriptFooter}>{(pendingPermissions || []).map(request => <PermissionCard key={request.requestId} sessionId={id} request={request} />)}{syncing && <Text style={s.thinkingLabel}>Syncing chat from Mac…</Text>}{showWorkingRow && <WorkingStatus label={workingLabel} startedAt={turnStartedAt} />}</View>, [pendingPermissions, id, syncing, showWorkingRow, workingLabel, turnStartedAt]);
+  const pendingPermissions = mac.snapshot?.pendingPermissions?.[id];
+  const turnStartedAt = mac.snapshot?.turnStartedAt?.[id] ?? chat?.lastEventAt ?? undefined;
+  const transcriptFooter = useMemo(() => <View style={s.transcriptFooter}>{(pendingPermissions || []).map(request => <PermissionCard key={request.requestId} mac={mac} sessionId={id} request={request} />)}{syncing && <Text style={s.thinkingLabel}>Syncing chat from Mac…</Text>}{showWorkingRow && <WorkingStatus label={workingLabel} startedAt={turnStartedAt} />}</View>, [mac, pendingPermissions, id, syncing, showWorkingRow, workingLabel, turnStartedAt]);
   const loadEarlier = React.useCallback(() => {
     mayLoadOlder.current = false;
     following.current = false;
     userDragged.current = true;
     setAtBottom(false);
-    remote.loadOlder(id).catch(() => {});
+    mac.loadOlder(id).catch(() => {});
   }, [id]);
   const onTranscriptScroll = React.useCallback((event: any) => {
     const { contentOffset, layoutMeasurement, contentSize } = event.nativeEvent;
@@ -254,7 +257,7 @@ export function ChatWorkspace({ route, navigation }: any) {
     if (!userDragged.current && !next) return;
     following.current = next;
     setAtBottom(previous => previous === next ? previous : next);
-    if (mayLoadOlder.current && contentOffset.y < 180 && remote.hasOlder(id)) loadEarlier();
+    if (mayLoadOlder.current && contentOffset.y < 180 && mac.hasOlder(id)) loadEarlier();
   }, [id, loadEarlier]);
   const onTranscriptSize = React.useCallback(() => { if (following.current) scroll.current?.scrollToEnd({ animated: false }); }, []);
   const onTranscriptDrag = React.useCallback(() => { userDragged.current = true; mayLoadOlder.current = true; }, []);
@@ -267,8 +270,8 @@ export function ChatWorkspace({ route, navigation }: any) {
   }, [id]);
   useEffect(() => {
     if (!chat) return;
-    const chatRoot = chat.worktreePath || remote.snapshot?.projects.find(x => x.id === chat.projectId)?.rootPath || '';
-    const request = (name: string, args: Record<string, unknown> = {}) => remote.request(name, { sessionId: id, ...args }).catch(e => Alert.alert('Abstract', String(e)));
+    const chatRoot = chat.worktreePath || mac.snapshot?.projects.find(x => x.id === chat.projectId)?.rootPath || '';
+    const request = (name: string, args: Record<string, unknown> = {}) => mac.request(name, { sessionId: id, ...args }).catch(e => Alert.alert('Abstract', String(e)));
     navigation.setOptions({
       headerTransparent: true,
       headerStyle: { backgroundColor: 'transparent' },
@@ -276,9 +279,9 @@ export function ChatWorkspace({ route, navigation }: any) {
       headerTitle: () => <ScrollingTitle title={chat.name} provider={chat.providerId} width={Math.max(72, Math.min(192, windowWidth - 245))} />,
       headerLeft: () => <ToolbarAction label="Open sidebar" onPress={() => navigation.popTo('Sidebar', { selectedChat: id })}><Glyph name="menu" size={19} color={ink} /></ToolbarAction>,
       headerRight: () => <View style={chrome.nativeActions}>
-        <ToolbarAction label="Review changes" onPress={() => navigation.navigate('Review', { sessionId: id })}><Glyph name="review" size={17} color={muted} /></ToolbarAction>
-        <ToolbarAction label="Files" onPress={() => navigation.navigate('Files', { root: chatRoot, sessionId: id })}><Glyph name="files" size={18} /></ToolbarAction>
-        <ToolbarAction label="Pull request" onPress={() => navigation.navigate('PullRequest', { sessionId: id })}><PullRequestIcon pr={pr} size={17} color={muted} /></ToolbarAction>
+        <ToolbarAction label="Review changes" onPress={() => navigation.navigate('Review', { hostId, sessionId: id })}><Glyph name="review" size={17} color={muted} /></ToolbarAction>
+        <ToolbarAction label="Files" onPress={() => navigation.navigate('Files', { hostId, root: chatRoot, sessionId: id })}><Glyph name="files" size={18} /></ToolbarAction>
+        <ToolbarAction label="Pull request" onPress={() => navigation.navigate('PullRequest', { hostId, sessionId: id })}><PullRequestIcon pr={pr} size={17} color={muted} /></ToolbarAction>
         <MenuView actions={[
           { id: 'terminal', title: 'Terminal', image: Platform.OS === 'ios' ? 'terminal' : undefined },
           { id: 'rename', title: 'Rename chat', image: Platform.OS === 'ios' ? 'pencil' : undefined },
@@ -287,7 +290,7 @@ export function ChatWorkspace({ route, navigation }: any) {
           { id: 'delete', title: 'Delete chat', attributes: { destructive: true }, image: Platform.OS === 'ios' ? 'trash' : undefined },
         ]} onPressAction={({ nativeEvent }) => {
           switch (nativeEvent.event) {
-            case 'terminal': navigation.navigate('Terminal', { root: chatRoot, sessionId: id }); break;
+            case 'terminal': navigation.navigate('Terminal', { hostId, root: chatRoot, sessionId: id }); break;
             case 'rename': if (Platform.OS === 'ios') Alert.prompt('Rename chat', '', name => name.trim() && request('rename', { name: name.trim() }), 'plain-text', chat.name); else { setRename(chat.name); setMenu('manage'); } break;
             case 'resume': request('resume'); break;
             case 'archive': request('setArchived', { archived: !chat.archivedAt }); break;
@@ -298,11 +301,11 @@ export function ChatWorkspace({ route, navigation }: any) {
     });
   }, [navigation, id, windowWidth, chat?.name, chat?.providerId, chat?.archivedAt, chat?.worktreePath, pr?.state, pr?.isDraft]);
   useEffect(() => {
-    if (remote.status !== 'online') { setSyncing(false); return; }
+    if (mac.status !== 'online') { setSyncing(false); return; }
     let active = true;
     const retries: Array<ReturnType<typeof setTimeout>> = [];
     setSyncing(true);
-    remote.subscribeChat(id).then(() => {
+    mac.subscribeChat(id).then(() => {
       if (active) setSyncing(false);
       if (!active || userDragged.current) return;
       following.current = true;
@@ -314,22 +317,22 @@ export function ChatWorkspace({ route, navigation }: any) {
     return () => {
       active = false;
       retries.forEach(clearTimeout);
-      remote.unsubscribeChat(id).catch(() => {});
+      mac.unsubscribeChat(id).catch(() => {});
     };
-  }, [id, remote.status]);
-  useEffect(() => { if (!chat) return; const root = chat.worktreePath || remote.snapshot?.projects.find(x => x.id === chat.projectId)?.rootPath; if (!root || remote.status !== 'online') { setDiff({ files: 0, added: 0, removed: 0 }); return; } let active = true; const refresh = () => remote.exec(root, ['diff', 'HEAD', '--numstat']).then(result => { if (!active) return; const counts = result.stdout.split('\n').filter(line => line.includes('\t')).reduce((n, line) => { const [a, d] = line.split('\t'); return { files: n.files + 1, added: n.added + (Number(a) || 0), removed: n.removed + (Number(d) || 0) }; }, { files: 0, added: 0, removed: 0 }); setDiff(counts); }).catch(() => {}); const timer = setTimeout(refresh, 400); const interval = setInterval(refresh, 15000); return () => { active = false; clearTimeout(timer); clearInterval(interval); }; }, [id, chat?.status, chat?.worktreePath, chat?.projectId, remote.status]);
+  }, [hostId, id, mac.status]);
+  useEffect(() => { if (!chat) return; const root = chat.worktreePath || mac.snapshot?.projects.find(x => x.id === chat.projectId)?.rootPath; if (!root || mac.status !== 'online') { setDiff({ files: 0, added: 0, removed: 0 }); return; } let active = true; const refresh = () => mac.exec(root, ['diff', 'HEAD', '--numstat']).then(result => { if (!active) return; const counts = result.stdout.split('\n').filter(line => line.includes('\t')).reduce((n, line) => { const [a, d] = line.split('\t'); return { files: n.files + 1, added: n.added + (Number(a) || 0), removed: n.removed + (Number(d) || 0) }; }, { files: 0, added: 0, removed: 0 }); setDiff(counts); }).catch(() => {}); const timer = setTimeout(refresh, 400); const interval = setInterval(refresh, 15000); return () => { active = false; clearTimeout(timer); clearInterval(interval); }; }, [hostId, id, chat?.status, chat?.worktreePath, chat?.projectId, mac.status]);
   if (!chat) return <View style={s.waiting}><Text style={s.faint}>Waiting for this chat on the Mac…</Text></View>;
-  const root = chat.worktreePath || remote.snapshot?.projects.find(x => x.id === chat.projectId)?.rootPath || '';
-  const context = chatContext(chat, chat.projectId ? remote.snapshot?.projects.find(x => x.id === chat.projectId)?.name : null);
-  const catalog = remote.snapshot?.modelCatalogs?.[chat.providerId];
+  const root = chat.worktreePath || mac.snapshot?.projects.find(x => x.id === chat.projectId)?.rootPath || '';
+  const context = chatContext(chat, chat.projectId ? mac.snapshot?.projects.find(x => x.id === chat.projectId)?.name : null);
+  const catalog = mac.snapshot?.modelCatalogs?.[chat.providerId];
   const modelOption = catalog?.models.find(x => x.id === chat.model) || catalog?.versions.find(x => x.id === chat.model);
-  const defaultModelLabel = remote.snapshot?.defaultModelNames?.[chat.providerId] || catalog?.accountDefault?.label;
+  const defaultModelLabel = mac.snapshot?.defaultModelNames?.[chat.providerId] || catalog?.accountDefault?.label;
   const modelLabel = chat.model ? modelOption?.label || chat.model : defaultModelLabel || 'Default model';
   const effortLabel = (chat.effort || modelOption?.defaultEffort || catalog?.accountDefault?.defaultEffort || 'Default effort').replace(/^./, x => x.toUpperCase());
   const providerLabel = { codex: 'Codex', claude: 'Claude Code', opencode: 'OpenCode' }[chat.providerId] || chat.providerId;
   const policyLabel = { ask: 'Ask before acting', 'auto-edits': 'Accept edits', bypass: 'Full autonomy' }[chat.permissionPolicy];
-  const act = (name: string, args: Record<string, unknown> = {}) => remote.request(name, { sessionId: id, ...args }).catch(e => Alert.alert('Abstract', String(e)));
-  const send = async () => { if (!message.trim() && !attachments.length) return; if (/^\/[a-z]+$/i.test(message.trim()) && runSlash(message.trim().slice(1))) return; try { if (attachments.length) await remote.request('sendAttachments', { sessionId: id, text: message, ...attachmentPayload(attachments) }); else await remote.request('send', { sessionId: id, text: message }); setMessage(''); setAttachments([]); setPreviewingMarkdown(false); } catch (e) { Alert.alert('Could not send', String(e)); } };
+  const act = (name: string, args: Record<string, unknown> = {}) => mac.request(name, { sessionId: id, ...args }).catch(e => Alert.alert('Abstract', String(e)));
+  const send = async () => { if (!message.trim() && !attachments.length) return; if (/^\/[a-z]+$/i.test(message.trim()) && runSlash(message.trim().slice(1))) return; try { if (attachments.length) await mac.request('sendAttachments', { sessionId: id, text: message, ...attachmentPayload(attachments) }); else await mac.request('send', { sessionId: id, text: message }); setMessage(''); setAttachments([]); setPreviewingMarkdown(false); } catch (e) { Alert.alert('Could not send', String(e)); } };
   const searchLinks = async (source: LinkKind, query: string) => {
     if (!root) return;
     setLinkLoading(true);
@@ -337,7 +340,7 @@ export function ChatWorkspace({ route, navigation }: any) {
       const kind = source === 'issue' ? 'issue' : 'pr';
       const fields = source === 'issue' ? 'number,title,url,state,body' : 'number,title,url,state,body,isDraft,baseRefName,headRefName';
       const args = [kind, 'list', '--limit', '30', '--json', fields, '--state', query.trim() ? 'all' : 'open', ...(query.trim() ? ['--search', query.trim()] : [])];
-      const reply = await remote.request('exec', { command: 'gh', args, cwd: root });
+      const reply = await mac.request('exec', { command: 'gh', args, cwd: root });
       const output = reply.exec?._0;
       if (output?.code !== 0) throw Error(output?.stderr || 'Could not search GitHub.');
       setLinkResults(JSON.parse(output.stdout || '[]'));
@@ -364,7 +367,7 @@ export function ChatWorkspace({ route, navigation }: any) {
     switch (command) {
       case 'agent': case 'model': case 'effort': case 'mode': setSlashChoosing(command); return true;
       case 'stop': act('stop'); break;
-      case 'diff': navigation.navigate('Review', { sessionId: id }); break;
+      case 'diff': navigation.navigate('Review', { hostId, sessionId: id }); break;
       case 'rename': setMenu('manage'); break;
       case 'attach': pickAttachments(attachments).then(setAttachments).catch(e => Alert.alert('Attachment', String(e))); break;
       default: return false;
@@ -373,7 +376,7 @@ export function ChatWorkspace({ route, navigation }: any) {
     setSlashChoosing(null);
     return true;
   };
-  const providerChoices = (remote.snapshot?.providers || []).map(value => ({ id: value, title: ({ codex: 'Codex', claude: 'Claude Code', opencode: 'OpenCode' } as Record<string, string>)[value] || value, selected: value === chat.providerId, image: Platform.OS === 'ios' ? providerMenuImage(value) : undefined }));
+  const providerChoices = (mac.snapshot?.providers || []).map(value => ({ id: value, title: ({ codex: 'Codex', claude: 'Claude Code', opencode: 'OpenCode' } as Record<string, string>)[value] || value, selected: value === chat.providerId, image: Platform.OS === 'ios' ? providerMenuImage(value) : undefined }));
   const modelChoices = [{ id: '', title: defaultModelLabel ? `Default (${defaultModelLabel})` : 'Default model', selected: !chat.model }, ...(catalog?.models || []).map(value => ({ id: value.id, title: value.label, selected: value.id === chat.model }))];
   const effortChoices = [{ id: '', title: 'Default effort', selected: !chat.effort }, ...(modelOption?.efforts || catalog?.accountDefault?.efforts || []).map(value => ({ id: value, title: value.replace(/^./, x => x.toUpperCase()), selected: value === chat.effort }))];
   const policyChoices = ([['ask', 'Ask before acting'], ['auto-edits', 'Accept edits'], ['bypass', 'Full autonomy']] as const).map(([id, title]) => ({ id, title, selected: id === chat.permissionPolicy }));
@@ -387,7 +390,7 @@ export function ChatWorkspace({ route, navigation }: any) {
   const keyboardOffset = Platform.OS === 'ios' ? keyboardHeight : 0;
   const slashPopupHeight = Math.max(150, Math.min(365, windowHeight - keyboardOffset - bottomPanelHeight - safeArea.top - 22));
   return <SafeAreaView edges={['left', 'right']} style={s.root}>
-    <SwipeForward onSwipe={() => navigation.navigate('Review', { sessionId: id })} onBack={() => navigation.goBack()}><BlurTargetView ref={blurTarget} style={{ flex: 1 }}><FlatList ref={scroll} style={s.transcript} contentInsetAdjustmentBehavior="automatic" contentContainerStyle={[s.transcriptContent, { paddingBottom: bottomPanelHeight + keyboardOffset + 20 }]} data={transcriptRows} keyExtractor={transcriptKey} renderItem={renderTranscriptItem} initialNumToRender={14} maxToRenderPerBatch={12} windowSize={7} updateCellsBatchingPeriod={30} maintainVisibleContentPosition={{ minIndexForVisible: 1 }} ListHeaderComponent={hasOlder || loadingHistory ? <Pressable accessibilityRole="button" accessibilityLabel="Load older messages" disabled={loadingHistory} onPress={loadEarlier} style={{ alignItems: 'center', paddingVertical: 10 }}>{loadingHistory ? <ActivityIndicator size="small" color={muted} /> : <Text style={s.thinkingLabel}>Load older messages</Text>}</Pressable> : null} ListFooterComponent={transcriptFooter} onContentSizeChange={onTranscriptSize} onScroll={onTranscriptScroll} onScrollBeginDrag={onTranscriptDrag} scrollEventThrottle={100} keyboardShouldPersistTaps="handled" />{remote.status !== 'online' && <Pressable accessibilityRole="button" accessibilityLabel={remote.active ? 'Reconnect to host' : 'Connect to host'} onPress={() => remote.active ? remote.connect(remote.nearby.find(x => x.id === remote.active?.peer.id)?.address || remote.active.address, remote.active).catch(() => {}) : navigation.navigate('Settings')} style={[s.hostPill, { top: safeArea.top + 54 }]}>{remote.status === 'connecting' ? <ActivityIndicator size="small" color={ink} /> : <Glyph name="terminal" size={15} color={ink} />}<Text style={s.hostPillText}>{remote.status === 'connecting' ? 'Connecting to host' : remote.active ? 'Reconnect to host' : 'Connect to host'}</Text></Pressable>}{!atBottom && <Pressable accessibilityLabel="Jump to latest" style={[s.jump, { bottom: bottomPanelHeight + keyboardOffset + 12 }]} onPress={() => { following.current = true; userDragged.current = false; setAtBottom(true); scroll.current?.scrollToEnd({ animated: true }); }}><Glyph name="arrow.down" size={14} color={ink} /></Pressable>}</BlurTargetView></SwipeForward>
+    <SwipeForward onSwipe={() => navigation.navigate('Review', { hostId, sessionId: id })} onBack={() => navigation.goBack()}><BlurTargetView ref={blurTarget} style={{ flex: 1 }}><FlatList ref={scroll} style={s.transcript} contentInsetAdjustmentBehavior="automatic" contentContainerStyle={[s.transcriptContent, { paddingBottom: bottomPanelHeight + keyboardOffset + 20 }]} data={transcriptRows} keyExtractor={transcriptKey} renderItem={renderTranscriptItem} initialNumToRender={14} maxToRenderPerBatch={12} windowSize={7} updateCellsBatchingPeriod={30} maintainVisibleContentPosition={{ minIndexForVisible: 1 }} ListHeaderComponent={hasOlder || loadingHistory ? <Pressable accessibilityRole="button" accessibilityLabel="Load older messages" disabled={loadingHistory} onPress={loadEarlier} style={{ alignItems: 'center', paddingVertical: 10 }}>{loadingHistory ? <ActivityIndicator size="small" color={muted} /> : <Text style={s.thinkingLabel}>Load older messages</Text>}</Pressable> : null} ListFooterComponent={transcriptFooter} onContentSizeChange={onTranscriptSize} onScroll={onTranscriptScroll} onScrollBeginDrag={onTranscriptDrag} scrollEventThrottle={100} keyboardShouldPersistTaps="handled" />{mac.status !== 'online' && <Pressable accessibilityRole="button" accessibilityLabel={macName ? `Reconnect to ${macName}` : 'Connect to a Mac'} onPress={() => macName ? remote.reconnect(hostId).catch(() => {}) : navigation.navigate('Settings')} style={[s.hostPill, { top: safeArea.top + 54 }]}>{mac.status === 'connecting' ? <ActivityIndicator size="small" color={ink} /> : <Glyph name="terminal" size={15} color={ink} />}<Text style={s.hostPillText}>{mac.status === 'connecting' ? `Connecting to ${macName || 'Mac'}` : macName ? `Reconnect to ${macName}` : 'Connect to a Mac'}</Text></Pressable>}{!atBottom && <Pressable accessibilityLabel="Jump to latest" style={[s.jump, { bottom: bottomPanelHeight + keyboardOffset + 12 }]} onPress={() => { following.current = true; userDragged.current = false; setAtBottom(true); scroll.current?.scrollToEnd({ animated: true }); }}><Glyph name="arrow.down" size={14} color={ink} /></Pressable>}</BlurTargetView></SwipeForward>
     <ProgressiveBlur edge="bottom" blurTarget={blurTarget} style={[s.bottomBlur, { bottom: keyboardOffset, height: bottomPanelHeight + 24 }]} />
     <View style={[s.bottomPanel, { bottom: keyboardOffset }]} onLayout={event => {
       const measuredHeight = event?.nativeEvent?.layout?.height;
@@ -395,9 +398,9 @@ export function ChatWorkspace({ route, navigation }: any) {
       setBottomPanelHeight(height => Math.abs(height - measuredHeight) < 1 ? height : measuredHeight);
     }}>
       <View style={s.contextRow}>
-        <ContextPill context={context} onPress={chat.projectId ? () => navigation.navigate('Worktrees', { projectId: chat.projectId }) : undefined} />
-        {pr && <Pressable accessibilityRole="button" accessibilityLabel={`Pull request #${pr.number}`} onPress={() => navigation.navigate('PullRequest', { sessionId: id })} style={s.prContext}><PullRequestIcon pr={pr} size={14} /><Text style={s.prContextLabel}>#{pr.number}</Text></Pressable>}
-        {diff.files > 0 && <Pressable accessibilityRole="button" accessibilityLabel={`Review ${diff.files} changed ${diff.files === 1 ? 'file' : 'files'}`} onPress={() => { Haptics.selectionAsync().catch(() => {}); navigation.navigate('Review', { sessionId: id }); }} style={s.changesPill}>
+        <ContextPill context={context} onPress={chat.projectId ? () => navigation.navigate('Worktrees', { hostId, projectId: chat.projectId }) : undefined} />
+        {pr && <Pressable accessibilityRole="button" accessibilityLabel={`Pull request #${pr.number}`} onPress={() => navigation.navigate('PullRequest', { hostId, sessionId: id })} style={s.prContext}><PullRequestIcon pr={pr} size={14} /><Text style={s.prContextLabel}>#{pr.number}</Text></Pressable>}
+        {diff.files > 0 && <Pressable accessibilityRole="button" accessibilityLabel={`Review ${diff.files} changed ${diff.files === 1 ? 'file' : 'files'}`} onPress={() => { Haptics.selectionAsync().catch(() => {}); navigation.navigate('Review', { hostId, sessionId: id }); }} style={s.changesPill}>
           <Glyph name="review" size={13} color={ink} /><Text style={s.changesPillLabel}>{diff.files} {diff.files === 1 ? 'file' : 'files'}</Text>{diff.added > 0 && <Text style={s.changesAdded}>+{diff.added}</Text>}{diff.removed > 0 && <Text style={s.changesRemoved}>−{diff.removed}</Text>}
         </Pressable>}
       </View>

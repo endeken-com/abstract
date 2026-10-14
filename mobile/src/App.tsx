@@ -11,7 +11,8 @@ import Svg, { Path } from 'react-native-svg';
 import { MenuView } from '@react-native-menu/menu';
 import { BlurTargetView } from 'expo-blur';
 import { useHeaderHeight } from '@react-navigation/elements';
-import { remote } from './remote';
+import { remote, type RemoteClient } from './remote';
+import { itemKey, macChats, macProjects, macPullRequests, type MacView } from './macs';
 import { ChatWorkspace } from './ChatWorkspace';
 import { BranchIcon, PullRequestIcon } from './PullRequestIcon';
 import { contextSymbols } from './chatContext';
@@ -68,6 +69,9 @@ function useRemote() {
   useEffect(() => remote.subscribe(() => rerender(x => x + 1)), []);
   return remote;
 }
+// The connection to the Mac that owns what a screen shows.
+function useMac(hostId?: string) { return useRemote().client(hostId); }
+function macStatus(mac: MacView) { return mac.state === 'online' ? 'Connected' : mac.state === 'connecting' ? 'Connecting' : `${mac.name} isn't reachable`; }
 function Button({ title, onPress, secondary, danger }: { title: string; onPress: () => void; secondary?: boolean; danger?: boolean }) {
   return <Pressable onPress={() => { Haptics.selectionAsync().catch(() => {}); onPress(); }} style={[styles.button, secondary && styles.secondary, danger && styles.danger]}><Text style={[styles.buttonText, secondary && { color: ink }]}>{title}</Text></Pressable>;
 }
@@ -109,7 +113,7 @@ function HeaderSpacer() {
   return <View style={{ height: useHeaderHeight() }} />;
 }
 function run(action: () => Promise<unknown>) { action().catch(error => Alert.alert('Abstract', String(error.message || error))); }
-function activeRoot(session: Session) { return session.worktreePath || remote.snapshot?.projects.find(x => x.id === session.projectId)?.rootPath || ''; }
+function activeRoot(mac: RemoteClient, session: Session) { return session.worktreePath || mac.snapshot?.projects.find(x => x.id === session.projectId)?.rootPath || ''; }
 
 function RailAction({ icon, title, detail, onPress }: { icon: IconName; title: string; detail?: string; onPress: () => void }) {
   return <Pressable accessibilityRole="button" onPress={onPress} style={styles.railAction}>
@@ -117,45 +121,60 @@ function RailAction({ icon, title, detail, onPress }: { icon: IconName; title: s
     {detail ? <Text style={styles.railDetail}>{detail}</Text> : null}
   </Pressable>;
 }
-function WorkspaceRail({ navigate, selectedChat }: { navigate: (name: string, params?: Record<string, unknown>) => void; selectedChat?: string | null }) {
+function RailChat({ mac, chat, selected, navigate }: { mac: MacView; chat: Session; selected: boolean; navigate: (name: string, params?: Record<string, unknown>) => void }) {
+  const pr = mac.snapshot?.pullRequests?.[chat.id];
+  return <Pressable onPress={() => navigate('Chat', { hostId: mac.id, sessionId: chat.id })} style={[styles.railChat, selected && styles.railChatSelected]}>
+    {pr ? <PullRequestIcon pr={pr} size={13} /> : <View style={[styles.statusDiamond, chat.status === 'running' && styles.statusRunning]} />}<Text numberOfLines={1} style={styles.railChatTitle}>{chat.name}</Text>
+    {chat.status === 'running' ? <Text style={styles.railDetail}>•••</Text> : null}
+  </Pressable>;
+}
+function WorkspaceRail({ navigate, selectedChat }: { navigate: (name: string, params?: Record<string, unknown>) => void; selectedChat?: { hostId?: string; sessionId?: string } }) {
   const state = useRemote();
-  const projects = state.snapshot?.projects || [];
-  const sessions = state.snapshot?.sessions.filter(x => !x.archivedAt) || [];
-  const standalone = sessions.filter(x => !x.projectId);
-  const prs = Object.keys(state.snapshot?.pullRequests || {}).length;
+  const macs = state.macs();
+  const prs = macPullRequests(macs).length;
+  const online = macs.filter(mac => mac.state === 'online').length;
+  const footer = !macs.length ? 'Offline' : online === macs.length ? 'Connected' : online ? `${online} of ${macs.length} connected` : macs.some(mac => mac.state === 'connecting') ? 'Connecting' : 'Offline';
   return <View style={styles.rail}>
     <HeaderScrollView contentContainerStyle={styles.railContent}>
       <RailAction icon="plus" title="New" onPress={() => navigate('NewChat', {})} />
       <RailAction icon="clock" title="Automations" onPress={() => navigate('Automations')} />
       <RailAction icon="worktree" title="Worktrees" onPress={() => navigate('Worktrees')} />
       <RailAction icon="pull" title="Pull Requests" detail={prs ? String(prs) : undefined} onPress={() => navigate('PullRequests')} />
-      {state.active && <Pressable onPress={() => navigate('Settings')} style={styles.railHost}><Icon name="devices" size={14} color={tertiary} /><Text numberOfLines={1} style={styles.railHostTitle}>{state.active.peer.name}</Text><View style={[styles.connectionDot, state.status !== 'online' && { backgroundColor: tertiary }]} /></Pressable>}
-      {projects.map(project => <View key={project.id} style={styles.railGroup}>
-        <Pressable onPress={() => navigate('Project', { projectId: project.id })} style={styles.railGroupHeader}>
-          <Text numberOfLines={1} style={styles.railGroupTitle}>{project.name}</Text><Icon name="chevron" size={12} color={tertiary} />
-        </Pressable>
-        {sessions.filter(x => x.projectId === project.id).sort((a, b) => b.createdAt - a.createdAt).map(chat => <Pressable key={chat.id} onPress={() => navigate('Chat', { sessionId: chat.id })} style={[styles.railChat, selectedChat === chat.id && styles.railChatSelected]}>
-          {state.snapshot?.pullRequests?.[chat.id] ? <PullRequestIcon pr={state.snapshot.pullRequests[chat.id]} size={13} /> : <View style={[styles.statusDiamond, chat.status === 'running' && styles.statusRunning]} />}<Text numberOfLines={1} style={styles.railChatTitle}>{chat.name}</Text>
-          {chat.status === 'running' ? <Text style={styles.railDetail}>•••</Text> : null}
-        </Pressable>)}
-      </View>)}
-      {standalone.length > 0 && <View style={styles.railGroup}><Text style={styles.railGroupTitle}>Standalone</Text>{standalone.map(chat => <Pressable key={chat.id} onPress={() => navigate('Chat', { sessionId: chat.id })} style={[styles.railChat, selectedChat === chat.id && styles.railChatSelected]}>{state.snapshot?.pullRequests?.[chat.id] ? <PullRequestIcon pr={state.snapshot.pullRequests[chat.id]} size={13} /> : <View style={styles.statusDiamond} />}<Text numberOfLines={1} style={styles.railChatTitle}>{chat.name}</Text></Pressable>)}</View>}
-      {!state.snapshot && <Text style={styles.railEmpty}>Connect to a Mac to see its projects and chats.</Text>}
+      {macs.map(mac => {
+        const sessions = (mac.snapshot?.sessions || []).filter(x => !x.archivedAt).sort((a, b) => b.createdAt - a.createdAt);
+        const standalone = sessions.filter(x => !x.projectId);
+        const isSelected = (chat: Session) => selectedChat?.hostId === mac.id && selectedChat.sessionId === chat.id;
+        return <View key={mac.id}>
+          <Pressable onPress={() => navigate('Settings')} style={styles.railHost}><Icon name="devices" size={14} color={tertiary} /><Text numberOfLines={1} style={styles.railHostTitle}>{mac.name}</Text><View style={[styles.connectionDot, mac.state !== 'online' && { backgroundColor: tertiary }]} /></Pressable>
+          {mac.state !== 'online' && <Text style={styles.railMacStatus}>{macStatus(mac)}</Text>}
+          <View style={mac.state === 'unreachable' && styles.unreachable}>
+            {(mac.snapshot?.projects || []).map(project => <View key={project.id} style={styles.railGroup}>
+              <Pressable onPress={() => navigate('Project', { hostId: mac.id, projectId: project.id })} style={styles.railGroupHeader}>
+                <Text numberOfLines={1} style={styles.railGroupTitle}>{project.name}</Text><Icon name="chevron" size={12} color={tertiary} />
+              </Pressable>
+              {sessions.filter(x => x.projectId === project.id).map(chat => <RailChat key={chat.id} mac={mac} chat={chat} selected={isSelected(chat)} navigate={navigate} />)}
+            </View>)}
+            {standalone.length > 0 && <View style={styles.railGroup}><Text style={[styles.railGroupTitle, styles.railGroupHeader]}>Standalone</Text>{standalone.map(chat => <RailChat key={chat.id} mac={mac} chat={chat} selected={isSelected(chat)} navigate={navigate} />)}</View>}
+          </View>
+        </View>;
+      })}
+      {!macs.length && <Text style={styles.railEmpty}>Pair a Mac to see its projects and chats.</Text>}
     </HeaderScrollView>
-    <Pressable onPress={() => navigate('Settings')} style={styles.railFooter}><Icon name="settings" /><Text numberOfLines={1} style={styles.railFooterTitle}>Settings</Text><Text numberOfLines={1} style={styles.railDetail}>{state.status === 'online' ? 'Connected' : state.status === 'connecting' ? 'Connecting' : 'Offline'}</Text><View style={[styles.connectionDot, state.status !== 'online' && { backgroundColor: tertiary }]} /></Pressable>
+    <Pressable onPress={() => navigate('Settings')} style={styles.railFooter}><Icon name="settings" /><Text numberOfLines={1} style={styles.railFooterTitle}>Settings</Text><Text numberOfLines={1} style={styles.railDetail}>{footer}</Text><View style={[styles.connectionDot, !online && { backgroundColor: tertiary }]} /></Pressable>
   </View>;
 }
 function SidebarScreen({ navigation, route }: any) {
   const state = useRemote();
-  const selected = route.params?.selectedChat as string | undefined;
-  const latest = state.snapshot?.sessions.filter(chat => !chat.archivedAt).sort((a, b) => b.createdAt - a.createdAt)[0]?.id;
+  const selected = route.params?.selectedChat as { hostId?: string; sessionId?: string } | undefined;
+  const newest = macChats(state.macs())[0];
+  const latest = selected?.sessionId ? selected : newest && { hostId: newest.mac.id, sessionId: newest.chat.id };
   useEffect(() => {
     navigation.setOptions({
-      headerLeft: () => <Pressable accessibilityRole="button" accessibilityLabel="Close sidebar" onPress={() => { if (selected || latest) navigation.navigate('Chat', { sessionId: selected || latest }); }} style={styles.headerAction}><Icon name="close" size={19} color={ink} /></Pressable>,
+      headerLeft: () => <Pressable accessibilityRole="button" accessibilityLabel="Close sidebar" onPress={() => { if (latest) navigation.navigate('Chat', latest); }} style={styles.headerAction}><Icon name="close" size={19} color={ink} /></Pressable>,
     });
-  }, [navigation, selected, latest]);
+  }, [navigation, latest?.hostId, latest?.sessionId]);
   return <SafeAreaView edges={['bottom', 'left', 'right']} style={{ flex: 1, backgroundColor: sidebar }}>
-    <SwipeForward enabled={!!(selected || latest)} onSwipe={() => navigation.navigate('Chat', { sessionId: selected || latest })}>
+    <SwipeForward enabled={!!latest} onSwipe={() => latest && navigation.navigate('Chat', latest)}>
       <WorkspaceRail navigate={(name, params) => navigation.navigate(name, params)} selectedChat={selected} />
     </SwipeForward>
   </SafeAreaView>;
@@ -168,36 +187,42 @@ function ScreenNavigation({ navigation }: { navigation: any }) {
 }
 function PullRequestsScreen({ navigation }: any) {
   const state = useRemote();
-  const prs = Object.entries(state.snapshot?.pullRequests || {});
+  const prs = macPullRequests(state.macs());
   return <HeaderScrollView style={styles.page} contentContainerStyle={styles.content}>
     <Text style={styles.title}>Pull Requests</Text>
-    {prs.map(([sessionId, pr]) => <Pressable key={sessionId} style={styles.row} onPress={() => navigation.navigate('PullRequest', { sessionId })}><PullRequestIcon pr={pr} /><View style={{ flex: 1 }}><Text style={styles.rowTitle} numberOfLines={1}>{`#${pr.number}  ${pr.title}`}</Text><Text style={styles.subtitle}>{`${pr.standing || (pr.isDraft ? 'Draft' : pr.state)} · ${state.snapshot?.sessions.find(x => x.id === sessionId)?.name || ''}`}</Text></View><Icon name="chevron" size={12} /></Pressable>)}
-    {!prs.length && <Empty text="No pull requests on this Mac." />}
+    {prs.map(({ mac, sessionId, pr, chat }) => <Pressable key={itemKey(mac.id, sessionId)} style={[styles.row, mac.state === 'unreachable' && styles.unreachable]} onPress={() => navigation.navigate('PullRequest', { hostId: mac.id, sessionId })}><PullRequestIcon pr={pr} /><View style={{ flex: 1 }}><Text style={styles.rowTitle} numberOfLines={1}>{`#${pr.number}  ${pr.title}`}</Text><Text style={styles.subtitle}>{`${pr.standing || (pr.isDraft ? 'Draft' : pr.state)} · ${chat?.name || ''} · ${mac.name}`}</Text></View><Icon name="chevron" size={12} /></Pressable>)}
+    {!prs.length && <Empty text="No pull requests on your Macs." />}
   </HeaderScrollView>;
 }
 
 function ProjectsScreen({ navigation }: any) {
   const state = useRemote();
-  return <HeaderScrollView style={styles.page} contentContainerStyle={styles.content}><Text style={styles.title}>Projects</Text><Text style={styles.lead}>{state.active?.peer.name || 'Connect a Mac to see its projects'}</Text>
-    {(state.snapshot?.projects || []).map(project => <Row key={project.id} title={project.name} subtitle={project.rootPath} onPress={() => navigation.navigate('Project', { projectId: project.id })} />)}
-    {!state.snapshot?.projects.length && <Empty text="No projects available." />}
+  const macs = state.macs();
+  return <HeaderScrollView style={styles.page} contentContainerStyle={styles.content}><Text style={styles.title}>Projects</Text>{!macs.length && <Text style={styles.lead}>Pair a Mac to see its projects</Text>}
+    {macs.map(mac => <View key={mac.id} style={mac.state === 'unreachable' && styles.unreachable}><Section title={mac.name}>
+      {mac.state !== 'online' && <Text style={styles.hint}>{macStatus(mac)}</Text>}
+      {(mac.snapshot?.projects || []).map(project => <Row key={project.id} title={project.name} subtitle={project.rootPath} onPress={() => navigation.navigate('Project', { hostId: mac.id, projectId: project.id })} />)}
+      {!mac.snapshot?.projects.length && <Empty text="No projects available." />}
+    </Section></View>)}
   </HeaderScrollView>;
 }
 function ProjectScreen({ route, navigation }: any) {
-  const state = useRemote();
+  const hostId = route.params.hostId as string;
+  const state = useMac(hostId);
   const project = state.snapshot?.projects.find(x => x.id === route.params.projectId) as Project | undefined;
   if (!project) return <View style={styles.content}><Empty text="Project unavailable." /></View>;
   const chats = state.snapshot?.sessions.filter(x => x.projectId === project.id && !x.archivedAt) || [];
-  return <HeaderScrollView style={styles.page} contentContainerStyle={styles.content}><Text style={styles.title}>{project.name}</Text><Text style={styles.lead}>{project.rootPath}</Text>
-    <View style={styles.actions}><Button title="New chat" onPress={() => navigation.navigate('NewChat', { projectId: project.id })} /><Button title="Worktrees" secondary onPress={() => navigation.navigate('Worktrees', { projectId: project.id })} /><Button title="Files" secondary onPress={() => navigation.navigate('Files', { root: project.rootPath })} /><Button title="Terminal" secondary onPress={() => navigation.navigate('Terminal', { root: project.rootPath })} /></View>
-    <Section title="Chats">{chats.map(chat => <Row key={chat.id} title={chat.name} subtitle={`${chat.providerId} · ${chat.branch || chat.status}`} subtitleIcon={chat.branch ? <BranchIcon size={11} color={tertiary} /> : undefined} iconNode={<ProviderLogo provider={chat.providerId} size={16} />} onPress={() => navigation.navigate('Chat', { sessionId: chat.id })} trailing={chat.status} />)}{!chats.length && <Empty text="No chats in this project." />}</Section>
+  return <HeaderScrollView style={styles.page} contentContainerStyle={styles.content}><Text style={styles.title}>{project.name}</Text><Text style={styles.lead}>{`${remote.mac(hostId)?.name || ''} · ${project.rootPath}`}</Text>
+    <View style={styles.actions}><Button title="New chat" onPress={() => navigation.navigate('NewChat', { hostId, projectId: project.id })} /><Button title="Worktrees" secondary onPress={() => navigation.navigate('Worktrees', { hostId, projectId: project.id })} /><Button title="Files" secondary onPress={() => navigation.navigate('Files', { hostId, root: project.rootPath })} /><Button title="Terminal" secondary onPress={() => navigation.navigate('Terminal', { hostId, root: project.rootPath })} /></View>
+    <Section title="Chats">{chats.map(chat => <Row key={chat.id} title={chat.name} subtitle={`${chat.providerId} · ${chat.branch || chat.status}`} subtitleIcon={chat.branch ? <BranchIcon size={11} color={tertiary} /> : undefined} iconNode={<ProviderLogo provider={chat.providerId} size={16} />} onPress={() => navigation.navigate('Chat', { hostId, sessionId: chat.id })} trailing={chat.status} />)}{!chats.length && <Empty text="No chats in this project." />}</Section>
   </HeaderScrollView>;
 }
 function ChatsScreen({ navigation }: any) {
   const state = useRemote();
-  const chats = state.snapshot?.sessions.filter(x => !x.archivedAt).sort((a, b) => b.createdAt - a.createdAt) || [];
-  return <HeaderScrollView style={styles.page} contentContainerStyle={styles.content}><Text style={styles.title}>Chats</Text><Text style={styles.lead}>{state.active?.peer.name || 'Connect a Mac to see its chats'}</Text>{state.snapshot && <Button title="New standalone chat" onPress={() => navigation.navigate('NewChat', { standalone: true })} />}
-    {chats.map(chat => <Row key={chat.id} title={chat.name} subtitle={`${state.snapshot?.projects.find(p => p.id === chat.projectId)?.name || 'No project'} · ${chat.providerId}`} iconNode={<ProviderLogo provider={chat.providerId} size={16} />} trailing={chat.status} onPress={() => navigation.navigate('Chat', { sessionId: chat.id })} />)}
+  const macs = state.macs();
+  const chats = macChats(macs);
+  return <HeaderScrollView style={styles.page} contentContainerStyle={styles.content}><Text style={styles.title}>Chats</Text>{!macs.length && <Text style={styles.lead}>Pair a Mac to see its chats</Text>}{macs.some(mac => mac.state === 'online') && <Button title="New standalone chat" onPress={() => navigation.navigate('NewChat', { standalone: true })} />}
+    {chats.map(({ mac, chat }) => <View key={itemKey(mac.id, chat.id)} style={mac.state === 'unreachable' && styles.unreachable}><Row title={chat.name} subtitle={`${mac.snapshot?.projects.find(p => p.id === chat.projectId)?.name || 'No project'} · ${chat.providerId} · ${mac.name}`} iconNode={<ProviderLogo provider={chat.providerId} size={16} />} trailing={chat.status} onPress={() => navigation.navigate('Chat', { hostId: mac.id, sessionId: chat.id })} /></View>)}
     {!chats.length && <Empty text="No chats available." />}
   </HeaderScrollView>;
 }
@@ -213,7 +238,15 @@ function BrandMark() {
   </Svg>;
 }
 function NewChatScreen({ route, navigation }: any) {
-  const state = useRemote();
+  const store = useRemote();
+  const macs = store.macs();
+  // A chat starts on the Mac that owns its project; a standalone chat on the Mac chosen for it.
+  const [hostId, setHostId] = useState<string | null>(route.params?.hostId || null);
+  const fallbackHost = (macs.find(mac => mac.state === 'online') || macs[0])?.id || null;
+  useEffect(() => {
+    if (!macs.some(mac => mac.id === hostId) && fallbackHost !== hostId) setHostId(fallbackHost);
+  }, [hostId, fallbackHost]);
+  const state = store.client(hostId);
   const [prompt, setPrompt] = useState('');
   const [attachments, setAttachments] = useState<PickedAttachment[]>([]);
   const [projectId, setProjectId] = useState<string | null>(route.params?.projectId || null);
@@ -236,7 +269,7 @@ function NewChatScreen({ route, navigation }: any) {
     setProvider(project.defaultProviderId);
     setPolicy(project.defaultPermissionPolicy);
     setBase(project.defaultBaseRef || 'HEAD');
-  }, [project?.id]);
+  }, [hostId, project?.id]);
   useEffect(() => {
     if (!project && state.snapshot?.providers.length && !state.snapshot.providers.includes(provider)) {
       setProvider(state.snapshot.providers[0]);
@@ -253,7 +286,7 @@ function NewChatScreen({ route, navigation }: any) {
       setWorktrees(entries.filter(entry => entry.path && entry.path !== project.rootPath));
     }).catch(() => { if (active) setWorktrees([]); });
     return () => { active = false; };
-  }, [project?.id]);
+  }, [hostId, project?.id]);
   const catalog = state.snapshot?.modelCatalogs?.[provider];
   const modelOption = [...(catalog?.models || []), ...(catalog?.versions || [])].find(x => x.id === modelName);
   const effortLevels = modelOption?.efforts || catalog?.accountDefault?.efforts || [];
@@ -271,10 +304,12 @@ function NewChatScreen({ route, navigation }: any) {
         ? await state.request('startChat', { _0: { projectId: project.id, providerId: provider, prompt: prompt.trim(), ...attachmentPayload(attachments), baseRef: base || null, policy, model: modelName || null, effort: effort || null, worktree: worktree || null } })
         : await state.request('startStandaloneConfigured', { providerId: provider, prompt: prompt.trim(), policy,
           ...attachmentPayload(attachments), model: modelName || null, effort: effort || null });
-      navigation.replace('Chat', { sessionId: response.started?.sessionId });
+      navigation.replace('Chat', { hostId, sessionId: response.started?.sessionId });
     } catch (error) { Alert.alert('Could not start chat', String(error)); } finally { setBusy(false); }
   };
-  const recent = (state.snapshot?.sessions || []).filter(x => !x.archivedAt).sort((a, b) => b.createdAt - a.createdAt).slice(0, 6);
+  const recent = macChats(macs).slice(0, 6);
+  const projectChoices = macProjects(macs).map(({ mac, project: choice }) => ({ id: itemKey(mac.id, choice.id), hostId: mac.id, projectId: choice.id, title: macs.length > 1 ? `${choice.name} · ${mac.name}` : choice.name }));
+  const macName = (id: string | null) => macs.find(mac => mac.id === id)?.name || 'No Mac';
   return <HeaderScrollView keyboardAware style={styles.page} contentContainerStyle={styles.launcherContent}>
     <View style={styles.launcherIntro}><BrandMark /><Text style={styles.launcherTitle}>{state.snapshot?.projects.length ? 'What should we build?' : 'Welcome to Abstract'}</Text><Text style={styles.launcherDescription}>{state.snapshot?.projects.length ? 'Each chat runs its own agent in an isolated worktree, so several can work at once without stepping on each other.' : 'Connect a Mac and start a standalone chat, or add a project on your Mac to work in isolated worktrees.'}</Text></View>
     <View style={styles.launcherBox}>
@@ -282,7 +317,8 @@ function NewChatScreen({ route, navigation }: any) {
       {attachments.length > 0 && <View style={styles.launcherAttachments}>{attachments.map(item => <Pressable key={item.id} accessibilityRole="button" accessibilityLabel={`Remove ${item.title}`} onPress={() => setAttachments(attachments.filter(x => x.id !== item.id))} style={styles.launcherAttachment}><Text numberOfLines={1} style={styles.launcherPickerText}>{item.title} ×</Text></Pressable>)}</View>}
       <View style={styles.launcherControls}>
         <Pressable accessibilityRole="button" accessibilityLabel="Attach files or images" onPress={() => run(async () => setAttachments(await pickAttachments(attachments)))} style={styles.launcherPicker}><Icon name="plus" size={16} color={muted} /></Pressable>
-        <LauncherPicker label="Project" value={project?.name || 'No project'} choices={[...(state.snapshot?.projects || []).map(x => ({ id: x.id, title: x.name, selected: x.id === projectId })), { id: '', title: 'No project', selected: !projectId }]} onSelect={id => { setStandalone(!id); setProjectId(id || null); setWorktree(''); }} />
+        <LauncherPicker label="Project" value={project?.name || 'No project'} choices={[...projectChoices.map(x => ({ id: x.id, title: x.title, selected: x.hostId === hostId && x.projectId === projectId })), { id: '', title: 'No project', selected: !projectId }]} onSelect={id => { const choice = projectChoices.find(x => x.id === id); setStandalone(!choice); if (choice) setHostId(choice.hostId); setProjectId(choice?.projectId || null); setWorktree(''); }} />
+        {!project && macs.length > 1 && <LauncherPicker label="Mac" value={macName(hostId)} leading={<Icon name="devices" size={13} color={muted} />} choices={macs.map(mac => ({ id: mac.id, title: mac.state === 'online' ? mac.name : `${mac.name} (${mac.state === 'connecting' ? 'connecting' : 'not reachable'})`, selected: mac.id === hostId }))} onSelect={id => { setHostId(id); setModelName(''); setEffort(''); }} />}
         <LauncherPicker label="Agent" value={providerLabel(provider)} leading={<ProviderLogo provider={provider} size={13} />} choices={(state.snapshot?.providers || []).map(id => ({ id, title: providerLabel(id), selected: id === provider, image: Platform.OS === 'ios' ? providerMenuImage(id) : undefined }))} onSelect={id => { setProvider(id); setModelName(''); setEffort(''); setCustomModel(false); }} />
         <LauncherPicker label="Model" value={modelOption?.label || modelName || state.snapshot?.defaultModelNames?.[provider] || 'Default model'} choices={[{ id: '', title: 'Default model', selected: !modelName }, ...(catalog?.models || []).map(x => ({ id: x.id, title: x.label, selected: modelName === x.id })), ...(catalog?.versions || []).map(x => ({ id: x.id, title: x.label, selected: modelName === x.id })), { id: '__other__', title: 'Other Model…' }]} onSelect={id => { if (id === '__other__') setCustomModel(true); else { setModelName(id); setEffort(''); setCustomModel(false); } }} />
         {effortLevels.length > 0 && <LauncherPicker label="Reasoning effort" value={effort ? effort.replace(/^./, x => x.toUpperCase()) : 'Default effort'} choices={[{ id: '', title: 'Default effort', selected: !effort }, ...effortLevels.map(id => ({ id, title: id.replace(/^./, x => x.toUpperCase()), selected: effort === id }))]} onSelect={setEffort} />}
@@ -293,25 +329,26 @@ function NewChatScreen({ route, navigation }: any) {
       {worktreeHolder && <Text style={styles.launcherWarning}>“{worktreeHolder.name}” works here now. Starting stops its agent and this chat takes the worktree.</Text>}
       <View style={styles.launcherFooter}><Pressable accessibilityRole="button" accessibilityState={{ disabled: !canStart }} disabled={!canStart} onPress={() => run(submit)} style={[styles.launcherStart, !canStart && styles.launcherStartDisabled]}><Text style={styles.launcherStartText}>{busy ? 'Starting…' : 'Start'}</Text><Icon name="chevron" size={13} color={bg} /></Pressable></View>
     </View>
-    {recent.length > 0 && <View style={styles.launcherRecent}><Text style={styles.launcherRecentLabel}>Recent</Text>{recent.map(chat => <Pressable key={chat.id} onPress={() => navigation.navigate('Chat', { sessionId: chat.id })} style={styles.launcherRecentRow}><ProviderLogo provider={chat.providerId} size={15} /><Text numberOfLines={1} style={styles.launcherRecentName}>{chat.name}</Text><Text numberOfLines={1} style={styles.launcherRecentMeta}>{state.snapshot?.projects.find(x => x.id === chat.projectId)?.name || 'Standalone'}</Text></Pressable>)}</View>}
+    {recent.length > 0 && <View style={styles.launcherRecent}><Text style={styles.launcherRecentLabel}>Recent</Text>{recent.map(({ mac, chat }) => <Pressable key={itemKey(mac.id, chat.id)} onPress={() => navigation.navigate('Chat', { hostId: mac.id, sessionId: chat.id })} style={styles.launcherRecentRow}><ProviderLogo provider={chat.providerId} size={15} /><Text numberOfLines={1} style={styles.launcherRecentName}>{chat.name}</Text><Text numberOfLines={1} style={styles.launcherRecentMeta}>{`${mac.snapshot?.projects.find(x => x.id === chat.projectId)?.name || 'Standalone'}${macs.length > 1 ? ` · ${mac.name}` : ''}`}</Text></Pressable>)}</View>}
   </HeaderScrollView>;
 }
 function WorktreesScreen({ route, navigation }: any) {
-  const state = useRemote(); const project = state.snapshot?.projects.find(x => x.id === route.params?.projectId);
+  const store = useRemote(); const hostId = route.params?.hostId as string | undefined;
+  const state = store.client(hostId); const project = hostId ? state.snapshot?.projects.find(x => x.id === route.params?.projectId) : undefined;
   const [output, setOutput] = useState('');
   const refresh = () => { if (project) state.exec(project.rootPath, ['worktree', 'list', '--porcelain']).then(x => setOutput(x.stdout)).catch(error => setOutput(String(error))); };
-  useEffect(refresh, [project?.id]);
+  useEffect(refresh, [hostId, project?.id]);
   const entries = output.split(/\n\n+/).map(block => ({ path: block.match(/^worktree (.*)$/m)?.[1], branch: block.match(/^branch refs\/heads\/(.*)$/m)?.[1] })).filter(x => x.path);
-  return <HeaderScrollView style={styles.page} contentContainerStyle={styles.content}><Text style={styles.title}>Worktrees</Text>{!project ? <Section title="Projects">{state.snapshot?.projects.map(p => <Row key={p.id} title={p.name} subtitle={p.rootPath} onPress={() => navigation.navigate('Worktrees', { projectId: p.id })} />)}</Section> : <><Text style={styles.lead}>{project.name}</Text>{entries.map(entry => <View key={entry.path}><Row title={entry.branch || 'Detached'} subtitle={entry.path} onPress={() => navigation.navigate('Files', { root: entry.path })} /><Button title="Terminal" secondary onPress={() => navigation.navigate('Terminal', { root: entry.path })} />{entry.path !== project.rootPath && <><Button title="New chat here" secondary onPress={() => navigation.navigate('NewChat', { projectId: project.id, worktree: entry.path })} /><Button title="Remove worktree" danger onPress={() => Alert.alert('Remove worktree?', entry.path || '', [{ text: 'Cancel' }, { text: 'Remove', style: 'destructive', onPress: () => run(async () => { await state.request('removeWorktree', { projectId: project.id, path: entry.path, deleteBranch: false }); refresh(); }) }])} /></>}</View>)}{!entries.length && <Empty text="No worktrees found." />}</>}
+  return <HeaderScrollView style={styles.page} contentContainerStyle={styles.content}><Text style={styles.title}>Worktrees</Text>{!project ? store.macs().map(mac => <View key={mac.id} style={mac.state === 'unreachable' && styles.unreachable}><Section title={mac.name}>{mac.state !== 'online' && <Text style={styles.hint}>{macStatus(mac)}</Text>}{mac.snapshot?.projects.map(p => <Row key={p.id} title={p.name} subtitle={p.rootPath} onPress={() => navigation.navigate('Worktrees', { hostId: mac.id, projectId: p.id })} />)}</Section></View>) : <><Text style={styles.lead}>{project.name}</Text>{entries.map(entry => <View key={entry.path}><Row title={entry.branch || 'Detached'} subtitle={entry.path} onPress={() => navigation.navigate('Files', { hostId, root: entry.path })} /><Button title="Terminal" secondary onPress={() => navigation.navigate('Terminal', { hostId, root: entry.path })} />{entry.path !== project.rootPath && <><Button title="New chat here" secondary onPress={() => navigation.navigate('NewChat', { hostId, projectId: project.id, worktree: entry.path })} /><Button title="Remove worktree" danger onPress={() => Alert.alert('Remove worktree?', entry.path || '', [{ text: 'Cancel' }, { text: 'Remove', style: 'destructive', onPress: () => run(async () => { await state.request('removeWorktree', { projectId: project.id, path: entry.path, deleteBranch: false }); refresh(); }) }])} /></>}</View>)}{!entries.length && <Empty text="No worktrees found." />}</>}
     <Text style={styles.hint}>Create a chat to create a new worktree. Open a worktree to browse its files.</Text>
   </HeaderScrollView>;
 }
 function FilesScreen({ route, navigation }: any) {
-  const state = useRemote(); const root = route.params.root as string;
+  const hostId = route.params.hostId as string; const state = useMac(hostId); const root = route.params.root as string;
   const [paths, setPaths] = useState<string[]>([]); const [query, setQuery] = useState(''); const [folder, setFolder] = useState('');
   const [error, setError] = useState(''); const [loading, setLoading] = useState(false);
   const refresh = () => { setLoading(true); setError(''); state.request('listFiles', { root }).then(response => setPaths(response.files?._0 || [])).catch(reason => setError(String(reason.message || reason))).finally(() => setLoading(false)); };
-  useEffect(() => { refresh(); }, [root]);
+  useEffect(() => { refresh(); }, [hostId, root]);
   const matchingPaths = query.trim() ? paths.filter(path => path.toLowerCase().includes(query.trim().toLowerCase())) : null;
   const entries = matchingPaths
     ? matchingPaths.slice(0, 500).map(path => ({ path, name: path.split('/').at(-1) || path, directory: false }))
@@ -322,20 +359,20 @@ function FilesScreen({ route, navigation }: any) {
         const child = folder ? `${folder}/${name}` : name;
         return [child, { path: child, name, directory }] as const;
       })).values()].sort((a, b) => Number(b.directory) - Number(a.directory) || a.name.localeCompare(b.name));
-  return <SwipeForward enabled={!!route.params.sessionId} onSwipe={() => navigation.navigate('Terminal', { root, sessionId: route.params.sessionId })} onBack={() => navigation.goBack()}><View style={styles.page}>
+  return <SwipeForward enabled={!!route.params.sessionId} onSwipe={() => navigation.navigate('Terminal', { hostId, root, sessionId: route.params.sessionId })} onBack={() => navigation.goBack()}><View style={styles.page}>
     <HeaderSpacer />
     <View style={styles.filesFilterSection}>
       <View style={styles.filesFilterHeading}><Text style={styles.filesFilterTitle}>FILES</Text><Text style={styles.filesFilterCount}>{loading ? 'Loading…' : matchingPaths ? `${matchingPaths.length} matches` : `${entries.length} items`}</Text></View>
       <View style={styles.filesFilterRow}><View style={styles.fileFilter}><Icon name="filter" size={16} color={tertiary} /><TextInput style={styles.fileFilterInput} placeholder="Filter files" placeholderTextColor={tertiary} value={query} onChangeText={setQuery} autoCapitalize="none" autoCorrect={false} />{query ? <Pressable style={styles.fileFilterClear} onPress={() => setQuery('')} accessibilityLabel="Clear filter"><Icon name="close" size={13} color={muted} /></Pressable> : null}</View><Pressable style={styles.fileRefreshButton} accessibilityLabel="Refresh files" onPress={() => { Haptics.selectionAsync().catch(() => {}); refresh(); }}><Icon name="refresh" size={17} color={muted} /></Pressable></View>
     </View>
     {folder ? <Pressable style={styles.breadcrumb} onPress={() => setFolder(folder.split('/').slice(0, -1).join('/'))}><Icon name="back" size={13} color={muted} /><Text numberOfLines={1} style={styles.breadcrumbText}>{folder}</Text></Pressable> : null}
-    {error ? <View style={styles.paneEmpty}><Icon name="failed" size={22} color="#EF6461" /><Text style={styles.paneEmptyTitle}>Couldn't load files</Text><Text style={styles.empty}>{error}</Text><Button title="Try again" secondary onPress={refresh} /></View> : loading && !paths.length ? <View style={styles.paneEmpty}><Text style={styles.empty}>Loading files…</Text></View> : <FlatList contentContainerStyle={styles.fileList} data={entries} keyExtractor={item => item.path} ListEmptyComponent={<View style={styles.paneEmpty}><Text style={styles.empty}>{query.trim() ? 'No matching files.' : 'No files found.'}</Text></View>} renderItem={({ item }) => <Pressable style={styles.fileTreeRow} onPress={() => item.directory ? setFolder(item.path) : navigation.navigate('File', { path: root.replace(/\/$/, '') + '/' + item.path })}><FileIcon path={item.path} directory={item.directory} size={17} /><View style={{ flex: 1, minWidth: 0 }}><Text numberOfLines={1} style={styles.fileTreeTitle}>{item.name}</Text>{query ? <Text numberOfLines={1} style={styles.fileTreeSubtitle}>{item.path}</Text> : null}</View>{item.directory ? <Icon name="chevron" size={11} color={tertiary} /> : null}</Pressable>} />}
+    {error ? <View style={styles.paneEmpty}><Icon name="failed" size={22} color="#EF6461" /><Text style={styles.paneEmptyTitle}>Couldn't load files</Text><Text style={styles.empty}>{error}</Text><Button title="Try again" secondary onPress={refresh} /></View> : loading && !paths.length ? <View style={styles.paneEmpty}><Text style={styles.empty}>Loading files…</Text></View> : <FlatList contentContainerStyle={styles.fileList} data={entries} keyExtractor={item => item.path} ListEmptyComponent={<View style={styles.paneEmpty}><Text style={styles.empty}>{query.trim() ? 'No matching files.' : 'No files found.'}</Text></View>} renderItem={({ item }) => <Pressable style={styles.fileTreeRow} onPress={() => item.directory ? setFolder(item.path) : navigation.navigate('File', { hostId, path: root.replace(/\/$/, '') + '/' + item.path })}><FileIcon path={item.path} directory={item.directory} size={17} /><View style={{ flex: 1, minWidth: 0 }}><Text numberOfLines={1} style={styles.fileTreeTitle}>{item.name}</Text>{query ? <Text numberOfLines={1} style={styles.fileTreeSubtitle}>{item.path}</Text> : null}</View>{item.directory ? <Icon name="chevron" size={11} color={tertiary} /> : null}</Pressable>} />}
   </View></SwipeForward>;
 }
 function FileScreen({ route, navigation }: any) {
-  const state = useRemote(); const path = route.params.path as string;
+  const hostId = route.params.hostId as string; const state = useMac(hostId); const path = route.params.path as string;
   const [content, setContent] = useState(''); const [editing, setEditing] = useState(false);
-  useEffect(() => { state.readFile(path).then(setContent).catch(error => Alert.alert('File', String(error))); }, [path]);
+  useEffect(() => { state.readFile(path).then(setContent).catch(error => Alert.alert('File', String(error))); }, [hostId, path]);
   useEffect(() => { navigation.setOptions({ title: path.split('/').at(-1) || 'File' }); }, [navigation, path]);
   const save = async () => { await state.writeFile(path, content); setEditing(false); };
   const lines = content.split('\n');
@@ -344,14 +381,14 @@ function FileScreen({ route, navigation }: any) {
   </KeyboardAvoidingView>;
 }
 function TerminalScreen({ route, navigation }: any) {
-  const state = useRemote(); const root = route.params.root as string;
+  const hostId = route.params.hostId as string; const state = useMac(hostId); const root = route.params.root as string;
   const [id, setId] = useState<number | null>(null);
   useEffect(() => {
     let terminal: number | null = null;
     state.openTerminal(root).then(value => { terminal = value; setId(value); }).catch(error => Alert.alert('Terminal', String(error)));
     return () => { if (terminal !== null) state.request('closeTerminal', { id: terminal }).catch(() => {}); };
-  }, [root]);
-  return <SafeAreaView edges={['left', 'right', 'bottom']} style={styles.page}><HeaderSpacer /><SwipeForward enabled={!!route.params.sessionId} onSwipe={() => navigation.navigate('PullRequest', { sessionId: route.params.sessionId })} onBack={() => navigation.goBack()}><TerminalView id={id} root={root} /></SwipeForward></SafeAreaView>;
+  }, [hostId, root]);
+  return <SafeAreaView edges={['left', 'right', 'bottom']} style={styles.page}><HeaderSpacer /><SwipeForward enabled={!!route.params.sessionId} onSwipe={() => navigation.navigate('PullRequest', { hostId, sessionId: route.params.sessionId })} onBack={() => navigation.goBack()}><TerminalView hostId={hostId} id={id} root={root} /></SwipeForward></SafeAreaView>;
 }
 type ReviewComment = { path: string; line: number; side: 'old' | 'new'; code: string; text: string };
 function patchLines(patch: string) {
@@ -378,7 +415,7 @@ function ReviewDiff({ patch, path, onSelect }: { patch: string; path: string; on
   </Pressable>)}</View></ScrollView>;
 }
 function ReviewScreen({ route, navigation }: any) {
-  const state = useRemote(); const chat = state.snapshot?.sessions.find(x => x.id === route.params.sessionId);
+  const hostId = route.params.hostId as string; const state = useMac(hostId); const chat = state.snapshot?.sessions.find(x => x.id === route.params.sessionId);
   const [committed, setCommitted] = useState(false);
   const [files, setFiles] = useState<Array<{ path: string; status: string; additions: number; deletions: number; binary: boolean; patch: string }>>([]);
   const [comments, setComments] = useState<ReviewComment[]>([]);
@@ -388,7 +425,7 @@ function ReviewScreen({ route, navigation }: any) {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const refresh = () => { if (!chat) return; setError(''); state.request('review', { sessionId: chat.id, committed }).then(response => setFiles(response.review?._0 || [])).catch(reason => setError(String(reason.message || reason))); };
-  useEffect(() => { if (chat) refresh(); }, [chat?.id, committed]);
+  useEffect(() => { if (chat) refresh(); }, [hostId, chat?.id, committed]);
   const decide = (path: string, accept: boolean) => Alert.alert(accept ? 'Accept change?' : 'Discard change?', path, [
     { text: 'Cancel' }, { text: accept ? 'Accept into project' : 'Discard from worktree', style: accept ? 'default' : 'destructive', onPress: () => run(async () => { await state.request('reviewFile', { sessionId: chat!.id, path, committed, accept }); refresh(); }) }
   ]);
@@ -402,7 +439,7 @@ function ReviewScreen({ route, navigation }: any) {
   });
   const additions = files.reduce((sum, file) => sum + file.additions, 0);
   const deletions = files.reduce((sum, file) => sum + file.deletions, 0);
-  return <SwipeForward enabled={!!chat} onSwipe={() => navigation.navigate('Files', { root: chat && activeRoot(chat), sessionId: chat?.id })} onBack={() => navigation.goBack()}><View style={styles.page}>
+  return <SwipeForward enabled={!!chat} onSwipe={() => navigation.navigate('Files', { hostId, root: chat && activeRoot(state, chat), sessionId: chat?.id })} onBack={() => navigation.goBack()}><View style={styles.page}>
     <HeaderSpacer />
     <View style={styles.paneToolbar}><NativeSelect label="Review mode" value={committed ? 'Committed' : 'Uncommitted'} align="left" choices={[{ id: 'uncommitted', title: 'Uncommitted', selected: !committed }, { id: 'committed', title: 'Committed', selected: committed }]} onSelect={id => { setCommitted(id === 'committed'); setExpandedPaths([]); }} /><Text style={styles.diffAdded}>+{additions}</Text><Text style={styles.diffRemoved}>−{deletions}</Text><Pressable style={styles.paneIconButton} accessibilityLabel="Refresh review" onPress={refresh}><Icon name="refresh" size={17} /></Pressable><MenuView actions={[{ id: 'expand', title: 'Expand all files' }, { id: 'collapse', title: 'Collapse all files' }]} onPressAction={({ nativeEvent }) => setExpandedPaths(nativeEvent.event === 'expand' ? files.map(file => file.path) : [])}><View style={styles.paneIconButton}><SymbolView name={{ ios: 'ellipsis', android: 'more_horiz' }} size={19} tintColor={muted} /></View></MenuView></View>
     <KeyboardAwareScrollView style={{ flex: 1 }} contentContainerStyle={styles.paneContent}>
@@ -419,7 +456,7 @@ function ReviewScreen({ route, navigation }: any) {
   </View></SwipeForward>;
 }
 function PullRequestScreen({ route, navigation }: any) {
-  const state = useRemote(); const sessionId = route.params.sessionId as string;
+  const state = useMac(route.params.hostId); const sessionId = route.params.sessionId as string;
   const blurTarget = useRef<View>(null);
   const headerHeight = useHeaderHeight();
   const chat = state.snapshot?.sessions.find(x => x.id === sessionId);
@@ -512,13 +549,15 @@ function PullRequestScreen({ route, navigation }: any) {
   </View>;
 }
 function AutomationsScreen({ navigation }: any) {
-  const state = useRemote(); const automations = state.snapshot?.automations || [];
-  return <HeaderScrollView style={styles.page} contentContainerStyle={styles.content}><Text style={styles.title}>Automations</Text><Text style={styles.lead}>Scheduled on {state.active?.peer.name || 'a connected Mac'}.</Text><Button title="New automation" onPress={() => navigation.navigate('Automation', {})} />
-    {automations.map(a => <Row key={a.id} title={a.name} subtitle={`${a.enabled ? 'Enabled' : 'Paused'} · ${a.providerId} · ${a.nextRunAt ? displayDate(a.nextRunAt) : 'Manual'}`} onPress={() => navigation.navigate('Automation', { id: a.id })} />)}{!automations.length && <Empty text="No automations on this Mac." />}
+  const macs = useRemote().macs();
+  return <HeaderScrollView style={styles.page} contentContainerStyle={styles.content}><Text style={styles.title}>Automations</Text>{!macs.length && <Text style={styles.lead}>Pair a Mac to schedule automations on it.</Text>}
+    {macs.map(mac => { const automations = mac.snapshot?.automations || []; return <View key={mac.id} style={mac.state === 'unreachable' && styles.unreachable}><Section title={mac.name}>{mac.state !== 'online' && <Text style={styles.hint}>{macStatus(mac)}</Text>}<Button title="New automation" onPress={() => navigation.navigate('Automation', { hostId: mac.id })} />
+      {automations.map(a => <Row key={a.id} title={a.name} subtitle={`${a.enabled ? 'Enabled' : 'Paused'} · ${a.providerId} · ${a.nextRunAt ? displayDate(a.nextRunAt) : 'Manual'}`} onPress={() => navigation.navigate('Automation', { hostId: mac.id, id: a.id })} />)}{!automations.length && <Empty text="No automations on this Mac." />}
+    </Section></View>; })}
   </HeaderScrollView>;
 }
 function AutomationScreen({ route, navigation }: any) {
-  const state = useRemote(); const existing = state.snapshot?.automations?.find(x => x.id === route.params?.id);
+  const state = useMac(route.params?.hostId); const existing = state.snapshot?.automations?.find(x => x.id === route.params?.id);
   const [name, setName] = useState(existing?.name || ''); const [prompt, setPrompt] = useState(existing?.prompt || '');
   const [triggers, setTriggers] = useState<AutomationTrigger[]>(existing?.triggers || []);
   const [provider, setProvider] = useState(existing?.providerId || state.snapshot?.providers[0] || 'claude');
@@ -621,7 +660,7 @@ const styles = StyleSheet.create({
   launcherRecentMeta: { color: tertiary, fontFamily: 'Inter', fontSize: 11, maxWidth: 110 },
   headerAction: { width: 42, height: 44, alignItems: 'center', justifyContent: 'center' },
   page: { flex: 1, backgroundColor: bg }, content: { padding: 18, gap: 16, paddingBottom: 32 }, title: { color: ink, fontFamily: 'Inter', fontSize: 25, fontWeight: '600' }, lead: { color: muted, fontFamily: 'Inter', fontSize: 14, lineHeight: 21 }, section: { backgroundColor: panel, borderRadius: 8, padding: 14, gap: 9, borderWidth: StyleSheet.hairlineWidth, borderColor: border }, sectionTitle: { color: muted, fontFamily: 'Inter', fontSize: 13.5, fontWeight: '600' }, label: { color: muted, fontFamily: 'Inter', fontSize: 12, fontWeight: '600', marginTop: 8 }, value: { color: ink, fontFamily: 'Inter', fontSize: 15 }, row: { minHeight: 56, paddingVertical: 11, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border, flexDirection: 'row', alignItems: 'center', gap: 10 }, rowTitle: { color: ink, fontFamily: 'Inter', fontSize: 15.5, fontWeight: '500' }, subtitle: { color: muted, fontFamily: 'Inter', fontSize: 12.5, marginTop: 4 }, subtitleRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4 }, subtitleText: { marginTop: 0, flexShrink: 1 }, trailing: { color: tertiary, fontFamily: 'Inter', fontSize: 11 }, button: { backgroundColor: accent, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 11, alignSelf: 'flex-start', marginRight: 5, marginBottom: 5 }, buttonText: { color: bg, fontFamily: 'Inter', fontSize: 14, fontWeight: '600' }, secondary: { backgroundColor: inset }, danger: { backgroundColor: '#9B3F43' }, input: { backgroundColor: inset, color: ink, borderRadius: 7, borderWidth: StyleSheet.hairlineWidth, borderColor: border, paddingHorizontal: 12, paddingVertical: 10, fontFamily: 'Inter', fontSize: 15, minHeight: 48 }, multiline: { minHeight: 120, textAlignVertical: 'top' }, actions: { flexDirection: 'row', flexWrap: 'wrap', marginVertical: 5 }, choices: { flexDirection: 'row', flexWrap: 'wrap' }, empty: { color: muted, fontFamily: 'Inter', fontSize: 14, lineHeight: 21 }, error: { color: '#EF6461' }, callout: { backgroundColor: raised, borderRadius: 8, borderColor: border, borderWidth: StyleSheet.hairlineWidth, padding: 15 }, code: { color: ink, fontFamily: 'JetBrainsMonoMedium', fontSize: 32, letterSpacing: 3 }, bubble: { backgroundColor: raised, padding: 13, borderRadius: 8, marginBottom: 8 }, bubbleLabel: { color: muted, fontFamily: 'Inter', fontSize: 11, marginBottom: 5 }, body: { color: ink, fontFamily: 'Inter', fontSize: 14.5, lineHeight: 22 }, mono: { color: ink, fontSize: 11, fontFamily: 'JetBrainsMono', lineHeight: 17 }, hint: { color: tertiary, fontFamily: 'Inter', fontSize: 11 }, composer: { backgroundColor: panel, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: border, padding: 10, flexDirection: 'row', alignItems: 'flex-end' }, codeScroll: { padding: 16 }, codeText: { color: ink, fontFamily: 'JetBrainsMono', fontSize: 11, textAlignVertical: 'top', minHeight: 500 },
-  rail: { flex: 1, backgroundColor: sidebar }, railContent: { paddingTop: 10, paddingBottom: 24 }, railAction: { height: 50, paddingHorizontal: 18, flexDirection: 'row', alignItems: 'center', gap: 12 }, railActionTitle: { color: ink, fontFamily: 'Inter', fontSize: 15.5, flex: 1 }, railDetail: { color: tertiary, fontFamily: 'Inter', fontSize: 12 }, railHost: { marginTop: 18, marginHorizontal: 14, height: 48, paddingHorizontal: 5, flexDirection: 'row', alignItems: 'center', gap: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: border }, railHostTitle: { color: muted, fontFamily: 'Inter', fontSize: 12, fontWeight: '600', flex: 1 }, railGroup: { paddingTop: 12 }, railGroupHeader: { paddingHorizontal: 18, height: 38, flexDirection: 'row', alignItems: 'center', gap: 6 }, railGroupTitle: { color: muted, fontFamily: 'Inter', fontSize: 14, fontWeight: '600', flex: 1 }, railChat: { height: 44, paddingLeft: 24, paddingRight: 18, flexDirection: 'row', alignItems: 'center', gap: 9 }, railChatSelected: { backgroundColor: raised }, railChatTitle: { color: ink, fontFamily: 'Inter', fontSize: 14.5, flex: 1 }, statusDiamond: { width: 6, height: 6, backgroundColor: tertiary, transform: [{ rotate: '45deg' }] }, statusRunning: { backgroundColor: '#4CC38A' }, railEmpty: { color: muted, fontFamily: 'Inter', fontSize: 12, lineHeight: 18, margin: 18 }, railFooter: { minHeight: 60, paddingHorizontal: 18, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: border, flexDirection: 'row', alignItems: 'center', gap: 10 }, railFooterTitle: { color: ink, fontFamily: 'Inter', fontSize: 15, flex: 1 }, connectionDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#4CC38A' },
+  rail: { flex: 1, backgroundColor: sidebar }, railContent: { paddingTop: 10, paddingBottom: 24 }, railAction: { height: 50, paddingHorizontal: 18, flexDirection: 'row', alignItems: 'center', gap: 12 }, railActionTitle: { color: ink, fontFamily: 'Inter', fontSize: 15.5, flex: 1 }, railDetail: { color: tertiary, fontFamily: 'Inter', fontSize: 12 }, railHost: { marginTop: 18, marginHorizontal: 14, height: 48, paddingHorizontal: 5, flexDirection: 'row', alignItems: 'center', gap: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: border }, railHostTitle: { color: muted, fontFamily: 'Inter', fontSize: 12, fontWeight: '600', flex: 1 }, railGroup: { paddingTop: 12 }, railGroupHeader: { paddingHorizontal: 18, height: 38, flexDirection: 'row', alignItems: 'center', gap: 6 }, railGroupTitle: { color: muted, fontFamily: 'Inter', fontSize: 14, fontWeight: '600', flex: 1 }, railChat: { height: 44, paddingLeft: 24, paddingRight: 18, flexDirection: 'row', alignItems: 'center', gap: 9 }, railChatSelected: { backgroundColor: raised }, railChatTitle: { color: ink, fontFamily: 'Inter', fontSize: 14.5, flex: 1 }, statusDiamond: { width: 6, height: 6, backgroundColor: tertiary, transform: [{ rotate: '45deg' }] }, statusRunning: { backgroundColor: '#4CC38A' }, railMacStatus: { color: tertiary, fontFamily: 'Inter', fontSize: 12, marginHorizontal: 19, marginTop: -6, marginBottom: 4 }, unreachable: { opacity: 0.45 }, railEmpty: { color: muted, fontFamily: 'Inter', fontSize: 12, lineHeight: 18, margin: 18 }, railFooter: { minHeight: 60, paddingHorizontal: 18, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: border, flexDirection: 'row', alignItems: 'center', gap: 10 }, railFooterTitle: { color: ink, fontFamily: 'Inter', fontSize: 15, flex: 1 }, connectionDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#4CC38A' },
   paneToolbar: { height: 45, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border, backgroundColor: bg },
   paneIconButton: { width: 42, height: 42, alignItems: 'center', justifyContent: 'center' },
   paneContent: { paddingBottom: 30 },
