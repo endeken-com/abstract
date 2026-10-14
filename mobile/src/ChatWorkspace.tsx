@@ -13,6 +13,7 @@ import { remote, type RemoteClient } from './remote';
 import { uuid } from './secure';
 import { attachmentPayload, pickAttachments, type PickedAttachment } from './attachments';
 import { chatTimeline, type ChatItem } from './chatTimeline';
+import { sendPhoneDraft, visiblePhoneMessages, type PendingPhoneMessage } from './chatSending';
 import { IssueIcon, PullRequestIcon } from './PullRequestIcon';
 import { ContextPill } from './ContextPill';
 import { chatContext } from './chatContext';
@@ -207,6 +208,10 @@ export function ChatWorkspace({ route, navigation }: any) {
   const chat = mac.snapshot?.sessions.find(x => x.id === id);
   const pr = mac.snapshot?.pullRequests?.[id];
   const [message, setMessage] = useState('');
+  const [pendingSends, setPendingSends] = useState<PendingPhoneMessage[]>([]);
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const sendLock = useRef(false);
   const [syncing, setSyncing] = useState(false);
   const keyboardHeight = useKeyboardHeight();
   const safeArea = useSafeAreaInsets();
@@ -233,6 +238,10 @@ export function ChatWorkspace({ route, navigation }: any) {
   const loadingHistory = mac.loadingHistory.has(id);
   const rows = useMemo(() => chatTimeline(lines, id), [id, lines]);
   const displayRows = useMemo(() => groupToolRows(rows), [rows]);
+  const visibleSends = useMemo(() => visiblePhoneMessages(pendingSends, lines), [pendingSends, lines]);
+  useEffect(() => {
+    if (pendingSends.length && !visibleSends.length) setPendingSends([]);
+  }, [pendingSends, visibleSends]);
   const transcriptRows = useMemo(() => chat?.prompt && !lines.length
     ? [{ id: 'prompt', kind: 'user' as const, text: chat.prompt }, ...displayRows] : displayRows, [chat?.prompt, lines.length, displayRows]);
   const lastRow = rows.at(-1);
@@ -241,7 +250,7 @@ export function ChatWorkspace({ route, navigation }: any) {
   const workingLabel = lastRow && (lastRow.kind === 'thinking' || (lastRow.kind === 'tool' && !lastRow.pending)) ? 'Thinking…' : 'Working…';
   const pendingPermissions = mac.snapshot?.pendingPermissions?.[id];
   const turnStartedAt = mac.snapshot?.turnStartedAt?.[id] ?? chat?.lastEventAt ?? undefined;
-  const transcriptFooter = useMemo(() => <View style={s.transcriptFooter}>{(pendingPermissions || []).map(request => <PermissionCard key={request.requestId} mac={mac} sessionId={id} request={request} />)}{syncing && <Text style={s.thinkingLabel}>Syncing chat from Mac…</Text>}{showWorkingRow && <WorkingStatus label={workingLabel} startedAt={turnStartedAt} />}</View>, [mac, pendingPermissions, id, syncing, showWorkingRow, workingLabel, turnStartedAt]);
+  const transcriptFooter = useMemo(() => <View style={s.transcriptFooter}>{visibleSends.map(item => <View key={item.id} style={s.userRow}><View style={s.userBubble}>{!!item.text && <Text style={s.prose}>{item.text}</Text>}{item.attachments.map(attachment => <Text key={attachment.id} style={s.pendingAttachment}>{attachment.reference ? `${attachment.reference} ` : ''}{attachment.title}</Text>)}</View><Text style={s.pendingStatus}>{item.status === 'sending' ? 'Sending…' : 'Sent'}</Text></View>)}{(pendingPermissions || []).map(request => <PermissionCard key={request.requestId} mac={mac} sessionId={id} request={request} />)}{syncing && <Text style={s.thinkingLabel}>Syncing chat from Mac…</Text>}{showWorkingRow && <WorkingStatus label={workingLabel} startedAt={turnStartedAt} />}</View>, [visibleSends, mac, pendingPermissions, id, syncing, showWorkingRow, workingLabel, turnStartedAt]);
   const loadEarlier = React.useCallback(() => {
     mayLoadOlder.current = false;
     following.current = false;
@@ -332,7 +341,35 @@ export function ChatWorkspace({ route, navigation }: any) {
   const providerLabel = { codex: 'Codex', claude: 'Claude Code', opencode: 'OpenCode' }[chat.providerId] || chat.providerId;
   const policyLabel = { ask: 'Ask before acting', 'auto-edits': 'Accept edits', bypass: 'Full autonomy' }[chat.permissionPolicy];
   const act = (name: string, args: Record<string, unknown> = {}) => mac.request(name, { sessionId: id, ...args }).catch(e => Alert.alert('Abstract', String(e)));
-  const send = async () => { if (!message.trim() && !attachments.length) return; if (/^\/[a-z]+$/i.test(message.trim()) && runSlash(message.trim().slice(1))) return; try { if (attachments.length) await mac.request('sendAttachments', { sessionId: id, text: message, ...attachmentPayload(attachments) }); else await mac.request('send', { sessionId: id, text: message }); setMessage(''); setAttachments([]); setPreviewingMarkdown(false); } catch (e) { Alert.alert('Could not send', String(e)); } };
+  const send = () => {
+    if (sendLock.current || (!message.trim() && !attachments.length)) return;
+    if (/^\/[a-z]+$/i.test(message.trim()) && runSlash(message.trim().slice(1))) return;
+    const draft = { text: message, attachments: [...attachments] };
+    const pending: PendingPhoneMessage = { ...draft, id: uuid(), afterSeq: lines.at(-1)?.seq || 0, status: 'sending' };
+    void sendPhoneDraft(sendLock, draft,
+      () => draft.attachments.length
+        ? mac.request('sendAttachments', { sessionId: id, text: draft.text, ...attachmentPayload(draft.attachments) })
+        : mac.request('send', { sessionId: id, text: draft.text }),
+      () => {
+        setPendingSends(current => [...current, pending]);
+        setSending(true);
+        setSendError(null);
+        setMessage('');
+        setAttachments([]);
+        setPreviewingMarkdown(false);
+      },
+      () => { setPendingSends(current => current.map(item => item.id === pending.id ? { ...item, status: 'accepted' } : item)); setSending(false); },
+      error => {
+        // A line from the Mac is stronger evidence than a lost response.
+        if (visiblePhoneMessages([...pendingSends, pending], mac.lines[id] || []).some(item => item.id === pending.id)) {
+          setPendingSends(current => current.filter(item => item.id !== pending.id));
+          setMessage(draft.text);
+          setAttachments(draft.attachments);
+          setSendError(`Could not send. ${error instanceof Error ? error.message : String(error)} Your message is back in the composer. Tap Send to try again.`);
+        } else setPendingSends(current => current.map(item => item.id === pending.id ? { ...item, status: 'accepted' } : item));
+        setSending(false);
+      });
+  };
   const searchLinks = async (source: LinkKind, query: string) => {
     if (!root) return;
     setLinkLoading(true);
@@ -407,18 +444,19 @@ export function ChatWorkspace({ route, navigation }: any) {
     {menu === 'manage' && <View style={s.menu}><TextInput style={s.menuInput} value={rename} onChangeText={setRename} placeholder="Rename chat" placeholderTextColor={tertiary} /><Chip label="Rename" onPress={() => { if (rename.trim()) act('rename', { name: rename.trim() }); setMenu(null); }} /><Chip icon="close" onPress={() => setMenu(null)} label="Close" /></View>}
     <LinkPickerSheet kind={linkSheet} query={linkQuery} setQuery={setLinkQuery} results={linkResults} loading={linkLoading} search={() => linkSheet && searchLinks(linkSheet, linkQuery)} select={attachLink} close={() => setLinkSheet(null)} />
     <View style={[s.composerWrap, { paddingBottom: keyboardHeight ? 7 : safeArea.bottom + 7 }]}>
+      {!!sendError && <Text accessibilityRole="alert" style={s.sendError}>{sendError}</Text>}
       {attachments.length > 0 && <ScrollView horizontal style={s.attachments} contentContainerStyle={{ gap: 5 }}>{attachments.map(item => <Chip key={item.id} label={`${item.reference ? `${item.reference} ` : ''}${item.title} ×`} onPress={() => setAttachments(attachments.filter(x => x.id !== item.id))} />)}</ScrollView>}
       <View style={s.composerBox}>
         <View style={s.composerTextRow}>
-          {previewingMarkdown ? <ScrollView style={s.composerInput}><Markdown style={markdownStyles} rules={codeRules}>{message}</Markdown></ScrollView> : <TextInput value={message} onChangeText={value => { setMessage(value); setSlashChoosing(null); }} multiline style={s.composerInput} placeholder="Type / for commands" placeholderTextColor={tertiary} textAlignVertical="top" />}
+          {previewingMarkdown ? <ScrollView style={s.composerInput}><Markdown style={markdownStyles} rules={codeRules}>{message}</Markdown></ScrollView> : <TextInput value={message} editable={!sending} onChangeText={value => { setMessage(value); setSendError(null); setSlashChoosing(null); }} multiline style={s.composerInput} placeholder="Type / for commands" placeholderTextColor={tertiary} textAlignVertical="top" />}
         </View>
         <View style={s.composerActionRow}>
-          <Pressable accessibilityLabel="Attach files" style={s.attachControl} onPress={() => pickAttachments(attachments).then(setAttachments).catch(e => Alert.alert('Attachment', String(e)))}><Glyph name="attach" size={18} color={muted} /></Pressable>
+          <Pressable accessibilityLabel="Attach files" disabled={sending} style={s.attachControl} onPress={() => pickAttachments(attachments).then(setAttachments).catch(e => Alert.alert('Attachment', String(e)))}><Glyph name="attach" size={18} color={muted} /></Pressable>
           <View style={s.composerTrailingActions}>
             {!!message && <Pressable accessibilityLabel={previewingMarkdown ? 'Edit Markdown' : 'Preview Markdown'} style={[s.composerAction, { width: previewingMarkdown ? 42 : 52 }]} onPress={() => setPreviewingMarkdown(!previewingMarkdown)}><Text style={s.previewLabel}>{previewingMarkdown ? 'Edit' : 'Preview'}</Text></Pressable>}
-            {!!root && <Pressable accessibilityLabel="Link a GitHub issue" style={s.composerAction} onPress={() => openLinks('issue')}><IssueIcon size={18} /></Pressable>}
-            {!!root && <Pressable accessibilityLabel="Link a pull request" style={s.composerAction} onPress={() => openLinks('linkPr')}><PullRequestIcon size={18} color={muted} /></Pressable>}
-            <Pressable accessibilityLabel={chat.status === 'running' ? 'Stop agent' : 'Send message'} style={s.composerAction} onPress={() => chat.status === 'running' ? act('stop') : send()}><Glyph name={chat.status === 'running' ? 'stop' : 'send'} size={18} color={message.trim() || attachments.length || chat.status === 'running' ? ink : tertiary} /></Pressable>
+            {!!root && <Pressable accessibilityLabel="Link a GitHub issue" disabled={sending} style={s.composerAction} onPress={() => openLinks('issue')}><IssueIcon size={18} /></Pressable>}
+            {!!root && <Pressable accessibilityLabel="Link a pull request" disabled={sending} style={s.composerAction} onPress={() => openLinks('linkPr')}><PullRequestIcon size={18} color={muted} /></Pressable>}
+            <Pressable accessibilityLabel={sending ? 'Sending message' : chat.status === 'running' ? 'Stop agent' : 'Send message'} disabled={sending} style={s.composerAction} onPress={() => chat.status === 'running' ? act('stop') : send()}>{sending ? <ActivityIndicator size="small" color={muted} /> : <Glyph name={chat.status === 'running' ? 'stop' : 'send'} size={18} color={message.trim() || attachments.length || chat.status === 'running' ? ink : tertiary} />}</Pressable>
           </View>
         </View>
       </View>
@@ -434,6 +472,9 @@ const chrome = StyleSheet.create({
 });
 const markdownStyles = StyleSheet.create({ body: { color: ink, fontFamily: 'Inter', fontSize: 15, lineHeight: 23 }, paragraph: { marginTop: 0, marginBottom: 10 }, heading1: { color: ink, fontFamily: 'Inter', fontSize: 19, fontWeight: '600', marginVertical: 8 }, heading2: { color: ink, fontFamily: 'Inter', fontSize: 16, fontWeight: '600', marginVertical: 8 }, heading3: { color: ink, fontFamily: 'Inter', fontSize: 14, fontWeight: '600', marginVertical: 6 }, code_inline: { color: ink, backgroundColor: '#303036', fontFamily: 'JetBrainsMono', fontSize: 12 }, code_block: { color: ink, backgroundColor: panel, fontFamily: 'JetBrainsMono', fontSize: 11, padding: 9, borderRadius: 6 }, fence: { color: ink, backgroundColor: panel, fontFamily: 'JetBrainsMono', fontSize: 11, padding: 9, borderRadius: 6 }, link: { color: '#91B8F6' }, bullet_list: { marginBottom: 10 }, ordered_list: { marginBottom: 10 }, blockquote: { backgroundColor: 'transparent', borderLeftColor: '#55555E', borderLeftWidth: 2, paddingLeft: 10 }, strong: { fontWeight: '700' } });
 const s = StyleSheet.create({
+  pendingAttachment: { color: muted, fontFamily: 'Inter', fontSize: 12, marginTop: 4 },
+  pendingStatus: { color: tertiary, fontFamily: 'Inter', fontSize: 11, marginTop: 4 },
+  sendError: { color: '#F08A84', fontFamily: 'Inter', fontSize: 12, lineHeight: 17, paddingHorizontal: 8, paddingBottom: 6 },
   bottomBlur: { top: undefined, bottom: 0, zIndex: 1 },
   bottomPanel: { position: 'absolute', left: 0, right: 0, zIndex: 2 },
   contextRow: { height: 40, marginHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 6 },
