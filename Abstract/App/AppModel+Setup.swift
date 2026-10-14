@@ -221,11 +221,8 @@ extension AppModel {
             let suggestion = try? result.get()
             if case .failure(let failure) = result { setup.namingFailure = namingFailureNote(failure, project: project) }
             if setup.slug == nil { setup.slug = suggestion?.branch }
-            if let title = suggestion?.title, var s = session(id), s.name == setup.provisionalName {
-                s.name = title
-                try? store.save(s)
-                reload()
-            }
+            namingRequests.remove(id)
+            if let provisional = setup.provisionalName { rename(id, from: provisional, to: suggestion?.title, source: .request) }
             guard !Task.isCancelled else { return }
         }
 

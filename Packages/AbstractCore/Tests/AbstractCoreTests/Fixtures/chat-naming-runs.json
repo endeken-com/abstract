@@ -1,0 +1,81 @@
+[
+  {
+    "case": "ABS-64: a builder run whose report used to rename it Test verification",
+    "automation": "Roadmap: build the next ticket",
+    "prompt": "You build Abstract, the macOS app in this repository, one Linear ticket at a time. Read AGENTS.md and ROADMAP.md first. Choose the highest-priority accepted ticket nobody has taken, build it, verify it and open a pull request titled with the ticket's title.",
+    "steps": [
+      { "reply": "Let me look.", "answers": [] },
+      {
+        "reply": "Taking ABS-64: the sidebar groups chats by what they need from you, with each chat's agent, age, pull request and checks on its row. Starting with SidebarChats.",
+        "answers": [{ "title": "ABS-64 · Group the sidebar by what chats need", "branch": "feature/status-grouped-sidebar" }]
+      },
+      {
+        "turnEnd": "Verification done. swift test: 912 tests in 61 suites passed. xcodebuild Debug build succeeded. Screenshots exported for the sidebar states. Opened the pull request and moved ABS-64 to In Review.",
+        "answers": [{ "title": "Test verification", "branch": "feature/test-verification" }]
+      },
+      {
+        "pullRequest": {
+          "title": "The sidebar groups chats by what they need from you, and shows each chat's agent, age, pull request and checks at a glance",
+          "body": "ABS-64\n\nWhy: with a dozen chats open, the sidebar is how you find work.\n\nFixes ABS-64"
+        }
+      }
+    ],
+    "expect": "ABS-64 · The sidebar groups chats by what they need from you, and shows each chat's agent, age, pull request and checks at a glance",
+    "neverNamed": ["Test verification"]
+  },
+  {
+    "case": "ABS-66: a builder run that never said what it took on before its report",
+    "automation": "Roadmap: build the next ticket",
+    "prompt": "You build Abstract, the macOS app in this repository, one Linear ticket at a time. Read AGENTS.md and ROADMAP.md first. Choose the highest-priority accepted ticket nobody has taken, build it, verify it and open a pull request titled with the ticket's title.",
+    "steps": [
+      { "reply": "Reading the roadmap rules first.", "answers": [{ "title": "", "branch": "" }] },
+      {
+        "turnEnd": "Done. Swift tests pass (AbstractCore, 915 tests), the iOS app exports, and the pull request for ABS-66 is open: the branch above the phone's reply box now uses the branch icon and fits its name.",
+        "answers": [
+          { "title": "Swift tests and iOS export", "branch": "feature/swift-tests-ios-export" },
+          { "title": "ABS-66 · Phone branch pill fits its name", "branch": "feature/phone-branch-pill" }
+        ]
+      },
+      {
+        "pullRequest": {
+          "title": "On the phone, the branch above the reply box uses the branch icon, says Branch, and is only as wide as its name",
+          "body": "ABS-66\n\nFixes ABS-66"
+        }
+      }
+    ],
+    "expect": "ABS-66 · On the phone, the branch above the reply box uses the branch icon, says Branch, and is only as wide as its name",
+    "neverNamed": ["Swift tests and iOS export"]
+  },
+  {
+    "case": "DGDEV-1114: a chat started with only its ticket ID",
+    "prompt": "DGDEV-1114",
+    "steps": [
+      { "start": [{ "title": "DGDEV-1114", "branch": "bugfix/dgdev-1114" }, { "title": "DGDEV-1114", "branch": "bugfix/dgdev-1114" }] },
+      {
+        "reply": "I'll fix DGDEV-1114: sign-up and team invites fail with a 401 when the user already has an ACL entry, because the invite path re-creates it.",
+        "answers": [{ "title": "Sign-up and team invites fail with 401", "branch": "bugfix/dgdev-1114-invites-401" }]
+      }
+    ],
+    "expect": "DGDEV-1114 · Sign-up and team invites fail with 401"
+  },
+  {
+    "case": "A name you typed survives the pull request",
+    "prompt": "Make the relay retry an image push that times out, with backoff",
+    "steps": [
+      { "start": [{ "title": "Retry timed-out relay image pushes", "branch": "bugfix/relay-image-retry" }] },
+      { "rename": "Relay retries (mine)" },
+      { "pullRequest": { "title": "The relay retries an image push that timed out", "body": "" } }
+    ],
+    "expect": "Relay retries (mine)"
+  },
+  {
+    "case": "A chat named for its pull request follows it when it's renamed",
+    "prompt": "Show each worktree's diff stat in the sidebar (ABS-51)",
+    "steps": [
+      { "start": [{ "title": "ABS-51 · Diff stats in the sidebar", "branch": "feature/abs-51-diff-stats" }] },
+      { "pullRequest": { "title": "Draft: The sidebar shows each worktree's diff stat", "body": "" } },
+      { "pullRequest": { "title": "The sidebar shows how much each chat changed", "body": "" } }
+    ],
+    "expect": "ABS-51 · The sidebar shows how much each chat changed"
+  }
+]

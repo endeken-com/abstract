@@ -513,6 +513,11 @@ public final class Store: Sendable {
         migrator.registerMigration("v8-pinned") { db in
             try db.execute(sql: "ALTER TABLE sessions ADD COLUMN pinned_at DATETIME")
         }
+        // Where each chat's name came from: an existing chat's counts as its
+        // prompt's, so its pull request can still name it.
+        migrator.registerMigration("v9-name-source") { db in
+            try db.execute(sql: "ALTER TABLE sessions ADD COLUMN name_source TEXT NOT NULL DEFAULT 'request'")
+        }
         return migrator
     }
 }
@@ -621,6 +626,7 @@ private struct SessionRow: FetchableRecord, PersistableRecord {
             effort: try row.decode(forColumn: "effort"))
         value.handoffFrom = try row.decode(forColumn: "handoff_from")
         value.pinnedAt = try row.decode(forColumn: "pinned_at")
+        value.nameSource = ChatNameSource(rawValue: try row.decode(forColumn: "name_source")) ?? .request
         let seats: String = try row.decode(forColumn: "provider_sessions")
         value.providerSessions = (try? JSONDecoder().decode([String: ProviderSeat].self, from: Data(seats.utf8))) ?? [:]
         self.value = value
@@ -648,6 +654,7 @@ private struct SessionRow: FetchableRecord, PersistableRecord {
         container["last_event_at"] = value.lastEventAt
         container["archived_at"] = value.archivedAt
         container["pinned_at"] = value.pinnedAt
+        container["name_source"] = value.nameSource.rawValue
     }
 }
 

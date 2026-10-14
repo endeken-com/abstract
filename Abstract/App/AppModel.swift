@@ -133,8 +133,8 @@ final class AppModel {
     /// Line comments waiting to go to each chat's agent, by chat id.
     var lineComments: [String: [LineComment]] = [:]
     /// Each chat's pull request, by chat id: the list's summary, or the full
-    /// detail once its tab has loaded it.
-    var pullRequests: [String: PullRequest] = [:]
+    /// detail once its tab has loaded it. A chat takes its title as its name.
+    var pullRequests: [String: PullRequest] = [:] { didSet { nameChatsForPullRequests() } }
     /// Recent pull requests of each GitHub project, by project id.
     var projectPullRequests: [String: [PullRequest]] = [:]
     var githubAccess: GitHubAccess?
@@ -225,9 +225,11 @@ final class AppModel {
     /// as its last edit left it, so the next edit's diff is its own.
     @ObservationIgnored private var enrichers: [String: any LineEnricher] = [:]
     @ObservationIgnored private var seenSeq: [String: Int] = [:]
-    /// Automation runs whose chat is being named, for its agent's first reply or its report.
+    /// Chats being named, for their agent's first reply or its report.
     @ObservationIgnored private var namingRuns: Set<String> = []
-    /// How far each fresh-worktree run's naming got.
+    /// Chats whose prompt is still being asked about.
+    @ObservationIgnored var namingRequests: Set<String> = []
+    /// How far each chat's naming from its agent's words got.
     @ObservationIgnored private var runNamings: [String: RunNaming] = [:]
     /// Chats `abstract` drives, and what it says about them; see AppModel+SessionLocks.
     var cliDriven: [String: SessionLockInfo] = [:]
@@ -586,12 +588,13 @@ final class AppModel {
     /// for its prompt until the model names it; a fresh worktree's chat is
     /// set up first (see AppModel+Setup) and its agent starts after.
     /// With no project it's a standalone chat, working in a folder of its own.
-    /// `name` and `slug`, when given, name the chat and its branch instead.
+    /// `name` and `slug`, when given, name the chat and its branch instead;
+    /// `nameSource` says whether a better name may replace it.
     /// `select` opens the new chat here; a chat started from another device doesn't take over this screen.
     @discardableResult
     func startChat(projectId: String?, providerId: String, prompt text: String, attachments: [PromptAttachment] = [], baseRef: String?,
                    policy: PermissionPolicy, model: String? = nil, effort: String? = nil, existing: WorktreeInfo? = nil,
-                   name: String? = nil, slug: String? = nil, automationId: String? = nil,
+                   name: String? = nil, nameSource: ChatNameSource = .manual, slug: String? = nil, automationId: String? = nil,
                    select: Bool = true) async throws -> String {
         let project = project(projectId)
         if projectId != nil, project == nil { throw AbstractError.notFound("project") }
@@ -607,6 +610,10 @@ final class AppModel {
         var session = Session(projectId: projectId, name: provisional, providerId: providerId,
                               baseRef: existing == nil ? baseRef : nil, status: .provisioning, permissionPolicy: policy,
                               prompt: prompt, automationId: automationId, model: model, effort: effort)
+        session.nameSource = name == nil ? .fallback : nameSource
+        if naming != nil { namingRequests.insert(session.id) }
+        // Its agent's first replies may still name it; an older chat's never do.
+        runNamings[session.id] = RunNaming()
         if project == nil {
             session.baseRef = nil
             session.worktreePath = try Workspace.standaloneFolder(home: executor.homeDirectory)
@@ -645,26 +652,47 @@ final class AppModel {
                 if case .failure(let failure) = result, let note = namingFailureNote(failure, project: project) {
                     engine.record(sessionId: session.id, OutputLine(stream: .note, line: note))
                 }
-                await rename(session.id, from: provisional, to: try? result.get().title)
+                namingRequests.remove(session.id)
+                rename(session.id, from: provisional, to: try? result.get().title, source: .request)
             }
         }
         return session.id
     }
 
-    /// The model's title for a new chat, unless it was renamed meanwhile.
-    private func rename(_ sessionId: String, from provisional: String, to title: String?) async {
-        guard let title, var s = session(sessionId), s.name == provisional else { return }
-        s.name = title
+    /// A name for the chat from `source`, unless it was renamed meanwhile or
+    /// has a better one. The ticket its prompt names stays in front.
+    func rename(_ sessionId: String, from current: String, to title: String?, source: ChatNameSource) {
+        guard let title, var s = session(sessionId), s.name == current, s.nameSource.mayBeReplaced(by: source) else { return }
+        s.name = ChatNaming.withTicket(title, from: [s.prompt.map { PromptAttachments.split($0).text }])
+        s.nameSource = source
         try? store.save(s)
         reload()
     }
 
-    /// How far a fresh-worktree run's naming got.
+    /// Chats take their pull request's title, as its line in the release
+    /// notes, and follow it when it's renamed; never a name you typed.
+    private func nameChatsForPullRequests() {
+        guard !isDemo else { return }
+        var renamed = false
+        for (id, pr) in pullRequests where !id.hasPrefix(RemoteService.mirrorPrefix) && !pr.title.isEmpty {
+            guard var s = sessions.first(where: { $0.id == id }), s.nameSource.mayBeReplaced(by: .pullRequest) else { continue }
+            let name = ChatNaming.pullRequestName(pr.title, ticketFrom: [s.name, pr.body, s.prompt.map { PromptAttachments.split($0).text }])
+            guard name != s.name || s.nameSource != .pullRequest else { continue }
+            s.name = name
+            s.nameSource = .pullRequest
+            try? store.save(s)
+            renamed = true
+        }
+        if renamed { reload() }
+    }
+
+    /// How far a chat's naming from its agent's words got, for chats started
+    /// since Abstract opened.
     struct RunNaming {
         /// Naming calls made on the agent's first replies.
         var replyCalls = 0
-        /// The title its first reply gave the chat, which the end of the turn still refines.
-        var title: String?
+        /// The reply it was named from, which the report's naming reads too.
+        var firstReply: String?
         /// The first reply's branch, kept for the end of the turn when renaming had to wait.
         var branch: String?
         /// The branch has had its last try, at the end of a turn.
@@ -678,15 +706,18 @@ final class AppModel {
         return automation
     }
 
-    /// A run's agent says what it's taking on: the chat and its branch are
-    /// named for that work at once, while nothing is committed on the branch.
-    /// Too little to go on, and its next reply is tried.
-    private func nameRunFromReply(_ sessionId: String, _ text: String) {
-        guard !namingRuns.contains(sessionId), let s = session(sessionId), let automation = freshRunAutomation(s),
-              AutomationRunNaming.isProvisional(s.name, automationName: automation.name),
-              runNamings[sessionId, default: RunNaming()].replyCalls < 3,
-              AutomationRunNaming.canName(fromReply: text) else { return }
+    /// The agent says what it's taking on. A run's chat and its branch are
+    /// named for that work at once, from the same answer, while nothing is
+    /// committed on the branch; a chat whose prompt said too little to name
+    /// it is renamed. Too little to go on, and its next reply is tried.
+    private func nameFromReply(_ sessionId: String, _ text: String) {
+        guard !namingRuns.contains(sessionId), !sessionId.hasPrefix(RemoteService.mirrorPrefix), let s = session(sessionId),
+              ChatNaming.namesFromFirstReply(source: s.nameSource, weakPrompt: ChatNaming.isWeakPrompt(s.prompt),
+                                             requestPending: namingRequests.contains(sessionId)),
+              let run = runNamings[sessionId], run.replyCalls < 3, AutomationRunNaming.canName(fromReply: text) else { return }
+        let isRun = freshRunAutomation(s) != nil
         runNamings[sessionId, default: RunNaming()].replyCalls += 1
+        runNamings[sessionId, default: RunNaming()].firstReply = text
         namingRuns.insert(sessionId)
         Task {
             // One try: an answer with no title means the agent hasn't said yet.
@@ -695,12 +726,12 @@ final class AppModel {
                                                     prompt: text, focus: AutomationRunNaming.firstReplyFocus, attempts: 1).get()
             namingRuns.remove(sessionId)
             if let naming {
-                await rename(sessionId, from: s.name, to: naming.title)
-                if session(sessionId)?.name == naming.title { runNamings[sessionId, default: RunNaming()].title = naming.title }
-                if await !renameRunBranch(sessionId, for: naming.branch, allowCommits: false) {
+                rename(sessionId, from: s.name, to: naming.title, source: .work)
+                if isRun, await !renameRunBranch(sessionId, for: naming.branch, allowCommits: false) {
                     runNamings[sessionId, default: RunNaming()].branch = naming.branch
                 }
             }
+            guard isRun else { return }
             // The turn ended while this was being asked: its own naming comes now.
             if let status = session(sessionId)?.status, status != .running, status != .waitingInput {
                 nameAutomationRun(sessionId)
@@ -709,13 +740,15 @@ final class AppModel {
     }
 
     /// A turn of a fresh-worktree run ended. Still named for its automation,
-    /// or for its agent's first reply, the chat is renamed for what the agent
-    /// says it worked on. A branch still named as the run started gets one
-    /// last try, commits and all, unless it was pushed.
+    /// the chat is named from what the agent says it worked on, read with
+    /// what it was asked and first said; a name from its first reply or its
+    /// pull request is never replaced by the report's. A branch still named
+    /// as the run started gets one last try, commits and all, unless it was
+    /// pushed.
     private func nameAutomationRun(_ sessionId: String) {
         guard !namingRuns.contains(sessionId), let s = session(sessionId), let automation = freshRunAutomation(s) else { return }
         let run = runNamings[sessionId, default: RunNaming()]
-        let refine = AutomationRunNaming.isProvisional(s.name, automationName: automation.name) || (run.title != nil && run.title == s.name)
+        let refine = AutomationRunNaming.namesFromReport(s.name, source: s.nameSource, automationName: automation.name)
         let retry = !run.retried && s.branch.map(WorktreeNaming.isRunBranch) == true
         let report = refine || run.branch == nil ? feed(sessionId).timeline.lastReply : nil
         guard refine || retry, report != nil || (retry && run.branch != nil) else { return }
@@ -724,14 +757,14 @@ final class AppModel {
         Task {
             var naming: ChatNaming.Suggestion?
             if let report {
+                let task = AutomationRunNaming.reportTask(request: s.prompt, firstReply: run.firstReply, report: report)
                 naming = try? await suggestedNaming(instructions: project(s.projectId)?.namingInstructions, providerId: s.providerId,
                                                     model: s.model ?? defaultModel(for: s.providerId),
-                                                    prompt: report, focus: AutomationRunNaming.reportFocus).get()
+                                                    prompt: task, focus: AutomationRunNaming.reportFocus).get()
             }
             namingRuns.remove(sessionId)
             if refine, let title = naming?.title {
-                await rename(sessionId, from: s.name, to: title)
-                runNamings[sessionId]?.title = nil
+                rename(sessionId, from: s.name, to: title, source: .work)
             }
             if retry, let branch = naming?.branch ?? run.branch {
                 await renameRunBranch(sessionId, for: branch, allowCommits: true)
@@ -1199,8 +1232,11 @@ final class AppModel {
 
     func rename(_ sessionId: String, to name: String) {
         if let (_, host) = RemoteService.split(sessionId) { remote.onlineLink(for: sessionId)?.fire(.rename(sessionId: host, name: name)); return }
-        guard var s = session(sessionId), !name.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-        s.name = name.trimmingCharacters(in: .whitespaces)
+        let name = name.trimmingCharacters(in: .whitespaces)
+        guard var s = session(sessionId), !name.isEmpty, name != s.name else { return }
+        // Yours: nothing renames it again.
+        s.name = name
+        s.nameSource = .manual
         try? store.save(s)
         reload()
     }
@@ -1385,7 +1421,7 @@ final class AppModel {
             setStatus(sessionId, .waitingInput, detail: "\(toolName) needs approval")
             notify(sessionId, .waitingInput, detail: "\(ProviderRegistry.name(session(sessionId)?.providerId ?? "")) wants to use \(toolName)")
         case let .text(.assistant, text, _, false):
-            nameRunFromReply(sessionId, text)
+            nameFromReply(sessionId, text)
         case let .usage(totals, cost, duration, turns):
             let s = session(sessionId)
             try? store.record(UsageRecord(sessionId: sessionId, projectId: s?.projectId, providerId: s?.providerId ?? "unknown",

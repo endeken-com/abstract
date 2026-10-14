@@ -80,6 +80,31 @@ public enum SessionStatus: String, Sendable, Codable, CaseIterable {
     public var isActive: Bool { self == .running || self == .provisioning || self == .waitingInput || self == .idle }
 }
 
+/// Where a chat's name came from, worst first: a better source may replace
+/// it, and a name you typed is never replaced.
+public enum ChatNameSource: String, Sendable, Codable, CaseIterable {
+    /// The prompt's first words, or an automation run's placeholder.
+    case fallback
+    /// Named from the prompt when the chat started.
+    case request
+    /// What the agent said it's taking on, or did.
+    case work
+    /// Its pull request's title.
+    case pullRequest = "pull_request"
+    /// A name you typed.
+    case manual
+
+    private var rank: Int { Self.allCases.firstIndex(of: self) ?? 0 }
+
+    /// Whether a name from `source` may take this one's place. A pull
+    /// request's name follows the pull request when it is renamed.
+    public func mayBeReplaced(by source: ChatNameSource) -> Bool {
+        if source == .manual { return true }
+        if self == .manual { return false }
+        return source == .pullRequest || source.rank > rank
+    }
+}
+
 /// One chat: an agent working in its own worktree, or a standalone chat's folder.
 public struct Session: Sendable, Hashable, Identifiable, Codable {
     public var id: String
@@ -111,6 +136,8 @@ public struct Session: Sendable, Hashable, Identifiable, Codable {
     public var providerSessions: [String: ProviderSeat] = [:]
     /// When it was pinned to the top of its project in the sidebar; nil = not pinned.
     public var pinnedAt: Date? = nil
+    /// Where its name came from.
+    public var nameSource: ChatNameSource = .request
 
     public init(
         id: String = UUID().uuidString, projectId: String?, name: String, providerId: String,
@@ -126,6 +153,34 @@ public struct Session: Sendable, Hashable, Identifiable, Codable {
         self.baseRef = baseRef; self.status = status; self.statusDetail = statusDetail
         self.permissionPolicy = permissionPolicy; self.prompt = prompt; self.automationId = automationId
         self.createdAt = createdAt; self.lastEventAt = lastEventAt; self.archivedAt = archivedAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, projectId, name, providerId, providerSessionId, worktreePath, branch, baseRef, status, statusDetail
+        case permissionPolicy, prompt, automationId, createdAt, lastEventAt, archivedAt, model, effort, handoffFrom
+        case providerSessions, pinnedAt, nameSource
+    }
+
+    /// An older Mac's chats come without what it doesn't know yet.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(id: try c.decode(String.self, forKey: .id), projectId: try c.decodeIfPresent(String.self, forKey: .projectId),
+                  name: try c.decode(String.self, forKey: .name), providerId: try c.decode(String.self, forKey: .providerId),
+                  providerSessionId: try c.decodeIfPresent(String.self, forKey: .providerSessionId),
+                  worktreePath: try c.decodeIfPresent(String.self, forKey: .worktreePath),
+                  branch: try c.decodeIfPresent(String.self, forKey: .branch), baseRef: try c.decodeIfPresent(String.self, forKey: .baseRef),
+                  status: try c.decode(SessionStatus.self, forKey: .status),
+                  statusDetail: try c.decodeIfPresent(String.self, forKey: .statusDetail),
+                  permissionPolicy: try c.decode(PermissionPolicy.self, forKey: .permissionPolicy),
+                  prompt: try c.decodeIfPresent(String.self, forKey: .prompt),
+                  automationId: try c.decodeIfPresent(String.self, forKey: .automationId),
+                  createdAt: try c.decode(Date.self, forKey: .createdAt), lastEventAt: try c.decodeIfPresent(Date.self, forKey: .lastEventAt),
+                  archivedAt: try c.decodeIfPresent(Date.self, forKey: .archivedAt), model: try c.decodeIfPresent(String.self, forKey: .model),
+                  effort: try c.decodeIfPresent(String.self, forKey: .effort))
+        handoffFrom = try c.decodeIfPresent(String.self, forKey: .handoffFrom)
+        providerSessions = try c.decodeIfPresent([String: ProviderSeat].self, forKey: .providerSessions) ?? [:]
+        pinnedAt = try c.decodeIfPresent(Date.self, forKey: .pinnedAt)
+        nameSource = try c.decodeIfPresent(ChatNameSource.self, forKey: .nameSource) ?? .request
     }
 }
 

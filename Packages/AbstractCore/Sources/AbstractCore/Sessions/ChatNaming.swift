@@ -45,10 +45,15 @@ public enum ChatNaming {
 
               """
         return """
-            Summarize this coding request as a short chat title. Reply with only a JSON object and nothing else:
+            Name this coding chat for what its work delivers. Reply with only a JSON object and nothing else:
             {"title": "…", "branch": "…"}
 
-            - title: a short chat title for the task, at most 60 characters, in plain words.
+            - title: what the work delivers for the user, in sentence case and plain words, at most 50 characters. \
+            When the task names a ticket or issue ID (ABS-64, DGDEV-1114, #3981), keep it in front: "ABS-64 · Group the sidebar by status".
+            - Name the result, never the process: no title about tests, verification, checks, export or cleanup, \
+            and nothing as vague as "Code changes" or "Fix issues".
+              Good: "Sign-up and team invites fail with 401", "Show each chat's pull request in the sidebar".
+              Bad: "Test verification", "Swift tests and iOS export".
             - branch: a git branch name for the work: lowercase kebab-case words, at most 60 characters, no spaces.
 
             \(rules)
@@ -64,6 +69,112 @@ public enum ChatNaming {
     static func prefixReminder(branch: String, allowed: [String]) -> String {
         "Your last answer's branch, \(branch), doesn't start with any of the prefixes the naming instructions allow: "
             + allowed.joined(separator: ", ") + ". Start the branch with one of them."
+    }
+
+    /// Asked again when a title names the process, or only a ticket, rather than the work.
+    static func genericReminder(title: String) -> String {
+        let why = withoutTickets(title).isEmpty ? "is only a ticket ID" : "names the process, not what the work delivers"
+        return "Your last answer's title, “\(title)”, \(why). Name what the work delivers for the user."
+    }
+
+    // MARK: Generic titles
+
+    /// Words about how work was done or checked, not what it delivers.
+    static let processWords: Set<String> = [
+        "test", "tests", "testing", "verification", "verify", "verifying", "check", "checks", "checking", "export", "exports",
+        "exporting", "cleanup", "lint", "linting", "prep", "preparation", "ci", "review", "validation", "validate",
+    ]
+
+    /// Titles that say nothing about the work.
+    static let genericTitles: Set<String> = [
+        "test verification", "code changes", "changes", "fix issues", "fixes", "bug fixes", "updates", "update",
+        "improvements", "misc", "miscellaneous", "wip", "work in progress", "new chat", "coding task", "task",
+    ]
+
+    static let fillerWords: Set<String> = ["a", "an", "and", "the", "of", "for", "to", "in", "on", "with", "&", "+", "·", "-", ":"]
+
+    /// Whether `title` is mostly process words ("Swift tests and iOS
+    /// export"), one of the generic titles, or nothing but a ticket ID.
+    public static func isGeneric(_ title: String) -> Bool {
+        let rest = withoutTickets(title).lowercased()
+        let words = rest.split(whereSeparator: { $0.isWhitespace || ",.;!?()".contains($0) }).map(String.init)
+            .filter { !fillerWords.contains($0) }
+        guard !words.isEmpty else { return true }
+        if genericTitles.contains(words.joined(separator: " ")) { return true }
+        return words.filter(processWords.contains).count * 2 >= words.count
+    }
+
+    // MARK: Ticket IDs
+
+    /// Version-like words that read as IDs but aren't tickets: UTF-8, GPT-5.
+    static let notTickets: Set<String> = ["UTF", "SHA", "ISO", "GPT", "RFC", "AES", "RSA", "TLS", "SSL", "HTTP", "MD", "IPV", "ES"]
+
+    static let ticketPattern = try! NSRegularExpression(pattern: #"(?<![A-Za-z0-9#-])([A-Z][A-Z0-9]{1,9}-[0-9]+|#[0-9]+)(?![A-Za-z0-9-])"#)
+
+    /// The first ticket or issue ID in `text`: `ABS-64`, `DGDEV-1114`, `#3981`.
+    public static func ticket(in text: String) -> String? {
+        let ns = text as NSString
+        for match in ticketPattern.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+            let id = ns.substring(with: match.range(at: 1))
+            if let prefix = id.split(separator: "-").first, notTickets.contains(String(prefix)) { continue }
+            return id
+        }
+        return nil
+    }
+
+    static func withoutTickets(_ title: String) -> String {
+        var rest = title
+        while let id = ticket(in: rest), let range = rest.range(of: id) { rest.removeSubrange(range) }
+        return rest.trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "·:-–—|")))
+    }
+
+    /// `title` with the first ticket ID found in `sources` in front, unless it carries one already.
+    public static func withTicket(_ title: String, from sources: [String?]) -> String {
+        guard ticket(in: title) == nil, let id = sources.lazy.compactMap({ $0.flatMap(ticket(in:)) }).first else { return title }
+        return id + AutomationRunNaming.separator + title
+    }
+
+    /// A chat named for its pull request: the title, without a draft's
+    /// "Draft:", with the ticket ID its name, the pull request or its prompt
+    /// had kept in front.
+    public static func pullRequestName(_ title: String, ticketFrom sources: [String?]) -> String {
+        var title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        for marker in ["Draft:", "[Draft]", "WIP:", "[WIP]"] where title.lowercased().hasPrefix(marker.lowercased()) {
+            title = String(title.dropFirst(marker.count)).trimmingCharacters(in: .whitespaces)
+        }
+        return withTicket(title, from: sources)
+    }
+
+    // MARK: Weak prompts
+
+    /// Commands a pasted command line starts with.
+    static let commands: Set<String> = [
+        "git", "gh", "npm", "npx", "yarn", "pnpm", "bun", "swift", "xcodebuild", "xcodegen", "cargo", "python", "python3",
+        "pip", "node", "docker", "kubectl", "brew", "bundle", "rake", "rails", "pytest", "jest", "deno", "sh", "bash", "zsh",
+    ]
+
+    /// A prompt too thin to name the work from: under five words, a
+    /// command line, or nothing but attachments. A prompt that is only an
+    /// ID, a link or a path is under five words.
+    public static func isWeakPrompt(_ prompt: String?) -> Bool {
+        let text = PromptAttachments.split(prompt ?? "").text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let words = text.split(whereSeparator: \.isWhitespace)
+        guard words.count >= 5 else { return true }
+        guard !text.contains("\n"), let first = words.first else { return false }
+        if first == "$" || first.hasPrefix("./") { return true }
+        return commands.contains(first.lowercased()) && words.dropFirst().contains { $0.hasPrefix("-") }
+    }
+
+    /// Whether a chat is named again from its agent's first reply: one that
+    /// still has its starting name, once its prompt was asked about (no
+    /// sooner, unless the prompt is too thin to wait for), or one named from
+    /// a weak prompt.
+    public static func namesFromFirstReply(source: ChatNameSource, weakPrompt: Bool, requestPending: Bool) -> Bool {
+        switch source {
+        case .fallback: return weakPrompt || !requestPending
+        case .request: return weakPrompt
+        case .work, .pullRequest, .manual: return false
+        }
     }
 
     /// The type folders the instructions name, in order: `bugfix/` and
@@ -116,9 +227,10 @@ public enum ChatNaming {
     }
 
     /// Asks `provider` for a title and branch, each call for at most
-    /// `timeout`, trying a failed one again `attempts - 1` times. A branch
-    /// outside the prefixes the instructions name is asked for once more,
-    /// then moved behind the first of them.
+    /// `timeout`, trying a failed one again `attempts - 1` times. A generic
+    /// title is asked about once more, and fails when it comes back generic.
+    /// A branch outside the prefixes the instructions name is asked for once
+    /// more, then moved behind the first of them.
     public static func suggest(executor: any Executor, provider: any ProviderDefinition, binary: String?, model: String? = nil,
                                instructions: String, task: String, focus: String = "",
                                attempts: Int = 2, timeout: Duration = timeout) async -> Result<Suggestion, Failure> {
@@ -128,17 +240,24 @@ public enum ChatNaming {
                 return .failure(Failure("\(provider.name) couldn't be limited to naming the chat without using any tools, so it wasn't asked."))
             }
         }
-        let request = prompt(instructions: instructions, task: task, focus: focus)
+        var request = prompt(instructions: instructions, task: task, focus: focus)
         var result = Result<Suggestion, Failure>.failure(Failure("\(provider.name) wasn't asked."))
         for _ in 0..<max(1, attempts) {
             result = await ask(executor, provider, binary: binary, model: model, request: request, timeout: timeout)
             if case .success = result { break }
         }
+        if case .success(let generic) = result, isGeneric(generic.title) {
+            request += "\n\n" + genericReminder(title: generic.title)
+            result = await ask(executor, provider, binary: binary, model: model, request: request, timeout: timeout)
+            if case .success(let again) = result, isGeneric(again.title) {
+                return .failure(Failure("\(provider.name) only suggested names about how the work was checked, not what it does."))
+            }
+        }
         let allowed = prefixes(in: instructions)
         guard case .success(let first) = result, !follows(first.branch, allowed: allowed) else { return result }
         let again = request + "\n\n" + prefixReminder(branch: first.branch, allowed: allowed)
         if case .success(let second) = await ask(executor, provider, binary: binary, model: model, request: again, timeout: timeout),
-           follows(second.branch, allowed: allowed) {
+           follows(second.branch, allowed: allowed), !isGeneric(second.title) {
             return .success(second)
         }
         return .success(corrected(first, allowed: allowed))
