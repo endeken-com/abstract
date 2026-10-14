@@ -23,6 +23,7 @@ struct ChatToolbarControls: View {
     @Environment(AppModel.self) private var model
     @AppStorage("chat.transcript") private var transcript: TranscriptMode = .normal
     let session: Session
+    var showsTabs = true
 
     var body: some View {
         let layout = model.layout(for: session.id)
@@ -30,7 +31,7 @@ struct ChatToolbarControls: View {
         let reserve = Chrome.sideTabsReserve + (canRun ? Chrome.button + Chrome.gap : 0)
         HStack(spacing: Chrome.gap) {
             // The side panel's tabs, on the buttons' line and starting at its edge.
-            if layout.side.isOpen, let width = model.sidePanelWidth[session.id], width > reserve {
+            if showsTabs, layout.side.isOpen, let width = model.sidePanelWidth[session.id], width > reserve {
                 PanelTabBar(slot: .side, session: session, inTitleBand: true)
                     .frame(width: width - reserve, height: Chrome.button, alignment: .leading)
             }

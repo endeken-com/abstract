@@ -1,5 +1,13 @@
 import Foundation
 
+/// Put the side panel's chrome in the panel when the main pane no longer has
+/// enough titlebar room for both sets of tabs and the chat actions.
+public enum SidePanelChrome {
+    public static func usesPanelHeader(mainColumnWidth: CGFloat, sideIsOpen: Bool) -> Bool {
+        sideIsOpen && mainColumnWidth < 620
+    }
+}
+
 /// What a tab shows. Add a case here and register a view for it in the app;
 /// the layout logic never needs to change.
 public enum PaneKind: String, Codable, Sendable, CaseIterable, Hashable {

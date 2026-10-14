@@ -41,7 +41,7 @@ struct PanelWorkspace: View {
                         model.updateLayout(session.id) { $0.resize(.side, to: size) }
                     }
                     .ignoresSafeArea(.container, edges: .top)
-                    // Its tabs live in the title band, beside the toolbar buttons.
+                    // At narrow widths its tabs and actions move into its header.
                     PanelView(slot: .side, session: session, showsTabs: false)
                         .frame(width: side)
                         .transition(.move(edge: .trailing).combined(with: .opacity))
@@ -74,8 +74,20 @@ private struct PanelView: View {
 
     var body: some View {
         let panel = model.layout(for: session.id)[slot]
+        let compactSideHeader = slot == .side &&
+            SidePanelChrome.usesPanelHeader(mainColumnWidth: model.mainColumnWidth, sideIsOpen: panel.isOpen)
         VStack(spacing: 0) {
-            if showsTabs {
+            if compactSideHeader {
+                PanelTabBar(slot: .side, session: session)
+                    .padding(.horizontal, 10)
+                    .frame(height: 38)
+                HStack {
+                    Spacer(minLength: 0)
+                    ChatToolbarControls(session: session, showsTabs: false)
+                }
+                .padding(.horizontal, 10)
+                .frame(height: 38)
+            } else if showsTabs {
                 PanelTabBar(slot: slot, session: session)
                     .padding(.horizontal, 10)
                     .frame(height: 38)
@@ -93,34 +105,38 @@ private struct PanelView: View {
     }
 }
 
-/// Fixed-width tabs and a + for more, nothing else. The bottom panel shows
-/// it above its content; the side panel's sits in the title band, where
-/// tabs that run into the toolbar buttons fade out under them.
+/// Fixed-width tabs and a + for more. The + stays outside the scrolling tabs
+/// so it remains reachable even when long tab names fill the available room.
 struct PanelTabBar: View {
     @Environment(AppModel.self) private var model
     let slot: PanelSlot
     let session: Session
-    /// In the title band: the + follows the last tab and the row fades out at its end.
+    /// In the title band the row fades out at its end.
     var inTitleBand = false
 
     var body: some View {
         let panel = model.layout(for: session.id)[slot]
-        HStack(spacing: 2) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 2) {
-                    ForEach(panel.tabs) { item in
-                        PanelTab(item: item, active: item.id == panel.active?.id, slot: slot, session: session)
+        ScrollViewReader { proxy in
+            HStack(spacing: 2) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 2) {
+                        ForEach(panel.tabs) { item in
+                            PanelTab(item: item, active: item.id == panel.active?.id, slot: slot, session: session)
+                                .id(item.id)
+                        }
                     }
-                    if inTitleBand { addMenu }
                 }
-            }
-            .mask {
-                HStack(spacing: 0) {
-                    Rectangle()
-                    if inTitleBand { LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing).frame(width: 28) }
+                .mask {
+                    HStack(spacing: 0) {
+                        Rectangle()
+                        if inTitleBand { LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing).frame(width: 28) }
+                    }
                 }
+                addMenu
             }
-            if !inTitleBand { addMenu }
+            .onChange(of: panel.active?.id, initial: true) { _, id in
+                if let id { proxy.scrollTo(id, anchor: .center) }
+            }
         }
     }
 
@@ -338,4 +354,3 @@ struct RegionGlyph: View {
         .frame(width: 16, height: 13)
     }
 }
-

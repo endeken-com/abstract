@@ -283,7 +283,12 @@ private struct DetailToolbarControls: View {
         switch model.destination {
         case .session(let id):
             if let session = model.session(id) {
-                ChatToolbarControls(session: session)
+                if SidePanelChrome.usesPanelHeader(mainColumnWidth: model.mainColumnWidth,
+                                                  sideIsOpen: model.layout(for: id).side.isOpen) {
+                    Color.clear.frame(width: 1, height: Chrome.button)
+                } else {
+                    ChatToolbarControls(session: session)
+                }
             } else {
                 Color.clear.frame(width: 1, height: Chrome.button)
             }
