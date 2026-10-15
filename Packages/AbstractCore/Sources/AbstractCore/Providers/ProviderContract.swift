@@ -171,6 +171,20 @@ public struct EditPreview: Sendable, Hashable, Codable {
     }
 }
 
+/// File changes reported with a shell command's result. Some paths have no
+/// diff because the provider limits how many it sends.
+public struct ToolFileChanges: Sendable, Hashable {
+    public var previews: [EditPreview]
+    public var remainingPaths: [String]
+    public var moreFiles: Int
+    public var incomplete: Bool
+
+    public init(previews: [EditPreview], remainingPaths: [String], moreFiles: Int, incomplete: Bool) {
+        self.previews = previews; self.remainingPaths = remainingPaths
+        self.moreFiles = moreFiles; self.incomplete = incomplete
+    }
+}
+
 /// A picture in a tool's result, as its bytes.
 public struct ToolImage: Sendable, Hashable {
     /// "image/png", as the agent labelled it.
@@ -192,6 +206,7 @@ public enum AgentEvent: Sendable, Hashable {
     case thinking(text: String, blockId: String?, partial: Bool)
     case toolUse(id: String, name: String, input: JSONValue, edit: EditPreview?)
     case toolResult(toolUseId: String, output: String, isError: Bool, edit: EditPreview?)
+    case toolFileChanges(toolUseId: String, changes: ToolFileChanges)
     /// Pictures a tool's result carried, as when Claude reads an image.
     case toolImages(toolUseId: String, images: [ToolImage])
     case permissionRequest(requestId: String, toolName: String, input: JSONValue)

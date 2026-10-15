@@ -137,10 +137,13 @@ public struct ToolCall: Sendable, Hashable, Identifiable {
     public var name: String
     public var input: JSONValue
     public var edit: EditPreview?
+    public var fileChanges: ToolFileChanges?
     public var result: ToolResult?
 
-    public init(id: String, name: String, input: JSONValue, edit: EditPreview? = nil, result: ToolResult? = nil) {
-        self.id = id; self.name = name; self.input = input; self.edit = edit; self.result = result
+    public init(id: String, name: String, input: JSONValue, edit: EditPreview? = nil,
+                fileChanges: ToolFileChanges? = nil, result: ToolResult? = nil) {
+        self.id = id; self.name = name; self.input = input; self.edit = edit
+        self.fileChanges = fileChanges; self.result = result
     }
 }
 
@@ -157,11 +160,13 @@ public struct ToolResult: Sendable, Hashable {
 extension Timeline {
     public var blocks: [TimelineBlock] {
         var results: [String: (String, Bool, EditPreview?)] = [:]
+        var fileChanges: [String: ToolFileChanges] = [:]
         var images: [String: [ToolImage]] = [:]
         var errors: Set<String> = []
         for e in entries {
             switch e.event {
             case let .toolResult(toolUseId, output, isError, edit): results[toolUseId] = (output, isError, edit)
+            case let .toolFileChanges(toolUseId, changes): fileChanges[toolUseId] = changes
             case let .toolImages(toolUseId, pictures): images[toolUseId, default: []] += pictures
             case let .error(message): errors.insert(message)
             default: break
@@ -198,6 +203,7 @@ extension Timeline {
                 // then the diff comes from the input, so it shows straight away.
                 let call = ToolCall(id: id, name: name, input: input,
                                     edit: r?.2 ?? edit,
+                                    fileChanges: fileChanges[id],
                                     result: r.map { ToolResult(output: $0.0, isError: $0.1, images: images[id] ?? []) })
                 if case let .tools(groupId, calls)? = out.last {
                     out[out.count - 1] = .tools(id: groupId, calls: calls + [call])
@@ -228,7 +234,7 @@ extension Timeline {
                 assistantOpen = false
             // Tasks and what subagents did are listed apart from the conversation;
             // a turn's end and usage make its line, above.
-            case .status, .sessionId, .toolResult, .toolImages, .permissionRequest, .promptSuggestion, .commands, .task, .subagent,
+            case .status, .sessionId, .toolResult, .toolFileChanges, .toolImages, .permissionRequest, .promptSuggestion, .commands, .task, .subagent,
                  .turnEnd, .usage:
                 break
             }

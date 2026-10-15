@@ -132,6 +132,7 @@ public struct ClaudeProvider: ProviderDefinition {
                 + (ctx.model.map { ["--model", $0] } ?? [])
                 + (ctx.effort.map { ["--effort", $0] } ?? []) + Self.styleArgs(ctx.outputStyle) + resumeArgs + ctx.extraArgs,
             cwd: ctx.cwd,
+            env: ["CLAUDE_CODE_BASH_EDIT_DIFF": "1"],
             stdinInitial: Self.userMessageLine(ctx.prompt, images: ctx.images),
             keepStdinOpen: true
         )
@@ -421,6 +422,7 @@ final class ClaudeParser: OutputParser {
     private func onUser(_ obj: JSONValue) -> [AgentEvent]? {
         guard let message = obj["message"], message.object != nil else { return [] }
         let edit = ClaudeWire.editPreview(toolUseResult: obj["tool_use_result"])
+        let fileChanges = ClaudeWire.bashEditDiff(toolUseResult: obj["tool_use_result"])
         var events: [AgentEvent] = []
         for block in message["content"]?.array ?? [] {
             switch block["type"]?.string {
@@ -429,6 +431,7 @@ final class ClaudeParser: OutputParser {
                 events.append(.toolResult(toolUseId: id,
                                           output: ClaudeWire.flatten(block["content"]),
                                           isError: block["is_error"]?.bool == true, edit: edit))
+                if let fileChanges { events.append(.toolFileChanges(toolUseId: id, changes: fileChanges)) }
                 let images = ClaudeWire.images(block["content"])
                 if !images.isEmpty { events.append(.toolImages(toolUseId: id, images: images)) }
             case "text":
@@ -622,6 +625,23 @@ private enum ClaudeWire {
             return preview(createdFile: filePath, content: content)
         }
         return nil
+    }
+
+    static func bashEditDiff(toolUseResult result: JSONValue?) -> ToolFileChanges? {
+        guard let diff = result?["bashEditDiff"], diff.object != nil,
+              diff["skipped"]?.bool != true else { return nil }
+        let previews = (diff["files"]?.array ?? []).compactMap { file -> EditPreview? in
+            guard let path = file["filePath"]?.string, !path.isEmpty else { return nil }
+            return preview(structuredPatch: file["hunks"]?.array ?? [], filePath: path)
+        }
+        let previewPaths = Set(previews.map(\.filePath))
+        let remainingPaths = (diff["changedFiles"]?.array ?? []).compactMap(\.string)
+            .filter { !previewPaths.contains($0) }
+        let moreFiles = max(0, int(diff["moreFiles"]) ?? 0)
+        let incomplete = diff["unavailable"]?.bool == true || diff["shared"]?.bool == true
+        guard !previews.isEmpty || !remainingPaths.isEmpty || moreFiles > 0 || incomplete else { return nil }
+        return ToolFileChanges(previews: previews, remainingPaths: remainingPaths,
+                               moreFiles: moreFiles, incomplete: incomplete)
     }
 
     private static func preview(structuredPatch patch: [JSONValue], filePath: String) -> EditPreview? {

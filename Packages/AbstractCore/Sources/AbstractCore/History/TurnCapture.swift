@@ -38,6 +38,10 @@ public struct TurnTranscript: Sendable, Hashable {
             case let .toolUse(_, _, _, edit), let .toolResult(_, _, _, edit):
                 edited(edit)
                 worked = true
+            case let .toolFileChanges(_, changes):
+                for edit in changes.previews { edited(edit) }
+                for path in changes.remainingPaths where !path.isEmpty && !paths.contains(path) { paths.append(path) }
+                worked = true
             case let .turnEnd(_, _, _, said):
                 worked = true
                 if event != TurnStop.rule, let said = said?.trimmingCharacters(in: .whitespacesAndNewlines), !said.isEmpty {
