@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 import AbstractCore
 
-/// The reply box. Return breaks the line, Command-Return sends, and the send
+/// The reply box. Return sends, Shift-Return breaks the line, and the send
 /// button turns into Stop while the agent works.
 struct ComposerView: View {
     @Environment(AppModel.self) private var model
@@ -71,7 +71,7 @@ struct ComposerView: View {
                         .padding(.top, 7)
                         .padding(.trailing, Space.sm)
                 }
-                HStack(alignment: .bottom, spacing: Space.sm) {
+                VStack(alignment: .leading, spacing: Space.xs) {
                     // The agent's guess at your next message shows as the placeholder;
                     // Tab takes it; Markdown stays literal until Preview is opened.
                     if previewingMarkdown {
@@ -81,66 +81,49 @@ struct ComposerView: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { markdownHeight = $0 }
                         }
-                        .frame(height: min(max(markdownHeight, 20), 180))
-                        .padding(.vertical, 7)
+                        .frame(height: min(max(markdownHeight, 60), 180))
+                        .padding(.top, 10)
                     } else {
-                        GrowingTextEditor(text: $draft, placeholder: placeholder, font: BTFont.chat(13.5), lines: 1...10, focused: $focused)
+                        GrowingTextEditor(text: $draft, placeholder: placeholder, font: BTFont.chat(13.5), lines: 3...10, focused: $focused)
                             .disabled(readOnly || settingUp)
                             .onKeyPress(.tab) {
                                 guard draft.isEmpty, let suggestion else { return .ignored }
                                 draft = suggestion
                                 return .handled
                             }
-                            .returnBreaksLine(commandReturn: send)
-                            // Last, so it sees these keys before the Tab and Return handlers above.
+                            .onKeyPress(.return, phases: [.down, .repeat], action: returnKey)
+                            // Last, so it sees these keys before the Tab handler above.
                             // Repeats too: holding ↓ keeps moving down the menu, not the caret.
-                            .onKeyPress(keys: [.upArrow, .downArrow, .return, .tab, .escape], phases: [.down, .repeat], action: slashKey)
-                            .padding(.vertical, 7)
+                            .onKeyPress(keys: [.upArrow, .downArrow, .tab, .escape], phases: [.down, .repeat], action: slashKey)
+                            .padding(.top, 10)
                     }
 
-                    AttachmentButtons(repoRoot: repoRoot, sessionId: session.id, attachments: attachmentsBinding)
-                        .disabled(readOnly || settingUp)
+                    HStack(spacing: Space.xs) {
+                        AttachmentButtons(repoRoot: repoRoot, sessionId: session.id, attachments: attachmentsBinding)
+                            .disabled(readOnly || settingUp)
 
-                    if !draft.isEmpty {
-                        Button(previewingMarkdown ? "Edit" : "Preview") {
-                            previewingMarkdown.toggle()
-                            if !previewingMarkdown { focused = true }
-                        }
-                        .buttonStyle(.plain)
-                        .font(.btChatCaption)
-                        .foregroundStyle(Color.btTextSecondary)
-                        .frame(height: 26)
-                        .help(previewingMarkdown ? "Edit Markdown" : "Preview Markdown")
-                    }
-
-                    // The send button becomes Stop while the agent works.
-                    if working {
-                        Button { model.stop(session.id) } label: {
-                            Image(systemName: "stop.fill")
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundStyle(Color.btText)
-                                .frame(width: 26, height: 26)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .help("Stop the agent (⌘.)")
-                    } else {
-                        Button(action: send) {
-                            // The shortcut that sends, as the button's face: ⌘↩.
-                            HStack(spacing: 1) {
-                                Image(systemName: "command")
-                                Image(systemName: "return")
+                        if !draft.isEmpty {
+                            Button(previewingMarkdown ? "Edit" : "Preview") {
+                                previewingMarkdown.toggle()
+                                if !previewingMarkdown { focused = true }
                             }
-                                .font(.system(size: 11, weight: .regular))
-                                .foregroundStyle(canSend ? Color.btText : Color.btTextTertiary)
-                                .padding(.horizontal, 4)
-                                .frame(minWidth: 26, minHeight: 26)
-                                .contentShape(Rectangle())
+                            .buttonStyle(.btGhost)
+                            .help(previewingMarkdown ? "Edit Markdown" : "Preview Markdown")
                         }
-                        .buttonStyle(.plain)
-                        .disabled(!canSend)
-                        .help("Send (⌘↩)")
-                        .animation(.snappy(duration: 0.15), value: canSend)
+                        Spacer(minLength: Space.sm)
+
+                        // The send button becomes Stop while the agent works.
+                        if working {
+                            Button("Stop") { model.stop(session.id) }
+                                .buttonStyle(.btGhost)
+                                .help("Stop the agent (⌘.)")
+                        } else {
+                            Button("Send", action: send)
+                                .buttonStyle(.btPrimary)
+                                .disabled(!canSend)
+                                .help("Send (Return)")
+                                .animation(.snappy(duration: 0.15), value: canSend)
+                        }
                     }
                 }
             }
@@ -211,18 +194,17 @@ struct ComposerView: View {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard canSend else { return }
         let pending = attachments
-        draft = ""
-        previewingMarkdown = false
-        attachments = []
-        RevundService.shared.userWrote(session.id)
         do {
             // The review goes with the message, after it, then the attachments.
+            // Leave the draft and attachments in place until delivery succeeds.
             try model.sendFollowUp(session.id, text: model.messageWithReview(session.id, text: text), attachments: pending)
+            draft = ""
+            previewingMarkdown = false
+            attachments = []
+            RevundService.shared.userWrote(session.id)
             model.keepCommentsAsNotes(session.id)
             model.discardComments(session.id)
         } catch {
-            draft = text
-            attachments = pending
             model.flash(error.localizedDescription, isError: true)
         }
     }
@@ -320,7 +302,7 @@ struct ComposerView: View {
         }
     }
 
-    /// ↑ ↓ move through the `/` menu, Return or Tab picks, Esc steps back.
+    /// ↑ ↓ move through the `/` menu, Tab picks, Esc steps back.
     /// Everything else, and every key while it's closed, goes on to the box.
     private func slashKey(_ press: KeyPress) -> KeyPress.Result {
         let items = slashItems
@@ -331,10 +313,37 @@ struct ComposerView: View {
         switch press.key {
         case .upArrow: slashSelected = (current - 1 + items.count) % items.count
         case .downArrow: slashSelected = (current + 1) % items.count
-        case .return, .tab: items[current].run()
+        case .tab: items[current].run()
         case .escape:
             if slashChoosing != nil { slashChoosing = nil; slashSelected = 0 } else { slashDismissed = draft }
         default: return .ignored
+        }
+        return .handled
+    }
+
+    private func returnKey(_ press: KeyPress) -> KeyPress.Result {
+        let editor = NSApp.keyWindow?.firstResponder as? NSTextView
+        let items = slashItems
+        switch ChatComposerReturnAction.resolve(
+            isComposing: editor?.hasMarkedText() == true, slashMenuOpen: !items.isEmpty,
+            shift: press.modifiers.contains(.shift), command: press.modifiers.contains(.command),
+            option: press.modifiers.contains(.option), control: press.modifiers.contains(.control),
+            repeated: press.phase == .repeat
+        ) {
+        case .system:
+            return .ignored
+        case .consume:
+            return .handled
+        case .newline:
+            let edit = ChatComposerDraftEdit.insertingNewline(into: draft, selectedRange: editor?.selectedRange())
+            draft = edit.text
+            if let editor {
+                DispatchQueue.main.async { [weak editor] in editor?.setSelectedRange(edit.selection) }
+            }
+        case .selectSlashItem:
+            items[min(slashSelected, items.count - 1)].run()
+        case .send:
+            send()
         }
         return .handled
     }
