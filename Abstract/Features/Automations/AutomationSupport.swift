@@ -76,10 +76,14 @@ extension AppModel {
 
     /// A run in a chat that already exists: its instructions arrive as your
     /// next message would, so its agent picks up where it left off.
-    func deliverAutomationRun(_ prompt: String, to chatId: String) throws {
+    func deliverAutomationRun(_ prompt: String, to chatId: String) async throws {
         guard let chat = session(chatId) else { throw AbstractError.notFound("chat") }
         if chat.archivedAt != nil { setArchived(chatId, false) }
-        try sendFollowUp(chatId, text: prompt)
+        if chatId.hasPrefix(RemoteService.mirrorPrefix) {
+            try await sendRemoteFollowUp(chatId, text: prompt)
+        } else {
+            try sendFollowUp(chatId, text: prompt)
+        }
     }
 
     /// An automation drafted from `description` by the agent the page has

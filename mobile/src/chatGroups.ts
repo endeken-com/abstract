@@ -19,6 +19,7 @@ export type ChatFacts = {
   hostId: string;
   mac: string;
   macState: MacState;
+  lastSeenAt?: number | null;
   pullRequest?: PullRequest | null;
   // Uncommitted, unpushed or unmerged work; undefined until the Mac has read its branch.
   hasChanges?: boolean;
@@ -39,12 +40,12 @@ export function chatsFromMacs(macs: MacView[]): ChatFacts[] {
   return macs.flatMap(mac => chatsFromSnapshot(mac.snapshot, mac));
 }
 
-export function chatsFromSnapshot(snapshot: Snapshot | null | undefined, mac: Pick<MacView, 'id' | 'name' | 'state'>): ChatFacts[] {
+export function chatsFromSnapshot(snapshot: Snapshot | null | undefined, mac: Pick<MacView, 'id' | 'name' | 'state' | 'lastSeenAt'>): ChatFacts[] {
   if (!snapshot) return [];
   const projects = new Map(snapshot.projects.map(p => [p.id, p.name]));
   const busy = new Set(snapshot.backgroundTasks || []);
   return snapshot.sessions.map(session => ({
-    session, hostId: mac.id, mac: mac.name, macState: mac.state,
+    session, hostId: mac.id, mac: mac.name, macState: mac.state, lastSeenAt: mac.lastSeenAt,
     pullRequest: snapshot.pullRequests?.[session.id] ?? null,
     // A chat with no folder has nothing to review.
     hasChanges: session.worktreePath ? snapshot.unmergedWork?.[session.id] : false,

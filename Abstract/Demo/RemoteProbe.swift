@@ -83,7 +83,7 @@ enum RemoteProbe {
         }
         log("remote: opened “\(first.name)”, \(blocks) blocks")
 
-        try? model.sendFollowUp(mirror, text: "Also add a short note to the README.")
+        try? await model.sendRemoteFollowUp(mirror, text: "Also add a short note to the README.")
         let grew = await wait(20, { model.feed(mirror).rows.count > blocks + 1 ? model.feed(mirror).rows.count : nil })
         log(grew.map { "remote: reply streamed back, \($0) blocks" } ?? "remote: FAIL reply didn't stream back")
 
@@ -127,7 +127,7 @@ enum RemoteProbe {
             log("remote: reconnected")
             let before = model.feed(mirror).rows.count
             do {
-                try model.sendFollowUp(mirror, text: "Sent after reconnecting.")
+                try await model.sendRemoteFollowUp(mirror, text: "Sent after reconnecting.")
                 // The stand-in agent answers every follow-up under one id, so its reply replaces the last; your message is the new row.
                 let grew = await wait(20, { model.feed(mirror).rows.count > before ? true : nil })
                 log(grew != nil ? "remote: message after reconnect delivered" : "remote: FAIL message after reconnect not answered")

@@ -69,15 +69,20 @@ extension RemoteLink {
     func openTerminal(cwd: String, cols: Int, rows: Int, output: @escaping (Data) -> Void, exit: @escaping (Int32?) -> Void) -> Int {
         let id = nextRequestId()
         terminals[id] = (output, exit)
+        terminalSpecs[id] = (cwd, cols, rows)
         send(.request(id: id, .openTerminal(id: id, cwd: cwd, cols: cols, rows: rows)))
         return id
     }
 
     func terminalInput(_ id: Int, _ data: Data) { fire(.terminalInput(id: id, data: data)) }
-    func resizeTerminal(_ id: Int, cols: Int, rows: Int) { fire(.resizeTerminal(id: id, cols: cols, rows: rows)) }
+    func resizeTerminal(_ id: Int, cols: Int, rows: Int) {
+        if let spec = terminalSpecs[id] { terminalSpecs[id] = (spec.cwd, cols, rows) }
+        fire(.resizeTerminal(id: id, cols: cols, rows: rows))
+    }
 
     func closeTerminal(_ id: Int) {
         guard terminals.removeValue(forKey: id) != nil else { return }
+        terminalSpecs[id] = nil
         fire(.closeTerminal(id: id))
     }
 }

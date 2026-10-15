@@ -246,9 +246,19 @@ final class RevundService {
     /// Sends findings to the chat's agent to fix.
     func send(_ findings: [RevundFinding], scope: String, to sessionId: String, model: AppModel) {
         guard !findings.isEmpty else { return }
+        let text = "Revund reviewed \(scope). Fix what it found; if a finding doesn't apply, say why."
+        let attachments = [Revund.attachment(findings, scope: scope)]
+        if sessionId.hasPrefix(RemoteService.mirrorPrefix) {
+            Task {
+                do {
+                    try await model.sendRemoteFollowUp(sessionId, text: text, attachments: attachments)
+                    for finding in findings { handled[sessionId, default: []].insert(finding.id) }
+                } catch { model.flash(error.localizedDescription, isError: true) }
+            }
+            return
+        }
         do {
-            try model.sendFollowUp(sessionId, text: "Revund reviewed \(scope). Fix what it found; if a finding doesn't apply, say why.",
-                                   attachments: [Revund.attachment(findings, scope: scope)])
+            try model.sendFollowUp(sessionId, text: text, attachments: attachments)
             for f in findings { handled[sessionId, default: []].insert(f.id) }
         } catch {
             model.flash(error.localizedDescription, isError: true)

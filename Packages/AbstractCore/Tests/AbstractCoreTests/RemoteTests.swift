@@ -99,6 +99,39 @@ struct RemoteTests {
         client.close()
     }
 
+    @Test func unpairedMacExplainsWhyReconnectFailed() async throws {
+        let listener = try NWListener(using: RemoteNetwork.parameters, on: .any)
+        let accepted = AsyncStream<NWConnection>.makeStream()
+        listener.newConnectionHandler = { accepted.continuation.yield($0) }
+        let ready = AsyncStream<UInt16>.makeStream()
+        listener.stateUpdateHandler = { state in
+            if case .ready = state, let port = listener.port?.rawValue { ready.continuation.yield(port) }
+        }
+        listener.start(queue: .global())
+        defer { listener.cancel() }
+        var ports = ready.stream.makeAsyncIterator()
+        let port = try #require(await ports.next())
+
+        let hostIdentity = host
+        async let refusal: Void = {
+            var incoming = accepted.stream.makeAsyncIterator()
+            let channel = RemoteChannel(connection: await incoming.next()!)
+            try await channel.open()
+            await #expect(throws: SecureChannelError.unknownPeer) {
+                try await channel.accept(as: hostIdentity, lookup: { _ in nil })
+            }
+            channel.close()
+        }()
+
+        let client = RemoteChannel(connection: NWConnection(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port)!, using: RemoteNetwork.parameters))
+        try await client.open()
+        await #expect(throws: SecureChannelError.unknownPeer) {
+            try await client.handshake(as: controller, pairing: false, expected: host.peer)
+        }
+        try await refusal
+        client.close()
+    }
+
     @Test func framesStateTheirLength() {
         let framed = RemoteFraming.frame(Data([1, 2, 3]))
         #expect(framed.count == 7)

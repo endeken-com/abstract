@@ -10,6 +10,7 @@ struct ComposerView: View {
     @State private var draft = ""
     @State private var previewingMarkdown = false
     @State private var markdownHeight: CGFloat = 20
+    @State private var sending = false
     @FocusState private var focused: Bool
     /// The `/` menu: the highlighted row, the command whose choices it shows
     /// (nil: the commands), and the draft it was closed on with Esc.
@@ -29,7 +30,8 @@ struct ComposerView: View {
     }
     /// A review or attachments can go on their own; otherwise there must be something typed.
     private var canSend: Bool {
-        !readOnly && !settingUp && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.comments(session.id).isEmpty || !attachments.isEmpty)
+        !readOnly && !settingUp && !sending && (!remote || model.remote.unreachableMessage(session.id) == nil)
+            && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.comments(session.id).isEmpty || !attachments.isEmpty)
     }
     private var attachments: [PromptAttachment] {
         get { model.draftAttachments[session.id] ?? [] }
@@ -53,6 +55,13 @@ struct ComposerView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if let unreachable = model.remote.unreachableMessage(session.id) {
+                Text(unreachable)
+                    .font(.btChatCaption)
+                    .foregroundStyle(Color.btTextSecondary)
+                    .frame(maxWidth: Space.readingWidth, alignment: .leading)
+                    .padding(.bottom, Space.sm)
+            }
             HStack {
                 ReviewPill(sessionId: session.id)
                 Spacer(minLength: 0)
@@ -85,7 +94,7 @@ struct ComposerView: View {
                         .padding(.top, 10)
                     } else {
                         GrowingTextEditor(text: $draft, placeholder: placeholder, font: BTFont.chat(13.5), lines: 3...10, focused: $focused)
-                            .disabled(readOnly || settingUp)
+                            .disabled(readOnly || settingUp || sending)
                             .onKeyPress(.tab) {
                                 guard draft.isEmpty, let suggestion else { return .ignored }
                                 draft = suggestion
@@ -116,12 +125,13 @@ struct ComposerView: View {
                         if working {
                             Button("Stop") { model.stop(session.id) }
                                 .buttonStyle(.btGhost)
-                                .help("Stop the agent (⌘.)")
+                                .disabled(remote && model.remote.unreachableMessage(session.id) != nil)
+                                .help(model.remote.unreachableMessage(session.id) ?? "Stop the agent (⌘.)")
                         } else {
                             Button("Send", action: send)
                                 .buttonStyle(.btPrimary)
                                 .disabled(!canSend)
-                                .help("Send (Return)")
+                                .help(model.remote.unreachableMessage(session.id) ?? "Send (Return)")
                                 .animation(.snappy(duration: 0.15), value: canSend)
                         }
                     }
@@ -194,19 +204,35 @@ struct ComposerView: View {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard canSend else { return }
         let pending = attachments
+        let message = model.messageWithReview(session.id, text: text)
+        if remote {
+            sending = true
+            Task {
+                do {
+                    try await model.sendRemoteFollowUp(session.id, text: message, attachments: pending)
+                    sent()
+                } catch { model.flash(error.localizedDescription, isError: true) }
+                sending = false
+            }
+            return
+        }
         do {
             // The review goes with the message, after it, then the attachments.
             // Leave the draft and attachments in place until delivery succeeds.
-            try model.sendFollowUp(session.id, text: model.messageWithReview(session.id, text: text), attachments: pending)
-            draft = ""
-            previewingMarkdown = false
-            attachments = []
-            RevundService.shared.userWrote(session.id)
-            model.keepCommentsAsNotes(session.id)
-            model.discardComments(session.id)
+            try model.sendFollowUp(session.id, text: message, attachments: pending)
+            sent()
         } catch {
             model.flash(error.localizedDescription, isError: true)
         }
+    }
+
+    private func sent() {
+        draft = ""
+        previewingMarkdown = false
+        attachments = []
+        RevundService.shared.userWrote(session.id)
+        model.keepCommentsAsNotes(session.id)
+        model.discardComments(session.id)
     }
 
     // MARK: - The / menu

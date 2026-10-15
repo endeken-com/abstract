@@ -141,9 +141,11 @@ extension RemoteLink {
     func watch(_ paths: [String], onChange: @escaping () -> Void) -> RemoteWatch {
         let id = nextRequestId()
         watchers[id] = onChange
+        watchPaths[id] = paths
         fire(.watch(id: id, paths: paths))
         return RemoteWatch { [weak self] in
             guard let self, self.watchers.removeValue(forKey: id) != nil else { return }
+            self.watchPaths[id] = nil
             self.fire(.unwatch(id: id))
         }
     }
@@ -167,7 +169,9 @@ extension RemoteLink {
         case let .processExit(id, code): processes.removeValue(forKey: id)?.exit(code)
         case .changed(let id): watchers[id]?()
         case let .terminalOutput(id, data): terminals[id]?.output(data)
-        case let .terminalExit(id, code): terminals.removeValue(forKey: id)?.exit(code)
+        case let .terminalExit(id, code):
+            terminalSpecs[id] = nil
+            terminals.removeValue(forKey: id)?.exit(code)
         default: break
         }
     }
@@ -176,8 +180,9 @@ extension RemoteLink {
     func dropStreams() {
         for (_, process) in processes { process.exit(nil) }
         processes = [:]
-        for (_, terminal) in terminals { terminal.exit(nil) }
-        terminals = [:]
+        for (_, terminal) in terminals {
+            terminal.output(Data("\r\nConnection dropped. Earlier processes ended; a new shell will start when the Mac reconnects.\r\n".utf8))
+        }
     }
 }
 

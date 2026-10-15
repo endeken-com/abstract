@@ -3,7 +3,7 @@ import type { Project, PullRequest, Session, Snapshot } from './types';
 // One paired Mac as the screens see it. A Mac that can't be reached keeps the
 // last snapshot it sent, so its projects stay visible, greyed out.
 export type MacState = 'online' | 'connecting' | 'unreachable';
-export type MacView = { id: string; name: string; state: MacState; snapshot: Snapshot | null };
+export type MacView = { id: string; name: string; state: MacState; snapshot: Snapshot | null; lastSeenAt?: number | null };
 export type MacProject = { mac: MacView; project: Project };
 export type MacChat = { mac: MacView; chat: Session };
 export type MacPullRequest = { mac: MacView; sessionId: string; pr: PullRequest; chat?: Session };

@@ -73,6 +73,7 @@ export class RemoteClient {
   status = 'offline';
   // The last attempt to reach this Mac failed; its snapshot is the last one it sent.
   unreachable = false;
+  lastSeenAt: number | null = null;
   pairingCode: string | null = null;
   error: string | null = null;
   lines: Record<string, RemoteLine[]> = {};
@@ -91,6 +92,7 @@ export class RemoteClient {
   private connectingTask: Promise<void> | null = null;
   private abortDial: (() => void) | null = null;
   private lineNotification: ReturnType<typeof setTimeout> | null = null;
+  private heartbeat: ReturnType<typeof setInterval> | null = null;
   private watched = new Set<string>();
   private subscribing = new Map<string, Promise<void>>();
   private replayBuffers = new Map<string, RemoteLine[]>();
@@ -107,6 +109,7 @@ export class RemoteClient {
     }, 80);
   }
   disconnect(clearSnapshot = false) {
+    if (this.heartbeat) { clearInterval(this.heartbeat); this.heartbeat = null; }
     this.connectionEpoch++;
     this.abortDial?.(); this.abortDial = null;
     this.connectingAddress = null; this.connectingPeerId = null; this.connectingTask = null;
@@ -118,7 +121,7 @@ export class RemoteClient {
     this.subscribing.clear();
     this.replayBuffers.clear();
     this.loadingHistory.clear();
-    this.active = null; if (clearSnapshot) { this.snapshot = null; this.snapshotHostId = null; this.lines = {}; this.historyBefore = {}; this.watched.clear(); } this.status = 'offline'; this.error = null;
+    this.active = null; if (clearSnapshot) { this.snapshot = null; this.snapshotHostId = null; this.lines = {}; this.historyBefore = {}; this.watched.clear(); } this.status = 'offline'; this.error = null; this.unreachable = !clearSnapshot && this.snapshot !== null;
     this.terminals = {};
     const socket = this.socket; this.socket = null; socket?.close(); this.cipher = null; this.changed();
   }
@@ -230,7 +233,8 @@ export class RemoteClient {
       socket.onClose = error => {
         if (this.socket !== socket) return;
         this.socket = null; this.cipher = null;
-        this.status = 'offline'; this.error = null; this.changed();
+        if (this.heartbeat) { clearInterval(this.heartbeat); this.heartbeat = null; }
+        this.status = 'offline'; this.unreachable = true; this.error = String(error); this.changed();
         for (const waiter of this.pending.values()) { clearTimeout(waiter.timer); waiter.reject(error); }
         this.pending.clear();
         this.scheduleReconnect();
@@ -238,7 +242,13 @@ export class RemoteClient {
       this.receive(socket);
       await this.request('snapshot');
       if (epoch !== this.connectionEpoch) return;
-      this.status = 'online'; this.unreachable = false; this.pairingCode = null; this.changed();
+      this.status = 'online'; this.unreachable = false; this.lastSeenAt = Date.now(); this.pairingCode = null; this.changed();
+      this.heartbeat = setInterval(() => {
+        if (this.status !== 'online') return;
+        this.request('snapshot', {}, 10000).catch(error => {
+          if (this.status === 'online') this.socket?.close(error as Error);
+        });
+      }, 15000);
       await Promise.all([...this.watched].map(sessionId => this.subscribeChat(sessionId)));
     } catch (error) {
       socket?.close();
@@ -285,6 +295,7 @@ export class RemoteClient {
           const event = message.event._0;
           if (event.snapshot) {
             this.snapshot = event.snapshot._0; this.snapshotHostId = this.active?.peer.id || null;
+            this.lastSeenAt = Date.now();
             if (this.active) {
               const address = validInternetAddress(this.snapshot?.internetAddress) ? this.snapshot.internetAddress : undefined;
               if (this.active.internetAddress?.endpointId !== address?.endpointId) {
@@ -463,7 +474,7 @@ export class RemoteStore {
   macs(): MacView[] {
     return this.devices.map(device => {
       const client = this.client(device.peer.id);
-      return { id: device.peer.id, name: device.peer.name, state: macState(client), snapshot: client.snapshot };
+      return { id: device.peer.id, name: device.peer.name, state: macState(client), snapshot: client.snapshot, lastSeenAt: client.lastSeenAt };
     });
   }
   mac(hostId?: string | null) { return this.macs().find(x => x.id === hostId); }

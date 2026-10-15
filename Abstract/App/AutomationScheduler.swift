@@ -91,7 +91,7 @@ final class AutomationScheduler {
         switch a.workspaceMode {
         case .pinned:
             if let chat = model.session(a.pinnedSessionId) {
-                try model.deliverAutomationRun(a.prompt, to: chat.id)
+                try await model.deliverAutomationRun(a.prompt, to: chat.id)
                 return chat.id
             }
             // A chat of its own: made on the first run (and again if it was
