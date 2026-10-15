@@ -169,6 +169,7 @@ final class CodexParser: OutputParser {
         case "thread.started":
             return obj["thread_id"]?.string.map { [.sessionId($0)] }
         case "turn.started":
+            openTools.removeAll()
             return [.status(.running, detail: nil)]
         case "turn.completed":
             let usage = obj["usage"]

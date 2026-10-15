@@ -49,6 +49,10 @@ public final class ChatStream {
     public private(set) var providerId: String
     private var parser: (any OutputParser)?
     private let makeParser: (String) -> (any OutputParser)?
+    /// Codex reuses item ids on resumed turns. Keep this across parser restarts,
+    /// and rebuild it from the same input and output lines during replay.
+    private var codexTurn = 0
+    private var codexPromptWaiting = false
 
     /// Between a `summarize` marker and the handoff that follows it.
     public private(set) var isSummarizing = false
@@ -90,6 +94,7 @@ public final class ChatStream {
                 return []
             case .handoff:
                 isSummarizing = false
+                codexPromptWaiting = false
                 restart(providerId: marker.to)
                 return [.handoff(from: marker.from, to: marker.to, summary: marker.summary, source: marker.source)]
             }
@@ -97,12 +102,42 @@ public final class ChatStream {
             // A message of yours means any hidden turn is over, even one whose
             // handoff never got logged.
             isSummarizing = false
+            if providerId == "codex" {
+                codexTurn += 1
+                codexPromptWaiting = true
+            }
             return [.text(role: .user, text: line.line, blockId: nil, partial: false)]
         case .note:
             return [.notice(.info(line.line))]
         case .stdout, .stderr:
             let events = parser?.feed(line.line, stream: line.stream) ?? [.raw(line: line.line, stream: line.stream)]
-            return isSummarizing ? summarizing(events) : events
+            let scoped = providerId == "codex" ? scopeCodex(events) : events
+            return isSummarizing ? summarizing(scoped) : scoped
+        }
+    }
+
+    private func scopeCodex(_ events: [AgentEvent]) -> [AgentEvent] {
+        // A turn without a recorded user line still gets its own namespace.
+        if events.contains(where: { if case .status(.running, _) = $0 { true } else { false } }) {
+            if !codexPromptWaiting { codexTurn += 1 }
+            codexPromptWaiting = false
+        }
+        func id(_ raw: String) -> String { "codex:\(codexTurn):\(raw)" }
+        return events.map { event in
+            switch event {
+            case let .text(.assistant, text, blockId, partial):
+                return .text(role: .assistant, text: text, blockId: blockId.map(id), partial: partial)
+            case let .thinking(text, blockId, partial):
+                return .thinking(text: text, blockId: blockId.map(id), partial: partial)
+            case let .toolUse(raw, name, input, edit):
+                return .toolUse(id: id(raw), name: name, input: input, edit: edit)
+            case let .toolResult(raw, output, isError, edit):
+                return .toolResult(toolUseId: id(raw), output: output, isError: isError, edit: edit)
+            case let .toolImages(raw, images):
+                return .toolImages(toolUseId: id(raw), images: images)
+            default:
+                return event
+            }
         }
     }
 
