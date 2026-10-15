@@ -753,16 +753,22 @@ private struct RailChatLine: View {
             if let project = line.project { part(project) }
             if let pr = line.pullRequest {
                 dot(after: line.project != nil)
-                HStack(spacing: 2) {
+                HStack(spacing: 3) {
                     PullRequestGlyph(kind: .init(state: pr.state, isDraft: pr.isDraft))
                         .foregroundStyle(Color.pullRequestInk(state: pr.state, isDraft: pr.isDraft))
                         .frame(width: 10, height: 10)
                     part("#\(pr.number)").monospacedDigit()
+                    if let checks = line.checks {
+                        HStack(spacing: 2) {
+                            Image(systemName: checks.symbol)
+                                .font(.system(size: 9, weight: .semibold))
+                            Text(checks.rawValue)
+                        }
+                        .foregroundStyle(checks.color)
+                    }
                 }
-            }
-            if let checks = line.checks {
-                dot(after: true)
-                part(checks.rawValue, color: checks == .failing ? .btRemoved : .btTextTertiary)
+                .fixedSize(horizontal: true, vertical: false)
+                .layoutPriority(1)
             }
             if line.changesRequested {
                 dot(after: true)
@@ -781,7 +787,7 @@ private struct RailChatLine: View {
         .lineLimit(1)
         .frame(height: 14)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(line.text)
+        .accessibilityLabel(line.accessibilityText)
     }
 
     private func part(_ text: String, color: Color = .btTextTertiary) -> some View {
@@ -790,6 +796,24 @@ private struct RailChatLine: View {
 
     @ViewBuilder private func dot(after previous: Bool) -> some View {
         if previous { Text("·").foregroundStyle(Color.btTextTertiary.opacity(0.7)) }
+    }
+}
+
+private extension SidebarChats.PullRequestFacts.Checks {
+    var symbol: String {
+        switch self {
+        case .passed: "checkmark"
+        case .failing: "xmark"
+        case .running: "clock"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .passed: .btAdded
+        case .failing: .btRemoved
+        case .running: .btTextSecondary
+        }
     }
 }
 
