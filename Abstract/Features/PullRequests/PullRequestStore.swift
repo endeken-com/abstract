@@ -293,6 +293,13 @@ extension AppModel {
     }
 
     private func send(_ sessionId: String, _ text: String) {
+        if sessionId.hasPrefix(RemoteService.mirrorPrefix) {
+            Task {
+                do { try await sendRemoteFollowUp(sessionId, text: text) }
+                catch { flash(error.localizedDescription, isError: true) }
+            }
+            return
+        }
         do { try sendFollowUp(sessionId, text: text) } catch { flash(error.localizedDescription, isError: true) }
     }
 }

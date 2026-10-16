@@ -22,7 +22,8 @@ struct ConversationView: View {
         let permissions = model.pendingPermissions(session.id)
         let approvals = ToolSegment.approvals(for: feed.calls, pending: permissions)
         let matched = Set(approvals.values.map(\.requestId))
-        let working = session.status == .running || session.status == .provisioning
+        let working = (session.status == .running || session.status == .provisioning)
+            && model.remote.unreachableMessage(session.id) == nil
         let context = TranscriptContext(sessionId: session.id, working: working, approvals: approvals,
                                         latestTodoCallId: feed.calls.last { ToolKind($0.name) == .todo }?.id,
                                         prose: ProseStyle(font: chatFont, size: chatSize), transcript: transcript)

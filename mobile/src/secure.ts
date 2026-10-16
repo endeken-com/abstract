@@ -65,7 +65,16 @@ export function beginHandshake(who: Identity, pairing: boolean) {
   return {
     hello,
     finish(replyBytes: Uint8Array, pinned?: Peer) {
-      const reply = JSON.parse(Buffer.from(replyBytes).toString('utf8')) as { v: number; peer: Peer; ephemeral: string; signature: string };
+      const reply = JSON.parse(Buffer.from(replyBytes).toString('utf8')) as { v: number; peer: Peer; ephemeral: string; signature: string; reason?: string };
+      if (reply.reason) {
+        if (!pinned || !reply.signature || !ed25519.verify(bytes(reply.signature),
+          concat(utf8('abstract-handshake-refusal-v1'), hello, utf8(reply.reason)), bytes(pinned.publicKey))) {
+          throw Error('Mac identity signature failed.');
+        }
+        if (reply.reason === 'unknownPeer') throw Error('This phone is no longer paired with the Mac.');
+        if (reply.reason === 'keyChanged') throw Error('The Mac identity changed. Unpair it and pair again.');
+        if (reply.reason === 'versionMismatch') throw Error('The Mac runs a different version of Abstract’s remote protocol.');
+      }
       if (reply.v !== 1 || !reply.signature || !reply.peer?.publicKey) throw Error('Incompatible Mac remote protocol.');
       if (!pairing && (!pinned || pinned.id !== reply.peer.id || pinned.publicKey !== reply.peer.publicKey)) throw Error('The Mac identity changed or is not paired.');
       const transcript = sha256(concat(utf8('abstract-remote-v1'), hello,

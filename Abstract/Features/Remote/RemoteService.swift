@@ -596,16 +596,6 @@ final class RemoteService {
         if !link.isConnected { link.connect(to: endpoint, internet: device.internetAddress, as: identity) }
     }
 
-    /// The link to a chat's Mac when it's up; otherwise says so, starts
-    /// reconnecting, and returns nil, so nothing is lost without a word.
-    func onlineLink(for id: String) -> RemoteLink? {
-        guard let link = link(for: id) else { return nil }
-        if link.state == .online { return link }
-        reconnect(link.device.id)
-        model?.flash("\(link.device.peer.name) isn't connected. Reconnecting…", isError: true)
-        return nil
-    }
-
     // MARK: Changing settings
 
     private func restartListening() {
@@ -668,7 +658,13 @@ final class RemoteService {
 
     func isAlive(_ id: String) -> Bool {
         guard let (device, session) = Self.split(id) else { return false }
-        return links[device]?.snapshot?.alive.contains(session) ?? false
+        guard let link = links[device], link.state == .online else { return false }
+        return link.snapshot?.alive.contains(session) ?? false
+    }
+
+    func unreachableMessage(_ id: String) -> String? {
+        guard let link = link(for: id), link.state != .online else { return nil }
+        return link.unreachableMessage
     }
 
     func link(for id: String) -> RemoteLink? { Self.split(id).flatMap { links[$0.device] } }
@@ -679,13 +675,13 @@ final class RemoteService {
     }
 
     /// Files go along with the message, for the other Mac to keep beside its own.
-    func send(_ id: String, text: String, attachments: [PromptAttachment] = []) throws {
+    func send(_ id: String, text: String, attachments: [PromptAttachment] = []) async throws {
         guard let (_, session) = Self.split(id) else { return }
         guard let link = link(for: id), link.state == .online else {
             reconnectAll()
-            throw AbstractError.message("\(self.link(for: id)?.device.peer.name ?? "That Mac") isn't connected, so your message wasn't sent. Reconnecting…")
+            throw AbstractError.message("\(self.link(for: id)?.device.peer.name ?? "That Mac") isn't reachable, so your message wasn't sent. Reconnecting…")
         }
-        guard !attachments.isEmpty else { link.fire(.send(sessionId: session, text: text)); return }
+        guard !attachments.isEmpty else { try await link.perform(.send(sessionId: session, text: text)); return }
         var files: [String: Data] = [:]
         for a in attachments where a.kind == .file || a.kind == .image {
             guard let path = a.path else { continue }
@@ -694,26 +690,13 @@ final class RemoteService {
         guard files.values.reduce(0, { $0 + $1.count }) <= 10 << 20 else {
             throw AbstractError.message("Attachments can go to another Mac up to 10 MB at a time.")
         }
-        link.fire(.sendAttachments(sessionId: session, text: text, attachments: attachments, files: files))
+        try await link.perform(.sendAttachments(sessionId: session, text: text, attachments: attachments, files: files))
     }
 
-    func stop(_ id: String) {
-        guard let (_, session) = Self.split(id) else { return }
-        onlineLink(for: id)?.fire(.stop(sessionId: session))
-    }
-
-    @discardableResult
-    func answer(_ id: String, requestId: String, allow: Bool) -> Bool {
-        guard let (_, session) = Self.split(id), let link = onlineLink(for: id) else { return false }
-        link.fire(.answer(sessionId: session, requestId: requestId, allow: allow))
-        return true
-    }
-
-    @discardableResult
-    func answerQuestion(_ id: String, requestId: String, answers: [String: String]) -> Bool {
-        guard let (_, session) = Self.split(id), let link = onlineLink(for: id) else { return false }
-        link.fire(.answerQuestion(sessionId: session, requestId: requestId, answers: answers))
-        return true
+    func perform(_ id: String, _ request: RemoteRequest) async throws {
+        guard let link = link(for: id) else { throw AbstractError.message("That Mac isn't paired anymore.") }
+        if link.state != .online { reconnect(link.device.id) }
+        try await link.perform(request)
     }
 
     /// Starts a chat on another Mac and returns its id here.
@@ -1067,6 +1050,7 @@ final class RemoteLink {
     @ObservationIgnored private var outbox = AsyncStream<RemoteMessage>.makeStream()
     @ObservationIgnored private var nextId = 1
     @ObservationIgnored private var waiting: [Int: CheckedContinuation<RemoteResponse, any Error>] = [:]
+    @ObservationIgnored private var timeouts: [Int: Task<Void, Never>] = [:]
     @ObservationIgnored private var subscribed: Set<String> = []
     @ObservationIgnored private var lastSeq: [String: Int] = [:]
     @ObservationIgnored private var streams: [String: ChatStream] = [:]
@@ -1074,6 +1058,17 @@ final class RemoteLink {
     @ObservationIgnored var processes: [Int: (line: @Sendable (OutputLine) -> Void, exit: @Sendable (Int32?) -> Void)] = [:]
     @ObservationIgnored var watchers: [Int: () -> Void] = [:]
     @ObservationIgnored var terminals: [Int: (output: (Data) -> Void, exit: (Int32?) -> Void)] = [:]
+    @ObservationIgnored var watchPaths: [Int: [String]] = [:]
+    @ObservationIgnored var terminalSpecs: [Int: (cwd: String, cols: Int, rows: Int)] = [:]
+    private(set) var lastConnectedAt: Date?
+
+    var unreachableMessage: String {
+        let seen = lastConnectedAt ?? device.lastSeen
+        let date = seen.map { " Last seen \($0.formatted(date: .abbreviated, time: .shortened))." } ?? ""
+        let reason: String
+        if case .failed(let error) = state { reason = " \(error)" } else { reason = "" }
+        return "\(device.peer.name) isn't reachable.\(date)\(reason)"
+    }
 
     init(device: RemoteService.PairedDevice, service: RemoteService) {
         self.device = device; self.service = service
@@ -1102,7 +1097,10 @@ final class RemoteLink {
                         try await local.open()
                         _ = try await local.handshake(as: identity, pairing: false, expected: device.peer)
                         connected = local
-                    } catch { local.close() }
+                    } catch {
+                        local.close()
+                        if error is SecureChannelError { throw error }
+                    }
                     timeout.cancel()
                 }
                 guard generation == attempt, !Task.isCancelled else { connected?.close(); return }
@@ -1133,6 +1131,7 @@ final class RemoteLink {
         self.channel = channel
         outbox = AsyncStream<RemoteMessage>.makeStream()
         state = .online
+        lastConnectedAt = Date()
         firstSnapshot = true
         let stream = outbox.stream
         Task {
@@ -1152,6 +1151,8 @@ final class RemoteLink {
         fire(.snapshot)
         // Chats already open here pick up where they left off.
         for session in subscribed { outbox.continuation.yield(.request(id: take(), .subscribe(sessionId: session, afterSeq: lastSeq[session] ?? 0))) }
+        for (id, paths) in watchPaths { fire(.watch(id: id, paths: paths)) }
+        for (id, spec) in terminalSpecs { fire(.openTerminal(id: id, cwd: spec.cwd, cols: spec.cols, rows: spec.rows)) }
     }
 
     /// A link that went quiet without closing (a Mac that slept, Wi-Fi that
@@ -1187,11 +1188,14 @@ final class RemoteLink {
     }
 
     private func ended() {
+        guard channel != nil || state == .connecting || state == .online else { return }
         channel = nil
         outbox.continuation.finish()
         if state == .online || state == .connecting { state = .offline }
         for (_, waiter) in waiting { waiter.resume(throwing: RemoteChannel.Failure.closed) }
         waiting = [:]
+        for task in timeouts.values { task.cancel() }
+        timeouts = [:]
         dropStreams()
     }
 
@@ -1214,8 +1218,18 @@ final class RemoteLink {
         let id = take()
         return try await withCheckedThrowingContinuation { continuation in
             waiting[id] = continuation
+            timeouts[id] = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(30))
+                guard !Task.isCancelled, let self, let waiter = self.waiting.removeValue(forKey: id) else { return }
+                self.timeouts[id] = nil
+                waiter.resume(throwing: AbstractError.message("\(self.device.peer.name) did not respond."))
+            }
             outbox.continuation.yield(.request(id: id, request))
         }
+    }
+
+    func perform(_ request: RemoteRequest) async throws {
+        if case .failed(let message) = try await self.request(request) { throw AbstractError.message(message) }
     }
 
     func subscribe(_ session: String) {
@@ -1226,9 +1240,11 @@ final class RemoteLink {
     private func handle(_ message: RemoteMessage) {
         switch message {
         case let .response(id, response):
+            timeouts.removeValue(forKey: id)?.cancel()
             if let waiter = waiting.removeValue(forKey: id) { waiter.resume(returning: response) } else { spawnAnswered(id, response) }
         case .event(.snapshot(let snapshot)):
             self.snapshot = snapshot
+            lastConnectedAt = Date()
             service?.rememberInternet(snapshot.internetAddress, for: device.id)
             service?.model?.remoteSnapshotChanged(device: device.id, snapshot, fresh: firstSnapshot)
             firstSnapshot = false

@@ -112,20 +112,22 @@ export function ChatRow({ chat, showProject, showMac = false, now, selected, onP
   const line = lineOf(chat, showProject, showMac);
   const dimmed = chat.session.archivedAt != null || chat.macState === 'unreachable';
   return <Pressable onPress={onPress} accessibilityRole="button" style={[styles.row, selected && styles.rowSelected, dimmed && { opacity: 0.5 }]}>
-    <AgentMark session={chat.session} working={chat.backgroundTasks} />
+    <AgentMark session={chat.session} working={chat.backgroundTasks} unreachable={chat.macState === 'unreachable'} />
     <View style={styles.rowText}>
       <View style={styles.firstLine}>
         <Text numberOfLines={1} style={styles.title}>{chat.session.name}</Text>
         <Text style={styles.age}>{age(activeAt(chat), now)}</Text>
       </View>
-      {!lineIsEmpty(line) && <SecondLine line={line} />}
+      {chat.macState === 'unreachable'
+        ? <Text style={styles.age}>{chat.mac} isn't reachable{chat.lastSeenAt ? ` · last seen ${new Date(chat.lastSeenAt).toLocaleString()}` : ''}</Text>
+        : !lineIsEmpty(line) && <SecondLine line={line} />}
     </View>
   </Pressable>;
 }
 
 // The agent's logo, with a small badge while it works, when it needs you, or when it failed.
-function AgentMark({ session, working }: { session: Session; working: boolean }) {
-  const badge = session.status === 'waiting_input' ? ink : session.status === 'errored' ? removed
+function AgentMark({ session, working, unreachable = false }: { session: Session; working: boolean; unreachable?: boolean }) {
+  const badge = unreachable ? tertiary : session.status === 'waiting_input' ? ink : session.status === 'errored' ? removed
     : session.status === 'running' || session.status === 'provisioning' || working ? running : null;
   return <View style={styles.mark} accessibilityLabel={`${agentNames[session.providerId] || session.providerId}, ${session.status.replace('_', ' ')}`}>
     <ProviderLogo provider={session.providerId} size={17} />

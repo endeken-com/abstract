@@ -39,7 +39,7 @@ extension AppModel {
 
     func stopTask(_ sessionId: String, taskId: String) {
         if let (_, host) = RemoteService.split(sessionId) {
-            remote.onlineLink(for: sessionId)?.fire(.stopTask(sessionId: host, taskId: taskId))
+            remoteAction(sessionId, .stopTask(sessionId: host, taskId: taskId))
             return
         }
         control(sessionId) { $0.buildStopTask(taskId, requestId: "stop-\(UUID().uuidString.prefix(8))") }
@@ -48,7 +48,7 @@ extension AppModel {
     /// Ctrl+B: one call's work (`toolUseId`), or everything in the foreground.
     func moveToBackground(_ sessionId: String, toolUseId: String? = nil) {
         if let (_, host) = RemoteService.split(sessionId) {
-            remote.onlineLink(for: sessionId)?.fire(.moveToBackground(sessionId: host, toolUseId: toolUseId))
+            remoteAction(sessionId, .moveToBackground(sessionId: host, toolUseId: toolUseId))
             return
         }
         control(sessionId) { $0.buildBackground(toolUseId: toolUseId, requestId: "bg-\(UUID().uuidString.prefix(8))") }

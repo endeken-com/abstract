@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Network
 import Synchronization
@@ -91,8 +92,18 @@ public final class RemoteChannel: @unchecked Sendable {
     /// The connecting side: proves itself and checks the host against `expected` (nil when pairing).
     public func handshake(as identity: DeviceIdentity, pairing: Bool, expected: PeerInfo?) async throws -> Handshake.Outcome {
         let initiator = Handshake.Initiator(identity: identity, pairing: pairing)
-        try await sendPlain(try initiator.start())
-        let (finish, outcome) = try initiator.finish(reply: try await receivePlain(maximumLength: 4096), expected: expected)
+        let hello = try initiator.start()
+        try await sendPlain(hello)
+        let reply = try await receivePlain(maximumLength: 4096)
+        if let refusal = try? JSONDecoder().decode(HandshakeRefusal.self, from: reply) {
+            guard let expected,
+                  let key = try? Curve25519.Signing.PublicKey(rawRepresentation: expected.publicKey),
+                  key.isValidSignature(refusal.signature, for: refusal.signedData(hello)) else {
+                throw SecureChannelError.badSignature
+            }
+            throw refusal.reason.error
+        }
+        let (finish, outcome) = try initiator.finish(reply: reply, expected: expected)
         try await sendPlain(finish)
         secure(with: outcome.cipher)
         return outcome
@@ -101,11 +112,54 @@ public final class RemoteChannel: @unchecked Sendable {
     /// The listening side: `lookup` gives a paired device's pinned identity.
     public func accept(as identity: DeviceIdentity, lookup: @Sendable (String) -> PeerInfo?) async throws -> Handshake.Outcome {
         let responder = Handshake.Responder(identity: identity)
-        let (reply, _, _) = try responder.respond(to: try await receivePlain(maximumLength: 4096), lookup: lookup)
+        let hello = try await receivePlain(maximumLength: 4096)
+        let reply: Data
+        do {
+            (reply, _, _) = try responder.respond(to: hello, lookup: lookup)
+        } catch let error as SecureChannelError {
+            if let reason = HandshakeRefusal.Reason(error) {
+                let refusal = HandshakeRefusal(reason: reason,
+                    signature: try identity.signingKey.signature(for: HandshakeRefusal.signedData(hello, reason: reason)))
+                try? await sendPlain(JSONEncoder().encode(refusal))
+            }
+            throw error
+        }
         try await sendPlain(reply)
         let outcome = try responder.complete(finish: try await receivePlain(maximumLength: 4096))
         secure(with: outcome.cipher)
         return outcome
+    }
+}
+
+private struct HandshakeRefusal: Codable {
+    enum Reason: String, Codable {
+        case unknownPeer, keyChanged, versionMismatch
+
+        init?(_ error: SecureChannelError) {
+            switch error {
+            case .unknownPeer: self = .unknownPeer
+            case .keyChanged: self = .keyChanged
+            case .versionMismatch: self = .versionMismatch
+            default: return nil
+            }
+        }
+
+        var error: SecureChannelError {
+            switch self {
+            case .unknownPeer: .unknownPeer
+            case .keyChanged: .keyChanged
+            case .versionMismatch: .versionMismatch
+            }
+        }
+    }
+
+    let reason: Reason
+    let signature: Data
+
+    func signedData(_ hello: Data) -> Data { Self.signedData(hello, reason: reason) }
+
+    static func signedData(_ hello: Data, reason: Reason) -> Data {
+        Data("abstract-handshake-refusal-v1".utf8) + hello + Data(reason.rawValue.utf8)
     }
 }
 

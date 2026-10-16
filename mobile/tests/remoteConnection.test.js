@@ -116,6 +116,20 @@ test('an unreachable local address falls back to the saved internet identity', a
   client.disconnect();
 });
 
+test('a dropped Mac becomes unreachable and keeps its last snapshot', async () => {
+  const client = new RemoteClient();
+  await client.connect('192.0.2.2:52000', { ...device });
+  const lastSeen = client.lastSeenAt;
+  const snapshot = client.snapshot;
+  sockets.at(-1).destroy();
+  assert.equal(client.status, 'offline');
+  assert.equal(client.unreachable, true);
+  assert.equal(client.lastSeenAt, lastSeen);
+  assert.strictEqual(client.snapshot, snapshot);
+  await assert.rejects(client.request('send', { sessionId: 'chat', text: 'hello' }), /Connect to a Mac first/);
+  client.disconnect();
+});
+
 test('cancelling an internet dial cannot adopt the connection when it finishes', async () => {
   const client = new RemoteClient();
   let finish;

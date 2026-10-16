@@ -249,7 +249,7 @@ export function ChatWorkspace({ route, navigation }: any) {
   const transcriptRows = useMemo(() => chat?.prompt && !lines.length
     ? [{ id: 'prompt', kind: 'user' as const, text: chat.prompt }, ...displayRows] : displayRows, [chat?.prompt, lines.length, displayRows]);
   const lastRow = rows.at(-1);
-  const showWorking = chat?.status === 'running' || chat?.status === 'provisioning';
+  const showWorking = mac.status === 'online' && (chat?.status === 'running' || chat?.status === 'provisioning');
   const showWorkingRow = showWorking && !(lastRow?.pending && ['tool', 'prose', 'thinking'].includes(lastRow.kind));
   const workingLabel = lastRow && (lastRow.kind === 'thinking' || (lastRow.kind === 'tool' && !lastRow.pending)) ? 'Thinking…' : 'Working…';
   const pendingPermissions = mac.snapshot?.pendingPermissions?.[id];
@@ -359,7 +359,7 @@ export function ChatWorkspace({ route, navigation }: any) {
   const policyLabel = { ask: 'Ask before acting', 'auto-edits': 'Accept edits', bypass: 'Full autonomy' }[chat.permissionPolicy];
   const act = (name: string, args: Record<string, unknown> = {}) => mac.request(name, { sessionId: id, ...args }).catch(e => Alert.alert('Abstract', String(e)));
   const send = () => {
-    if (sendLock.current || (!message.trim() && !attachments.length)) return;
+    if (mac.status !== 'online' || sendLock.current || (!message.trim() && !attachments.length)) return;
     if (/^\/[a-z]+$/i.test(message.trim()) && runSlash(message.trim().slice(1))) return;
     const draft = { text: message, attachments: [...attachments] };
     const pending: PendingPhoneMessage = { ...draft, id: uuid(), afterSeq: lines.at(-1)?.seq || 0, status: 'sending' };
@@ -467,6 +467,7 @@ export function ChatWorkspace({ route, navigation }: any) {
     {menu === 'manage' && <View style={s.menu}><TextInput style={s.menuInput} value={rename} onChangeText={setRename} placeholder="Rename chat" placeholderTextColor={tertiary} /><Chip label="Rename" onPress={() => { if (rename.trim()) act('rename', { name: rename.trim() }); setMenu(null); }} /><Chip icon="close" onPress={() => setMenu(null)} label="Close" /></View>}
     <LinkPickerSheet kind={linkSheet} query={linkQuery} setQuery={setLinkQuery} results={linkResults} loading={linkLoading} search={() => linkSheet && searchLinks(linkSheet, linkQuery)} select={attachLink} close={() => setLinkSheet(null)} />
     <View style={[s.composerWrap, { paddingBottom: keyboardHeight ? 7 : safeArea.bottom + 7 }]}>
+      {mac.status !== 'online' && <Text accessibilityRole="alert" style={s.sendError}>{macName || 'That Mac'} isn't reachable.{mac.lastSeenAt ? ` Last seen ${new Date(mac.lastSeenAt).toLocaleString()}.` : ''}{mac.error ? ` ${mac.error}` : ''}</Text>}
       {!!sendError && <Text accessibilityRole="alert" style={s.sendError}>{sendError}</Text>}
       {attachments.length > 0 && <ScrollView horizontal style={s.attachments} contentContainerStyle={{ gap: 5 }}>{attachments.map(item => <Chip key={item.id} label={`${item.reference ? `${item.reference} ` : ''}${item.title} ×`} onPress={() => setAttachments(attachments.filter(x => x.id !== item.id))} />)}</ScrollView>}
       <View style={[s.composerBox, composerFocused && s.composerBoxFocused]}>
@@ -479,7 +480,7 @@ export function ChatWorkspace({ route, navigation }: any) {
             {!!message && <Pressable accessibilityLabel={previewingMarkdown ? 'Edit Markdown' : 'Preview Markdown'} style={[s.composerAction, { width: previewingMarkdown ? 42 : 52 }]} onPress={() => setPreviewingMarkdown(!previewingMarkdown)}><Text style={s.previewLabel}>{previewingMarkdown ? 'Edit' : 'Preview'}</Text></Pressable>}
             {!!root && <Pressable accessibilityLabel="Link a GitHub issue" disabled={sending} style={s.composerAction} onPress={() => openLinks('issue')}><IssueIcon size={18} /></Pressable>}
             {!!root && <Pressable accessibilityLabel="Link a pull request" disabled={sending} style={s.composerAction} onPress={() => openLinks('linkPr')}><PullRequestIcon size={18} color={muted} /></Pressable>}
-            <Pressable accessibilityLabel={sending ? 'Sending message' : chat.status === 'running' ? 'Stop agent' : 'Send message'} disabled={sending} style={s.composerAction} onPress={() => chat.status === 'running' ? act('stop') : send()}>{sending ? <ActivityIndicator size="small" color={muted} /> : <Glyph name={chat.status === 'running' ? 'stop' : 'send'} size={18} color={message.trim() || attachments.length || chat.status === 'running' ? ink : tertiary} />}</Pressable>
+            <Pressable accessibilityLabel={mac.status !== 'online' ? `${macName || 'Mac'} isn't reachable` : sending ? 'Sending message' : chat.status === 'running' ? 'Stop agent' : 'Send message'} disabled={sending || mac.status !== 'online'} style={s.composerAction} onPress={() => chat.status === 'running' ? act('stop') : send()}>{sending ? <ActivityIndicator size="small" color={muted} /> : <Glyph name={chat.status === 'running' ? 'stop' : 'send'} size={18} color={mac.status !== 'online' ? tertiary : message.trim() || attachments.length || chat.status === 'running' ? ink : tertiary} />}</Pressable>
           </View>
         </View>
       </View>

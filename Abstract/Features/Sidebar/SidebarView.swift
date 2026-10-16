@@ -522,19 +522,27 @@ struct RailChatRow: View {
 
     var body: some View {
         let selected = model.selectedSessionId == session.id
+        let unreachable = model.remote.unreachableMessage(session.id)
         let line = SidebarChats.line(for: chat, showProject: showProject)
         Button { model.open(session.id) } label: {
-            HStack(alignment: line.isEmpty ? .center : .top, spacing: 8) {
-                RailAgentMark(providerId: session.providerId, status: session.status, working: backgroundTasks > 0)
+            HStack(alignment: line.isEmpty && unreachable == nil ? .center : .top, spacing: 8) {
+                RailAgentMark(providerId: session.providerId, status: unreachable == nil ? session.status : .idle,
+                              working: unreachable == nil && backgroundTasks > 0)
+                    .opacity(unreachable == nil ? 1 : 0.5)
                     .frame(width: Rail.iconColumn, height: 17)
                 VStack(alignment: .leading, spacing: 1) {
                     firstLine(selected: selected)
-                    if !line.isEmpty { RailChatLine(line: line) }
+                    if let unreachable {
+                        Text(unreachable)
+                            .font(.btCaption)
+                            .foregroundStyle(Color.btTextTertiary)
+                            .lineLimit(1)
+                    } else if !line.isEmpty { RailChatLine(line: line) }
                 }
             }
             .padding(.leading, Rail.rowPadding + Rail.chatIndent)
             .padding(.trailing, Rail.rowPadding)
-            .padding(.vertical, line.isEmpty ? 0 : 5)
+            .padding(.vertical, line.isEmpty && unreachable == nil ? 0 : 5)
             .frame(minHeight: Rail.rowHeight)
         }
         .buttonStyle(RailRowStyle(selected: selected))

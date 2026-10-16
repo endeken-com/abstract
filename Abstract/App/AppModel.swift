@@ -885,8 +885,9 @@ final class AppModel {
     }
 
     func sendFollowUp(_ sessionId: String, text: String, attachments: [PromptAttachment] = []) throws {
-        // On another Mac, your message comes back with its output.
-        if sessionId.hasPrefix(RemoteService.mirrorPrefix) { try remote.send(sessionId, text: text, attachments: attachments); return }
+        if sessionId.hasPrefix(RemoteService.mirrorPrefix) {
+            throw AbstractError.message("Send this message from the remote chat's composer.")
+        }
         if isDrivenFromCLI(sessionId) { throw Self.drivenFromCLI }
         guard let session = session(sessionId), let provider = ProviderRegistry.provider(session.providerId) else { return }
         // Its agent starts once it's set up, with the chat's first message.
@@ -917,13 +918,26 @@ final class AppModel {
         }
     }
 
+    func sendRemoteFollowUp(_ sessionId: String, text: String, attachments: [PromptAttachment] = []) async throws {
+        try await remote.send(sessionId, text: text, attachments: attachments)
+    }
+
+    func remoteAction(_ sessionId: String, _ request: RemoteRequest, succeeded: (() -> Void)? = nil) {
+        Task {
+            do {
+                try await remote.perform(sessionId, request)
+                succeeded?()
+            } catch { flash(error.localizedDescription, isError: true) }
+        }
+    }
+
     /// Switch a chat's agent, model or effort. The next message uses them: a
     /// running agent restarts, resuming its conversation when the agent is the
     /// same. A different agent is handed the chat with that message (see
     /// `handOver`); one that worked here before resumes its own conversation.
     func setAgent(_ sessionId: String, providerId: String, model: String?, effort: String?) {
         if let (_, host) = RemoteService.split(sessionId) {
-            remote.onlineLink(for: sessionId)?.fire(.setAgent(sessionId: host, providerId: providerId, model: model, effort: effort))
+            remoteAction(sessionId, .setAgent(sessionId: host, providerId: providerId, model: model, effort: effort))
             return
         }
         guard !isDrivenFromCLI(sessionId), var s = session(sessionId), (s.providerId, s.model, s.effort) != (providerId, model, effort) else { return }
@@ -953,7 +967,7 @@ final class AppModel {
     /// per turn (Codex) pick it up with the next message.
     func setPolicy(_ sessionId: String, _ policy: PermissionPolicy) {
         if let (_, host) = RemoteService.split(sessionId) {
-            remote.onlineLink(for: sessionId)?.fire(.setPolicy(sessionId: host, policy: policy))
+            remoteAction(sessionId, .setPolicy(sessionId: host, policy: policy))
             return
         }
         guard !isDrivenFromCLI(sessionId), var s = session(sessionId), s.permissionPolicy != policy,
@@ -1096,14 +1110,26 @@ final class AppModel {
 
     /// A chat stopped by a limit carries on with another agent.
     func continueWith(_ sessionId: String, providerId: String) {
+        if let (_, host) = RemoteService.split(sessionId) {
+            Task {
+                do {
+                    try await remote.perform(sessionId, .setAgent(sessionId: host, providerId: providerId, model: nil, effort: nil))
+                    try await sendRemoteFollowUp(sessionId, text: "Continue where you left off.")
+                }
+                catch { flash(error.localizedDescription, isError: true) }
+            }
+            return
+        }
         setAgent(sessionId, providerId: providerId, model: nil, effort: nil)
         do { try sendFollowUp(sessionId, text: "Continue where you left off.") } catch { flash(error.localizedDescription, isError: true) }
     }
 
     func answerPermission(_ sessionId: String, requestId: String, allow: Bool) {
         if sessionId.hasPrefix(RemoteService.mirrorPrefix) {
-            // Only once the other Mac has it: offline, the question stays.
-            if remote.answer(sessionId, requestId: requestId, allow: allow) { permissions[sessionId]?.removeAll { $0.requestId == requestId } }
+            guard let (_, host) = RemoteService.split(sessionId) else { return }
+            remoteAction(sessionId, .answer(sessionId: host, requestId: requestId, allow: allow)) {
+                self.permissions[sessionId]?.removeAll { $0.requestId == requestId }
+            }
             return
         }
         respond(sessionId, requestId: requestId, allow: allow, input: permissions[sessionId]?.first { $0.requestId == requestId }?.input)
@@ -1113,7 +1139,10 @@ final class AppModel {
     /// agent hears them as its question tool's input, allowed.
     func answerQuestion(_ sessionId: String, requestId: String, answers: [String: String]) {
         if sessionId.hasPrefix(RemoteService.mirrorPrefix) {
-            if remote.answerQuestion(sessionId, requestId: requestId, answers: answers) { permissions[sessionId]?.removeAll { $0.requestId == requestId } }
+            guard let (_, host) = RemoteService.split(sessionId) else { return }
+            remoteAction(sessionId, .answerQuestion(sessionId: host, requestId: requestId, answers: answers)) {
+                self.permissions[sessionId]?.removeAll { $0.requestId == requestId }
+            }
             return
         }
         guard let request = permissions[sessionId]?.first(where: { $0.requestId == requestId }) else { return }
@@ -1146,8 +1175,7 @@ final class AppModel {
     /// reads as stopped, not failed.
     func stop(_ sessionId: String) {
         if let (device, host) = RemoteService.split(sessionId) {
-            remoteNotices[device]?.stopRequested(host)
-            remote.stop(sessionId)
+            remoteAction(sessionId, .stop(sessionId: host)) { self.remoteNotices[device]?.stopRequested(host) }
             return
         }
         if setups[sessionId]?.active == true { cancelSetup(sessionId); return }
@@ -1201,6 +1229,14 @@ final class AppModel {
     /// A question answered on the other Mac itself leaves nothing to answer
     /// here. Its chats notify here like this Mac's own.
     func remoteSnapshotChanged(device: String, _ snapshot: RemoteSnapshot, fresh: Bool) {
+        if let pending = snapshot.pendingPermissions {
+            for session in snapshot.sessions {
+                let id = RemoteService.mirrorId(device: device, session: session.id)
+                permissions[id] = pending[session.id]?.map {
+                    PendingPermission(requestId: $0.requestId, toolName: $0.toolName, input: $0.input)
+                }
+            }
+        }
         for session in snapshot.sessions where session.status != .waitingInput {
             let id = RemoteService.mirrorId(device: device, session: session.id)
             if permissions[id]?.isEmpty == false { permissions[id] = nil }
@@ -1216,7 +1252,7 @@ final class AppModel {
     }
 
     func resume(_ sessionId: String) {
-        if let (_, host) = RemoteService.split(sessionId) { remote.onlineLink(for: sessionId)?.fire(.resume(sessionId: host)); return }
+        if let (_, host) = RemoteService.split(sessionId) { remoteAction(sessionId, .resume(sessionId: host)); return }
         if isDrivenFromCLI(sessionId) { flash(Self.drivenFromCLI.localizedDescription, isError: true); return }
         guard let session = session(sessionId) else { return }
         // Not set up yet: set it up, then its agent starts.
@@ -1234,7 +1270,7 @@ final class AppModel {
     }
 
     func rename(_ sessionId: String, to name: String) {
-        if let (_, host) = RemoteService.split(sessionId) { remote.onlineLink(for: sessionId)?.fire(.rename(sessionId: host, name: name)); return }
+        if let (_, host) = RemoteService.split(sessionId) { remoteAction(sessionId, .rename(sessionId: host, name: name)); return }
         let name = name.trimmingCharacters(in: .whitespaces)
         guard var s = session(sessionId), !name.isEmpty, name != s.name else { return }
         // Yours: nothing renames it again.
@@ -1253,7 +1289,7 @@ final class AppModel {
 
     func setArchived(_ sessionId: String, _ archived: Bool) {
         if let (_, host) = RemoteService.split(sessionId) {
-            remote.onlineLink(for: sessionId)?.fire(.setArchived(sessionId: host, archived: archived))
+            remoteAction(sessionId, .setArchived(sessionId: host, archived: archived))
             return
         }
         guard var s = session(sessionId) else { return }
