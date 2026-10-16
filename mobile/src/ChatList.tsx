@@ -134,14 +134,24 @@ function AgentMark({ session, working }: { session: Session; working: boolean })
 }
 
 export function SecondLine({ line }: { line: ChatLine }) {
-  const parts: React.ReactNode[] = [];
-  if (line.project) parts.push(<Text key="project" numberOfLines={1} style={styles.part}>{line.project}</Text>);
-  if (line.pullRequest) parts.push(<View key="pr" style={styles.prPart}><PullRequestIcon pr={line.pullRequest} size={11} /><Text style={styles.part}>{`#${line.pullRequest.number}`}</Text></View>);
-  if (line.checks) parts.push(<Text key="checks" style={[styles.part, line.checks === 'failing' && { color: removed }]}>{line.checks}</Text>);
-  if (line.changesRequested) parts.push(<Text key="review" style={[styles.part, { color: muted }]}>changes requested</Text>);
-  if (line.mac) parts.push(<View key="mac" style={styles.prPart}><SymbolView name={{ ios: 'laptopcomputer', android: 'laptop_mac', web: 'laptop_mac' } as any} size={10} tintColor={tertiary} style={{ width: 12, height: 10 }} /><Text numberOfLines={1} style={styles.part}>{line.mac}</Text></View>);
+  const mac = line.mac ? <View key="mac" style={styles.macPart}>
+    <SymbolView name={{ ios: 'laptopcomputer', android: 'laptop_mac', web: 'laptop_mac' } as any} size={10} tintColor={tertiary} style={{ width: 12, height: 10 }} />
+    <Text numberOfLines={1} style={[styles.part, styles.macName]}>{line.mac}</Text>
+  </View> : null;
+  const first: React.ReactNode[] = [];
+  if (line.project) first.push(<Text key="project" numberOfLines={1} style={[styles.part, styles.projectName]}>{line.project}</Text>);
+  if (line.pullRequest) first.push(<View key="pr" style={styles.prPart}><PullRequestIcon pr={line.pullRequest} size={11} /><Text numberOfLines={1} style={styles.part}>{`#${line.pullRequest.number}`}</Text></View>);
+  if (line.checks) first.push(<Text key="checks" numberOfLines={1} style={[styles.part, line.checks === 'failing' && { color: removed }]}>{line.checks}</Text>);
+  if (!line.changesRequested && mac) first.push(mac);
+  const second: React.ReactNode[] = [];
+  if (line.changesRequested) {
+    second.push(<Text key="review" numberOfLines={1} style={[styles.part, styles.reviewStatus]}>changes requested</Text>);
+    if (mac) second.push(mac);
+  }
+  const withDots = (parts: React.ReactNode[]) => parts.flatMap((part, i) => i ? [<Text key={`dot${i}`} style={styles.dot}>·</Text>, part] : [part]);
   return <View style={styles.secondLine} accessibilityLabel={lineText(line)}>
-    {parts.flatMap((part, i) => i ? [<Text key={`dot${i}`} style={styles.dot}>·</Text>, part] : [part])}
+    <View style={styles.metadataRow}>{withDots(first)}</View>
+    {second.length > 0 && <View style={styles.metadataRow}>{withDots(second)}</View>}
   </View>;
 }
 
@@ -162,10 +172,15 @@ const styles = StyleSheet.create({
   age: { color: tertiary, fontFamily: 'Inter', fontSize: 12, fontVariant: ['tabular-nums'] },
   mark: { width: 20, height: 20, alignItems: 'center', justifyContent: 'center' },
   badge: { position: 'absolute', right: -1, bottom: -1, width: 7, height: 7, borderWidth: 1.5, borderColor: sidebar, transform: [{ rotate: '45deg' }] },
-  secondLine: { flexDirection: 'row', alignItems: 'center', gap: 5, minWidth: 0 },
-  prPart: { flexDirection: 'row', alignItems: 'center', gap: 3 },
-  part: { color: tertiary, fontFamily: 'Inter', fontSize: 12, flexShrink: 1 },
-  dot: { color: tertiary, fontFamily: 'Inter', fontSize: 12, opacity: 0.7 },
+  secondLine: { minWidth: 0, gap: 1 },
+  metadataRow: { flexDirection: 'row', alignItems: 'center', gap: 5, minWidth: 0 },
+  prPart: { flexDirection: 'row', alignItems: 'center', gap: 3, flexShrink: 0 },
+  macPart: { flexDirection: 'row', alignItems: 'center', gap: 3, flexShrink: 1, minWidth: 12 },
+  part: { color: tertiary, fontFamily: 'Inter', fontSize: 12 },
+  projectName: { flexShrink: 1, minWidth: 0 },
+  macName: { flexShrink: 1, minWidth: 0 },
+  reviewStatus: { color: muted, flexShrink: 0, maxWidth: '85%' },
+  dot: { color: tertiary, fontFamily: 'Inter', fontSize: 12, opacity: 0.7, flexShrink: 0 },
   older: { height: 36, paddingLeft: 52, justifyContent: 'center' },
   olderText: { color: tertiary, fontFamily: 'Inter', fontSize: 13 },
   empty: { color: muted, fontFamily: 'Inter', fontSize: 12, margin: 18 },

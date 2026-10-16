@@ -124,12 +124,87 @@ test('the second line renders its parts with dots between, a failing check in re
   const line = g.lineOf(chat('x', 'idle', { pullRequest: pr(3981, 'OPEN', { checks: [{ name: 'a', outcome: 'failed' }] }) }), true);
   const el = SecondLine({ line });
   assert.equal(el.props.accessibilityLabel, 'abstract · #3981 · failing');
-  const [project, dot, prPart, , checks] = el.props.children;
+  const [first, second] = el.props.children;
+  assert.equal(second, false, 'a chat without review feedback needs only one metadata line');
+  const [project, dot, prPart, , checks] = first.props.children;
   assert.equal(project.props.children, 'abstract');
   assert.equal(dot.props.children, '·');
   assert.equal(prPart.props.children[1].props.children, '#3981');
   assert.equal(checks.props.children, 'failing');
   assert.equal(checks.props.style[1].color, '#EF6461');
+});
+
+test('review feedback moves to a second line while all facts remain accessible', () => {
+  const line = g.lineOf(chat('x', 'idle', { projectName: 'A very long project name', mac: 'A very long Mac name',
+    pullRequest: pr(3981, 'OPEN', { checks: [{ name: 'a', outcome: 'passed' }], reviewDecision: 'CHANGES_REQUESTED' }) }), true, true);
+  const el = SecondLine({ line });
+  assert.equal(el.props.accessibilityLabel, 'A very long project name · #3981 · passed · changes requested · A very long Mac name');
+  const [first, second] = el.props.children;
+  assert.deepEqual(first.props.children.filter(child => child.type === 'Text').map(child => child.props.children),
+    ['A very long project name', '·', '·', 'passed']);
+  assert.equal(second.props.children[0].props.children, 'changes requested');
+  assert.equal(second.props.children[2].props.children[1].props.children, 'A very long Mac name');
+  for (const item of [first.props.children[0], first.props.children[4], second.props.children[0], second.props.children[2].props.children[1]]) {
+    assert.equal(item.props.numberOfLines, 1, 'metadata text cannot form a vertical word stack');
+  }
+});
+
+// Check the rendered row styles with Yoga, the layout engine used by iOS and Android.
+// Each Text measures as one line of 7-point characters at the selected text scale.
+async function metadataLayout(line, width, scale) {
+  const { loadYoga } = await import('yoga-layout/load');
+  const Yoga = await loadYoga();
+  const make = element => {
+    const n = Yoga.Node.create();
+    const style = Object.assign({}, ...(Array.isArray(element.props.style) ? element.props.style.filter(Boolean) : [element.props.style || {}]));
+    if (style.flexDirection === 'row') n.setFlexDirection(Yoga.FLEX_DIRECTION_ROW);
+    if (style.alignItems === 'center') n.setAlignItems(Yoga.ALIGN_CENTER);
+    if (style.flexShrink != null) n.setFlexShrink(style.flexShrink);
+    if (style.minWidth != null) n.setMinWidth(style.minWidth);
+    if (style.maxWidth != null) n.setMaxWidth(style.maxWidth);
+    if (style.gap != null) n.setGap(Yoga.GUTTER_ALL, style.gap);
+    if (element.type === 'Text') {
+      const natural = String(element.props.children).length * 7 * scale;
+      n.setMeasureFunc((available, mode) => ({ width: mode === Yoga.MEASURE_MODE_UNDEFINED ? natural : Math.min(natural, available), height: 16 * scale }));
+    } else if (element.type === 'SymbolView' || typeof element.type === 'function') {
+      n.setWidth(element.props.style?.width || element.props.size || 12);
+      n.setHeight(16 * scale);
+    } else {
+      for (const child of [element.props.children].flat().filter(Boolean)) n.insertChild(make(child), n.getChildCount());
+    }
+    return n;
+  };
+  const rows = SecondLine({ line }).props.children.filter(Boolean).map(make);
+  const layouts = rows.map(row => {
+    row.calculateLayout(width, undefined, Yoga.DIRECTION_LTR);
+    return { height: row.getComputedLayout().height, items: Array.from({ length: row.getChildCount() }, (_, i) => row.getChild(i).getComputedLayout()) };
+  });
+  rows.forEach(row => row.freeRecursive());
+  return layouts;
+}
+
+test('long names yield to whole PR statuses on a narrow phone and at larger text sizes', async () => {
+  const base = { project: 'A very long project name that should be cut', mac: 'A very long Mac name that should be cut',
+    pullRequest: pr(3981), changesRequested: true };
+  for (const checks of ['passed', 'failing', 'running']) {
+    for (const scale of [1, 1.6, 2]) {
+      const rows = await metadataLayout({ ...base, checks }, 250, scale);
+      assert.equal(rows.length, 2);
+      for (const row of rows) {
+        assert.ok(row.height <= Math.ceil(16 * scale), 'each metadata row remains one text line tall');
+        for (const item of row.items) assert.ok(item.left + item.width <= 251, `${checks} at ${scale}x stays inside the phone row`);
+      }
+      if (scale <= 1.6) {
+        assert.ok(rows[0].items[4].width >= checks.length * 7 * scale, 'check status stays readable');
+        assert.ok(rows[1].items[0].width >= 'changes requested'.length * 7 * scale, `review status stays readable: ${JSON.stringify(rows[1])}`);
+      }
+    }
+  }
+  assert.equal((await metadataLayout({ project: base.project, mac: base.mac, changesRequested: false }, 250, 1.6)).length, 1,
+    'a chat without a PR stays on one metadata line');
+  const [checksOnly] = await metadataLayout({ ...base, changesRequested: false, checks: 'passed' }, 250, 1.6);
+  assert.ok(checksOnly.items.every(item => item.left + item.width <= 251), 'checks without review fit on one line');
+  assert.ok(checksOnly.items[4].width >= 'passed'.length * 7 * 1.6, 'the check result keeps its full width');
 });
 
 test('ages read in the fewest characters', () => {
