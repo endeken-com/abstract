@@ -130,6 +130,7 @@ import AbstractCore
         let full = chat("x", pr: .init(number: 3981, state: .open, checks: .passed, changesRequested: true), mac: "Mac mini", remote: true)
         #expect(SidebarChats.line(for: full, showProject: true).text == "abstract · #3981 · passed · changes requested · Mac mini")
         #expect(SidebarChats.line(for: full, showProject: false).text == "#3981 · passed · changes requested · Mac mini")
+        #expect(SidebarChats.line(for: full, showProject: false).accessibilityText == "Pull request 3981, checks passed, changes requested, Mac mini")
 
         let merged = chat("m", pr: .init(number: 12, state: .merged, checks: .failing, changesRequested: true))
         #expect(SidebarChats.line(for: merged, showProject: false).text == "#12", "checks and reviews only while open")
@@ -138,6 +139,31 @@ import AbstractCore
         #expect(SidebarChats.line(for: fresh, showProject: false).isEmpty, "a fresh chat here has one line")
         #expect(SidebarChats.line(for: fresh, showProject: true).text == "abstract")
         #expect(SidebarChats.line(for: chat("s", project: nil), showProject: true).isEmpty)
+    }
+
+    @Test func openPullRequestRowsShowOnlyKnownChecksOnEitherMac() {
+        for (outcome, expected) in [("passed", "passed"), ("failed", "failing"), ("pending", "running")] {
+            let local = chat("local", pr: .init(number: 42, state: .open, checks: SidebarChats.PullRequestFacts.Checks(rawValue: expected)))
+            let remotePR = RemotePullRequest(number: 42, title: "t", state: "OPEN", isDraft: false, url: nil,
+                                             reviewDecision: nil,
+                                             checks: [RemotePullRequestCheck(name: "check", workflow: nil, outcome: outcome, url: nil)])
+            let remote = chat("remote", pr: .init(remotePR), mac: "Mac mini", remote: true)
+            let localLine = SidebarChats.line(for: local, showProject: false)
+            let remoteLine = SidebarChats.line(for: remote, showProject: false)
+            #expect(localLine.checks?.rawValue == expected)
+            #expect(remoteLine.checks == localLine.checks)
+            #expect(localLine.accessibilityText == "Pull request 42, checks \(expected)")
+            #expect(remoteLine.accessibilityText == "Pull request 42, checks \(expected), Mac mini")
+        }
+
+        let noChecks = chat("none", pr: .init(number: 42, state: .open))
+        let closed = chat("closed", pr: .init(number: 42, state: .closed, checks: .passed))
+        let merged = chat("merged", pr: .init(number: 42, state: .merged, checks: .failing))
+        for row in [noChecks, closed, merged] {
+            let line = SidebarChats.line(for: row, showProject: false)
+            #expect(line.checks == nil)
+            #expect(line.accessibilityText == "Pull request 42")
+        }
     }
 
     @Test func ageReadsInTheFewestCharacters() {

@@ -169,6 +169,17 @@ public enum SidebarChats {
             if let mac { parts.append(mac) }
             return parts.joined(separator: " · ")
         }
+
+        /// Names the pull request and its checks when VoiceOver reads the row.
+        public var accessibilityText: String {
+            var parts: [String] = []
+            if let project { parts.append(project) }
+            if let pullRequest { parts.append("Pull request \(pullRequest.number)") }
+            if let checks { parts.append("checks \(checks.rawValue)") }
+            if changesRequested { parts.append("changes requested") }
+            if let mac { parts.append(mac) }
+            return parts.joined(separator: ", ")
+        }
     }
 
     /// Checks and requested changes only matter while the pull request is open.

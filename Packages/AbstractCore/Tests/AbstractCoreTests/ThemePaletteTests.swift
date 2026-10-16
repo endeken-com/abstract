@@ -67,6 +67,15 @@ import AbstractCore
         #expect(PaletteRole.added.swatch(in: .ink) != PaletteRole.removed.swatch(in: .ink))
     }
 
+    @Test func sidebarCheckResultsReadInLightAndDarkThemes() {
+        for theme in Theme.allCases {
+            let sidebar = PaletteRole.sidebar.swatch(in: theme)
+            for role in [PaletteRole.added, .removed, .textSecondary] {
+                #expect(role.swatch(in: theme).contrast(on: sidebar) >= 4.5, "\(role) on \(theme) sidebar")
+            }
+        }
+    }
+
     /// Graphite and Paper aren't held to Ink's bar; their ratios are reported.
     @Test func reportsGraphiteAndPaperContrast() {
         for theme in [Theme.graphite, .paper] {
