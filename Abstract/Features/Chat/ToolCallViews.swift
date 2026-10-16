@@ -55,7 +55,7 @@ enum ToolSegment: Identifiable {
             // A command left running in the background, and an image with its
             // thumbnail, stand on their own rows.
             if folds, kind == .explore || kind == .command, !asking.contains(call.id), !ToolPresentation.startsInBackground(call),
-               !ToolThumbnail.shows(call) {
+               !ToolThumbnail.shows(call), call.fileChanges == nil {
                 if kind != runKind { flush() }
                 runKind = kind
                 run.append(call)
@@ -179,7 +179,8 @@ struct ToolCallView: View {
         // Asked in the reply box's place; the row keeps what you answered.
         case .question: return !asking
         case .todo: return call.id == latestTodoCallId || asking
-        case .command: return asking && ToolPresentation.command(call).map { $0.contains("\n") || $0.count > 80 } == true
+        case .command: return call.fileChanges != nil ||
+            (asking && ToolPresentation.command(call).map { $0.contains("\n") || $0.count > 80 } == true)
         default: return false
         }
     }
@@ -316,6 +317,9 @@ struct ToolCallView: View {
                 } else if let result = call.result, !result.output.isEmpty {
                     OutputText(text: result.output, isError: result.isError, key: "out:\(call.id)", findField: "out:\(call.id)")
                 }
+                if let changes = call.fileChanges {
+                    CommandFileChangesView(sessionId: sessionId, callId: call.id, changes: changes)
+                }
             }
         case .question:
             QuestionAnswers(questions: AgentQuestion.parse(call.input), result: call.result)
@@ -366,6 +370,51 @@ struct ToolCallView: View {
     private func copy(_ text: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
+    }
+}
+
+/// Diffs and paths a shell command changed, as reported by the agent.
+private struct CommandFileChangesView: View {
+    @Environment(AppModel.self) private var model
+    let sessionId: String
+    let callId: String
+    let changes: ToolFileChanges
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Space.sm) {
+            ForEach(Array(changes.previews.enumerated()), id: \.offset) { index, edit in
+                VStack(alignment: .leading, spacing: 4) {
+                    filePath(edit.filePath, additions: edit.additions, deletions: edit.deletions)
+                    EditDiff(edit: edit, key: "diff:\(callId):\(index)")
+                }
+            }
+            let remaining = max(changes.moreFiles, changes.remainingPaths.count)
+            if remaining > 0 {
+                Text("+\(remaining) more file\(remaining == 1 ? "" : "s")")
+                    .font(.btChatCaption).foregroundStyle(Color.btTextTertiary)
+                ForEach(Array(changes.remainingPaths.enumerated()), id: \.offset) { _, path in
+                    filePath(path)
+                }
+            }
+            if changes.incomplete {
+                Text("This file list may be incomplete.")
+                    .font(.btChatCaption).foregroundStyle(Color.btTextTertiary)
+            }
+        }
+    }
+
+    private func filePath(_ path: String, additions: Int? = nil, deletions: Int? = nil) -> some View {
+        let relative = ToolPresentation.relative(path, root: model.session(sessionId)?.worktreePath)
+        return HStack(spacing: Space.sm) {
+            Text(relative).font(.btChatMonoSmall).foregroundStyle(Color.btTextSecondary).textSelection(.enabled)
+            if let additions, let deletions {
+                DiffCounts(additions: additions, deletions: deletions, hideZeros: true)
+            }
+        }
+        .contextMenu {
+            Button("Show in Changes") { model.showChanges(relative, in: sessionId) }
+            Button("Open in Files") { model.openFile(relative, in: sessionId) }
+        }
     }
 }
 
