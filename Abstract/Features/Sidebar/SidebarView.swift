@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import AbstractCore
 
@@ -57,6 +58,14 @@ struct SidebarView: View {
                     RailNavRow(title: "Automations", symbol: "clock", destination: .automations)
                     RailNavRow(title: "Worktrees", symbol: "arrow.triangle.branch", destination: .worktrees)
                     RailNavRow(title: "Pull Requests", symbol: PullRequestGlyph.symbol, destination: .pullRequests)
+                    ForEach(model.plugins.usable) { plugin in
+                        if let view = plugin.view {
+                            RailNavRow(title: view.title,
+                                       symbol: NSImage(systemSymbolName: view.symbolOrFallback, accessibilityDescription: nil) != nil
+                                           ? view.symbolOrFallback : PluginManifest.fallbackSymbol,
+                                       destination: .plugin(plugin.id, view.id))
+                        }
+                    }
                 }
 
                 RailSection(title: arrangement == .status ? "Chats" : model.remote.identity.name, collapsed: $projectsCollapsed,

@@ -1,0 +1,12 @@
+{
+  "api": 1,
+  "id": "sh.abstract.chat-count",
+  "name": "Chat count",
+  "version": "1.0.0",
+  "description": "Shows how many chats need you, are working, are ready to review, or are done.",
+  "entry": "index.html",
+  "capabilities": ["chats.read", "chats.open", "storage.own"],
+  "contributes": {
+    "views": [{ "id": "main", "title": "Chat count", "symbol": "number", "location": "main" }]
+  }
+}

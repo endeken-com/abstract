@@ -111,6 +111,7 @@ struct DetailView: View {
         case .worktrees: "Worktrees"
         case .pullRequests: "Pull Requests"
         case .projectSettings(let id): model.project(id)?.name ?? ""
+        case .plugin(let id, _): model.plugins.plugin(id)?.view?.title ?? ""
         }
     }
 
@@ -136,6 +137,8 @@ struct DetailView: View {
             PullRequestsView()
         case .projectSettings(let id):
             ProjectSettingsView(projectId: id).id(id)
+        case .plugin(let id, let viewId):
+            PluginHostView(pluginId: id, viewId: viewId).id("\(id)/\(viewId)")
         }
     }
 }
@@ -239,6 +242,7 @@ private struct WindowTitle: View {
         case .worktrees: "Worktrees"
         case .pullRequests: "Pull Requests"
         case .projectSettings(let id): model.project(id)?.name ?? ""
+        case .plugin(let id, _): model.plugins.plugin(id)?.view?.title ?? ""
         default: ""
         }
     }

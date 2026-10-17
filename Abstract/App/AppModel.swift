@@ -13,6 +13,8 @@ enum Destination: Hashable {
     case pullRequests
     /// A project's settings page, by project id.
     case projectSettings(String)
+    /// A plugin's screen, by plugin id and view id.
+    case plugin(String, String)
 }
 
 /// What a tab shows of a chat: it changes when the chat is renamed, not
@@ -50,6 +52,8 @@ final class AppModel {
     let isDemo: Bool
     /// Keeps what each turn changed and why (`TurnRecord`).
     let turnRecorder: TurnRecorder
+    /// Installed plugins and their host state; see Features/Plugins.
+    let plugins: PluginService
 
     // Data
     var projects: [Project] = []
@@ -255,6 +259,7 @@ final class AppModel {
         self.executor = executor
         self.isDemo = isDemo
         turnRecorder = TurnRecorder(store: store)
+        plugins = PluginService(store: store)
         remote = RemoteService(dataDirectory: engine.logsURL.deletingLastPathComponent())
         AttachmentStore.root = engine.logsURL.deletingLastPathComponent().appendingPathComponent("attachments")
         AttachmentStore.prune()

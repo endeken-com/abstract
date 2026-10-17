@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:">
+<link rel="stylesheet" href="style.css">
+<title>Chat count</title>
+</head>
+<body>
+<main>
+  <h1>Chat count</h1>
+  <p class="note">A sample plugin. It sees only your chats' titles, agents and progress, and opens a chat when you click it.</p>
+  <section id="counts" aria-label="Chats by progress"></section>
+  <label class="toggle"><input type="checkbox" id="show-done"> Show done chats</label>
+  <ul id="chats"></ul>
+  <p id="empty" class="note" hidden>No chats yet.</p>
+</main>
+<script src="app.js"></script>
+</body>
+</html>
