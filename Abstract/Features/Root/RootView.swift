@@ -19,6 +19,14 @@ struct RootView: View {
     @AppStorage(EditorFontChoice.ligaturesKey) private var ligatures = EditorFontChoice.defaults.ligatures
     @AppStorage(EditorFontChoice.lineHeightKey) private var lineHeight = EditorFontChoice.defaults.lineHeight
 
+    /// The side panel's tabs and buttons are in its own header in the title
+    /// band, not in this toolbar (see `PanelWorkspace`).
+    private var sidePanelUsesItsHeader: Bool {
+        guard case .session(let id) = model.destination else { return false }
+        return SidePanelChrome.usesPanelHeader(mainColumnWidth: model.mainColumnWidth,
+                                               sideIsOpen: model.layout(for: id).side.isOpen)
+    }
+
     /// Fonts are read where text is drawn, not observed, so a new choice
     /// rebuilds the window's views; Settings stays as it is over them.
     private var fonts: String {
@@ -45,12 +53,15 @@ struct RootView: View {
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .toolbar(removing: .title)
         // The window's one toolbar. Every screen shares it, so its items never
-        // change set and the sidebar toggle never moves when you switch.
+        // change set and the sidebar toggle never moves when you switch. One
+        // exception: while the side panel's header sits in the title band, the
+        // flexible spacer would lie over it and take its clicks, so it steps
+        // aside until the panel's controls are back in the toolbar.
         .toolbar {
             PlainToolbarItem(placement: .navigation) {
                 TitlebarLeading(sidebarHidden: $sidebarHidden, sidebarWidth: sidebarWidth)
             }
-            if #available(macOS 26, *) { ToolbarSpacer(.flexible) }
+            if #available(macOS 26, *), !sidePanelUsesItsHeader { ToolbarSpacer(.flexible) }
             PlainToolbarItem(placement: .automatic) { DetailToolbarControls() }
         }
         .id(fonts)
@@ -289,7 +300,9 @@ private struct DetailToolbarControls: View {
             if let session = model.session(id) {
                 if SidePanelChrome.usesPanelHeader(mainColumnWidth: model.mainColumnWidth,
                                                   sideIsOpen: model.layout(for: id).side.isOpen) {
-                    Color.clear.frame(width: 1, height: Chrome.button)
+                    // Nothing here: even a clear placeholder would sit over
+                    // the panel header's buttons and take their clicks.
+                    EmptyView()
                 } else {
                     ChatToolbarControls(session: session)
                 }

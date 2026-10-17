@@ -1,4 +1,5 @@
 import SwiftUI
+import AbstractCore
 
 /// A toolbar item drawn by Abstract alone: on macOS 26 the system would put
 /// it in a shared glass capsule, which reads as a native segmented pill.
@@ -77,7 +78,7 @@ enum Chrome {
     /// the toolbar's trailing inset and a hair of room past the divider.
     static let sideTabsReserve: CGFloat = 3 * button + 3 * gap + 14 + 1
     /// Height of the window's titlebar band (unified toolbar).
-    static let titlebar: CGFloat = 52
+    static let titlebar: CGFloat = SidePanelChrome.headerHeight
     /// Where the first leading toolbar item starts, just past the traffic
     /// lights (measured once on macOS 26; the lights sit tighter before it).
     static var leadingItemOrigin: CGFloat {

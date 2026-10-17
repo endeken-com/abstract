@@ -3,8 +3,27 @@ import Foundation
 /// Put the side panel's chrome in the panel when the main pane no longer has
 /// enough titlebar room for both sets of tabs and the chat actions.
 public enum SidePanelChrome {
+    /// Height of the window's title band, and of the side panel's own header
+    /// within it. One height for both panes, so the hairline under each sits
+    /// at the same offset whether the panel header is showing or not.
+    public static let headerHeight: CGFloat = 52
+
     public static func usesPanelHeader(mainColumnWidth: CGFloat, sideIsOpen: Bool) -> Bool {
         sideIsOpen && mainColumnWidth < 620
+    }
+
+    /// Distance from the top of the window to the hairline under the side
+    /// panel's header. The same on both sides of the compact threshold, so
+    /// resizing across it never jumps the border.
+    public static func hairlineOffset(mainColumnWidth: CGFloat, sideIsOpen: Bool) -> CGFloat {
+        headerHeight
+    }
+
+    /// Room for the tabs in the panel's own header: what's left once the chat
+    /// buttons keep theirs, so they are never pushed off the panel's edge.
+    /// The tabs scroll within this; the buttons do not move.
+    public static func tabsWidth(headerWidth: CGFloat, controlsWidth: CGFloat, gap: CGFloat) -> CGFloat {
+        max(0, headerWidth - controlsWidth - gap)
     }
 }
 
