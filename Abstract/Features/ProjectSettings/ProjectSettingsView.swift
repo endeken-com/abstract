@@ -252,26 +252,44 @@ private struct ProjectHeader: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer(minLength: Space.lg)
-            DeviceMenu()
+            DeviceMenu(project: project)
         }
     }
 }
 
-/// Where the project's agents run. This Mac is the only place today.
+/// Where the project's new chats run: this Mac, or a paired Mac. The
+/// Launcher pre-selects it; a Mac that isn't connected falls back to
+/// this one there, with a note saying so.
 private struct DeviceMenu: View {
+    @Environment(AppModel.self) private var model
+    let project: Project
     @State private var hovering = false
+
+    private var name: String {
+        guard let id = project.defaultDeviceId else { return "This Mac" }
+        return model.remote.paired.first { $0.id == id }?.peer.name ?? "A paired Mac"
+    }
 
     var body: some View {
         Menu {
-            Picker("Device", selection: .constant("local")) {
-                Label("This Mac", systemImage: "laptopcomputer").tag("local")
+            Picker("Device", selection: Binding(get: { project.defaultDeviceId },
+                                                set: { id in model.updateProject(project.id) { $0.defaultDeviceId = id } })) {
+                Label("This Mac", systemImage: "laptopcomputer").tag(String?.none)
+                ForEach(model.remote.paired) { device in
+                    Label(device.peer.name, systemImage: "desktopcomputer").tag(Optional(device.id))
+                }
+                if let id = project.defaultDeviceId, !model.remote.paired.contains(where: { $0.id == id }) {
+                    Label("A Mac that isn't paired anymore", systemImage: "desktopcomputer").tag(Optional(id))
+                }
             }
             .pickerStyle(.inline)
             .labelsHidden()
+            Divider()
+            Text("New chats for this project start on this Mac.")
         } label: {
             HStack(spacing: 5) {
-                Image(systemName: "laptopcomputer").font(.system(size: 11, weight: .regular))
-                Text("This Mac").font(.btCallout.weight(.medium))
+                Image(systemName: project.defaultDeviceId == nil ? "laptopcomputer" : "desktopcomputer").font(.system(size: 11, weight: .regular))
+                Text(name).font(.btCallout.weight(.medium))
                 Image(systemName: "chevron.down").font(.system(size: 7.5, weight: .bold)).foregroundStyle(Color.btTextTertiary)
             }
             .foregroundStyle(Color.btTextSecondary)
@@ -286,7 +304,7 @@ private struct DeviceMenu: View {
         .fixedSize()
         .onHover { hovering = $0 }
         .padding(.trailing, -7)
-        .help("Where this project's agents run")
+        .help("Where this project's new chats run")
     }
 }
 

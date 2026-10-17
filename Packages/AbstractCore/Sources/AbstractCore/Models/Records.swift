@@ -33,6 +33,8 @@ public struct Project: Sendable, Hashable, Identifiable, Codable {
     public var teardownScript: String?
     /// What a chat's Run button runs.
     public var runScript: String?
+    /// The paired Mac new chats for this project start on; nil = this Mac.
+    public var defaultDeviceId: String?
 
     public init(
         id: String = UUID().uuidString, name: String, rootPath: String, defaultBaseRef: String = "HEAD",
@@ -41,7 +43,8 @@ public struct Project: Sendable, Hashable, Identifiable, Codable {
         sortOrder: Int = 0, createdAt: Date = Date(), archivedAt: Date? = nil,
         iconSymbol: String? = nil, iconColor: String? = nil, iconImagePath: String? = nil,
         namingInstructions: String? = nil, sparseCheckout: [String] = [],
-        setupScript: String? = nil, teardownScript: String? = nil, runScript: String? = nil
+        setupScript: String? = nil, teardownScript: String? = nil, runScript: String? = nil,
+        defaultDeviceId: String? = nil
     ) {
         self.id = id; self.name = name; self.rootPath = rootPath; self.defaultBaseRef = defaultBaseRef
         self.defaultProviderId = defaultProviderId; self.defaultPermissionPolicy = defaultPermissionPolicy
@@ -50,6 +53,26 @@ public struct Project: Sendable, Hashable, Identifiable, Codable {
         self.iconSymbol = iconSymbol; self.iconColor = iconColor; self.iconImagePath = iconImagePath
         self.namingInstructions = namingInstructions; self.sparseCheckout = sparseCheckout
         self.setupScript = setupScript; self.teardownScript = teardownScript; self.runScript = runScript
+        self.defaultDeviceId = defaultDeviceId
+    }
+
+    /// The Mac a new chat for this project starts on: its chosen default
+    /// when that Mac is connected now, else this Mac (nil).
+    public func resolvedDefaultDevice(online: Set<String>) -> String? {
+        defaultDeviceId.flatMap { online.contains($0) ? $0 : nil }
+    }
+
+    /// A default Mac is chosen but isn't connected now, so the chat runs
+    /// on this Mac instead and the Launcher says so.
+    public func defaultDeviceMissing(online: Set<String>) -> Bool {
+        defaultDeviceId.map { !online.contains($0) } ?? false
+    }
+
+    /// This project as another Mac has it: the same project there (its own
+    /// record of the same repository), by id when both share one, else by
+    /// name. Nil when that Mac has no such project.
+    public static func counterpart(of project: Project, in projects: [Project]) -> Project? {
+        projects.first { $0.id == project.id } ?? projects.first { $0.name == project.name }
     }
 
     /// A script with something in it, else nil.
