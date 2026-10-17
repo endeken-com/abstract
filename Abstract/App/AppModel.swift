@@ -914,7 +914,8 @@ final class AppModel {
             Task { await relaunch(session, prompt: message, images: images) }
             return
         }
-        if provider.followUpMode == .stdin, isAlive(sessionId), let line = provider.buildUserMessage(message, images: images) {
+        if provider.followUpMode == .stdin, isAlive(sessionId),
+           let line = provider.buildUserMessage(message, images: images, sessionId: session.providerSessionId) {
             try engine.write(sessionId: sessionId, isDemo ? DemoAgent.followUpLine(message) : line)
             turnStartedAt[sessionId] = Date()
             setStatus(sessionId, .running)
@@ -1077,7 +1078,8 @@ final class AppModel {
         guard live || seat?.sessionId != nil else { return nil }
         engine.record(sessionId: id, HandoffMarker(phase: .summarize, from: from, to: session.providerId).line)
         do {
-            if live, let line = provider.buildUserMessage(HandoffPrompt.summaryRequest) {
+            if live, let line = provider.buildUserMessage(HandoffPrompt.summaryRequest, images: [],
+                                                           sessionId: seat?.sessionId ?? session.providerSessionId) {
                 try engine.write(sessionId: id, line)
             } else {
                 await stopForRestart(id)
@@ -1354,6 +1356,8 @@ final class AppModel {
             }
             guard let stream = stream(for: sessionId) else { return }
             let events = stream.feed(line)
+            // An agent whose parser drives its protocol answers from here.
+            for reply in stream.takePendingInput() { try? engine.write(sessionId: sessionId, reply) }
             if startWaits[sessionId] != nil, line.stream == .stdout,
                let outcome = AgentStart.outcome(of: events, agentName: ProviderRegistry.name(stream.providerId)) {
                 agentStart(sessionId, outcome)

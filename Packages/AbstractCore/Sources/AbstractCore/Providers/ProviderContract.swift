@@ -237,6 +237,16 @@ public protocol OutputParser: AnyObject {
     func onExit(code: Int32?) -> [AgentEvent]
 }
 
+/// A parser that also drives the agent: some protocols must answer one
+/// message before the next may be sent, which a launch-time stdin payload
+/// cannot sequence. Whoever feeds a live process's lines drains these after
+/// each line and writes them to its stdin. Replay never drains, and the
+/// parser's events must not depend on its writes being sent, so a log still
+/// folds to the same chat everywhere.
+public protocol InputDrivingParser: OutputParser {
+    func takePendingInput() -> [String]
+}
+
 /// Fills in what an agent's output leaves out, before the line is logged, so
 /// live streaming, replay and other Macs all read the same thing. Kept for
 /// the life of a chat, across relaunches. Called on the process's reader
@@ -302,6 +312,10 @@ public protocol ProviderDefinition: Sendable {
     func buildUserMessage(_ text: String) -> String?
     /// The same with images, as files on the agent's Mac.
     func buildUserMessage(_ text: String, images: [String]) -> String?
+    /// The same again, naming the conversation: protocols whose follow-up
+    /// must say which session it belongs to get the chat's own session id
+    /// (nil before the agent has reported one).
+    func buildUserMessage(_ text: String, images: [String], sessionId: String?) -> String?
     /// stdin line answering a permission request (stdin mode only).
     func buildPermissionResponse(requestId: String, allow: Bool, input: JSONValue?) -> String?
     /// A stdin line that switches a running agent's permission mode, when the
@@ -352,6 +366,9 @@ public extension ProviderDefinition {
     func makeLineEnricher(executor: any Executor, cwd: String) -> (any LineEnricher)? { nil }
     func configuredDefaultEffort(home: String) -> String? { nil }
     func buildUserMessage(_ text: String, images: [String]) -> String? { buildUserMessage(text) }
+    func buildUserMessage(_ text: String, images: [String], sessionId: String?) -> String? {
+        buildUserMessage(text, images: images)
+    }
     func buildPermissionModeChange(_ policy: PermissionPolicy, requestId: String) -> String? { nil }
     func buildStopTask(_ taskId: String, requestId: String) -> String? { nil }
     func buildInterrupt(requestId: String) -> String? { nil }
