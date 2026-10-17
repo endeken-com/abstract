@@ -48,6 +48,7 @@ type TimelineCache = {
   rows: ChatItem[];
   tools: Map<string, ChatItem>;
   codexItems: Map<string, ChatItem>;
+  museItems: Map<string, ChatItem>;
   blocks: Map<number, Block>;
 };
 const caches = new Map<string, TimelineCache>();
@@ -58,9 +59,10 @@ export function chatTimeline(lines: RemoteLine[], cacheKey = 'default'): ChatIte
   const continues = previous && lines.length >= previous.lines.length
     && (previous.lines.length === 0 || lines[previous.lines.length - 1] === previous.lines[previous.lines.length - 1]);
   const state: TimelineCache = continues ? previous : {
-    lines: [], rows: [], tools: new Map(), codexItems: new Map(), blocks: new Map(),
+    lines: [], rows: [], tools: new Map(), codexItems: new Map(), museItems: new Map(), blocks: new Map(),
   };
-  const { rows, tools, codexItems, blocks } = state;
+  if (!state.museItems) state.museItems = new Map();
+  const { rows, tools, codexItems, museItems, blocks } = state;
   const append = (kind: ChatItem['kind'], text: string, id: string) => {
     if (text.trim()) rows.push({ id, kind, text });
   };
@@ -177,6 +179,47 @@ export function chatTimeline(lines: RemoteLine[], cacheKey = 'default'): ChatIte
           const edits = editPreviewsFromChanges(Array.isArray(item.changes) ? item.changes : []);
           if (edits.length) row.edits = edits;
         }
+      }
+      continue;
+    }
+    // Muse Code (`muse serve`) view items: the same fold the Mac makes,
+    // so a chat reads the same here, live and replayed.
+    if (typeof value.method === 'string') {
+      const params = value.params || {};
+      if (['item/started', 'item/updated', 'item/completed'].includes(value.method)) {
+        const item = params.item || {};
+        const itemId = String(item.itemId || id);
+        if (item.kind === 'toolCall' || item.kind === 'webSearch') {
+          const callId = String(item.callId || itemId);
+          const name = item.tool || (item.kind === 'webSearch' ? 'web_search' : 'tool');
+          let row = museItems.get(callId);
+          if (!row) {
+            let input: any = {};
+            if (typeof item.args === 'string') { try { input = JSON.parse(item.args); } catch { /* unparsable args stay empty */ } }
+            if (item.kind === 'webSearch' && !input.query && typeof item.query === 'string') input = { query: item.query };
+            row = addTool(id, name, input, item.status === 'inProgress');
+            museItems.set(callId, row);
+          }
+          if (['completed', 'failed', 'cancelled', 'rejected', 'timedOut'].includes(item.status)) {
+            row.pending = false;
+            row.failed = item.status !== 'completed';
+            row.text = toolVerb(name);
+            const detail = item.visibleOutput || item.failureReason || '';
+            if (typeof detail === 'string' && detail) row.detail = detail;
+          }
+        } else if (item.kind === 'agentMessage') {
+          let row = museItems.get(itemId);
+          if (!row) { row = { id, kind: 'prose', text: '', pending: true }; rows.push(row); museItems.set(itemId, row); }
+          if (value.method === 'item/completed') { row.text = item.text || row.text; row.pending = false; }
+        }
+      } else if (value.method === 'item/delta' && params.field === 'text' && typeof params.delta === 'string') {
+        const itemId = String(params.itemId || id);
+        let row = museItems.get(itemId);
+        if (!row) { row = { id, kind: 'prose', text: '', pending: true }; rows.push(row); museItems.set(itemId, row); }
+        row.text += params.delta;
+      } else if (value.method === 'turn/completed') {
+        if (params.terminal === 'failed') append('error', params.reason || 'Muse Code could not finish this turn.', id);
+        else if (typeof params.durationMs === 'number') rows.push({ id, kind: 'turn', text: '', durationMs: params.durationMs });
       }
       continue;
     }

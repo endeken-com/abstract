@@ -52,6 +52,8 @@ export function editPreviewFromInput(name: string, input: any): EditPreview[] {
   const key = name.toLowerCase();
   if (key === 'edit' && typeof input.old_string === 'string' && typeof input.new_string === 'string')
     return [preview(path, lineDiff(input.old_string, input.new_string))];
+  if (key === 'edit_file' && typeof input.find === 'string' && typeof input.replace === 'string')
+    return [preview(path, lineDiff(input.find, input.replace))];
   if (key === 'multiedit' && Array.isArray(input.edits)) {
     const lines: EditLine[] = [];
     input.edits.forEach((edit: any) => {
@@ -62,7 +64,7 @@ export function editPreviewFromInput(name: string, input: any): EditPreview[] {
     });
     return lines.length ? [preview(path, lines)] : [];
   }
-  if (key === 'write' && typeof input.content === 'string')
+  if ((key === 'write' || key === 'write_file') && typeof input.content === 'string')
     return [preview(path, splitLines(input.content).map((text, index) => ({ kind: '+', text: `+${text}`, next: index + 1 })))];
   return [];
 }

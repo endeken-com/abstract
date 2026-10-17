@@ -65,3 +65,42 @@ test('Codex reuses item IDs in later turns without losing messages or commands',
   assert.deepEqual(rows.map(row => row.text), ['First reply', 'Ran', 'Follow-up', 'Second reply', 'Ran']);
   assert.deepEqual(rows.filter(row => row.kind === 'tool').map(row => row.target), ['echo first', 'echo second']);
 });
+
+test('Muse Code serve items show files, changes and searches', () => {
+  const item = (seq, method, it) => line(seq, 'stdout', { jsonrpc: '2.0', method, params: { item: it } });
+  const lines = [
+    item(1, 'item/started', { itemId: 'i1', kind: 'toolCall', revision: 1, status: 'inProgress', tool: 'read_file', callId: 'c1', args: '{"path":"src/App.swift"}' }),
+    item(2, 'item/completed', { itemId: 'i1', kind: 'toolCall', revision: 2, status: 'completed', tool: 'read_file', callId: 'c1', args: '{"path":"src/App.swift"}', visibleOutput: 'Read text file `App.swift`.' }),
+    item(3, 'item/completed', { itemId: 'i2', kind: 'toolCall', revision: 2, status: 'completed', tool: 'search', callId: 'c2', args: '{"pattern":"needle"}', visibleOutput: 'App.swift:2:needle' }),
+    item(4, 'item/completed', { itemId: 'i3', kind: 'toolCall', revision: 2, status: 'completed', tool: 'edit_file', callId: 'c3', args: '{"path":"App.swift","find":"old","replace":"new"}', visibleOutput: 'edited' }),
+    item(5, 'item/completed', { itemId: 'i4', kind: 'toolCall', revision: 2, status: 'completed', tool: 'write_file', callId: 'c4', args: '{"path":"made.txt","content":"made"}', visibleOutput: 'wrote 4 bytes' }),
+    item(6, 'item/completed', { itemId: 'i5', kind: 'toolCall', revision: 2, status: 'completed', tool: 'bash', callId: 'c5', args: '{"command":"echo hi"}', visibleOutput: 'hi' }),
+    item(7, 'item/completed', { itemId: 'i6', kind: 'toolCall', revision: 2, status: 'completed', tool: 'web_search', callId: 'c6', args: '{"query":"swift version"}', visibleOutput: '{}' }),
+    item(8, 'item/completed', { itemId: 'i7', kind: 'toolCall', revision: 2, status: 'failed', tool: 'read_file', callId: 'c7', args: '{"path":"missing.txt"}', failureReason: 'No such file' }),
+    item(9, 'item/completed', { itemId: 'm1', kind: 'agentMessage', revision: 1, status: 'completed', text: 'done' }),
+    line(10, 'stdout', { jsonrpc: '2.0', method: 'turn/completed', params: { terminal: 'completed', durationMs: 1200 } }),
+  ];
+  const rows = chatTimeline(lines, 'muse-serve');
+  const tools = rows.filter(row => row.kind === 'tool');
+  assert.deepEqual(tools.map(row => row.toolName), ['read_file', 'search', 'edit_file', 'write_file', 'bash', 'web_search', 'read_file']);
+  assert.deepEqual(tools.map(row => row.text), ['Read', 'Searched', 'Edited', 'Created', 'Ran', 'Searched the web', 'Read']);
+  assert.deepEqual(tools.map(row => row.target), ['App.swift', 'needle', 'App.swift', 'made.txt', 'echo hi', 'swift version', 'missing.txt']);
+  assert.equal(tools[0].path, 'src/App.swift');
+  assert.equal(toolKind('read_file'), 'explore');
+  assert.equal(toolKind('edit_file'), 'edit');
+  assert.equal(toolKind('web_fetch'), 'explore');
+  assert.equal(tools[2].additions, 1);
+  assert.equal(tools[2].deletions, 1);
+  assert.equal(tools[3].additions, 1);
+  assert.equal(tools.at(-1).failed, true);
+  assert.equal(tools.at(-1).detail, 'No such file');
+  assert.equal(rows.find(row => row.kind === 'prose')?.text, 'done');
+  assert.equal(rows.find(row => row.kind === 'turn')?.durationMs, 1200);
+});
+
+test('Muse Code calls with unparsable arguments keep their output and no target', () => {
+  const lines = [line(1, 'stdout', { jsonrpc: '2.0', method: 'item/completed', params: { item: { itemId: 'i1', kind: 'toolCall', revision: 1, status: 'completed', tool: 'read_file', callId: 'c1', args: '{path: x', visibleOutput: 'the output' } } })];
+  const row = chatTimeline(lines, 'muse-bad-args').find(r => r.kind === 'tool');
+  assert.equal(row.target, '');
+  assert.equal(row.detail, 'the output');
+});
