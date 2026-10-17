@@ -40,6 +40,10 @@ targets:
         # The app icon's source art; scripts/make-icons.sh makes AppIcon.icon from it.
         excludes:
           - Resources/Brand
+          - Resources/Plugins
+      # Bundled plugins keep their folder shape inside the app.
+      - path: Abstract/Resources/Plugins
+        type: folder
     dependencies:
       - package: AbstractCore
       - package: AbstractInternet
