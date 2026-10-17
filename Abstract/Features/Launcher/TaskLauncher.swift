@@ -32,6 +32,8 @@ struct TaskLauncher: View {
     @State private var policy: PermissionPolicy = .ask
     @State private var starting = false
     @State private var error: String?
+    /// Why the project's default Mac wasn't used for this chat.
+    @State private var deviceNotice: String?
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -134,6 +136,12 @@ struct TaskLauncher: View {
                     .padding(.horizontal, embedded ? 0 : Space.lg)
                     .padding(.bottom, Space.md)
                     .textSelection(.enabled)
+            } else if let deviceNotice {
+                Label(deviceNotice, systemImage: "exclamationmark.triangle")
+                    .font(.btCallout)
+                    .foregroundStyle(Color.btWarning)
+                    .padding(.horizontal, embedded ? 0 : Space.lg)
+                    .padding(.bottom, Space.md)
             } else if device == nil, let status = model.providerStatus[providerId], !status.available {
                 Label("\(ProviderRegistry.name(providerId)) wasn't found on this Mac. Set its path in Settings › Agents.", systemImage: "exclamationmark.triangle")
                     .font(.btCallout)
@@ -151,9 +159,14 @@ struct TaskLauncher: View {
             let initial = initialProjectId ?? model.selectedSession?.projectId ?? model.projects.first?.id ?? firstRemoteProject
             // Asked for, or there's no project to start in.
             if initialStandalone || initial == nil { chooseStandalone(); if autofocus { focused = true }; return }
-            // A project on a paired Mac starts its chat there.
-            device = initial.flatMap { id in model.projects.contains { $0.id == id } ? nil : model.remote.device(ofProject: id) }
-            select(initial)
+            if let initial, model.projects.contains(where: { $0.id == initial }) {
+                // This Mac's project: its default Mac is pre-selected.
+                selectLocal(initial)
+            } else {
+                // A project on a paired Mac starts its chat there.
+                device = initial.flatMap { model.remote.device(ofProject: $0) }
+                select(initial)
+            }
             if autofocus { focused = true }
         }
         .onChange(of: model.focusLauncherToken) { focused = true }
@@ -194,6 +207,7 @@ struct TaskLauncher: View {
     private var deviceBinding: Binding<String?> {
         Binding(get: { device }, set: { new in
             guard new != device else { return }
+            deviceNotice = nil
             device = new
             worktree = nil
             modelId = nil
@@ -204,7 +218,11 @@ struct TaskLauncher: View {
     }
 
     private var projectBinding: Binding<String?> {
-        Binding(get: { projectId }, set: { select($0) })
+        Binding(get: { projectId }, set: { new in
+            // Picking one of this Mac's projects pre-selects its default
+            // Mac; on another Mac the device already chosen stays.
+            if device == nil { selectLocal(new) } else { deviceNotice = nil; select(new) }
+        })
     }
 
     private var providerBinding: Binding<String> {
@@ -236,6 +254,35 @@ struct TaskLauncher: View {
         standalone = true
         projectId = nil
         worktree = nil
+        deviceNotice = nil
+    }
+
+    /// Selecting one of this Mac's projects: pre-select the Mac its new
+    /// chats default to, and that Mac's own record of the project, when
+    /// it's connected and has it. Otherwise the chat runs on this Mac
+    /// and the note below the prompt says why.
+    private func selectLocal(_ id: String?) {
+        deviceNotice = nil
+        guard let id, let p = model.projects.first(where: { $0.id == id }) else { select(id); return }
+        let online = Set(onlineDevices.map(\.id))
+        if let target = p.resolvedDefaultDevice(online: online) {
+            let theirs = (model.remote.links[target]?.snapshot?.projects ?? []).filter { $0.archivedAt == nil }
+            if let counterpart = Project.counterpart(of: p, in: theirs) {
+                device = target
+                select(counterpart.id)
+                return
+            }
+            deviceNotice = "\(deviceName(target)) doesn't have a project called “\(p.name)”, so this chat runs on This Mac."
+        } else if p.defaultDeviceMissing(online: online) {
+            deviceNotice = "\(deviceName(p.defaultDeviceId)) isn't connected, so this chat runs on This Mac."
+        }
+        device = nil
+        select(id)
+    }
+
+    private func deviceName(_ id: String?) -> String {
+        guard let id, let name = model.remote.paired.first(where: { $0.id == id })?.peer.name else { return "Its default Mac" }
+        return name
     }
 
     private func start() {

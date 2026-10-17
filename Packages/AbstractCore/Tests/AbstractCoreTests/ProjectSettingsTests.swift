@@ -15,14 +15,15 @@ import Testing
             id: "p1", name: "api", rootPath: "/r/api", worktreeTemplate: "/wt/{repo}-{hash}/{slug}", branchPrefix: "",
             createdAt: Self.created, iconSymbol: "shippingbox", iconColor: "sage", iconImagePath: "/icons/p1.png",
             namingInstructions: "Prefix fixes with fix/.", sparseCheckout: ["apps/web", "packages/ui"],
-            setupScript: "npm install\ncp \"$ROOT/.env\" .", teardownScript: "docker compose down", runScript: "npm run dev")
+            setupScript: "npm install\ncp \"$ROOT/.env\" .", teardownScript: "docker compose down", runScript: "npm run dev",
+            defaultDeviceId: "mac-studio")
         try store.save(project)
         #expect(try store.project("p1") == project)
 
         var cleared = project
         cleared.iconSymbol = nil; cleared.iconColor = nil; cleared.iconImagePath = nil
         cleared.namingInstructions = nil; cleared.sparseCheckout = []
-        cleared.setupScript = nil; cleared.teardownScript = nil; cleared.runScript = nil
+        cleared.setupScript = nil; cleared.teardownScript = nil; cleared.runScript = nil; cleared.defaultDeviceId = nil
         try store.save(cleared)
         #expect(try store.projects() == [cleared])
     }

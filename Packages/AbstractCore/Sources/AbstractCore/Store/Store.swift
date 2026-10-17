@@ -574,6 +574,10 @@ public final class Store: Sendable {
                 CREATE INDEX code_notes_turn ON code_notes(turn_id);
                 """)
         }
+        // The paired Mac a project's new chats start on; nil = this Mac.
+        migrator.registerMigration("v11-default-device") { db in
+            try db.execute(sql: "ALTER TABLE projects ADD COLUMN default_device_id TEXT")
+        }
         return migrator
     }
 }
@@ -627,7 +631,8 @@ private struct ProjectRow: FetchableRecord, PersistableRecord {
             sparseCheckout: try row.stringList("sparse_checkout"),
             setupScript: try row.decode(forColumn: "setup_script"),
             teardownScript: try row.decode(forColumn: "teardown_script"),
-            runScript: try row.decode(forColumn: "run_script"))
+            runScript: try row.decode(forColumn: "run_script"),
+            defaultDeviceId: try row.decode(forColumn: "default_device_id"))
     }
 
     func encode(to container: inout PersistenceContainer) throws {
@@ -651,6 +656,7 @@ private struct ProjectRow: FetchableRecord, PersistableRecord {
         container["setup_script"] = value.setupScript
         container["teardown_script"] = value.teardownScript
         container["run_script"] = value.runScript
+        container["default_device_id"] = value.defaultDeviceId
     }
 }
 
