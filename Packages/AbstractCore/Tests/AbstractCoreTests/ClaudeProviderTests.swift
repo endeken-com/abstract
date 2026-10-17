@@ -391,13 +391,14 @@ import AbstractCore
 @Suite struct ProviderRegistryTests {
     @Test func listsEveryProviderOnce() {
         let ids = ProviderRegistry.all.map(\.id)
-        #expect(ids == ["claude", "codex", "opencode"])
+        #expect(ids == ["claude", "codex", "opencode", "muse"])
         #expect(Set(ids).count == ids.count)
     }
 
     @Test func looksUpById() {
         #expect(ProviderRegistry.provider("claude")?.name == "Claude Code")
         #expect(ProviderRegistry.provider("codex")?.name == "Codex")
+        #expect(ProviderRegistry.provider("muse")?.name == "Muse Code")
         #expect(ProviderRegistry.provider("nope") == nil)
     }
 }

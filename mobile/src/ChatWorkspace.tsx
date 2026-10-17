@@ -355,7 +355,7 @@ export function ChatWorkspace({ route, navigation }: any) {
   const defaultModelLabel = mac.snapshot?.defaultModelNames?.[chat.providerId] || catalog?.accountDefault?.label;
   const modelLabel = chat.model ? modelOption?.label || chat.model : defaultModelLabel || 'Default model';
   const effortLabel = (chat.effort || modelOption?.defaultEffort || catalog?.accountDefault?.defaultEffort || 'Default effort').replace(/^./, x => x.toUpperCase());
-  const providerLabel = { codex: 'Codex', claude: 'Claude Code', opencode: 'OpenCode' }[chat.providerId] || chat.providerId;
+  const providerLabel = { codex: 'Codex', claude: 'Claude Code', opencode: 'OpenCode', muse: 'Muse Code' }[chat.providerId] || chat.providerId;
   const policyLabel = { ask: 'Ask before acting', 'auto-edits': 'Accept edits', bypass: 'Full autonomy' }[chat.permissionPolicy];
   const act = (name: string, args: Record<string, unknown> = {}) => mac.request(name, { sessionId: id, ...args }).catch(e => Alert.alert('Abstract', String(e)));
   const send = () => {
@@ -430,7 +430,7 @@ export function ChatWorkspace({ route, navigation }: any) {
     setSlashChoosing(null);
     return true;
   };
-  const providerChoices = (mac.snapshot?.providers || []).map(value => ({ id: value, title: ({ codex: 'Codex', claude: 'Claude Code', opencode: 'OpenCode' } as Record<string, string>)[value] || value, selected: value === chat.providerId, image: Platform.OS === 'ios' ? providerMenuImage(value) : undefined }));
+  const providerChoices = (mac.snapshot?.providers || []).map(value => ({ id: value, title: ({ codex: 'Codex', claude: 'Claude Code', opencode: 'OpenCode', muse: 'Muse Code' } as Record<string, string>)[value] || value, selected: value === chat.providerId, image: Platform.OS === 'ios' ? providerMenuImage(value) : undefined }));
   const modelChoices = [{ id: '', title: defaultModelLabel ? `Default (${defaultModelLabel})` : 'Default model', selected: !chat.model }, ...(catalog?.models || []).map(value => ({ id: value.id, title: value.label, selected: value.id === chat.model }))];
   const effortChoices = [{ id: '', title: 'Default effort', selected: !chat.effort }, ...(modelOption?.efforts || catalog?.accountDefault?.efforts || []).map(value => ({ id: value, title: value.replace(/^./, x => x.toUpperCase()), selected: value === chat.effort }))];
   const policyChoices = ([['ask', 'Ask before acting'], ['auto-edits', 'Accept edits'], ['bypass', 'Full autonomy']] as const).map(([id, title]) => ({ id, title, selected: id === chat.permissionPolicy }));
