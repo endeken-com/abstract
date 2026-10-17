@@ -76,17 +76,31 @@ private struct PanelView: View {
         let panel = model.layout(for: session.id)[slot]
         let compactSideHeader = slot == .side &&
             SidePanelChrome.usesPanelHeader(mainColumnWidth: model.mainColumnWidth, sideIsOpen: panel.isOpen)
+        // The side panel runs up through the title band, like the main pane,
+        // so its hairline sits at the band's edge on both sides of the divider.
+        let inTitleBand = slot == .side && !showsTabs
+        let hairlineOffset = SidePanelChrome.hairlineOffset(mainColumnWidth: model.mainColumnWidth, sideIsOpen: panel.isOpen)
         VStack(spacing: 0) {
             if compactSideHeader {
-                PanelTabBar(slot: .side, session: session)
-                    .padding(.horizontal, 10)
-                    .frame(height: 38)
-                HStack {
-                    Spacer(minLength: 0)
-                    ChatToolbarControls(session: session, showsTabs: false)
+                // One row in the title band: the tabs scroll in what's left
+                // after the chat buttons, so all of them stay visible.
+                let canRun = Project.nonBlank(model.project(session.projectId)?.runScript) != nil && session.worktreePath != nil
+                let buttons = CGFloat(canRun ? 4 : 3)
+                let controlsWidth = buttons * Chrome.button + (buttons - 1) * Chrome.gap
+                GeometryReader { geo in
+                    HStack(spacing: Chrome.gap) {
+                        PanelTabBar(slot: .side, session: session)
+                            .frame(width: SidePanelChrome.tabsWidth(headerWidth: geo.size.width, controlsWidth: controlsWidth, gap: Chrome.gap),
+                                   alignment: .leading)
+                        ChatToolbarControls(session: session, showsTabs: false)
+                            .frame(width: controlsWidth)
+                    }
+                    .frame(maxHeight: .infinity)
                 }
                 .padding(.horizontal, 10)
-                .frame(height: 38)
+                .frame(height: hairlineOffset)
+            } else if inTitleBand {
+                Color.clear.frame(height: hairlineOffset)
             } else if showsTabs {
                 PanelTabBar(slot: slot, session: session)
                     .padding(.horizontal, 10)
@@ -102,6 +116,7 @@ private struct PanelView: View {
             }
         }
         .background(Color.btCanvas)
+        .ignoresSafeArea(.container, edges: inTitleBand ? .top : Edge.Set())
     }
 }
 
