@@ -8,6 +8,7 @@ public enum ProviderRegistry {
         ClaudeProvider(),
         CodexProvider(),
         OpenCodeProvider(),
+        MuseProvider(),
     ]
 
     public static func provider(_ id: String) -> (any ProviderDefinition)? {
