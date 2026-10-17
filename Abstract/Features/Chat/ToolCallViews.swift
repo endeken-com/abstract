@@ -89,8 +89,8 @@ enum ToolKind: Equatable {
 
     init(_ name: String) {
         switch name.lowercased() {
-        case "read", "grep", "glob", "ls", "notebookread", "toolsearch", "websearch", "web_search", "webfetch": self = .explore
-        case "edit", "multiedit", "write", "notebookedit", "applypatch", "apply_patch", "file_change": self = .edit
+        case "read", "read_file", "grep", "glob", "search", "ls", "notebookread", "toolsearch", "websearch", "web_search", "webfetch", "web_fetch": self = .explore
+        case "edit", "edit_file", "multiedit", "write", "write_file", "notebookedit", "applypatch", "apply_patch", "file_change": self = .edit
         case "bash", "shell", "command_execution", "bashoutput": self = .command
         case "todowrite", "todolist", "todo_list": self = .todo
         case "exitplanmode": self = .plan
@@ -777,12 +777,12 @@ extension EnvironmentValues {
 enum ToolPresentation {
     static func symbol(_ name: String) -> String {
         switch name.lowercased() {
-        case "read", "notebookread": "doc.text"
-        case "write": "doc.badge.plus"
-        case "edit", "multiedit", "notebookedit", "applypatch", "apply_patch", "file_change": "pencil"
+        case "read", "read_file", "notebookread": "doc.text"
+        case "write", "write_file": "doc.badge.plus"
+        case "edit", "edit_file", "multiedit", "notebookedit", "applypatch", "apply_patch", "file_change": "pencil"
         case "bash", "shell", "command_execution", "bashoutput": "terminal"
         case "grep", "glob", "search", "ls", "toolsearch": "magnifyingglass"
-        case "webfetch", "websearch", "web_search": "globe"
+        case "webfetch", "web_fetch", "websearch", "web_search": "globe"
         case "todowrite", "todolist", "todo_list": "checklist"
         case "exitplanmode": "list.bullet.clipboard"
         case "task", "agent": "person.2"
@@ -796,13 +796,13 @@ enum ToolPresentation {
     static func verb(_ name: String, pending: Bool = false) -> String {
         if pending {
             switch name.lowercased() {
-            case "read", "notebookread": return "Reading"
-            case "write": return "Creating"
-            case "edit", "multiedit", "notebookedit", "applypatch", "apply_patch", "file_change": return "Editing"
+            case "read", "read_file", "notebookread": return "Reading"
+            case "write", "write_file": return "Creating"
+            case "edit", "edit_file", "multiedit", "notebookedit", "applypatch", "apply_patch", "file_change": return "Editing"
             case "bash", "shell", "command_execution": return "Running"
-            case "grep", "websearch", "web_search", "toolsearch": return "Searching"
+            case "grep", "search", "websearch", "web_search", "toolsearch": return "Searching"
             case "glob", "ls": return "Listing"
-            case "webfetch": return "Fetching"
+            case "webfetch", "web_fetch": return "Fetching"
             case "task", "agent": return "Delegating"
             case "todowrite", "todolist", "todo_list": return "Updating plan"
             case "exitplanmode": return "Proposed a plan"
@@ -812,15 +812,15 @@ enum ToolPresentation {
             }
         }
         return switch name.lowercased() {
-        case "read", "notebookread": "Read"
-        case "write": "Created"
-        case "edit", "multiedit", "notebookedit", "applypatch", "apply_patch", "file_change": "Edited"
+        case "read", "read_file", "notebookread": "Read"
+        case "write", "write_file": "Created"
+        case "edit", "edit_file", "multiedit", "notebookedit", "applypatch", "apply_patch", "file_change": "Edited"
         case "bash", "shell", "command_execution": "Ran"
         case "bashoutput": "Checked output"
-        case "grep": "Searched"
+        case "grep", "search": "Searched"
         case "glob", "ls": "Listed"
         case "toolsearch": "Looked up tools"
-        case "webfetch": "Fetched"
+        case "webfetch", "web_fetch": "Fetched"
         case "websearch", "web_search": "Searched the web"
         case "task", "agent": "Delegated"
         case "todowrite", "todolist", "todo_list": "Updated plan"
@@ -834,12 +834,12 @@ enum ToolPresentation {
     /// A plain request for an approval row: "Edit", "Run", "Create".
     static func ask(_ name: String) -> String {
         switch name.lowercased() {
-        case "edit", "multiedit", "notebookedit": "Edit"
-        case "write": "Create"
+        case "edit", "edit_file", "multiedit", "notebookedit": "Edit"
+        case "write", "write_file": "Create"
         case "bash", "shell": "Run"
-        case "webfetch": "Open"
-        case "websearch": "Search the web for"
-        case "read": "Read"
+        case "webfetch", "web_fetch": "Open"
+        case "websearch", "web_search": "Search the web for"
+        case "read", "read_file": "Read"
         case "exitplanmode": "Start on this plan"
         case "skill": "Use skill"
         case "askuserquestion": "Needs your input"
@@ -928,10 +928,10 @@ enum ToolPresentation {
         var files = Set<String>(), searches = 0, web = 0, pages = 0, other = 0
         for call in calls {
             switch call.name.lowercased() {
-            case "read", "notebookread": files.insert(path(call) ?? call.id)
-            case "grep", "glob", "ls", "toolsearch": searches += 1
+            case "read", "read_file", "notebookread": files.insert(path(call) ?? call.id)
+            case "grep", "glob", "search", "ls", "toolsearch": searches += 1
             case "websearch", "web_search": web += 1
-            case "webfetch": pages += 1
+            case "webfetch", "web_fetch": pages += 1
             default: other += 1
             }
         }

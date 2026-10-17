@@ -74,6 +74,12 @@ public final class ChatStream {
         parser = makeParser(providerId)
     }
 
+    /// Lines the parser wants written to the live agent's stdin, drained.
+    /// Empty for agents whose parsers only read.
+    public func takePendingInput() -> [String] {
+        (parser as? any InputDrivingParser)?.takePendingInput() ?? []
+    }
+
     /// What the summary turn said, its replies joined.
     public var capturedSummary: String {
         summaryTurn.blocks.compactMap { block -> String? in

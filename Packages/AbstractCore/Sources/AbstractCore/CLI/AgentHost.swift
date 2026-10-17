@@ -69,6 +69,8 @@ final class AgentHost: @unchecked Sendable {
     private var exitCode: Int32?
     private var stderrTail: [String] = []
     private var status: (SessionStatus, String?)?
+    /// The agent's own session id, for follow-ups that must name it.
+    private var providerSessionId: String?
     private var lastActivity = Date()
     private var stopRequested = false
     /// The app asked for the chat (SIGUSR1): it's the app's once the agent is idle.
@@ -269,6 +271,7 @@ final class AgentHost: @unchecked Sendable {
             lastActivity = Date()
             if line.stream == .stderr { stderrTail = Array((stderrTail + [line.line]).suffix(5)) }
             let events = stream.feed(line)
+            for reply in stream.takePendingInput() { try? engine.write(sessionId: sessionId, reply) }
             // Only the agent's own output says how it's doing, never the prompt logged for it.
             if !up, startFailure == nil, line.stream == .stdout,
                let outcome = AgentStart.outcome(of: events, agentName: provider.name) {
@@ -310,6 +313,7 @@ final class AgentHost: @unchecked Sendable {
         case let .status(status, detail):
             setStatus(status, detail)
         case let .sessionId(id):
+            providerSessionId = id
             try? store.updateProviderSessionId(sessionId, id)
             StoreChanges.post(storePath: storePath)
         case let .usage(totals, cost, duration, turns):
@@ -370,7 +374,8 @@ final class AgentHost: @unchecked Sendable {
         guard request.agentId == agent.id, !exited, engine.isAlive(sessionId) else {
             return .failed(CLIError(.agentNotRunning, "Agent \(request.agentId) isn't running."))
         }
-        guard request.op == "send", let text = request.text, let line = provider.buildUserMessage(text) else {
+        guard request.op == "send", let text = request.text,
+              let line = provider.buildUserMessage(text, images: [], sessionId: providerSessionId ?? session.providerSessionId) else {
             return .failed(CLIError(.invalidArguments, "The agent's host doesn't understand “\(request.op)”."))
         }
         lastActivity = Date()
