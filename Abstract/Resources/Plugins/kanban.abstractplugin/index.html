@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:">
+<link rel="stylesheet" href="style.css">
+<title>Kanban</title>
+</head>
+<body>
+<main>
+  <header>
+    <div class="heading">
+      <h1>Kanban</h1>
+      <p id="summary" class="note"></p>
+    </div>
+    <input id="search" type="search" placeholder="Search title, branch or pull request" aria-label="Search chats">
+  </header>
+
+  <div class="filters" role="group" aria-label="Board filters">
+    <details id="filter-projects">
+      <summary>Projects</summary>
+      <div class="choices"></div>
+    </details>
+    <details id="filter-agents">
+      <summary>Agents</summary>
+      <div class="choices"></div>
+    </details>
+    <details id="filter-macs">
+      <summary>Macs</summary>
+      <div class="choices"></div>
+    </details>
+    <label class="toggle"><input type="checkbox" id="show-archived"> Show archived</label>
+    <button type="button" id="clear-filters" hidden>Clear filters</button>
+  </div>
+
+  <p id="unreachable" class="notice" hidden></p>
+  <p id="empty" class="notice" hidden></p>
+
+  <section id="board" aria-label="Chats by progress"></section>
+</main>
+<script src="board.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
