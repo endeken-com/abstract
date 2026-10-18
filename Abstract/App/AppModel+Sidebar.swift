@@ -12,20 +12,24 @@ extension AppModel {
                               // A chat with no folder has nothing to review.
                               hasChanges: s.worktreePath == nil ? false : branchStates[s.id]?.hasUnmergedWork,
                               backgroundTasks: runningBackgroundTasks(s.id), projectName: project(s.projectId)?.name,
-                              mac: here)
+                              mac: here,
+                              icon: SidebarChats.icon(project: project(s.projectId), isRemote: false, remoteImage: nil))
         }
         let paired = remote.paired.compactMap { remote.links[$0.id] }.flatMap { link -> [SidebarChats.Chat] in
             guard let snapshot = link.snapshot else { return [] }
-            let projects = Dictionary(snapshot.projects.map { ($0.id, $0.name) }, uniquingKeysWith: { a, _ in a })
+            let projects = Dictionary(snapshot.projects.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
             let busy = Set(snapshot.backgroundTasks ?? [])
             return snapshot.sessions.map { hosted in
                 var s = hosted
                 s.id = RemoteService.mirrorId(device: link.device.id, session: hosted.id)
+                let hostedProject = hosted.projectId.flatMap { projects[$0] }
                 return SidebarChats.Chat(session: s, pullRequest: snapshot.pullRequests?[hosted.id].map(SidebarChats.PullRequestFacts.init),
                                          hasChanges: hosted.worktreePath == nil ? false : snapshot.unmergedWork?[hosted.id],
                                          backgroundTasks: max(runningBackgroundTasks(s.id), busy.contains(hosted.id) ? 1 : 0),
-                                         projectName: hosted.projectId.flatMap { projects[$0] },
-                                         mac: link.device.peer.name, isRemote: true)
+                                         projectName: hostedProject?.name,
+                                         mac: link.device.peer.name, isRemote: true,
+                                         icon: SidebarChats.icon(project: hostedProject, isRemote: true,
+                                                                 remoteImage: hosted.projectId.flatMap { snapshot.projectIcons?[$0] }))
             }
         }
         return local + paired
