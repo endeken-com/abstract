@@ -54,6 +54,8 @@ final class RemoteService {
     @ObservationIgnored private var internetChannels: [UUID: RemoteChannel] = [:]
     @ObservationIgnored private var outgoingPair: RemoteChannel?
     @ObservationIgnored private var pairingTask: Task<Void, Never>?
+    /// Uploaded project icons read for snapshots, by path, until the file changes.
+    @ObservationIgnored private var projectIconCache: [String: (modified: Date?, data: Data?)] = [:]
 
     private(set) var identity: DeviceIdentity
     private(set) var paired: [PairedDevice] { didSet { save() } }
@@ -443,7 +445,29 @@ final class RemoteService {
                               }), turnStartedAt: model.turnStarts, pagedHistory: true, execInput: true,
                               internetAddress: internetAddress,
                               backgroundTasks: model.alive.filter { model.runningBackgroundTasks($0) > 0 }.sorted(),
-                              unmergedWork: model.branchStates.mapValues(\.hasUnmergedWork))
+                              unmergedWork: model.branchStates.mapValues(\.hasUnmergedWork),
+                              projectIcons: projectIcons(model.projects.filter { $0.archivedAt == nil }))
+    }
+
+    /// Each project's uploaded icon as bytes, so a viewing Mac can show it
+    /// without reading a file that only exists here. Missing or oversized
+    /// icons are left out; the viewing Mac falls back to the symbol tile.
+    private func projectIcons(_ projects: [Project]) -> [String: Data]? {
+        var icons: [String: Data] = [:]
+        for project in projects {
+            guard let path = project.iconImagePath else { continue }
+            let modified = (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date
+            let data: Data?
+            if let cached = projectIconCache[path], cached.modified == modified {
+                data = cached.data
+            } else {
+                let read = try? Data(contentsOf: URL(fileURLWithPath: path))
+                data = read.flatMap { $0.count <= RemoteSnapshot.maxProjectIconBytes ? $0 : nil }
+                projectIconCache[path] = (modified, data)
+            }
+            if let data { icons[project.id] = data }
+        }
+        return icons.isEmpty ? nil : icons
     }
 
     /// A chat's new output, to the Macs watching it.

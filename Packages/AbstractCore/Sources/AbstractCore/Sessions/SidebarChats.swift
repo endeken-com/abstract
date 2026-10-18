@@ -66,6 +66,47 @@ public enum SidebarChats {
         }
     }
 
+    /// A project's icon as its chat rows show it: its uploaded image, else
+    /// its symbol (or its initial) on its colour. An uploaded image from a
+    /// paired Mac travels as bytes (`imageData`); one on this Mac stays a
+    /// file (`imageFile`), and only once it is known to still be there.
+    public struct ProjectMark: Sendable, Hashable {
+        public var name: String
+        public var symbol: String?
+        public var color: String?
+        public var imageFile: String?
+        public var imageData: Data?
+
+        public init(name: String, symbol: String? = nil, color: String? = nil, imageFile: String? = nil, imageData: Data? = nil) {
+            self.name = name; self.symbol = symbol; self.color = color; self.imageFile = imageFile; self.imageData = imageData
+        }
+    }
+
+    /// What leads a chat's row: its project's icon, or (standalone) its agent's logo.
+    public enum Icon: Sendable, Hashable {
+        case agentLogo
+        case project(ProjectMark)
+    }
+
+    /// The icon a chat's row leads with, following Project Settings: an
+    /// uploaded image that is still there wins, then the symbol and colour,
+    /// then the default tile. A paired Mac's `iconImagePath` names a file on
+    /// that Mac, so it is never read here; its snapshot's bytes are used
+    /// instead, and an older Mac that sends none falls back to the tile.
+    public static func icon(project: Project?, isRemote: Bool, remoteImage: Data?,
+                            fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) -> Icon {
+        guard let project else { return .agentLogo }
+        var mark = ProjectMark(name: project.name, symbol: project.iconSymbol, color: project.iconColor)
+        if project.iconImagePath != nil {
+            if isRemote {
+                if let remoteImage, !remoteImage.isEmpty { mark.imageData = remoteImage }
+            } else if let path = project.iconImagePath, fileExists(path) {
+                mark.imageFile = path
+            }
+        }
+        return .project(mark)
+    }
+
     /// What the sidebar knows of one chat.
     public struct Chat: Sendable, Hashable, Identifiable {
         public var session: Session
@@ -79,13 +120,16 @@ public enum SidebarChats {
         public var mac: String
         /// On a paired Mac rather than this one.
         public var isRemote: Bool
+        /// What leads its row: its project's icon, or its agent's logo.
+        public var icon: Icon
 
         public var id: String { session.id }
 
         public init(session: Session, pullRequest: PullRequestFacts? = nil, hasChanges: Bool? = nil, backgroundTasks: Int = 0,
-                    projectName: String? = nil, mac: String = "", isRemote: Bool = false) {
+                    projectName: String? = nil, mac: String = "", isRemote: Bool = false, icon: Icon = .agentLogo) {
             self.session = session; self.pullRequest = pullRequest; self.hasChanges = hasChanges
             self.backgroundTasks = backgroundTasks; self.projectName = projectName; self.mac = mac; self.isRemote = isRemote
+            self.icon = icon
         }
 
         /// When it last did something.

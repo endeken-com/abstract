@@ -223,6 +223,44 @@ import AbstractCore
         #expect(s.hasUnmergedWork == false, "origin deleted the branch: its pull request merged")
     }
 
+    // MARK: Project icons
+
+    @Test func iconResolutionFollowsProjectSettings() {
+        let uploaded = Project(name: "Alpha", rootPath: "/tmp/a", iconSymbol: "cube", iconColor: "sage", iconImagePath: "/icons/a.png")
+        // This Mac: an uploaded image that is still there wins over the symbol.
+        let local = SidebarChats.icon(project: uploaded, isRemote: false, remoteImage: nil, fileExists: { _ in true })
+        #expect(local == .project(.init(name: "Alpha", symbol: "cube", color: "sage", imageFile: "/icons/a.png")))
+        // This Mac: a missing or removed upload falls back to the symbol tile.
+        let missing = SidebarChats.icon(project: uploaded, isRemote: false, remoteImage: nil, fileExists: { _ in false })
+        #expect(missing == .project(.init(name: "Alpha", symbol: "cube", color: "sage")))
+        // A paired Mac: the image's bytes travel in its snapshot; its file path is never read here.
+        let bytes = Data([0x89, 0x50])
+        let paired = SidebarChats.icon(project: uploaded, isRemote: true, remoteImage: bytes, fileExists: { _ in true })
+        #expect(paired == .project(.init(name: "Alpha", symbol: "cube", color: "sage", imageData: bytes)))
+        // An older paired Mac sends no bytes: the symbol tile, not a local file that happens to match.
+        let older = SidebarChats.icon(project: uploaded, isRemote: true, remoteImage: nil, fileExists: { _ in true })
+        #expect(older == .project(.init(name: "Alpha", symbol: "cube", color: "sage")))
+
+        // Symbol and colour alone, and no custom choice at all (the default tile).
+        let symbol = Project(name: "Beta", rootPath: "/tmp/b", iconSymbol: "bolt", iconColor: "rose")
+        #expect(SidebarChats.icon(project: symbol, isRemote: false, remoteImage: nil, fileExists: { _ in false })
+                == .project(.init(name: "Beta", symbol: "bolt", color: "rose")))
+        let plain = Project(name: "Gamma", rootPath: "/tmp/g")
+        #expect(SidebarChats.icon(project: plain, isRemote: false, remoteImage: nil, fileExists: { _ in false })
+                == .project(.init(name: "Gamma")))
+        // Two projects sharing an agent still resolve to their own icons.
+        #expect(local != SidebarChats.icon(project: symbol, isRemote: false, remoteImage: nil, fileExists: { _ in false }))
+        // A standalone chat keeps its agent's logo.
+        #expect(SidebarChats.icon(project: nil, isRemote: false, remoteImage: nil, fileExists: { _ in true }) == .agentLogo)
+    }
+
+    @Test func olderPairedMacsSendNoProjectIcons() throws {
+        let old = try JSONDecoder().decode(RemoteSnapshot.self, from: Data(#"{"projects":[],"sessions":[],"providers":[],"alive":[]}"#.utf8))
+        #expect(old.projectIcons == nil)
+        let snapshot = RemoteSnapshot(projects: [], sessions: [], providers: [], alive: [], projectIcons: ["p": Data([1, 2])])
+        #expect(try JSONDecoder().decode(RemoteSnapshot.self, from: JSONEncoder().encode(snapshot)).projectIcons == ["p": Data([1, 2])])
+    }
+
     @Test func olderPairedMacsSendNoUnmergedWork() throws {
         let old = try JSONDecoder().decode(RemoteSnapshot.self, from: Data(#"{"projects":[],"sessions":[],"providers":[],"alive":[]}"#.utf8))
         #expect(old.unmergedWork == nil)

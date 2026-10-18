@@ -188,6 +188,13 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
     /// Whether each chat's branch has work not merged anywhere yet, for the
     /// chats whose branch that Mac has read. Optional for older peers.
     public var unmergedWork: [String: Bool]?
+    /// Uploaded project icons by project id, as image bytes: a project's
+    /// `iconImagePath` names a file on this Mac, which a viewing Mac cannot
+    /// read. Optional for older peers.
+    public var projectIcons: [String: Data]?
+
+    /// The largest uploaded icon a snapshot carries; larger ones are left out.
+    public static let maxProjectIconBytes = 512 << 10
 
     public init(projects: [Project], sessions: [Session], providers: [String], alive: [String],
                 home: String? = nil, modelCatalogs: [String: ModelCatalog]? = nil,
@@ -195,7 +202,8 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
                 pullRequests: [String: RemotePullRequest]? = nil, automations: [Automation]? = nil,
                 pendingPermissions: [String: [RemotePendingPermission]]? = nil,
                 turnStartedAt: [String: Date]? = nil, pagedHistory: Bool? = nil, execInput: Bool? = nil,
-                internetAddress: InternetAddress? = nil, backgroundTasks: [String]? = nil, unmergedWork: [String: Bool]? = nil) {
+                internetAddress: InternetAddress? = nil, backgroundTasks: [String]? = nil, unmergedWork: [String: Bool]? = nil,
+                projectIcons: [String: Data]? = nil) {
         self.projects = projects; self.sessions = sessions; self.providers = providers; self.alive = alive
         self.home = home; self.modelCatalogs = modelCatalogs; self.defaultModelNames = defaultModelNames
         self.pullRequests = pullRequests
@@ -207,6 +215,7 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
         self.internetAddress = internetAddress
         self.backgroundTasks = backgroundTasks
         self.unmergedWork = unmergedWork
+        self.projectIcons = projectIcons
     }
 }
 

@@ -512,7 +512,7 @@ private struct RailProjectGroup: View {
     }
 }
 
-/// A chat in the rail: its agent and state, title and age on the first
+/// A chat in the rail: its project and state, title and age on the first
 /// line; where it lives and how its pull request stands on a quiet second.
 struct RailChatRow: View {
     @Environment(AppModel.self) private var model
@@ -535,8 +535,8 @@ struct RailChatRow: View {
         let line = SidebarChats.line(for: chat, showProject: showProject)
         Button { model.open(session.id) } label: {
             HStack(alignment: line.isEmpty && unreachable == nil ? .center : .top, spacing: 8) {
-                RailAgentMark(providerId: session.providerId, status: unreachable == nil ? session.status : .idle,
-                              working: unreachable == nil && backgroundTasks > 0)
+                RailChatMark(chat: chat, status: unreachable == nil ? session.status : .idle,
+                             working: unreachable == nil && backgroundTasks > 0)
                     .opacity(unreachable == nil ? 1 : 0.5)
                     .frame(width: Rail.iconColumn, height: 17)
                 VStack(alignment: .leading, spacing: 1) {
@@ -731,16 +731,17 @@ private struct RailStatus: View {
     }
 }
 
-/// A chat's agent, with a small badge for its state: turning while it
-/// works, filled when it needs you, red when it failed. At rest, just the logo.
-private struct RailAgentMark: View {
-    let providerId: String
+/// What leads a chat's row: its project's icon (its agent's logo when it
+/// has no project), with a small badge for its state: turning while it
+/// works, filled when it needs you, red when it failed. At rest, just the icon.
+private struct RailChatMark: View {
+    let chat: SidebarChats.Chat
     let status: SessionStatus
     /// Still at work in the background, though its turn is over.
     var working = false
 
     var body: some View {
-        ProviderLogo(providerId: providerId, size: 14)
+        content
             .overlay(alignment: .bottomTrailing) {
                 if let badge {
                     RailStatus(status: badge, size: 7)
@@ -749,7 +750,16 @@ private struct RailAgentMark: View {
                         .offset(x: 3.5, y: 3.5)
                 }
             }
-            .accessibilityLabel("\(ProviderRegistry.name(providerId)), \(status.label)")
+            .accessibilityLabel("\(chat.projectName ?? SidebarChats.standalone), \(ProviderRegistry.name(chat.session.providerId)), \(status.label)")
+    }
+
+    @ViewBuilder private var content: some View {
+        switch chat.icon {
+        case .agentLogo:
+            ProviderLogo(providerId: chat.session.providerId, size: 14)
+        case .project(let mark):
+            RailProjectMark(mark: mark)
+        }
     }
 
     private var badge: SessionStatus? {
@@ -757,6 +767,33 @@ private struct RailAgentMark: View {
         case .running, .provisioning, .waitingInput, .errored: status
         case .idle, .finished, .created: working ? .running : nil
         }
+    }
+}
+
+/// A project's icon at rail size, as Project Settings shows it: its uploaded
+/// image (from its file here, or from the bytes its Mac sent), else its
+/// symbol or initial on its colour.
+private struct RailProjectMark: View {
+    let mark: SidebarChats.ProjectMark
+
+    var body: some View {
+        if let image {
+            Image(nsImage: image)
+                .resizable()
+                .interpolation(.high)
+                .scaledToFill()
+                .frame(width: Rail.iconColumn, height: Rail.iconColumn)
+                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+        } else {
+            ProjectIconView(project: Project(name: mark.name, rootPath: "", iconSymbol: mark.symbol, iconColor: mark.color),
+                            size: Rail.iconColumn)
+        }
+    }
+
+    private var image: NSImage? {
+        if let data = mark.imageData { return NSImage(data: data) }
+        if let file = mark.imageFile { return ProjectIconStore.image(file) }
+        return nil
     }
 }
 
