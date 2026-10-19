@@ -103,6 +103,8 @@ struct AutomationDraft: Equatable {
     var name = ""
     var prompt = ""
     var projectId: String?
+    /// The paired Mac its runs start on; nil is this one.
+    var deviceId: String?
     var triggers: [TriggerDraft]
     var providerId: String
     var modelId: String?
@@ -132,6 +134,7 @@ struct AutomationDraft: Equatable {
         name = a.name
         prompt = a.prompt
         projectId = a.projectId
+        deviceId = a.deviceId
         triggers = a.triggers.map(TriggerDraft.init)
         providerId = a.providerId
         modelId = a.model
@@ -156,6 +159,7 @@ struct AutomationDraft: Equatable {
         a.name = displayName
         a.prompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         a.projectId = projectId
+        a.deviceId = deviceId
         a.triggers = triggers.map { $0.trigger(now: now) }
         a.providerId = providerId
         a.model = modelId
@@ -184,7 +188,7 @@ struct AutomationDraft: Equatable {
     /// how the page holds it, so switching a preset away and back is no change.
     func differs(from a: Automation) -> Bool {
         let saved = automation(base: a)
-        return saved.name != a.name || saved.prompt != a.prompt || saved.projectId != a.projectId
+        return saved.name != a.name || saved.prompt != a.prompt || saved.projectId != a.projectId || saved.deviceId != a.deviceId
             || saved.providerId != a.providerId || saved.model != a.model || saved.effort != a.effort
             || saved.permissionPolicy != a.permissionPolicy || saved.workspaceMode != a.workspaceMode
             || saved.pinnedSessionId != a.pinnedSessionId || saved.catchUp != a.catchUp
@@ -454,16 +458,10 @@ private struct ScopeSentence: View {
                     projectMenu
                 }
                 SentenceWord("on")
-                SentenceMenu(title: "This Mac") {
-                    Picker("Device", selection: .constant("local")) {
-                        Label("This Mac", systemImage: "laptopcomputer").tag("local")
-                    }
-                    .pickerStyle(.inline)
-                    .labelsHidden()
-                }
+                deviceMenu
                 if chat == nil {
                     SentenceWord("using")
-                    AgentChip(providerId: $draft.providerId, modelId: $draft.modelId, effort: $draft.effort)
+                    AgentChip(providerId: $draft.providerId, modelId: $draft.modelId, effort: $draft.effort, device: draft.deviceId)
                     SentenceWord("with")
                     policyMenu
                 }
@@ -493,6 +491,7 @@ private struct ScopeSentence: View {
                         draft.workspaceMode = .pinned
                         draft.pinnedSessionId = s.id
                         draft.projectId = s.projectId
+                        draft.deviceId = RemoteService.split(s.id)?.device
                     }
                 }
             }
@@ -535,6 +534,45 @@ private struct ScopeSentence: View {
         }
     }
 
+    /// Which Mac runs start on: this one, or a paired Mac. Choosing one
+    /// the continued chat isn't on starts a chat of its own there instead.
+    private var deviceMenu: some View {
+        SentenceMenu(title: deviceName) {
+            Picker("Device", selection: Binding(get: { draft.deviceId }, set: { chooseDevice($0) })) {
+                Label("This Mac", systemImage: "laptopcomputer").tag(String?.none)
+                ForEach(model.remote.paired) { device in
+                    Label(device.peer.name, systemImage: "desktopcomputer").tag(Optional(device.id))
+                }
+                if let id = draft.deviceId, !model.remote.paired.contains(where: { $0.id == id }) {
+                    Label("A Mac that isn't paired anymore", systemImage: "desktopcomputer").tag(Optional(id))
+                }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+            Divider()
+            Text("Each run starts on this Mac; you work on it from here.")
+        }
+    }
+
+    private func chooseDevice(_ id: String?) {
+        guard id != draft.deviceId else { return }
+        draft.deviceId = id
+        draft.modelId = nil
+        draft.effort = nil
+        if let chat, RemoteService.split(chat.id)?.device != id { draft.pinnedSessionId = nil }
+    }
+
+    private var deviceName: String {
+        guard let id = draft.deviceId else { return "This Mac" }
+        return model.remote.paired.first { $0.id == id }?.peer.name ?? "A paired Mac"
+    }
+
+    /// The chosen Mac's last word on itself, when it's connected now.
+    private var deviceSnapshot: RemoteSnapshot? {
+        guard let id = draft.deviceId, let link = model.remote.links[id], link.state == .online else { return nil }
+        return link.snapshot
+    }
+
     private var policyMenu: some View {
         SentenceMenu(title: draft.policy.phrase) {
             ForEach(PermissionPolicy.allCases, id: \.self) { p in
@@ -548,11 +586,21 @@ private struct ScopeSentence: View {
 
     @ViewBuilder
     private var notes: some View {
-        if chat == nil, model.providerStatus[draft.providerId]?.available == false {
+        if chat == nil, draft.deviceId == nil, model.providerStatus[draft.providerId]?.available == false {
             Label("\(ProviderRegistry.name(draft.providerId)) wasn't found on this Mac. Set its path in Settings › Agents.",
                   systemImage: "exclamationmark.triangle")
                 .font(.btCallout)
                 .foregroundStyle(Color.btWarning)
+        }
+        if draft.deviceId != nil {
+            if deviceSnapshot == nil {
+                note("\(deviceName) isn't connected now. A run that comes due while it isn't is recorded as failed, with that reason.",
+                     warning: true)
+            } else if let snapshot = deviceSnapshot, chat == nil, let project = model.projects.first(where: { $0.id == draft.projectId }),
+                      !AutomationDeviceRun.hasProject(project, in: snapshot) {
+                note("\(deviceName) doesn't have a project called “\(project.name)”, so runs there fail until it does.",
+                     warning: true)
+            }
         }
         if draft.isPinned, draft.pinnedSessionId != nil, chat == nil {
             note("Its chat was deleted, so the next run starts a new one of its own.", warning: true)
@@ -588,6 +636,9 @@ private struct AgentChip: View {
     @Binding var providerId: String
     @Binding var modelId: String?
     @Binding var effort: String?
+    /// The paired Mac runs start on; nil is this one. Its agents and
+    /// models are the ones on offer.
+    var device: String? = nil
     @State private var typing = false
     @State private var typed = ""
     @FocusState private var fieldFocused: Bool
@@ -596,16 +647,16 @@ private struct AgentChip: View {
         Group {
             if typing { field } else { menu }
         }
-        .onChange(of: modelId) { _, new in effort = model.supportedEffort(effort, providerId: providerId, model: new) }
+        .onChange(of: modelId) { _, new in effort = model.supportedEffort(effort, providerId: providerId, model: new, on: device) }
     }
 
     private var menu: some View {
-        let catalog = model.models(for: providerId)
-        let efforts = model.efforts(providerId: providerId, model: modelId)
+        let catalog = model.models(for: providerId, on: device)
+        let efforts = model.efforts(providerId: providerId, model: modelId, on: device)
         return SentenceMenu(title: title(catalog, efforts), logo: providerId) {
             Section("Agent") {
                 Picker("Agent", selection: Binding(get: { providerId }, set: { select($0) })) {
-                    ForEach(model.pickableAgents(keeping: providerId), id: \.id) { p in
+                    ForEach(model.pickableAgents(on: device, keeping: providerId), id: \.id) { p in
                         Label {
                             Text(p.name)
                         } icon: {
@@ -618,7 +669,7 @@ private struct AgentChip: View {
                 .labelsHidden()
             }
             Section("Model") {
-                row(model.defaultModelName(for: providerId).map { "Default (\($0))" } ?? "Default", detail: nil, id: nil)
+                row(model.defaultModelName(for: providerId, on: device).map { "Default (\($0))" } ?? "Default", detail: nil, id: nil)
                 ForEach(catalog.models) { row($0) }
                 if let custom = modelId, catalog.option(custom) == nil { row(custom, detail: nil, id: custom) }
             }
@@ -661,7 +712,7 @@ private struct AgentChip: View {
 
     private func title(_ catalog: ModelCatalog, _ efforts: (levels: [String], defaultLevel: String?)) -> String {
         var parts = [ProviderRegistry.name(providerId)]
-        parts.append(modelId.map { catalog.option($0)?.label ?? $0 } ?? model.defaultModelName(for: providerId) ?? "Default model")
+        parts.append(modelId.map { catalog.option($0)?.label ?? $0 } ?? model.defaultModelName(for: providerId, on: device) ?? "Default model")
         if !efforts.levels.isEmpty, let level = effort ?? efforts.defaultLevel { parts.append(ModelOption.effortTitle(level)) }
         return parts.joined(separator: " · ")
     }
