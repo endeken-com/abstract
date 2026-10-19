@@ -578,6 +578,12 @@ public final class Store: Sendable {
         migrator.registerMigration("v11-default-device") { db in
             try db.execute(sql: "ALTER TABLE projects ADD COLUMN default_device_id TEXT")
         }
+        // What each turn settled, in one line, and whether a project's
+        // agents may read that history (ABS-61); existing projects may.
+        migrator.registerMigration("v12-code-history") { db in
+            try db.execute(sql: "ALTER TABLE turn_records ADD COLUMN decision TEXT")
+            try db.execute(sql: "ALTER TABLE projects ADD COLUMN agent_history INTEGER")
+        }
         return migrator
     }
 }
@@ -632,7 +638,8 @@ private struct ProjectRow: FetchableRecord, PersistableRecord {
             setupScript: try row.decode(forColumn: "setup_script"),
             teardownScript: try row.decode(forColumn: "teardown_script"),
             runScript: try row.decode(forColumn: "run_script"),
-            defaultDeviceId: try row.decode(forColumn: "default_device_id"))
+            defaultDeviceId: try row.decode(forColumn: "default_device_id"),
+            agentHistory: try row.decode(forColumn: "agent_history"))
     }
 
     func encode(to container: inout PersistenceContainer) throws {
@@ -657,6 +664,7 @@ private struct ProjectRow: FetchableRecord, PersistableRecord {
         container["teardown_script"] = value.teardownScript
         container["run_script"] = value.runScript
         container["default_device_id"] = value.defaultDeviceId
+        container["agent_history"] = value.agentHistory
     }
 }
 
