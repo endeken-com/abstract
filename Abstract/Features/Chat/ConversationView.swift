@@ -42,6 +42,11 @@ struct ConversationView: View {
                 if !working, feed.turns > 0, model.setups[session.id] == nil {
                     ChatChangesSummary(session: session, turnKey: feed.turns)
                 }
+                if let merged = AskAuthor.mergedLine(model.pullRequests[session.id]) {
+                    Text(merged)
+                        .font(.btChatCaption)
+                        .foregroundStyle(Color.btTextTertiary)
+                }
             }
             .padding(.top, 20)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -75,6 +80,7 @@ struct ConversationView: View {
             }
         }
         .animation(.snappy(duration: 0.2), value: atBottom)
+        .task(id: feed.turns) { model.loadTurnCommits(session.id) }
     }
 }
 
@@ -536,15 +542,31 @@ private struct TurnSummary: View {
     let sessionId: String
 
     var body: some View {
-        HStack(spacing: Space.md) {
-            Hairline()
-            Text([Self.label(info), total].compactMap { $0 }.joined(separator: " · "))
-                .font(.btChatCaption)
-                .foregroundStyle(Color.btTextTertiary)
-                .monospacedDigit()
-                .lineLimit(1)
-                .fixedSize()
-            Hairline()
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: Space.md) {
+                Hairline()
+                Text([Self.label(info), total].compactMap { $0 }.joined(separator: " · "))
+                    .font(.btChatCaption)
+                    .foregroundStyle(Color.btTextTertiary)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .fixedSize()
+                Hairline()
+            }
+            if let shas = model.turnCommits[sessionId]?[id], !shas.isEmpty {
+                HStack(spacing: Space.sm) {
+                    Text(shas.count == 1 ? "Commit" : "Commits")
+                        .font(.btChatCaption)
+                        .foregroundStyle(Color.btTextTertiary)
+                    ForEach(shas, id: \.self) { sha in
+                        Button(AskAuthor.short(sha)) { model.openCommitInReview(sha, in: sessionId) }
+                            .buttonStyle(.plain)
+                            .font(.btChatMonoSmall)
+                            .foregroundStyle(Color.btTextSecondary)
+                            .help("Show \(AskAuthor.short(sha)) in Changes")
+                    }
+                }
+            }
         }
         .padding(.vertical, Space.xs)
         .help(details)

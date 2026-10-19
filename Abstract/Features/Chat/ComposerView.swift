@@ -55,6 +55,13 @@ struct ComposerView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if let notice = model.composerNotices[session.id] {
+                Text(notice)
+                    .font(.btChatCaption)
+                    .foregroundStyle(Color.btTextSecondary)
+                    .frame(maxWidth: Space.readingWidth, alignment: .leading)
+                    .padding(.bottom, Space.sm)
+            }
             if let unreachable = model.remote.unreachableMessage(session.id) {
                 Text(unreachable)
                     .font(.btChatCaption)
@@ -190,6 +197,13 @@ struct ComposerView: View {
                 .allowsHitTesting(false)
         }
         .onAppear { focused = true }
+        // Lines quoted from Files or Review wait here for your question.
+        .onChange(of: model.pendingDrafts[session.id], initial: true) { _, pending in
+            guard let pending else { return }
+            draft = draft.isEmpty ? pending : pending + draft
+            model.pendingDrafts[session.id] = nil
+            focused = true
+        }
         // Closing ⌘F's bar hands the keyboard back here.
         .onChange(of: model.feed(session.id).find.closings) { focused = true }
     }
@@ -227,6 +241,7 @@ struct ComposerView: View {
     }
 
     private func sent() {
+        model.composerNotices[session.id] = nil
         draft = ""
         previewingMarkdown = false
         attachments = []
