@@ -250,6 +250,14 @@ final class AppModel {
     var notifyAttention: Bool { didSet { save("notifyAttention", notifyAttention) } }
     var notifyFinished: Bool { didSet { save("notifyFinished", notifyFinished) } }
     var notifyAutomationFailed: Bool { didSet { save("notifyAutomationFailed", notifyAutomationFailed) } }
+    var notifyStalled: Bool { didSet { save("notifyStalled", notifyStalled) } }
+    /// How long a working chat may go without output before it reads as
+    /// quiet, then stalled; see AppModel+Stalls.
+    var stallThresholds: StallThresholds { didSet { save("stallThresholds", stallThresholds) } }
+    /// Chats gone quiet or stalled right now, by chat id. Working chats
+    /// with recent output aren't in here. Written only in AppModel+Stalls.
+    var stallStates: [String: StallState] = [:]
+    @ObservationIgnored var stallWatches: [String: StallWatch] = [:]
     var defaultTimezone: String { didSet { save("defaultTimezone", defaultTimezone) } }
     /// How agents write their answers. Running chats pick it up from their
     /// next message, by restarting into the same conversation.
@@ -305,6 +313,8 @@ final class AppModel {
         notifyAttention = store.setting("notifyAttention", as: Bool.self) ?? true
         notifyFinished = store.setting("notifyFinished", as: Bool.self) ?? true
         notifyAutomationFailed = store.setting("notifyAutomationFailed", as: Bool.self) ?? true
+        notifyStalled = store.setting("notifyStalled", as: Bool.self) ?? true
+        stallThresholds = store.setting("stallThresholds", as: StallThresholds.self) ?? .default
         defaultTimezone = store.setting("defaultTimezone", as: String.self) ?? TimeZone.current.identifier
         outputStyle = store.setting("outputStyle", as: OutputStyle.self) ?? .default
         claudeProfile = store.setting("claudeProfile", as: String.self)
@@ -333,6 +343,7 @@ final class AppModel {
         Task { await refreshModels() }
         scheduler = AutomationScheduler(model: self)
         scheduler?.start()
+        Task { await watchForStalls() }
         Task { await watchPullRequests() }
         Task { await readEveryBranch() }
         if !isDemo { Task { await accounts.seedFromLogs(engine.logsURL) } }

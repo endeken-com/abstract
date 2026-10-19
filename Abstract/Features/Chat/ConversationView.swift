@@ -650,8 +650,12 @@ private struct WorkingIndicator: View {
     @Environment(\.transcriptMode) private var transcript
 
     var body: some View {
+        // A chat gone quiet says so here, whatever its last event was: a
+        // stuck tool call is exactly what goes quiet.
+        if let stall = model.stallState(session.id) {
+            stallLine(stall)
         // Streaming text, running tool rows and shown thinking already show the agent at work.
-        if case .text(_, _, _, true)? = last { EmptyView() } else if case .toolUse? = last { EmptyView() }
+        } else if case .text(_, _, _, true)? = last { EmptyView() } else if case .toolUse? = last { EmptyView() }
         else if case .thinking? = last, transcript.showsThinking { EmptyView() } else {
             SwiftUI.TimelineView(.periodic(from: .now, by: 1)) { context in
                 HStack(spacing: Space.sm) {
@@ -665,6 +669,27 @@ private struct WorkingIndicator: View {
                 }
             }
         }
+    }
+
+    /// No output for a while, in amber; stalled adds what you can do about it.
+    private func stallLine(_ stall: StallState) -> some View {
+        SwiftUI.TimelineView(.periodic(from: .now, by: 1)) { context in
+            HStack(spacing: Space.sm) {
+                DotLoader()
+                Text(stallText(stall, at: context.date))
+                    .font(.btChatCallout.weight(.regular)).foregroundStyle(Color.btWarning)
+                if stall.isStalled {
+                    Button("Keep waiting") { model.keepWaiting(session.id) }
+                    Button("Stop") { model.stop(session.id) }
+                    Button("Stop and retry") { model.stopAndRetry(session.id) }
+                }
+            }
+        }
+    }
+
+    private func stallText(_ stall: StallState, at now: Date) -> String {
+        let minutes = stall.quietMinutes(at: now) ?? 0
+        return stall.isStalled ? "Stalled — no output for \(minutes) min" : "No output for \(minutes) min"
     }
 
     /// The tool row already says what's running, so this only says the turn

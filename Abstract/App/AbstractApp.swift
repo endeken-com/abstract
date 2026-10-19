@@ -72,6 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Notifier.shared.onOpenSession { [model] id in model.open(id) }
+        Notifier.shared.onStallAction { [model] id, action in model.stallAction(id, action) }
         Task {
             await model.bootstrap()
             if let demo = DemoBootstrap.current { await demo.run(model) }
