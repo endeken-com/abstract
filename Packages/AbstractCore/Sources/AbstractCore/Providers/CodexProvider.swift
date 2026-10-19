@@ -24,6 +24,7 @@ public struct CodexProvider: ProviderDefinition {
         let mode = switch policy {
         case .ask, .autoEdits: "workspace-write"
         case .bypass: "danger-full-access"
+        case .plan, .readOnly: "read-only"
         }
         return resuming ? ["-c", "sandbox_mode=\"\(mode)\""] : ["-s", mode]
     }
@@ -122,7 +123,13 @@ public struct CodexProvider: ProviderDefinition {
     /// The output style and, when the chat gets it, the code-history
     /// instruction, joined as developer instructions.
     static func developerInstructions(_ ctx: LaunchContext) -> [String] {
-        let parts = [ctx.outputStyle.instructions, ctx.historyTool == nil ? nil : CodeHistory.instruction]
+        // Plan mode is read-only above; this is what makes the turn a plan.
+        let mode = switch ctx.permissionPolicy {
+        case .plan: Plan.instruction
+        case .readOnly: Plan.readOnlyInstruction
+        default: nil as String?
+        }
+        let parts = [ctx.outputStyle.instructions, mode, ctx.historyTool == nil ? nil : CodeHistory.instruction]
             .compactMap { $0 }
         return parts.isEmpty ? [] : ["-c", "developer_instructions=\(tomlString(parts.joined(separator: "\n\n")))"]
     }

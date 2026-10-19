@@ -20,7 +20,8 @@ struct ConversationView: View {
         // themselves are observed by the list, a row at a time.
         let feed = model.feed(session.id)
         let permissions = model.pendingPermissions(session.id)
-        let approvals = ToolSegment.approvals(for: feed.calls, pending: permissions)
+        // A plan shows as its card below, not as a tool approval.
+        let approvals = ToolSegment.approvals(for: feed.calls, pending: permissions.filter { !Plan.isExitPlanMode($0.toolName) })
         let matched = Set(approvals.values.map(\.requestId))
         let working = (session.status == .running || session.status == .provisioning)
             && model.remote.unreachableMessage(session.id) == nil
@@ -29,8 +30,11 @@ struct ConversationView: View {
                                         prose: ProseStyle(font: chatFont, size: chatSize), transcript: transcript)
         TranscriptList(feed: feed, context: context, jump: jump, atBottom: $atBottom) {
             VStack(alignment: .leading, spacing: 20) {
+                if let plan = model.plans[session.id], plan.isVisible {
+                    PlanCard(sessionId: session.id, plan: plan)
+                }
                 // Approvals Claude asked for without sending the call first.
-                ForEach(permissions.filter { !matched.contains($0.requestId) }) { p in
+                ForEach(permissions.filter { !matched.contains($0.requestId) && !Plan.isExitPlanMode($0.toolName) }) { p in
                     PermissionCard(sessionId: session.id, request: p)
                         .transition(.opacity)
                 }

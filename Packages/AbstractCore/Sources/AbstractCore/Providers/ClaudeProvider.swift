@@ -44,6 +44,9 @@ public struct ClaudeProvider: ProviderDefinition {
         case .ask: []
         case .autoEdits: ["--permission-mode", "acceptEdits"]
         case .bypass: ["--permission-mode", "bypassPermissions"]
+        // Its plan mode is the read-only one: it explores, then asks
+        // to start through `ExitPlanMode`, whatever the message was.
+        case .plan, .readOnly: ["--permission-mode", "plan"]
         }
         return mode + ["--permission-prompt-tool", "stdio", "--allow-dangerously-skip-permissions"]
     }
@@ -55,6 +58,7 @@ public struct ClaudeProvider: ProviderDefinition {
         case .ask: "default"
         case .autoEdits: "acceptEdits"
         case .bypass: "bypassPermissions"
+        case .plan, .readOnly: "plan"
         }
         return #"{"type":"control_request","request_id":"# + ClaudeWire.quoted(requestId)
             + #","request":{"subtype":"set_permission_mode","mode":"# + ClaudeWire.quoted(mode) + "}}\n"
