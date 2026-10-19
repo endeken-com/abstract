@@ -176,6 +176,18 @@ final class AppModel {
         didSet { UserDefaults.standard.set(showArchived, forKey: "sidebar.showArchived") }
     }
     var newChatProjectId: String?? = nil
+    /// What the next New Chat's prompt starts with, from asking about some lines.
+    var newChatPrompt: String?
+    /// Reply-box text waiting for a chat, from asking the chat that wrote some lines.
+    var pendingDrafts: [String: String] = [:]
+    /// A line above a chat's reply box, until its next message is sent.
+    var composerNotices: [String: String] = [:]
+    /// Each turn line's commits, by chat then turn-block id; see AppModel+AskAuthor.
+    var turnCommits: [String: [Int: [String]]] = [:]
+    /// Who to ask about lines already looked up, by where they are.
+    var askTargets: [AskAuthorKey: AskAuthor.Target] = [:]
+    @ObservationIgnored var turnHistories: [String: TurnHistory] = [:]
+    @ObservationIgnored var askInFlight: Set<AskAuthorKey> = []
     /// The next New Chat starts with no project.
     var newChatStandalone = false
     /// A worktree the next New Chat should start in, from "New Chat Here".

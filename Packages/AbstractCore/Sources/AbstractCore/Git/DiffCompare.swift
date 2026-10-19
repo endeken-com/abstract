@@ -24,6 +24,10 @@ public struct CommitSummary: Sendable, Hashable, Identifiable {
     public var repo: String = ""
     /// Two submodules cloned from one upstream can hold the same commit.
     public var id: String { repo + ":" + sha }
+
+    public init(sha: String, shortSha: String, author: String, date: Date?, subject: String, repo: String = "") {
+        self.sha = sha; self.shortSha = shortSha; self.author = author; self.date = date; self.subject = subject; self.repo = repo
+    }
 }
 
 extension Diff {

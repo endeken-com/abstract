@@ -9,6 +9,8 @@ struct TaskLauncher: View {
     var initialProjectId: String?
     /// Start with no project: a standalone chat.
     var initialStandalone = false
+    /// What the prompt starts with, from asking about some lines.
+    var initialPrompt: String?
     var autofocus = true
     /// Inside a sheet the sheet is the container; draw no field frame of our own.
     var embedded = false
@@ -153,6 +155,7 @@ struct TaskLauncher: View {
         .modifier(OptionalFieldChrome(active: !embedded, focused: focused))
         .attachmentInput($attachments, focused: focused)
         .onAppear {
+            if prompt.isEmpty, let initialPrompt { prompt = initialPrompt }
             let firstRemoteProject = onlineDevices.compactMap { device in
                 model.remote.links[device.id]?.snapshot?.projects.first { $0.archivedAt == nil }?.id
             }.first
@@ -554,11 +557,14 @@ struct NewChatSheet: View {
                     .keyboardShortcut(.cancelAction)
                     .help("Close")
             }
-            TaskLauncher(initialProjectId: initialProjectId, initialStandalone: standalone, embedded: true, onStarted: { dismiss() })
+            TaskLauncher(initialProjectId: initialProjectId, initialStandalone: standalone,
+                         initialPrompt: model.newChatPrompt, embedded: true,
+                         onStarted: { model.newChatPrompt = nil; dismiss() })
         }
         .padding(Space.xl)
         .frame(width: 760)
         .background(Color.btCanvas)
+        .onDisappear { model.newChatPrompt = nil }
     }
 }
 
