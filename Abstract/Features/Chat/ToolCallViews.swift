@@ -148,6 +148,8 @@ struct ToolCallView: View {
     @State private var open: Bool?
     @State private var hovering = false
     @State private var answered = false
+    /// "Always allow/deny in this project…" being written, and which way.
+    @State private var ruleDecision: PermissionDecision?
 
     private var kind: ToolKind { ToolKind(call.name) }
     private var outcome: ToolOutcome { ToolOutcome(call) }
@@ -188,6 +190,13 @@ struct ToolCallView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
+            if !asking, let note = model.ruleNote(for: call, in: sessionId) {
+                Text(note)
+                    .font(.btChatCaption)
+                    .foregroundStyle(Color.btTextTertiary)
+                    .textSelection(.enabled)
+                    .padding(.bottom, Space.xs)
+            }
             if ToolThumbnail.shows(call) { ToolThumbnail(sessionId: sessionId, call: call) }
             if isOpen {
                 details
@@ -205,6 +214,15 @@ struct ToolCallView: View {
             }
         }
         .contextMenu { menu }
+        .sheet(isPresented: Binding(get: { ruleDecision != nil }, set: { if !$0 { ruleDecision = nil } })) {
+            if let decision = ruleDecision, let projectId = model.session(sessionId)?.projectId {
+                PermissionRuleSheet(projectId: projectId, seed: PermissionRuleSeed(call: call, decision: decision,
+                                                                                   root: model.session(sessionId)?.worktreePath)) {
+                    ruleDecision = nil
+                    answer(decision == .allow)
+                }
+            }
+        }
     }
 
     private var header: some View {
@@ -348,6 +366,10 @@ struct ToolCallView: View {
             Button("Always Continue for \(ToolPresentation.displayName(call.name)) in This Chat") {
                 model.autoContinue(call.name, in: sessionId)
                 answer(true)
+            }
+            if model.session(sessionId)?.projectId != nil {
+                Button("Always Allow in This Project…") { ruleDecision = .allow }
+                Button("Always Deny in This Project…") { ruleDecision = .deny }
             }
             Divider()
         }

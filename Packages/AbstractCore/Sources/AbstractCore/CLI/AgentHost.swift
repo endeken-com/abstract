@@ -303,8 +303,16 @@ final class AgentHost: @unchecked Sendable {
 
     private func apply(_ event: AgentEvent, asked: Bool) {
         switch event {
-        case let .permissionRequest(requestId, _, _):
-            if let line = provider.buildPermissionResponse(requestId: requestId, allow: false, input: nil) {
+        case let .permissionRequest(requestId, toolName, input):
+            // A remembered answer for the chat's project still answers here;
+            // anything else is refused, as nobody is there to ask.
+            var allow = false
+            if session.permissionPolicy != .bypass, let projectId = session.projectId,
+               let rules = try? store.permissionRules(projectId: projectId),
+               let rule = PermissionRule.answer(rules, toolName: toolName, input: input, root: session.worktreePath) {
+                allow = rule.decision == .allow
+            }
+            if let line = provider.buildPermissionResponse(requestId: requestId, allow: allow, input: allow ? input : nil) {
                 try? engine.write(sessionId: sessionId, line)
             }
         case .status(.waitingInput, _) where asked:

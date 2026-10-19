@@ -34,6 +34,14 @@ struct PendingPermission: Identifiable, Hashable {
     let input: JSONValue
 }
 
+/// A permission request a project rule answered, so its tool row can name
+/// the rule. See AppModel+Permissions.
+struct RuleAnswer: Hashable {
+    let toolName: String
+    let input: JSONValue
+    let note: String
+}
+
 struct ProviderStatus: Hashable {
     var available: Bool
     var path: String?
@@ -124,6 +132,14 @@ final class AppModel {
     private(set) var stopRequests: [String: UUID] = [:]
     /// Tool names to approve without asking, per chat.
     var autoContinueTools: [String: Set<String>] = [:]
+    /// Remembered permission answers, by project id; see AppModel+Permissions.
+    var permissionRules: [String: [PermissionRule]] = [:]
+    /// Requests a rule answered, by chat: the note for a tool row, by the
+    /// call's id (or the request's, when the call has no row of its own).
+    var ruleNotes: [String: [String: String]] = [:]
+    /// The same answers by tool and input, for a call that reaches its row
+    /// after the answer (the feed batches rows behind the request).
+    var ruleAnswers: [String: [RuleAnswer]] = [:]
     /// A file the Changes pane should select next time it loads, per chat.
     var pendingChangeSelection: [String: String] = [:]
     /// The agents' accounts and their limits, and token use from their logs.
@@ -341,6 +357,7 @@ final class AppModel {
         projects = (try? store.projects()) ?? []
         sessions = (try? store.sessions()) ?? []
         automations = (try? store.automations()) ?? []
+        permissionRules = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, (try? store.permissionRules(projectId: $0.id)) ?? []) })
         alive = engine.aliveSessionIds
     }
 
@@ -1478,6 +1495,12 @@ final class AppModel {
             notify(sessionId, .waitingInput, detail: AgentQuestion.parse(input).first?.question
                 ?? "\(ProviderRegistry.name(session(sessionId)?.providerId ?? "")) has a question")
         case let .permissionRequest(requestId, toolName, input):
+            if let rule = permissionRuleAnswer(sessionId, toolName: toolName, input: input) {
+                recordRuleAnswer(rule, requestId: requestId, toolName: toolName, input: input, in: sessionId)
+                permissions[sessionId, default: []].append(PendingPermission(requestId: requestId, toolName: toolName, input: input))
+                answerPermission(sessionId, requestId: requestId, allow: rule.decision == .allow)
+                return
+            }
             if shouldAutoContinue(toolName, in: sessionId) {
                 permissions[sessionId, default: []].append(PendingPermission(requestId: requestId, toolName: toolName, input: input))
                 answerPermission(sessionId, requestId: requestId, allow: true)
