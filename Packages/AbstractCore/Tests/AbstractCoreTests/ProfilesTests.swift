@@ -74,6 +74,19 @@ import Testing
         #expect(config.contains(CodeHistory.serverName))
     }
 
+    @Test func openCodesPlanAgentKeepsTheAgentSlotOverAProfile() {
+        // Plan and Ask run on OpenCode's built-in plan agent, which
+        // cannot edit; a profile's instructions ride on the prompt then.
+        var session = chat(from: reviewer)
+        session.providerId = "opencode"
+        session.permissionPolicy = .plan
+        let spec = AgentLaunch.spec(for: session, provider: OpenCodeProvider(), prompt: "Plan this",
+                                    resumeId: nil, settings: settings(), home: "/tmp")
+        #expect(spec.args.contains("plan") && !spec.args.contains(OpenCodeProvider.profileAgent))
+        #expect(spec.args.last?.contains("most serious first") == true)
+        #expect(spec.args.last?.hasSuffix("Plan this") == true)
+    }
+
     @Test func aChatFromNoProfileLaunchesAsBefore() {
         let session = Session(projectId: nil, name: "Chat", providerId: "claude", worktreePath: "/w")
         let spec = AgentLaunch.spec(for: session, provider: ClaudeProvider(), prompt: "hi",

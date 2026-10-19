@@ -207,6 +207,16 @@ private struct AppearanceSettingsPane: View {
 private struct NotificationSettingsPane: View {
     @Environment(AppModel.self) private var model
 
+    /// The thresholds re-clamp on the way in, so Stalled always comes after quiet.
+    private var quietMinutes: Binding<Int> {
+        Binding(get: { model.stallThresholds.quietMinutes },
+                set: { model.stallThresholds = StallThresholds(quietMinutes: $0, stalledMinutes: model.stallThresholds.stalledMinutes) })
+    }
+    private var stalledMinutes: Binding<Int> {
+        Binding(get: { model.stallThresholds.stalledMinutes },
+                set: { model.stallThresholds = StallThresholds(quietMinutes: model.stallThresholds.quietMinutes, stalledMinutes: $0) })
+    }
+
     var body: some View {
         @Bindable var model = model
         Form {
@@ -223,8 +233,26 @@ private struct NotificationSettingsPane: View {
                     Text("When an automation fails")
                     Text("A scheduled run couldn't create its workspace or start its agent.")
                 }
+                Toggle(isOn: $model.notifyStalled) {
+                    Text("When a chat goes quiet")
+                    Text("Its agent is still working but hasn't produced any output for a long time.")
+                }
             } header: {
                 Text("Notify me")
+            }
+            Section {
+                Stepper(value: quietMinutes, in: 1...120) {
+                    Text("Show “No output” after")
+                    Text("\(model.stallThresholds.quietMinutes) minutes without output. The chat's working line says so; nothing else happens.")
+                }
+                Stepper(value: stalledMinutes, in: 2...240) {
+                    Text("Mark the chat Stalled after")
+                    Text("\(model.stallThresholds.stalledMinutes) minutes without output. You're told once, with Keep waiting, Stop and Stop and retry.")
+                }
+            } header: {
+                Text("Chats that go quiet")
+            } footer: {
+                SettingsCaption("Time spent waiting for your answer to a permission or a question, or for a task running in the background, doesn't count. Abstract never restarts a quiet chat on its own.")
             }
         }
         .settingsPane()

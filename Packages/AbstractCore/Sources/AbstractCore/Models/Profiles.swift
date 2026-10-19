@@ -71,8 +71,9 @@ public struct AgentProfile: Sendable, Hashable, Identifiable, Codable {
     }
 
     /// The profiles every install starts with. Plain profiles once saved:
-    /// they can be edited or deleted like any other. Planner plans first
-    /// and asks before acting; a plan mode of its own arrives with ABS-104.
+    /// they can be edited or deleted like any other. Planner's
+    /// instructions ask for a plan first; Plan mode itself is picked
+    /// per message in the composer (ABS-104).
     public static let starters: [AgentProfile] = [
         AgentProfile(
             name: "Implementer", iconSymbol: "hammer", providerId: "claude",

@@ -94,7 +94,7 @@ private struct ProfileSettingsSection: View {
             }
             LabeledContent {
                 Picker("Permissions", selection: binding(\.permissionPolicy, default: .ask)) {
-                    ForEach(PermissionPolicy.allCases, id: \.self) { Text($0.title).tag($0) }
+                    ForEach(PermissionPolicy.autonomyCases, id: \.self) { Text($0.title).tag($0) }
                 }
                 .labelsHidden()
                 .frame(maxWidth: 360)

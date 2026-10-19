@@ -1,16 +1,22 @@
 import Foundation
 
-/// How much an agent may do without asking.
+/// How much an agent may do without asking. The last two are the
+/// composer's read-only modes (ABS-104): Plan writes a plan for your
+/// approval before anything changes, Ask only looks and answers.
 public enum PermissionPolicy: String, Sendable, Codable, CaseIterable {
     case ask
     case autoEdits = "auto-edits"
     case bypass
+    case plan
+    case readOnly = "read-only"
 
     public var title: String {
         switch self {
         case .ask: "Ask before acting"
         case .autoEdits: "Accept edits"
         case .bypass: "Full autonomy"
+        case .plan: "Plan"
+        case .readOnly: "Ask (read-only)"
         }
     }
 
@@ -19,8 +25,17 @@ public enum PermissionPolicy: String, Sendable, Codable, CaseIterable {
         case .ask: "You approve each tool call in the chat."
         case .autoEdits: "File edits go through; commands still ask."
         case .bypass: "Nothing asks. Only for trusted tasks."
+        case .plan: "The agent explores and writes a plan. Nothing changes until you approve it."
+        case .readOnly: "The agent can look and answer, but can't change anything."
         }
     }
+
+    /// It may look, but it changes nothing.
+    public var isReadOnly: Bool { self == .plan || self == .readOnly }
+
+    /// The levels of autonomy a chat, project or automation runs at.
+    /// Plan and Ask are picked per message in the composer instead.
+    public static let autonomyCases: [PermissionPolicy] = [.ask, .autoEdits, .bypass]
 }
 
 /// The code-history tool handed to one chat's agent (ABS-61): the

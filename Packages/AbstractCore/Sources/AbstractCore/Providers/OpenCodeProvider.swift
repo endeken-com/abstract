@@ -27,18 +27,25 @@ public struct OpenCodeProvider: ProviderDefinition {
         // configured permission rules, rejecting requests that need a prompt.
         // Only Full autonomy opts into automatically approving those requests.
         let auto = ctx.permissionPolicy == .bypass ? ["--auto"] : []
+        // Its built-in plan agent can't edit: Plan asks it for a plan,
+        // Ask (read-only) for an answer. That keeps the one `--agent`
+        // slot in those modes, so a profile's instructions then ride on
+        // the prompt below instead of its agent's prompt (ABS-101).
+        let agent = ctx.permissionPolicy.isReadOnly ? ["--agent", "plan"]
+            : (ctx.instructions == nil ? [] : ["--agent", Self.profileAgent])
         // Without an instruction file the history instruction rides on
         // the prompt, like the output style; with one it goes in the
         // config's `instructions`, after the user's own.
         let historyInPrompt = ctx.historyTool != nil && ctx.historyTool?.instructionFile == nil
-        let prompt = (ctx.outputStyle.instructions.map { $0 + "\n\n" } ?? "")
+        let prompt = (ctx.permissionPolicy.isReadOnly ? (ctx.instructions.map { $0 + "\n\n" } ?? "") : "")
+            + (ctx.outputStyle.instructions.map { $0 + "\n\n" } ?? "")
+            + (ctx.permissionPolicy == .readOnly ? Plan.readOnlyInstruction + "\n\n" : "")
             + (historyInPrompt ? CodeHistory.instruction + "\n\n" : "") + ctx.prompt
         return LaunchSpec(
             command: override.flatMap { $0.isEmpty ? nil : $0 } ?? binary,
             // OpenCode finds its project from the inherited PWD, not the
             // process's working directory, so the worktree is named outright.
-            args: ["run", "--format", "json", "--thinking", "--dir", ctx.cwd] + auto
-                + (ctx.instructions == nil ? [] : ["--agent", Self.profileAgent])
+            args: ["run", "--format", "json", "--thinking", "--dir", ctx.cwd] + auto + agent
                 + (resumeId.map { ["--session", $0] } ?? [])
                 + (ctx.model.map { ["--model", $0] } ?? [])
                 + (ctx.effort.map { ["--variant", $0] } ?? [])
@@ -91,8 +98,12 @@ public struct OpenCodeProvider: ProviderDefinition {
     /// `run` can't ask Abstract, so a request OpenCode's own rules would ask
     /// about is declined, unless Full autonomy approves it.
     public func permissionDetail(_ policy: PermissionPolicy) -> String {
-        policy == .bypass ? "OpenCode approves anything its own rules don't deny. Only for trusted tasks."
-            : "OpenCode's own permission rules apply; anything they would ask about is declined."
+        switch policy {
+        case .bypass: "OpenCode approves anything its own rules don't deny. Only for trusted tasks."
+        case .plan: "OpenCode's plan agent explores and writes a plan. Nothing changes until you approve it."
+        case .readOnly: "OpenCode's plan agent answers without changing anything."
+        default: "OpenCode's own permission rules apply; anything they would ask about is declined."
+        }
     }
 
     public func makeParser() -> OutputParser { OpenCodeParser() }

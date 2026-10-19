@@ -112,7 +112,7 @@ struct TaskLauncher: View {
                     }
                     CompactMenu(title: policy.title) {
                         Picker("Permissions", selection: $policy) {
-                            ForEach(PermissionPolicy.allCases, id: \.self) { p in Text(p.title).tag(p) }
+                            ForEach(PermissionPolicy.autonomyCases, id: \.self) { p in Text(p.title).tag(p) }
                         }
                         .pickerStyle(.inline)
                         Divider()
