@@ -532,11 +532,12 @@ struct RailChatRow: View {
     var body: some View {
         let selected = model.selectedSessionId == session.id
         let unreachable = model.remote.unreachableMessage(session.id)
+        let stalled = unreachable == nil && (model.stallState(session.id)?.isStalled ?? false)
         let line = SidebarChats.line(for: chat, showProject: showProject)
         Button { model.open(session.id) } label: {
-            HStack(alignment: line.isEmpty && unreachable == nil ? .center : .top, spacing: 8) {
+            HStack(alignment: line.isEmpty && unreachable == nil && !stalled ? .center : .top, spacing: 8) {
                 RailChatMark(chat: chat, status: unreachable == nil ? session.status : .idle,
-                             working: unreachable == nil && backgroundTasks > 0)
+                             working: unreachable == nil && backgroundTasks > 0, stalled: stalled)
                     .opacity(unreachable == nil ? 1 : 0.5)
                     .frame(width: Rail.iconColumn, height: 17)
                 VStack(alignment: .leading, spacing: 1) {
@@ -546,12 +547,17 @@ struct RailChatRow: View {
                             .font(.btCaption)
                             .foregroundStyle(Color.btTextTertiary)
                             .lineLimit(1)
+                    } else if stalled {
+                        Text("Stalled")
+                            .font(.btCaption)
+                            .foregroundStyle(Color.btWarning)
+                            .lineLimit(1)
                     } else if !line.isEmpty { RailChatLine(line: line) }
                 }
             }
             .padding(.leading, Rail.rowPadding + Rail.chatIndent)
             .padding(.trailing, Rail.rowPadding)
-            .padding(.vertical, line.isEmpty && unreachable == nil ? 0 : 5)
+            .padding(.vertical, line.isEmpty && unreachable == nil && !stalled ? 0 : 5)
             .frame(minHeight: Rail.rowHeight)
         }
         .buttonStyle(RailRowStyle(selected: selected))
@@ -708,10 +714,21 @@ struct RailChatRow: View {
 /// fill in with colour.
 private struct RailStatus: View {
     let status: SessionStatus
+    /// Working, but no output for so long the chat is marked Stalled.
+    var stalled = false
     var size: CGFloat = 10
 
     var body: some View {
         ZStack {
+            if stalled {
+                RoundedDiamond().fill(Color.btWarning)
+            } else { statusMark }
+        }
+        .frame(width: size, height: size)
+        .accessibilityLabel(stalled ? "Stalled" : status.label)
+    }
+
+    @ViewBuilder private var statusMark: some View {
             switch status {
             case .running, .provisioning:
                 // A short stroke runs round the outline, the way the ring's arc spun.
@@ -725,9 +742,6 @@ private struct RailStatus: View {
             case .finished, .created:
                 RoundedDiamond().stroke(Color.btTextTertiary.opacity(0.7), lineWidth: 1.2)
             }
-        }
-        .frame(width: size, height: size)
-        .accessibilityLabel(status.label)
     }
 }
 
@@ -739,18 +753,20 @@ private struct RailChatMark: View {
     let status: SessionStatus
     /// Still at work in the background, though its turn is over.
     var working = false
+    /// No output for so long the chat is marked Stalled.
+    var stalled = false
 
     var body: some View {
         content
             .overlay(alignment: .bottomTrailing) {
                 if let badge {
-                    RailStatus(status: badge, size: 7)
+                    RailStatus(status: badge, stalled: stalled, size: 7)
                         .padding(1.5)
                         .background(RoundedDiamond().fill(Color.btSidebar))
                         .offset(x: 3.5, y: 3.5)
                 }
             }
-            .accessibilityLabel("\(chat.projectName ?? SidebarChats.standalone), \(ProviderRegistry.name(chat.session.providerId)), \(status.label)")
+            .accessibilityLabel("\(chat.projectName ?? SidebarChats.standalone), \(ProviderRegistry.name(chat.session.providerId)), \(stalled ? "Stalled" : status.label)")
     }
 
     @ViewBuilder private var content: some View {
