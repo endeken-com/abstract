@@ -515,6 +515,15 @@ private struct NewChatSection: View {
                 .padding(.leading, -Chip.inset)
                 .frame(minHeight: ProjectPage.controlHeight)
             }
+            SettingRow(title: "Code history",
+                       detail: project.agentHistoryEnabled
+                           ? "Before changing code, an agent can look up what earlier chats in this project were asked, corrected and decided about it, and is told to follow those decisions."
+                           : "Agents get no history of earlier chats in this project.") {
+                Toggle("Give agents the history of the code they change", isOn: Binding(
+                    get: { project.agentHistoryEnabled },
+                    set: { on in model.updateProject(project.id) { $0.agentHistory = on } }))
+                    .frame(minHeight: ProjectPage.controlHeight)
+            }
             SettingRow(title: "Branch from", detail: "The branch or commit each new chat's worktree starts from.") {
                 BTTextField("Branch from", text: $baseRef, prompt: "HEAD", mono: true)
                     .frame(maxWidth: 240)

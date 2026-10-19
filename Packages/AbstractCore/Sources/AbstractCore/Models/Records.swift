@@ -35,6 +35,12 @@ public struct Project: Sendable, Hashable, Identifiable, Codable {
     public var runScript: String?
     /// The paired Mac new chats for this project start on; nil = this Mac.
     public var defaultDeviceId: String?
+    /// Agents may look up the history of the code they change (ABS-61);
+    /// nil (projects saved before) = yes.
+    public var agentHistory: Bool?
+
+    /// Whether this project's agents get the code-history tool.
+    public var agentHistoryEnabled: Bool { agentHistory ?? true }
 
     public init(
         id: String = UUID().uuidString, name: String, rootPath: String, defaultBaseRef: String = "HEAD",
@@ -44,7 +50,7 @@ public struct Project: Sendable, Hashable, Identifiable, Codable {
         iconSymbol: String? = nil, iconColor: String? = nil, iconImagePath: String? = nil,
         namingInstructions: String? = nil, sparseCheckout: [String] = [],
         setupScript: String? = nil, teardownScript: String? = nil, runScript: String? = nil,
-        defaultDeviceId: String? = nil
+        defaultDeviceId: String? = nil, agentHistory: Bool? = nil
     ) {
         self.id = id; self.name = name; self.rootPath = rootPath; self.defaultBaseRef = defaultBaseRef
         self.defaultProviderId = defaultProviderId; self.defaultPermissionPolicy = defaultPermissionPolicy
@@ -53,7 +59,7 @@ public struct Project: Sendable, Hashable, Identifiable, Codable {
         self.iconSymbol = iconSymbol; self.iconColor = iconColor; self.iconImagePath = iconImagePath
         self.namingInstructions = namingInstructions; self.sparseCheckout = sparseCheckout
         self.setupScript = setupScript; self.teardownScript = teardownScript; self.runScript = runScript
-        self.defaultDeviceId = defaultDeviceId
+        self.defaultDeviceId = defaultDeviceId; self.agentHistory = agentHistory
     }
 
     /// The Mac a new chat for this project starts on: its chosen default

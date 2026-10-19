@@ -145,10 +145,13 @@ public enum HistoryBackfill {
                 }
             }
             number += 1
+            let summary = SecretMasking.mask(turn.transcript.summary)
             let record = TurnRecord(
                 projectId: session.projectId, sessionId: session.id, chatName: session.name, providerId: session.providerId,
                 number: number, startedAt: turn.transcript.startedAt, endedAt: turn.transcript.endedAt,
-                request: turn.transcript.request, corrections: turn.transcript.corrections, summary: turn.transcript.summary,
+                request: SecretMasking.mask(turn.transcript.request),
+                corrections: turn.transcript.corrections.map(SecretMasking.mask), summary: summary,
+                decision: HistoryEntry.derivedDecision(from: summary),
                 files: files.sorted(), branch: session.branch, pullRequest: turn.pullRequest,
                 ticket: TurnRecorder.ticket(pullRequestBody: nil, branch: session.branch),
                 logStart: turn.lines.lowerBound, logEnd: turn.lines.upperBound)

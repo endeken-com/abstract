@@ -816,6 +816,15 @@ enum ToolPresentation {
 
     /// Past tense once done, present while running: "Edited", "Editing".
     static func verb(_ name: String, pending: Bool = false) -> String {
+        // Abstract's own code-history tools, under any agent's spelling.
+        if let tool = CodeHistory.tool(inStreamName: name) {
+            return switch (tool, pending) {
+            case (CodeHistory.historyTool, true): "Looking up history of"
+            case (CodeHistory.historyTool, false): "Looked up history of"
+            case (_, true): "Reading more of an earlier chat"
+            case (_, false): "Read more of an earlier chat"
+            }
+        }
         if pending {
             switch name.lowercased() {
             case "read", "read_file", "notebookread": return "Reading"
@@ -933,9 +942,15 @@ enum ToolPresentation {
         }
         if let path = path(call) {
             let rel = relative(path, root: root)
-            let name = (rel as NSString).lastPathComponent
+            var name = (rel as NSString).lastPathComponent
+            if name.isEmpty { name = rel }
+            // A history lookup names its lines too: "Diff.swift lines 220–245".
+            if CodeHistory.tool(inStreamName: call.name) == CodeHistory.historyTool,
+               let lines = o["lines"]?.string.flatMap(CodeHistoryService.lineRange) {
+                name += lines.lowerBound == lines.upperBound ? " line \(lines.lowerBound)" : " lines \(lines.lowerBound)–\(lines.upperBound)"
+            }
             let folder = (rel as NSString).deletingLastPathComponent
-            return .path(name: name.isEmpty ? rel : name, folder: folder == "/" ? nil : folder)
+            return .path(name: name, folder: folder == "/" ? nil : folder)
         }
         if call.name.lowercased() == "skill", let skill = o["skill"]?.string { return .text(skill) }
         for key in ["pattern", "query", "url", "description", "path", "command"] {

@@ -23,6 +23,25 @@ public enum PermissionPolicy: String, Sendable, Codable, CaseIterable {
     }
 }
 
+/// The code-history tool handed to one chat's agent (ABS-61): the
+/// `abstract` command that serves it, for this chat only.
+public struct HistoryToolLaunch: Sendable, Hashable {
+    /// The `abstract` executable on the agent's Mac.
+    public var command: String
+    public var chatId: String
+    /// A file holding `CodeHistory.instruction`, for agents whose
+    /// instructions are files (OpenCode).
+    public var instructionFile: String?
+
+    public init(command: String, chatId: String, instructionFile: String? = nil) {
+        self.command = command; self.chatId = chatId; self.instructionFile = instructionFile
+    }
+
+    /// What runs the server: `abstract mcp --chat <id>`.
+    public var serverArgs: [String] { ["mcp", "--chat", chatId] }
+    public var serverCommand: [String] { [command] + serverArgs }
+}
+
 public struct LaunchContext: Sendable {
     /// Working directory: the session's worktree.
     public var cwd: String
@@ -40,13 +59,16 @@ public struct LaunchContext: Sendable {
     public var images: [String]
     /// Folders outside the worktree the agent may read without asking (attachments).
     public var readableDirs: [String]
+    /// The code-history tool for this chat; nil when the project has it off.
+    public var historyTool: HistoryToolLaunch?
 
     public init(cwd: String, prompt: String, resumeId: String? = nil, permissionPolicy: PermissionPolicy,
                 extraArgs: [String] = [], binaryOverride: String? = nil, model: String? = nil, effort: String? = nil,
-                outputStyle: OutputStyle = .default, images: [String] = [], readableDirs: [String] = []) {
+                outputStyle: OutputStyle = .default, images: [String] = [], readableDirs: [String] = [],
+                historyTool: HistoryToolLaunch? = nil) {
         self.cwd = cwd; self.prompt = prompt; self.resumeId = resumeId; self.permissionPolicy = permissionPolicy
         self.extraArgs = extraArgs; self.binaryOverride = binaryOverride; self.outputStyle = outputStyle
-        self.images = images; self.readableDirs = readableDirs
+        self.images = images; self.readableDirs = readableDirs; self.historyTool = historyTool
         self.model = Self.nonBlank(model)
         self.effort = Self.nonBlank(effort)
     }
