@@ -5,10 +5,10 @@
     <link>https://endeken-com.github.io/abstract/appcast.xml</link>
     <language>en</language>
     <item>
-      <title>Abstract 0.11.0-nightly.37</title>
-      <pubDate>Sat, 17 Oct 2026 22:21:28 GMT</pubDate>
-      <sparkle:version>0.11.0.37</sparkle:version>
-      <sparkle:shortVersionString>0.11.0-nightly.37</sparkle:shortVersionString>
+      <title>Abstract 0.11.0-nightly.39</title>
+      <pubDate>Mon, 19 Oct 2026 11:46:37 GMT</pubDate>
+      <sparkle:version>0.11.0.39</sparkle:version>
+      <sparkle:shortVersionString>0.11.0-nightly.39</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
       <sparkle:channel>nightly</sparkle:channel>
       <sparkle:fullReleaseNotesLink>https://github.com/endeken-com/abstract/releases/tag/nightly</sparkle:fullReleaseNotesLink>
@@ -28,6 +28,7 @@
 &lt;li&gt;Draft: Sidebar PRs show a clear check result beside their number by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/wesguirra/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/wesguirra"&gt;@wesguirra&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5868000967" data-permission-text="Title is private" data-url="https://github.com/endeken-com/abstract/issues/66" data-hovercard-type="pull_request" data-hovercard-url="/endeken-com/abstract/pull/66/hovercard" href="https://github.com/endeken-com/abstract/pull/66"&gt;#66&lt;/a&gt;&lt;/li&gt;
 &lt;li&gt;Choose a default Mac for a project by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/wesguirra/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/wesguirra"&gt;@wesguirra&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5893464587" data-permission-text="Title is private" data-url="https://github.com/endeken-com/abstract/issues/70" data-hovercard-type="pull_request" data-hovercard-url="/endeken-com/abstract/pull/70/hovercard" href="https://github.com/endeken-com/abstract/pull/70"&gt;#70&lt;/a&gt;&lt;/li&gt;
 &lt;li&gt;Abstract lets you install, enable and open plugins by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/wesguirra/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/wesguirra"&gt;@wesguirra&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5894238723" data-permission-text="Title is private" data-url="https://github.com/endeken-com/abstract/issues/73" data-hovercard-type="pull_request" data-hovercard-url="/endeken-com/abstract/pull/73/hovercard" href="https://github.com/endeken-com/abstract/pull/73"&gt;#73&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;Chat rows show their project icon in the Mac sidebar by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/wesguirra/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/wesguirra"&gt;@wesguirra&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5913004601" data-permission-text="Title is private" data-url="https://github.com/endeken-com/abstract/issues/76" data-hovercard-type="pull_request" data-hovercard-url="/endeken-com/abstract/pull/76/hovercard" href="https://github.com/endeken-com/abstract/pull/76"&gt;#76&lt;/a&gt;&lt;/li&gt;
 &lt;/ul&gt;
 &lt;h3 dir="auto"&gt;Fixed&lt;/h3&gt;
 &lt;ul dir="auto"&gt;
@@ -64,8 +65,8 @@
 &lt;li&gt;Spike: find structured Muse Code tool events for detailed chat rows by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/wesguirra/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/wesguirra"&gt;@wesguirra&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5893640608" data-permission-text="Title is private" data-url="https://github.com/endeken-com/abstract/issues/71" data-hovercard-type="pull_request" data-hovercard-url="/endeken-com/abstract/pull/71/hovercard" href="https://github.com/endeken-com/abstract/pull/71"&gt;#71&lt;/a&gt;&lt;/li&gt;
 &lt;li&gt;Spike: define a safe plugin boundary for Abstract views and data by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/wesguirra/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/wesguirra"&gt;@wesguirra&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5893970919" data-permission-text="Title is private" data-url="https://github.com/endeken-com/abstract/issues/72" data-hovercard-type="pull_request" data-hovercard-url="/endeken-com/abstract/pull/72/hovercard" href="https://github.com/endeken-com/abstract/pull/72"&gt;#72&lt;/a&gt;&lt;/li&gt;
 &lt;/ul&gt;
-&lt;p dir="auto"&gt;&lt;strong&gt;Full Changelog&lt;/strong&gt;: &lt;a class="commit-link" href="https://github.com/endeken-com/abstract/compare/v0.10.0...cade8fe35602af2f8d7c3fd262342e52d993f094"&gt;&lt;tt&gt;v0.10.0...cade8fe&lt;/tt&gt;&lt;/a&gt;&lt;/p&gt;</description>
-      <enclosure url="https://github.com/endeken-com/abstract/releases/download/nightly/Abstract-0.11.0-nightly.37.dmg" length="55349156" type="application/octet-stream" sparkle:edSignature="J/03u1ibXia+icyvb9FZwotMZ6lWfDARVB2zY7JHy+rTU7V9y4E1Pr4UWI3cF1dgsCgZdJeYv1jRRfKOHDd6Dg==" />
+&lt;p dir="auto"&gt;&lt;strong&gt;Full Changelog&lt;/strong&gt;: &lt;a class="commit-link" href="https://github.com/endeken-com/abstract/compare/v0.10.0...021691c2d2d446081346818150ab9fa3210f8bca"&gt;&lt;tt&gt;v0.10.0...021691c&lt;/tt&gt;&lt;/a&gt;&lt;/p&gt;</description>
+      <enclosure url="https://github.com/endeken-com/abstract/releases/download/nightly/Abstract-0.11.0-nightly.39.dmg" length="55402922" type="application/octet-stream" sparkle:edSignature="yUZJyVziu+r9Uj3RijzLky8Lj1MrjVHKD5voJYMacCWrNJWOi+K7p4fyQJ9AUbF4q8298RCo6GSUVy2evmR3AA==" />
     </item>
     <item>
       <title>Abstract 0.10.0</title>
