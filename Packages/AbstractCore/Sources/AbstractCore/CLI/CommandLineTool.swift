@@ -9,6 +9,8 @@ import Synchronization
 ///     abstract agent find       --session <id>
 ///     abstract agent send       --session <id> --agent <id> --text-file <path|->
 ///     abstract agent respawn    --session <id> --agent claude --prompt-file <path|->
+///     abstract history          <file>[:<line>[-<line>]] [--project <p>]
+///     abstract mcp              --chat <id>   (the code-history tools, over stdio)
 ///
 /// `--project` takes a project's id, root path or name. Every command prints
 /// one JSON value on stdout and nothing else; a failure prints
@@ -30,6 +32,16 @@ public enum CommandLineTool {
     public static func main(_ arguments: [String]) async -> Int32 {
         let args = Array(arguments.dropFirst())
         if args.first == AgentHost.command { AgentHost.main(Array(args.dropFirst())) }
+        // The MCP server speaks JSON-RPC on stdio until the agent closes
+        // it; it is not one of the one-JSON-value commands.
+        if args.first == "mcp" {
+            guard let chat = option("chat", in: Array(args.dropFirst())), let server = HistoryMCPServer.open(chatId: chat) else {
+                FileHandle.standardError.write(Data("abstract mcp: no chat to serve history for.\n".utf8))
+                return 1
+            }
+            await server.run()
+            return 0
+        }
         do {
             emit(try await run(args))
             return 0
@@ -46,10 +58,29 @@ public enum CommandLineTool {
         Usage: abstract session list --project <p> [--include-archived] | \
         session create --project <p> --name <n> --branch <b> --agent <agent> --prompt-file <path|-> | \
         agent find --session <id> | agent send --session <id> --agent <id> --text-file <path|-> | \
-        agent respawn --session <id> --agent <agent> --prompt-file <path|->
+        agent respawn --session <id> --agent <agent> --prompt-file <path|-> | \
+        history <file>[:<line>[-<line>]] [--project <p>] | mcp --chat <id>
         """
 
+    /// `--name value` or `--name=value` among `tokens`; nil when absent.
+    static func option(_ name: String, in tokens: [String]) -> String? {
+        var index = 0
+        while index < tokens.count {
+            let token = tokens[index]
+            if token == "--\(name)", index + 1 < tokens.count { return tokens[index + 1] }
+            if token.hasPrefix("--\(name)=") { return String(token.dropFirst(name.count + 3)) }
+            index += 1
+        }
+        return nil
+    }
+
     private static func run(_ args: [String]) async throws -> any Encodable {
+        if args.first == "history" {
+            guard args.count >= 2 else {
+                throw CLIError(.invalidArguments, "Name a file: abstract history <file>[:<line>[-<line>]] [--project <p>].")
+            }
+            return try await Commands.open().history(args[1], project: option("project", in: Array(args.dropFirst(2))))
+        }
         guard args.count >= 2 else { throw CLIError(.invalidArguments, usage) }
         let rest = Array(args.dropFirst(2))
         let stdin = { FileHandle.standardInput.readDataToEndOfFile() }
@@ -108,6 +139,63 @@ struct Commands {
         let executable = Bundle.main.executablePath ?? CommandLine.arguments[0]
         return Commands(store: store, storePath: path, locks: SessionLock.defaultDirectory(),
                         executable: URL(fileURLWithPath: executable).resolvingSymlinksInPath().path)
+    }
+
+    // MARK: history
+
+    /// The earlier turns behind a file or some lines of it, the same
+    /// entries an agent's `code_history` tool returns, as JSON. The
+    /// project is the one named, else the one whose repository (or a
+    /// chat's worktree) the command runs in.
+    func history(_ target: String, project named: String?) async throws -> [HistoryEntry] {
+        let (path, lines) = Self.historyTarget(target)
+        let cwd = FileManager.default.currentDirectoryPath
+        let project: Project
+        var repo: String
+        if let named {
+            project = try resolveProject(named)
+            repo = project.rootPath
+        } else if let found = try projectCovering(cwd) {
+            project = found.project
+            repo = found.repo
+        } else {
+            throw CLIError(.projectNotFound, "No project covers “\(cwd)”. Run inside a project, or name one with --project.")
+        }
+        // A worktree of this project blames there, where the file is as read.
+        if named != nil, let found = try? projectCovering(cwd), found.project.id == project.id { repo = found.repo }
+        let service = CodeHistoryService(store: store, projectId: project.id, askingSessionId: nil, repo: repo)
+        guard service.relativePath(path) != nil else {
+            throw CLIError(.invalidArguments, "“\(path)” is outside “\(project.name)”'s repository.")
+        }
+        return await service.history(path: path, lines: lines.map { CodeHistoryService.lineRange($0) } ?? nil, exec: executor)
+    }
+
+    /// `<file>` or `<file>:<line>[-<line>]` → the file and its lines, as typed.
+    static func historyTarget(_ target: String) -> (path: String, lines: String?) {
+        guard let colon = target.range(of: ":", options: .backwards) else { return (target, nil) }
+        let tail = String(target[colon.upperBound...])
+        guard CodeHistoryService.lineRange(tail.replacingOccurrences(of: ":", with: "-")) != nil else { return (target, nil) }
+        return (String(target[..<colon.lowerBound]), tail)
+    }
+
+    /// The project `path` is in: its repository, or one of its chats'
+    /// worktrees (the repo to read in is then the worktree).
+    private func projectCovering(_ path: String) throws -> (project: Project, repo: String)? {
+        let here = Self.canonical(path)
+        func covers(_ root: String) -> Bool {
+            let root = Self.canonical(root)
+            return here == root || here.hasPrefix(root + "/")
+        }
+        for session in try store.sessions() {
+            if let worktree = session.worktreePath, covers(worktree),
+               let project = try session.projectId.flatMap({ try store.project($0) }) {
+                return (project, worktree)
+            }
+        }
+        for project in try store.projects() where covers(project.rootPath) {
+            return (project, project.rootPath)
+        }
+        return nil
     }
 
     // MARK: session list

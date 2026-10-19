@@ -130,12 +130,32 @@ public struct ClaudeProvider: ProviderDefinition {
             command: override.flatMap { $0.isEmpty ? nil : $0 } ?? binary,
             args: Self.baseArgs + Self.policyArgs(ctx.permissionPolicy) + ctx.readableDirs.flatMap { ["--add-dir", $0] }
                 + (ctx.model.map { ["--model", $0] } ?? [])
-                + (ctx.effort.map { ["--effort", $0] } ?? []) + Self.styleArgs(ctx.outputStyle) + resumeArgs + ctx.extraArgs,
+                + (ctx.effort.map { ["--effort", $0] } ?? []) + Self.styleArgs(ctx.outputStyle)
+                + Self.historyArgs(ctx.historyTool) + resumeArgs + ctx.extraArgs,
             cwd: ctx.cwd,
             env: ["CLAUDE_CODE_BASH_EDIT_DIFF": "1"],
             stdinInitial: Self.userMessageLine(ctx.prompt, images: ctx.images),
             keepStdinOpen: true
         )
+    }
+
+    /// The code-history tool (ABS-61, checked in ABS-60): inline MCP
+    /// config beside the user's own servers (never `--strict-mcp-config`,
+    /// which would drop theirs), both tools allowed outright or each
+    /// call becomes an approval request, and the instruction. Passed on
+    /// every resume too, or the tool disappears.
+    static func historyArgs(_ tool: HistoryToolLaunch?) -> [String] {
+        guard let tool else { return [] }
+        let config = JSONValue.object(["mcpServers": .object([
+            CodeHistory.serverName: .object([
+                "command": .string(tool.command),
+                "args": .array(tool.serverArgs.map(JSONValue.string)),
+            ]),
+        ])]).compact()
+        let allowed = [CodeHistory.historyTool, CodeHistory.excerptTool]
+            .map(CodeHistory.streamName).joined(separator: ",")
+        return ["--mcp-config", config, "--allowedTools", allowed,
+                "--append-system-prompt", CodeHistory.instruction]
     }
 
     /// Claude's built-in styles go by their display name in its settings.

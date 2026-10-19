@@ -21,6 +21,29 @@ public struct AgentDefaults: Codable, Hashable, Sendable {
     }
 }
 
+/// What serves a chat's code-history tool (ABS-61), when its project
+/// gives agents that history: this Mac's `abstract` command, and the
+/// instruction as a file for agents that read instructions from files.
+public struct CodeHistorySettings: Sendable, Hashable {
+    public var command: String
+    public var instructionFile: String?
+
+    public init(command: String, instructionFile: String? = nil) {
+        self.command = command; self.instructionFile = instructionFile
+    }
+
+    /// Writes the instruction into `directory` (once per launch is fine:
+    /// the text never changes) and names the file. Nil if it can't.
+    public static func instructionFile(in directory: String) -> String? {
+        let path = directory + "/code-history-instruction.md"
+        do {
+            try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+            try (CodeHistory.instruction + "\n").write(toFile: path, atomically: true, encoding: .utf8)
+            return path
+        } catch { return nil }
+    }
+}
+
 /// The settings every agent launch reads, wherever it starts: the app, or
 /// `abstract` with the app closed.
 public struct LaunchSettings: Sendable {
@@ -36,13 +59,17 @@ public struct LaunchSettings: Sendable {
     public var agentDefaults: [String: AgentDefaults]
     /// By agent id: the models last discovered, which say what efforts each takes.
     public var modelCatalogs: [String: ModelCatalog]
+    /// The code-history tool for this launch's chat, when its project
+    /// gives agents that history; nil leaves the agent without it.
+    public var codeHistory: CodeHistorySettings?
 
     public init(providerOverrides: [String: ProviderOverride], outputStyle: OutputStyle, claudeProfile: String?,
                 standardClaudeProfile: String = NSHomeDirectory() + "/.claude", attachmentsDirectory: String,
-                agentDefaults: [String: AgentDefaults] = [:], modelCatalogs: [String: ModelCatalog] = [:]) {
+                agentDefaults: [String: AgentDefaults] = [:], modelCatalogs: [String: ModelCatalog] = [:],
+                codeHistory: CodeHistorySettings? = nil) {
         self.providerOverrides = providerOverrides; self.outputStyle = outputStyle; self.claudeProfile = claudeProfile
         self.standardClaudeProfile = standardClaudeProfile; self.attachmentsDirectory = attachmentsDirectory
-        self.agentDefaults = agentDefaults; self.modelCatalogs = modelCatalogs
+        self.agentDefaults = agentDefaults; self.modelCatalogs = modelCatalogs; self.codeHistory = codeHistory
     }
 
     /// As the app last saved them, for a launch that doesn't go through the app.
@@ -79,7 +106,10 @@ public enum AgentLaunch {
                                 model: session.model ?? settings.agentDefaults[provider.id]?.model,
                                 effort: session.effort ?? settings.defaultEffort(for: provider, model: session.model, home: home),
                                 outputStyle: settings.outputStyle, images: images,
-                                readableDirs: [settings.attachmentsDirectory])
+                                readableDirs: [settings.attachmentsDirectory],
+                                historyTool: settings.codeHistory.map {
+                                    HistoryToolLaunch(command: $0.command, chatId: session.id, instructionFile: $0.instructionFile)
+                                })
         var spec = resumeId.map { provider.buildResume(ctx, resumeId: $0) } ?? provider.buildLaunch(ctx)
         if provider.id == "claude", let profile = settings.claudeProfile, profile != settings.standardClaudeProfile {
             spec.env["CLAUDE_CONFIG_DIR"] = profile
