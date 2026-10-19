@@ -19,6 +19,7 @@ export type Automation = {
   continueAgentSession: boolean; permissionPolicy: Policy; catchUp: boolean;
   enabled: boolean; nextRunAt: number | null; createdAt: number;
   updatedAt: number; model: string | null; effort: string | null;
+  deviceId?: string | null;
 };
 export type AutomationRun = { id: string; automationId: string; firedAt: number; trigger: string; status: string; sessionId: string | null; error: string | null };
 export type PendingPermission = { requestId: string; toolName: string; input: any };

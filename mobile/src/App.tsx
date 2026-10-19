@@ -596,7 +596,7 @@ function AutomationScreen({ route, navigation }: any) {
       triggers: triggers.filter(x => x.rrule.trim()).map(x => ({ ...x, rrule: x.rrule.trim() })),
       workspaceMode, pinnedSessionId: workspaceMode === 'pinned' ? pinnedSessionId : null,
       continueAgentSession, permissionPolicy: policy, catchUp,
-      enabled, nextRunAt: existing?.nextRunAt || null, createdAt: existing?.createdAt || now, updatedAt: now, model: modelName || null, effort: effort || null
+      enabled, nextRunAt: existing?.nextRunAt || null, createdAt: existing?.createdAt || now, updatedAt: now, model: modelName || null, effort: effort || null, deviceId: existing?.deviceId || null
     };
     await state.request('saveAutomation', { _0: automation }); navigation.goBack();
   };

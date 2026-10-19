@@ -102,7 +102,7 @@ private struct AutomationList: View {
                         .padding(.top, Space.lg)
                         .padding(.bottom, Space.xs)
                         ForEach(section.automations) { a in
-                            AutomationListRow(automation: a, chat: chat(of: a), now: context.date) {
+                            AutomationListRow(automation: a, chat: chat(of: a), device: device(of: a), now: context.date) {
                                 open(a.id)
                             }
                         }
@@ -181,11 +181,17 @@ private struct AutomationList: View {
         guard a.workspaceMode == .pinned, let chat = model.session(a.pinnedSessionId) else { return nil }
         return "in “\(chat.name)”"
     }
+
+    private func device(of a: Automation) -> String? {
+        guard let id = a.deviceId else { return nil }
+        return "on \(model.remote.paired.first { $0.id == id }?.peer.name ?? "a paired Mac")"
+    }
 }
 
 private struct AutomationListRow: View {
     let automation: Automation
     let chat: String?
+    let device: String?
     let now: Date
     let action: () -> Void
 
@@ -205,7 +211,7 @@ private struct AutomationListRow: View {
                     .foregroundStyle(Color.btText)
                     .lineLimit(1)
                     .layoutPriority(1)
-                Text([AutomationText.schedule(automation), chat].compactMap { $0 }.joined(separator: " · "))
+                Text([AutomationText.schedule(automation), chat, device].compactMap { $0 }.joined(separator: " · "))
                     .font(.btCallout)
                     .foregroundStyle(Color.btTextTertiary)
                     .lineLimit(1)

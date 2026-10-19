@@ -112,10 +112,22 @@ final class AutomationScheduler {
     }
 
     /// In its project, set up fresh in a worktree of its own; with no
-    /// project, a standalone chat.
+    /// project, a standalone chat. On a paired Mac when the automation
+    /// runs on one: the chat starts through the remote channel, and a Mac
+    /// that can't start it fails the run with that reason.
     private func newChat(_ a: Automation, name: String, nameSource: ChatNameSource = .manual, slug: String? = nil) async throws -> String {
-        try await model.startChat(projectId: a.projectId, providerId: a.providerId, prompt: a.prompt, baseRef: nil,
-                                  policy: a.permissionPolicy, model: a.model, effort: a.effort,
-                                  name: name, nameSource: nameSource, slug: a.projectId == nil ? nil : slug, automationId: a.id, select: false)
+        if let deviceId = a.deviceId {
+            let link = model.remote.links[deviceId]
+            let deviceName = link?.device.peer.name
+                ?? model.remote.paired.first { $0.id == deviceId }?.peer.name ?? "That Mac"
+            let start = try AutomationDeviceRun.plan(
+                a, deviceName: deviceName, snapshot: link?.state == .online ? link?.snapshot : nil,
+                localProject: a.projectId.flatMap { id in model.projects.first { $0.id == id } },
+                name: name, nameSource: nameSource, slug: slug)
+            return try await model.remote.startAutomationRun(on: deviceId, start)
+        }
+        return try await model.startChat(projectId: a.projectId, providerId: a.providerId, prompt: a.prompt, baseRef: nil,
+                                         policy: a.permissionPolicy, model: a.model, effort: a.effort,
+                                         name: name, nameSource: nameSource, slug: a.projectId == nil ? nil : slug, automationId: a.id, select: false)
     }
 }
