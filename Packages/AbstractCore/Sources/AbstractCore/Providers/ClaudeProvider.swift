@@ -131,7 +131,7 @@ public struct ClaudeProvider: ProviderDefinition {
             args: Self.baseArgs + Self.policyArgs(ctx.permissionPolicy) + ctx.readableDirs.flatMap { ["--add-dir", $0] }
                 + (ctx.model.map { ["--model", $0] } ?? [])
                 + (ctx.effort.map { ["--effort", $0] } ?? []) + Self.styleArgs(ctx.outputStyle)
-                + Self.historyArgs(ctx.historyTool) + resumeArgs + ctx.extraArgs,
+                + Self.historyArgs(ctx.historyTool) + Self.instructionArgs(ctx) + resumeArgs + ctx.extraArgs,
             cwd: ctx.cwd,
             env: ["CLAUDE_CODE_BASH_EDIT_DIFF": "1"],
             stdinInitial: Self.userMessageLine(ctx.prompt, images: ctx.images),
@@ -154,8 +154,15 @@ public struct ClaudeProvider: ProviderDefinition {
         ])]).compact()
         let allowed = [CodeHistory.historyTool, CodeHistory.excerptTool]
             .map(CodeHistory.streamName).joined(separator: ",")
-        return ["--mcp-config", config, "--allowedTools", allowed,
-                "--append-system-prompt", CodeHistory.instruction]
+        return ["--mcp-config", config, "--allowedTools", allowed]
+    }
+
+    /// Everything appended to Claude's system prompt, as one argument:
+    /// the profile's instructions (ABS-101) first, then how to use the
+    /// code-history tool when the chat gets it.
+    static func instructionArgs(_ ctx: LaunchContext) -> [String] {
+        let parts = [ctx.instructions, ctx.historyTool == nil ? nil : CodeHistory.instruction].compactMap { $0 }
+        return parts.isEmpty ? [] : ["--append-system-prompt", parts.joined(separator: "\n\n")]
     }
 
     /// Claude's built-in styles go by their display name in its settings.

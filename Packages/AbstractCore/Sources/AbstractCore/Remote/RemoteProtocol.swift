@@ -110,12 +110,16 @@ public struct RemoteStart: Codable, Sendable {
     public var effort: String?
     /// An existing worktree there to start in, by path; nil makes a new one.
     public var worktree: String?
+    /// The profile the chat starts from, as chosen here (ABS-101); a Mac
+    /// from before profiles starts the chat without it.
+    public var profile: ProfileSnapshot?
 
     public init(projectId: String, providerId: String, prompt: String, attachments: [PromptAttachment] = [], files: [String: Data] = [:],
-                baseRef: String?, policy: PermissionPolicy, model: String?, effort: String?, worktree: String?) {
+                baseRef: String?, policy: PermissionPolicy, model: String?, effort: String?, worktree: String?,
+                profile: ProfileSnapshot? = nil) {
         self.projectId = projectId; self.providerId = providerId; self.prompt = prompt; self.attachments = attachments
         self.files = files; self.baseRef = baseRef; self.policy = policy; self.model = model; self.effort = effort
-        self.worktree = worktree
+        self.worktree = worktree; self.profile = profile
     }
 }
 
@@ -135,13 +139,15 @@ public struct RemoteRunStart: Codable, Sendable, Hashable {
     /// The new worktree's branch, when the run starts in a project.
     public var slug: String?
     public var automationId: String
+    /// The profile the run starts from, resolved here (ABS-101).
+    public var profile: ProfileSnapshot?
 
     public init(projectId: String?, providerId: String, prompt: String, policy: PermissionPolicy,
                 model: String?, effort: String?, name: String, nameSource: ChatNameSource,
-                slug: String?, automationId: String) {
+                slug: String?, automationId: String, profile: ProfileSnapshot? = nil) {
         self.projectId = projectId; self.providerId = providerId; self.prompt = prompt; self.policy = policy
         self.model = model; self.effort = effort; self.name = name; self.nameSource = nameSource
-        self.slug = slug; self.automationId = automationId
+        self.slug = slug; self.automationId = automationId; self.profile = profile
     }
 }
 

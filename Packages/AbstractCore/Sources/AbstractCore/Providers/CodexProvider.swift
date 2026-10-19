@@ -119,10 +119,11 @@ public struct CodexProvider: ProviderDefinition {
         )
     }
 
-    /// The output style and, when the chat gets it, the code-history
-    /// instruction, joined as developer instructions.
+    /// The profile's instructions (ABS-101), the output style and, when
+    /// the chat gets it, the code-history instruction, joined as
+    /// developer instructions.
     static func developerInstructions(_ ctx: LaunchContext) -> [String] {
-        let parts = [ctx.outputStyle.instructions, ctx.historyTool == nil ? nil : CodeHistory.instruction]
+        let parts = [ctx.instructions, ctx.outputStyle.instructions, ctx.historyTool == nil ? nil : CodeHistory.instruction]
             .compactMap { $0 }
         return parts.isEmpty ? [] : ["-c", "developer_instructions=\(tomlString(parts.joined(separator: "\n\n")))"]
     }

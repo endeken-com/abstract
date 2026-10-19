@@ -38,6 +38,7 @@ public struct OpenCodeProvider: ProviderDefinition {
             // OpenCode finds its project from the inherited PWD, not the
             // process's working directory, so the worktree is named outright.
             args: ["run", "--format", "json", "--thinking", "--dir", ctx.cwd] + auto
+                + (ctx.instructions == nil ? [] : ["--agent", Self.profileAgent])
                 + (resumeId.map { ["--session", $0] } ?? [])
                 + (ctx.model.map { ["--model", $0] } ?? [])
                 + (ctx.effort.map { ["--variant", $0] } ?? [])
@@ -45,27 +46,46 @@ public struct OpenCodeProvider: ProviderDefinition {
                 + ctx.extraArgs
                 + (prompt.hasPrefix("-") ? ["--", prompt] : [prompt]),
             cwd: ctx.cwd,
-            env: Self.historyEnv(ctx.historyTool),
+            env: Self.configEnv(ctx),
             keepStdinOpen: false
         )
     }
 
-    /// The code-history tool (ABS-61, checked in ABS-60) in
-    /// `OPENCODE_CONFIG_CONTENT`, which OpenCode merges with the user's
-    /// own config: their servers and instructions stay, ours are added.
-    /// If the user's rules make the tool `ask`, `run` declines it and
-    /// the declined call shows in the chat.
+    /// The agent a chat with a profile's instructions runs as (ABS-101):
+    /// a primary agent whose prompt is those instructions, given through
+    /// the environment the way the naming agent is, so the user's own
+    /// config stays untouched.
+    static let profileAgent = "abstract-profile"
+
+    /// The code-history tool (ABS-61, checked in ABS-60) and a profile's
+    /// agent in `OPENCODE_CONFIG_CONTENT`, which OpenCode merges with
+    /// the user's own config: their servers, instructions and agents
+    /// stay, ours are added. If the user's rules make the tool `ask`,
+    /// `run` declines it and the declined call shows in the chat.
+    static func configEnv(_ ctx: LaunchContext) -> [String: String] {
+        var config: [String: JSONValue] = [:]
+        if let tool = ctx.historyTool {
+            config["mcp"] = .object([
+                CodeHistory.serverName: .object([
+                    "type": .string("local"),
+                    "command": .array(tool.serverCommand.map(JSONValue.string)),
+                    "enabled": .bool(true),
+                ]),
+            ])
+            if let file = tool.instructionFile { config["instructions"] = .array([.string(file)]) }
+        }
+        if let instructions = ctx.instructions {
+            config["agent"] = .object([profileAgent: .object([
+                "mode": .string("primary"),
+                "prompt": .string(instructions),
+            ])])
+        }
+        return config.isEmpty ? [:] : ["OPENCODE_CONFIG_CONTENT": JSONValue.object(config).compact()]
+    }
+
+    /// The code-history tool alone, as `configEnv` writes it.
     static func historyEnv(_ tool: HistoryToolLaunch?) -> [String: String] {
-        guard let tool else { return [:] }
-        var config: [String: JSONValue] = ["mcp": .object([
-            CodeHistory.serverName: .object([
-                "type": .string("local"),
-                "command": .array(tool.serverCommand.map(JSONValue.string)),
-                "enabled": .bool(true),
-            ]),
-        ])]
-        if let file = tool.instructionFile { config["instructions"] = .array([.string(file)]) }
-        return ["OPENCODE_CONFIG_CONTENT": JSONValue.object(config).compact()]
+        configEnv(LaunchContext(cwd: "", prompt: "", permissionPolicy: .ask, historyTool: tool))
     }
 
     /// `run` can't ask Abstract, so a request OpenCode's own rules would ask

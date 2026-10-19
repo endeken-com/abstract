@@ -109,7 +109,8 @@ public enum AgentLaunch {
                                 readableDirs: [settings.attachmentsDirectory],
                                 historyTool: settings.codeHistory.map {
                                     HistoryToolLaunch(command: $0.command, chatId: session.id, instructionFile: $0.instructionFile)
-                                })
+                                },
+                                instructions: session.profileInstructions)
         var spec = resumeId.map { provider.buildResume(ctx, resumeId: $0) } ?? provider.buildLaunch(ctx)
         if provider.id == "claude", let profile = settings.claudeProfile, profile != settings.standardClaudeProfile {
             spec.env["CLAUDE_CONFIG_DIR"] = profile
