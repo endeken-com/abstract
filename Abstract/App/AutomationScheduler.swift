@@ -2,14 +2,16 @@ import Foundation
 import AbstractCore
 
 /// Fires automations on schedule while Abstract runs. Closing the window
-/// keeps the app (and this loop) alive; quitting stops it, and a fire missed
-/// while closed runs on launch only when the automation has catch-up on.
+/// keeps the app (and this loop) alive; quitting stops it, and what a fire
+/// missed while closed does on launch is the automation's own choice.
 @MainActor
 final class AutomationScheduler {
     private unowned let model: AppModel
     private var loop: Task<Void, Never>?
     /// Automations mid-fire, so a re-evaluation cannot launch one twice.
     private var firing: Set<String> = []
+    /// Automations owed one run when the run still going finishes.
+    private var waiting: Set<String> = []
 
     init(model: AppModel) { self.model = model }
 
@@ -33,22 +35,94 @@ final class AutomationScheduler {
     private func tick() async -> TimeInterval {
         let now = Date()
         var earliest: Date?
+        func soon(_ date: Date) { earliest = min(earliest ?? date, date) }
+        // Pausing or deleting an automation drops the run it was owed.
+        waiting = waiting.filter { id in model.automations.contains { $0.id == id && $0.enabled } }
+
+        // Runs owed to automations whose last run was still going: each
+        // starts as soon as that run's chat is quiet again. Checked on a
+        // short leash below, since nothing says when a turn ends.
+        var firedWaiting: Set<String> = []
+        for a in model.automations where a.enabled && waiting.contains(a.id) {
+            guard !firing.contains(a.id), !lastRunActive(a) else { continue }
+            waiting.remove(a.id)
+            firedWaiting.insert(a.id)
+            await fire(a, trigger: .schedule)
+        }
+
         for a in model.automations where a.enabled {
+            guard !firedWaiting.contains(a.id) else {
+                if let next = a.nextRunAt { soon(next) }
+                continue
+            }
             guard let due = a.nextRunAt ?? a.nextOccurrence(after: now) else { continue }
             var nextRun = due
             if due <= now {
-                guard !firing.contains(a.id) else { continue }
-                let missed = now.timeIntervalSince(due) > 300
-                if !missed || a.catchUp { await fire(a, trigger: .schedule) }
+                guard !firing.contains(a.id) else { soon(now.addingTimeInterval(15)); continue }
+                let occurrences = a.dueOccurrences(from: due, through: now)
+                let decision = AutomationScheduling.decision(
+                    for: a, dueCount: occurrences.count, missed: now.timeIntervalSince(due) > 300,
+                    lastRunActive: lastRunActive(a), alreadyWaiting: waiting.contains(a.id),
+                    baseMoved: await baseMoved(a))
+                var skippedAt = 0
+                for skip in decision.skips {
+                    for _ in 0..<skip.count {
+                        let at = occurrences[min(skippedAt, occurrences.count - 1)]
+                        try? model.store.save(AutomationRun.skipped(automationId: a.id, reason: skip.reason, at: at))
+                        skippedAt += 1
+                    }
+                }
+                if decision.runAfterCurrentFinishes { waiting.insert(a.id) }
+                for _ in 0..<decision.fires { await fire(a, trigger: .schedule) }
                 guard let after = a.nextOccurrence(after: now) else { recordNextRun(nil, for: a); continue }
                 nextRun = after
             }
             recordNextRun(nextRun, for: a)
-            earliest = min(earliest ?? nextRun, nextRun)
+            soon(nextRun)
         }
+        if !waiting.isEmpty { soon(now.addingTimeInterval(15)) }
         model.automations = (try? model.store.automations()) ?? model.automations
         guard let earliest else { return 300 }
         return min(max(earliest.timeIntervalSinceNow, 1), 300)
+    }
+
+    /// The last run that started is still going: it is being set up, or
+    /// its chat's agent is mid-turn (a chat it continues counts too —
+    /// that chat busy is the run busy). A chat waiting on a permission
+    /// is still going; one idle for a follow-up is not.
+    private func lastRunActive(_ a: Automation) -> Bool {
+        let runs = (try? model.store.runs(automationId: a.id, limit: 10)) ?? []
+        guard let last = runs.first(where: { $0.status != .skipped }) else { return false }
+        if last.status == .creating { return true }
+        let chats = [last.sessionId, a.workspaceMode == .pinned ? a.pinnedSessionId : nil].compactMap { $0 }
+        return chats.contains { id in
+            guard let status = model.session(id)?.status else { return false }
+            return status == .provisioning || status == .running || status == .waitingInput
+        }
+    }
+
+    /// The project its runs branch from, through its chat when it
+    /// continues one someone else started. This Mac's record only: a
+    /// paired Mac's project names a folder over there.
+    private func baseProject(_ a: Automation) -> Project? {
+        let id = a.projectId ?? a.pinnedSessionId.flatMap { model.session($0)?.projectId }
+        return id.flatMap { id in model.projects.first { $0.id == id } }
+    }
+
+    /// The base's commit now, on this Mac. A run that starts on a paired
+    /// Mac branches from that Mac's copy, which this one can't read.
+    private func currentBaseCommit(_ a: Automation) async -> String? {
+        guard a.deviceId == nil, let project = baseProject(a) else { return nil }
+        return await Git.commit(model.executor, root: project.rootPath, ref: project.defaultBaseRef)
+    }
+
+    /// Whether the base moved since the last run, for an automation that
+    /// only runs when it has; nil for any other, and when it can't tell.
+    private func baseMoved(_ a: Automation) async -> Bool? {
+        guard a.onlyWhenChanged else { return nil }
+        let runs = (try? model.store.runs(automationId: a.id, limit: 50)) ?? []
+        return AutomationScheduling.baseMoved(lastRunCommit: runs.first { $0.baseCommit != nil }?.baseCommit,
+                                              currentCommit: await currentBaseCommit(a))
     }
 
     /// Write only the next-run time, onto a fresh copy of the automation, so
@@ -70,6 +144,7 @@ final class AutomationScheduler {
         firing.insert(a.id)
         defer { firing.remove(a.id) }
         var run = AutomationRun(automationId: a.id, trigger: trigger)
+        run.baseCommit = await currentBaseCommit(a)
         try? model.store.save(run)
         do {
             let sessionId = try await startRun(a)

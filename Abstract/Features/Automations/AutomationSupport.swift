@@ -113,6 +113,7 @@ extension RunStatus {
         case .creating: "Creating"
         case .created: "Created"
         case .failed: "Failed"
+        case .skipped: "Skipped"
         }
     }
 
@@ -121,6 +122,45 @@ extension RunStatus {
         case .creating: .btTextTertiary
         case .created: .btTextSecondary
         case .failed: .btRemoved
+        case .skipped: .btTextTertiary
+        }
+    }
+}
+
+extension AutomationConcurrency {
+    /// How it reads inside "If the last run is still going, …".
+    var phrase: String {
+        switch self {
+        case .skipIfActive: "skip this one"
+        case .runAfterActiveFinishes: "run after it finishes"
+        case .startAnother: "start another"
+        }
+    }
+
+    var option: String {
+        switch self {
+        case .skipIfActive: "Skip This One"
+        case .runAfterActiveFinishes: "Run After It Finishes"
+        case .startAnother: "Start Another"
+        }
+    }
+}
+
+extension AutomationMissedRuns {
+    /// How it reads inside "If runs were missed while Abstract was closed, …".
+    var phrase: String {
+        switch self {
+        case .skip: "skip them"
+        case .runOnce: "run once"
+        case .runEach: "run each, up to \(Self.runEachLimit)"
+        }
+    }
+
+    var option: String {
+        switch self {
+        case .skip: "Skip Them"
+        case .runOnce: "Run Once"
+        case .runEach: "Run Each, Up to \(Self.runEachLimit)"
         }
     }
 }

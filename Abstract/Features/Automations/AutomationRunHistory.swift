@@ -81,6 +81,14 @@ private struct RunRow: View {
                     .padding(.leading, AutoPage.gutter)
                     .padding(.bottom, Space.sm)
             }
+            if run.status == .skipped, let reason = run.reason, !reason.isEmpty {
+                Text(reason.prefix(1).uppercased() + reason.dropFirst() + ".")
+                    .font(.btCaption)
+                    .foregroundStyle(Color.btTextTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, AutoPage.gutter)
+                    .padding(.bottom, Space.sm)
+            }
         }
         .padding(.horizontal, AutoPage.hang)
         .contentShape(Rectangle())
@@ -100,6 +108,7 @@ private struct RunRow: View {
         switch run.status {
         case .creating: "Starting…"
         case .failed: "Failed"
+        case .skipped: "Skipped"
         case .created: session?.status.label ?? "Chat deleted"
         }
     }
