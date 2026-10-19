@@ -859,6 +859,16 @@ final class AppModel {
         URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
     }
 
+    /// The code-history tool for this chat (ABS-61): nil when its project
+    /// has it off, or when this Mac has no `abstract` command to serve it.
+    func historySettings(for session: Session) -> CodeHistorySettings? {
+        guard let project = project(session.projectId), project.agentHistoryEnabled else { return nil }
+        let tool = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/abstract").path
+        guard FileManager.default.isExecutableFile(atPath: tool) else { return nil }
+        let directory = AttachmentStore.root.deletingLastPathComponent().appendingPathComponent("code-history").path
+        return CodeHistorySettings(command: tool, instructionFile: CodeHistorySettings.instructionFile(in: directory))
+    }
+
     /// Spawn (or respawn) the agent for a session.
     func launch(_ session: Session, prompt: String, resume: Bool, images: [String] = []) throws {
         // A project chat always works in its worktree, never a fallback folder.
@@ -884,7 +894,8 @@ final class AppModel {
         }
         let settings = LaunchSettings(providerOverrides: providerOverrides, outputStyle: outputStyle, claudeProfile: claudeProfile,
                                       standardClaudeProfile: accounts.standardProfilePath, attachmentsDirectory: AttachmentStore.root.path,
-                                      agentDefaults: agentDefaults, modelCatalogs: modelCatalogs)
+                                      agentDefaults: agentDefaults, modelCatalogs: modelCatalogs,
+                                      codeHistory: historySettings(for: session))
         var spec = AgentLaunch.spec(for: session, provider: provider, prompt: prompt, resumeId: resumeId, images: images,
                                     settings: settings, home: executor.homeDirectory)
         let cwd = spec.cwd
