@@ -23,8 +23,13 @@ struct ChatSummary: Equatable {
     var name: String
     var providerId: String
     var worktreePath: String?
+    /// The profile it started from, shown in its tab (ABS-101).
+    var profileName: String?
 
-    init(_ session: Session) { name = session.name; providerId = session.providerId; worktreePath = session.worktreePath }
+    init(_ session: Session) {
+        name = session.name; providerId = session.providerId; worktreePath = session.worktreePath
+        profileName = session.profileName
+    }
 }
 
 struct PendingPermission: Identifiable, Hashable {
@@ -67,6 +72,8 @@ final class AppModel {
     /// Unarchived chats, most recently active first; changes only when the order does.
     private(set) var recentChats: [String] = []
     var automations: [Automation] = []
+    /// The named setups chats and automations can start from (ABS-101).
+    var profiles: [AgentProfile] = []
     var providerStatus: [String: ProviderStatus] = [:]
     /// Each agent's models: the copy cached at the last launch until the CLI
     /// has been asked again. See `refreshModels`.
@@ -296,6 +303,7 @@ final class AppModel {
     // MARK: - Bootstrap
 
     func bootstrap() async {
+        try? store.seedStarterProfilesIfNeeded()
         // A chat whose agent still runs from the command line wasn't interrupted.
         refreshCLIDriven()
         // Chats caught setting up, before they're marked interrupted below.
@@ -341,6 +349,7 @@ final class AppModel {
         projects = (try? store.projects()) ?? []
         sessions = (try? store.sessions()) ?? []
         automations = (try? store.automations()) ?? []
+        profiles = (try? store.profiles()) ?? []
         alive = engine.aliveSessionIds
     }
 
@@ -607,6 +616,36 @@ final class AppModel {
         reload()
     }
 
+    // MARK: - Profiles
+
+    func profile(_ id: String?) -> AgentProfile? {
+        id.flatMap { wanted in profiles.first { $0.id == wanted } }
+    }
+
+    /// Saved in place, so editing a profile in Settings doesn't reload
+    /// every chat under the text being typed.
+    func saveProfile(_ profile: AgentProfile) {
+        try? store.save(profile)
+        if let index = profiles.firstIndex(where: { $0.id == profile.id }) {
+            profiles[index] = profile
+        } else {
+            profiles.append(profile)
+            profiles.sort { ($0.sortOrder, $0.createdAt) < ($1.sortOrder, $1.createdAt) }
+        }
+    }
+
+    func deleteProfile(_ id: String) {
+        try? store.deleteProfile(id)
+        profiles.removeAll { $0.id == id }
+    }
+
+    @discardableResult
+    func addProfile() -> AgentProfile {
+        let profile = AgentProfile(name: "New profile", sortOrder: (profiles.map(\.sortOrder).max() ?? -1) + 1)
+        saveProfile(profile)
+        return profile
+    }
+
     // MARK: - Chats
 
     /// Start a chat: in a fresh worktree from `baseRef`, or in `existing`, which
@@ -621,7 +660,7 @@ final class AppModel {
     func startChat(projectId: String?, providerId: String, prompt text: String, attachments: [PromptAttachment] = [], baseRef: String?,
                    policy: PermissionPolicy, model: String? = nil, effort: String? = nil, existing: WorktreeInfo? = nil,
                    name: String? = nil, nameSource: ChatNameSource = .manual, slug: String? = nil, automationId: String? = nil,
-                   select: Bool = true) async throws -> String {
+                   profile: ProfileSnapshot? = nil, select: Bool = true) async throws -> String {
         let project = project(projectId)
         if projectId != nil, project == nil { throw AbstractError.notFound("project") }
         let prompt = PromptAttachments.message(text, attachments)
@@ -636,6 +675,9 @@ final class AppModel {
         var session = Session(projectId: projectId, name: provisional, providerId: providerId,
                               baseRef: existing == nil ? baseRef : nil, status: .provisioning, permissionPolicy: policy,
                               prompt: prompt, automationId: automationId, model: model, effort: effort)
+        // The profile it starts from, as it is now; editing the profile
+        // later changes later chats, never this one (ABS-101).
+        if let profile { session.apply(profile) }
         session.nameSource = name == nil ? .fallback : nameSource
         if naming != nil { namingRequests.insert(session.id) }
         // Its agent's first replies may still name it; an older chat's never do.

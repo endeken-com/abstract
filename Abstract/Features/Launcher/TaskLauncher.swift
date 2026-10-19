@@ -24,6 +24,8 @@ struct TaskLauncher: View {
     @State private var projectId: String?
     /// No project: the chat works in a folder of its own. Only on this Mac.
     @State private var standalone = false
+    /// The profile the fields below were filled from; they can still change.
+    @State private var profileId: String?
     @State private var providerId = "claude"
     @State private var modelId: String?
     @State private var effort: String?
@@ -75,6 +77,21 @@ struct TaskLauncher: View {
                             }
                             Button("Add Project…") { model.isAddingProject = true }
                         }
+                    }
+                    if !offeredProfiles.isEmpty {
+                        CompactMenu(title: offeredProfiles.first { $0.id == profileId }?.name ?? "No profile") {
+                            Picker("Profile", selection: profileBinding) {
+                                Text("No Profile").tag(String?.none)
+                                ForEach(offeredProfiles) { profile in
+                                    Label(profile.name, systemImage: profile.iconSymbol ?? "person.crop.circle")
+                                        .tag(Optional(profile.id))
+                                }
+                            }
+                            .pickerStyle(.inline)
+                            Divider()
+                            Text("A profile fills in the agent, model, effort and permissions, and gives the agent its instructions. Manage them in Settings › Profiles.")
+                        }
+                        .help("Start from a saved setup")
                     }
                     CompactMenu(title: ProviderRegistry.name(providerId), logo: providerId) {
                         Picker("Agent", selection: providerBinding) {
@@ -228,6 +245,25 @@ struct TaskLauncher: View {
         })
     }
 
+    /// The profiles this project offers (Project Settings picks them),
+    /// plus the chosen one when it isn't among them.
+    private var offeredProfiles: [AgentProfile] {
+        var offered = AgentProfile.visible(model.profiles, in: standalone ? nil : model.project(projectId))
+        if let chosen = model.profile(profileId), !offered.contains(chosen) { offered.append(chosen) }
+        return offered
+    }
+
+    private var profileBinding: Binding<String?> {
+        Binding(get: { profileId }, set: { new in
+            profileId = new
+            guard let profile = model.profile(new) else { return }
+            providerId = profile.providerId
+            modelId = profile.model
+            effort = profile.effort
+            policy = profile.permissionPolicy
+        })
+    }
+
     private var providerBinding: Binding<String> {
         Binding(get: { providerId }, set: { new in
             if new != providerId { modelId = nil; effort = nil }
@@ -293,16 +329,18 @@ struct TaskLauncher: View {
         starting = true
         error = nil
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let profile = model.profile(profileId)?.snapshot
         Task {
             do {
                 if let device, let projectId {
                     let id = try await model.remote.startChat(on: device, RemoteStart(
                         projectId: projectId, providerId: providerId, prompt: text, attachments: attachments, baseRef: baseRef,
-                        policy: policy, model: modelId, effort: effort, worktree: worktree?.path))
+                        policy: policy, model: modelId, effort: effort, worktree: worktree?.path, profile: profile))
                     model.open(id, newTab: true)
                 } else {
                     try await model.startChat(projectId: projectId, providerId: providerId, prompt: text, attachments: attachments,
-                                              baseRef: baseRef, policy: policy, model: modelId, effort: effort, existing: worktree)
+                                              baseRef: baseRef, policy: policy, model: modelId, effort: effort, existing: worktree,
+                                              profile: profile)
                 }
                 prompt = ""
                 attachments = []
