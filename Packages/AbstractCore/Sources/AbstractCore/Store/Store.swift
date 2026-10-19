@@ -578,6 +578,10 @@ public final class Store: Sendable {
         migrator.registerMigration("v11-default-device") { db in
             try db.execute(sql: "ALTER TABLE projects ADD COLUMN default_device_id TEXT")
         }
+        // The paired Mac an automation's runs start on; nil = this Mac.
+        migrator.registerMigration("v12-automation-device") { db in
+            try db.execute(sql: "ALTER TABLE automations ADD COLUMN device_id TEXT")
+        }
         return migrator
     }
 }
@@ -744,7 +748,8 @@ private struct AutomationRow: FetchableRecord, PersistableRecord {
             createdAt: try row.decode(forColumn: "created_at"),
             updatedAt: try row.decode(forColumn: "updated_at"),
             model: try row.decode(forColumn: "model"),
-            effort: try row.decode(forColumn: "effort"))
+            effort: try row.decode(forColumn: "effort"),
+            deviceId: try row.decode(forColumn: "device_id"))
     }
 
     func encode(to container: inout PersistenceContainer) throws {
@@ -766,6 +771,7 @@ private struct AutomationRow: FetchableRecord, PersistableRecord {
         container["permission_policy"] = value.permissionPolicy.rawValue
         container["model"] = value.model
         container["effort"] = value.effort
+        container["device_id"] = value.deviceId
         container["catch_up"] = value.catchUp
         container["enabled"] = value.enabled
         container["next_run_at"] = value.nextRunAt
