@@ -107,7 +107,7 @@ public struct CodexProvider: ProviderDefinition {
                 + Self.sandboxArgs(ctx.permissionPolicy, resuming: resuming) + (ctx.model.map { ["-m", $0] } ?? [])
                 // A config override; the value is TOML, so the level is quoted.
                 + (ctx.effort.map { ["-c", "model_reasoning_effort=\"\($0)\""] } ?? [])
-                + (ctx.outputStyle.instructions.map { ["-c", "developer_instructions=\(Self.tomlString($0))"] } ?? []) + ctx.extraArgs
+                + Self.developerInstructions(ctx) + Self.historyArgs(ctx.historyTool) + ctx.extraArgs
                 + ctx.images.flatMap { ["--image", $0] }
                 // A prompt like "- fix the parser" would otherwise parse as a flag,
                 // and `--image` takes every value up to the next flag.
@@ -117,6 +117,25 @@ public struct CodexProvider: ProviderDefinition {
             // `codex exec` waits on an open stdin forever.
             keepStdinOpen: false
         )
+    }
+
+    /// The output style and, when the chat gets it, the code-history
+    /// instruction, joined as developer instructions.
+    static func developerInstructions(_ ctx: LaunchContext) -> [String] {
+        let parts = [ctx.outputStyle.instructions, ctx.historyTool == nil ? nil : CodeHistory.instruction]
+            .compactMap { $0 }
+        return parts.isEmpty ? [] : ["-c", "developer_instructions=\(tomlString(parts.joined(separator: "\n\n")))"]
+    }
+
+    /// The code-history tool (ABS-61, checked in ABS-60) as config
+    /// overrides, on `exec` and `exec resume` alike; the user's own
+    /// config file is never touched. The tool must declare itself
+    /// read-only, or `exec` (approval policy "never") refuses the call.
+    static func historyArgs(_ tool: HistoryToolLaunch?) -> [String] {
+        guard let tool else { return [] }
+        let server = "mcp_servers.\(CodeHistory.serverName)"
+        let args = "[" + tool.serverArgs.map(tomlString).joined(separator: ", ") + "]"
+        return ["-c", "\(server).command=\(tomlString(tool.command))", "-c", "\(server).args=\(args)"]
     }
 
     /// A TOML basic string; its escapes match JSON's, all but `\/`, which
@@ -219,8 +238,13 @@ final class CodexParser: OutputParser {
             return [.notice(.warning(message))]
         case "file_change", "patch_apply":
             return onFileChange(item, id: id, itemType: itemType, phase: phase)
+        // Verified against codex-cli 0.156.1 (ABS-60; fixture
+        // `codex-mcp.jsonl`): `server`, `tool`, `arguments`, and on
+        // completion `result.content[]` or `error.message`, plus `status`.
+        case "mcp_tool_call":
+            return onMCPTool(item, id: id, phase: phase)
         // NOTE: unverified: these item types do not appear in the recorded fixture.
-        case "todo_list", "web_search", "mcp_tool_call":
+        case "todo_list", "web_search":
             return onGenericTool(item, id: id, itemType: itemType, phase: phase, edit: nil)
         default:
             return nil
@@ -260,6 +284,30 @@ final class CodexParser: OutputParser {
             }
         }
         return uses + results
+    }
+
+    /// An MCP call, named the way Claude's stream names it
+    /// (`mcp__<server>__<tool>`) so the chat reads the same for every
+    /// agent, with the call's own arguments as its input.
+    private func onMCPTool(_ item: JSONValue, id: String, phase: Phase) -> [AgentEvent] {
+        var events: [AgentEvent] = []
+        if !openTools.contains(id) {
+            openTools.insert(id)
+            let server = item["server"]?.string ?? ""
+            let tool = item["tool"]?.string ?? "McpToolCall"
+            events.append(.toolUse(id: id, name: server.isEmpty ? tool : "mcp__\(server)__\(tool)",
+                                   input: item["arguments"] ?? .object([:]), edit: nil))
+        }
+        if phase == .completed {
+            openTools.remove(id)
+            let status = item["status"]?.string
+            let error = item["error"]?["message"]?.string ?? item["error"]?.string
+            let content = (item["result"]?["content"]?.array ?? [])
+                .compactMap { $0["text"]?.string }.joined(separator: "\n")
+            events.append(.toolResult(toolUseId: id, output: error ?? (content.isEmpty ? CodexWire.output(item) : content),
+                                      isError: error != nil || status == "failed" || status == "error", edit: nil))
+        }
+        return events
     }
 
     private func onGenericTool(_ item: JSONValue, id: String, itemType: String, phase: Phase,

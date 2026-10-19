@@ -189,7 +189,15 @@ final class AgentHost: @unchecked Sendable {
         }
         engine.recordInput(sessionId: sessionId, text: request.prompt)
         let executor = LocalExecutor.shared
-        let settings = LaunchSettings(store: store, dataDirectory: URL(fileURLWithPath: storePath).deletingLastPathComponent())
+        var settings = LaunchSettings(store: store, dataDirectory: URL(fileURLWithPath: storePath).deletingLastPathComponent())
+        // The chat's agent gets the code-history tool (ABS-61) unless its
+        // project has it off; this program itself serves it.
+        if let project = try? session.projectId.flatMap({ try store.project($0) }), project.agentHistoryEnabled,
+           let executable = Bundle.main.executablePath {
+            let directory = URL(fileURLWithPath: storePath).deletingLastPathComponent().path + "/code-history"
+            settings.codeHistory = CodeHistorySettings(
+                command: executable, instructionFile: CodeHistorySettings.instructionFile(in: directory))
+        }
         let spec = AgentLaunch.spec(for: session, provider: provider, prompt: request.prompt, resumeId: nil,
                                     settings: settings, home: executor.homeDirectory)
         do {
