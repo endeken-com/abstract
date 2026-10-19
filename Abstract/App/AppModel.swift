@@ -445,6 +445,12 @@ final class AppModel {
         effort.flatMap { efforts(providerId: providerId, model: model).levels.contains($0) ? $0 : nil }
     }
 
+    /// The same, for a model on a paired Mac (nil: this one).
+    func supportedEffort(_ effort: String?, providerId: String, model: String?, on device: String?) -> String? {
+        guard device != nil else { return supportedEffort(effort, providerId: providerId, model: model) }
+        return effort.flatMap { efforts(providerId: providerId, model: model, on: device).levels.contains($0) ? $0 : nil }
+    }
+
     /// Asks each agent's CLI for the account's models and caches them for
     /// the next launch. An agent that can't tell keeps what it had.
     func updateModelCatalog(_ catalog: ModelCatalog, for providerId: String) {

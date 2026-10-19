@@ -60,6 +60,9 @@ public enum RemoteRequest: Codable, Sendable {
     case deleteAutomation(id: String)
     case runAutomation(id: String)
     case automationRuns(id: String)
+    /// One run of an automation kept on the asking Mac, started here.
+    /// Only send it to a Mac whose snapshot says `automationDevice`.
+    case startRun(RemoteRunStart)
     case review(sessionId: String, committed: Bool)
     case reviewFile(sessionId: String, path: String, committed: Bool, accept: Bool)
     case createPullRequest(sessionId: String, title: String, body: String, base: String?, draft: Bool, commitFirst: Bool)
@@ -113,6 +116,32 @@ public struct RemoteStart: Codable, Sendable {
         self.projectId = projectId; self.providerId = providerId; self.prompt = prompt; self.attachments = attachments
         self.files = files; self.baseRef = baseRef; self.policy = policy; self.model = model; self.effort = effort
         self.worktree = worktree
+    }
+}
+
+/// One automation run to start on the host: everything a run on the
+/// automation's own Mac starts with. `projectId` is the host's own record
+/// of the project; nil is a standalone chat.
+public struct RemoteRunStart: Codable, Sendable, Hashable {
+    public var projectId: String?
+    public var providerId: String
+    public var prompt: String
+    public var policy: PermissionPolicy
+    public var model: String?
+    public var effort: String?
+    /// What the chat is called, and whether a better name may replace it.
+    public var name: String
+    public var nameSource: ChatNameSource
+    /// The new worktree's branch, when the run starts in a project.
+    public var slug: String?
+    public var automationId: String
+
+    public init(projectId: String?, providerId: String, prompt: String, policy: PermissionPolicy,
+                model: String?, effort: String?, name: String, nameSource: ChatNameSource,
+                slug: String?, automationId: String) {
+        self.projectId = projectId; self.providerId = providerId; self.prompt = prompt; self.policy = policy
+        self.model = model; self.effort = effort; self.name = name; self.nameSource = nameSource
+        self.slug = slug; self.automationId = automationId
     }
 }
 
@@ -192,6 +221,9 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
     /// `iconImagePath` names a file on this Mac, which a viewing Mac cannot
     /// read. Optional for older peers.
     public var projectIcons: [String: Data]?
+    /// A host that starts another Mac's automation runs (`startRun`).
+    /// Optional for older peers.
+    public var automationDevice: Bool?
 
     /// The largest uploaded icon a snapshot carries; larger ones are left out.
     public static let maxProjectIconBytes = 512 << 10
@@ -203,7 +235,7 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
                 pendingPermissions: [String: [RemotePendingPermission]]? = nil,
                 turnStartedAt: [String: Date]? = nil, pagedHistory: Bool? = nil, execInput: Bool? = nil,
                 internetAddress: InternetAddress? = nil, backgroundTasks: [String]? = nil, unmergedWork: [String: Bool]? = nil,
-                projectIcons: [String: Data]? = nil) {
+                projectIcons: [String: Data]? = nil, automationDevice: Bool? = nil) {
         self.projects = projects; self.sessions = sessions; self.providers = providers; self.alive = alive
         self.home = home; self.modelCatalogs = modelCatalogs; self.defaultModelNames = defaultModelNames
         self.pullRequests = pullRequests
@@ -216,6 +248,7 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
         self.backgroundTasks = backgroundTasks
         self.unmergedWork = unmergedWork
         self.projectIcons = projectIcons
+        self.automationDevice = automationDevice
     }
 }
 

@@ -446,7 +446,8 @@ final class RemoteService {
                               internetAddress: internetAddress,
                               backgroundTasks: model.alive.filter { model.runningBackgroundTasks($0) > 0 }.sorted(),
                               unmergedWork: model.branchStates.mapValues(\.hasUnmergedWork),
-                              projectIcons: projectIcons(model.projects.filter { $0.archivedAt == nil }))
+                              projectIcons: projectIcons(model.projects.filter { $0.archivedAt == nil }),
+                              automationDevice: true)
     }
 
     /// Each project's uploaded icon as bytes, so a viewing Mac can show it
@@ -751,6 +752,17 @@ final class RemoteService {
         default: throw AbstractError.message("The other Mac didn't say which chat it started.")
         }
     }
+
+    /// Starts one run of an automation kept here on another Mac, and
+    /// returns its chat's id here.
+    func startAutomationRun(on device: String, _ start: RemoteRunStart) async throws -> String {
+        guard let link = links[device] else { throw AbstractError.message("That Mac isn't connected.") }
+        switch try await link.request(.startRun(start)) {
+        case .started(let session): return Self.mirrorId(device: device, session: session)
+        case .failed(let message): throw AbstractError.message(message)
+        default: throw AbstractError.message("The other Mac didn't say which chat it started.")
+        }
+    }
 }
 
 // MARK: - A paired Mac using this one
@@ -954,6 +966,21 @@ final class HostedPeer {
             return .automationRuns([run])
         case .automationRuns(let id):
             return .automationRuns(model.automationRuns(id))
+        case .startRun(let start):
+            do {
+                // As with a new chat from there, a retired agent's runs go
+                // to OpenCode on its own default model.
+                let agent = RetiredAgents.current(start.providerId)
+                let retired = agent != start.providerId
+                let id = try await model.startChat(projectId: start.projectId, providerId: agent, prompt: start.prompt,
+                                                   baseRef: nil, policy: start.policy,
+                                                   model: retired ? nil : start.model, effort: retired ? nil : start.effort,
+                                                   name: start.name, nameSource: start.nameSource, slug: start.slug,
+                                                   automationId: start.automationId, select: false)
+                return .started(sessionId: id)
+            } catch {
+                return .failed(error.localizedDescription)
+            }
         case let .review(session, committed):
             do {
                 let files = try await reviewFiles(session: session, committed: committed, model: model)

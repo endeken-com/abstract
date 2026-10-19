@@ -284,6 +284,8 @@ public struct Automation: Sendable, Hashable, Identifiable, Codable {
     public var model: String?
     /// Reasoning effort for every run; nil = the agent's own default.
     public var effort: String?
+    /// The paired Mac its runs start on; nil = the Mac it's stored on.
+    public var deviceId: String?
 
     public init(
         id: String = UUID().uuidString, name: String, prompt: String, providerId: String, projectId: String?,
@@ -291,9 +293,9 @@ public struct Automation: Sendable, Hashable, Identifiable, Codable {
         pinnedSessionId: String? = nil, continueAgentSession: Bool = false,
         permissionPolicy: PermissionPolicy = .autoEdits, catchUp: Bool = false, enabled: Bool = true,
         nextRunAt: Date? = nil, createdAt: Date = Date(), updatedAt: Date = Date(), model: String? = nil,
-        effort: String? = nil
+        effort: String? = nil, deviceId: String? = nil
     ) {
-        self.model = model; self.effort = effort
+        self.model = model; self.effort = effort; self.deviceId = deviceId
         self.id = id; self.name = name; self.prompt = prompt; self.providerId = providerId; self.projectId = projectId
         self.triggers = triggers; self.workspaceMode = workspaceMode
         self.pinnedSessionId = pinnedSessionId; self.continueAgentSession = continueAgentSession
@@ -309,14 +311,14 @@ public struct Automation: Sendable, Hashable, Identifiable, Codable {
         pinnedSessionId: String? = nil, continueAgentSession: Bool = false,
         permissionPolicy: PermissionPolicy = .autoEdits, catchUp: Bool = false, enabled: Bool = true,
         nextRunAt: Date? = nil, createdAt: Date = Date(), updatedAt: Date = Date(), model: String? = nil,
-        effort: String? = nil
+        effort: String? = nil, deviceId: String? = nil
     ) {
         self.init(
             id: id, name: name, prompt: prompt, providerId: providerId, projectId: projectId,
             triggers: [AutomationTrigger(rrule: rrule, timezone: timezone, dtstart: dtstart)],
             workspaceMode: workspaceMode, pinnedSessionId: pinnedSessionId, continueAgentSession: continueAgentSession,
             permissionPolicy: permissionPolicy, catchUp: catchUp, enabled: enabled, nextRunAt: nextRunAt,
-            createdAt: createdAt, updatedAt: updatedAt, model: model, effort: effort)
+            createdAt: createdAt, updatedAt: updatedAt, model: model, effort: effort, deviceId: deviceId)
     }
 
     /// The earliest next occurrence across every trigger, strictly after
