@@ -154,6 +154,8 @@ extension PermissionPolicy {
         case .ask: "approval for each action"
         case .autoEdits: "edits accepted"
         case .bypass: "full autonomy"
+        case .plan: "a plan for your approval"
+        case .readOnly: "read-only answers"
         }
     }
 }

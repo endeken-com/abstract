@@ -503,7 +503,7 @@ private struct NewChatSection: View {
             }
             SettingRow(title: "Permissions", detail: project.defaultPermissionPolicy.detail) {
                 SentenceMenu(title: project.defaultPermissionPolicy.title) {
-                    ForEach(PermissionPolicy.allCases, id: \.self) { p in
+                    ForEach(PermissionPolicy.autonomyCases, id: \.self) { p in
                         Toggle(isOn: Binding(get: { project.defaultPermissionPolicy == p },
                                              set: { _ in model.updateProject(project.id) { $0.defaultPermissionPolicy = p } })) {
                             Text(p.title)
