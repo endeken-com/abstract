@@ -1,0 +1,12 @@
+{
+  "api": 1,
+  "id": "sh.abstract.kanban",
+  "name": "Kanban",
+  "version": "1.0.0",
+  "description": "Shows your chats as a board, by what they need from you.",
+  "entry": "index.html",
+  "capabilities": ["projects.read", "chats.read", "chats.open", "storage.own"],
+  "contributes": {
+    "views": [{ "id": "board", "title": "Kanban", "symbol": "rectangle.split.3x1", "location": "main" }]
+  }
+}
