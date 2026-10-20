@@ -4,8 +4,9 @@ import { SymbolView } from 'expo-symbols';
 import { MenuView } from '@react-native-menu/menu';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ProviderLogo } from './ProviderLogo';
+import { ProjectIcon } from './ProjectIcon';
 import { PullRequestIcon } from './PullRequestIcon';
-import { swiftDate, type Session } from './types';
+import { swiftDate } from './types';
 import {
   activeAt, age, chatKey, defaultPrefs, filterIsEmpty, groupTitles, lineIsEmpty, lineOf, lineText,
   parsePrefs, sections, standalone, type ChatFacts, type ChatListPrefs, type ChatLine,
@@ -104,7 +105,7 @@ function FilterMenu({ all, prefs, setPrefs }: { all: ChatFacts[]; prefs: ChatLis
   </MenuView>;
 }
 
-// A chat: its agent and state, title and age; a quiet second line with its
+// A chat: its project and state, title and age; a quiet second line with its
 // project, pull request and Mac. Dimmed while archived, or while its Mac can't be reached.
 export function ChatRow({ chat, showProject, showMac = false, now, selected, onPress }: {
   chat: ChatFacts; showProject: boolean; showMac?: boolean; now: number; selected?: boolean; onPress: () => void;
@@ -112,7 +113,7 @@ export function ChatRow({ chat, showProject, showMac = false, now, selected, onP
   const line = lineOf(chat, showProject, showMac, now);
   const dimmed = chat.session.archivedAt != null || chat.macState === 'unreachable';
   return <Pressable onPress={onPress} accessibilityRole="button" style={[styles.row, selected && styles.rowSelected, dimmed && { opacity: 0.5 }]}>
-    <AgentMark session={chat.session} working={chat.backgroundTasks} unreachable={chat.macState === 'unreachable'} stalled={chat.macState !== 'unreachable' && chat.stall?.state === 'stalled'} />
+    <ChatMark chat={chat} working={chat.backgroundTasks} unreachable={chat.macState === 'unreachable'} />
     <View style={styles.rowText}>
       <View style={styles.firstLine}>
         <Text numberOfLines={1} style={styles.title}>{chat.session.name}</Text>
@@ -125,12 +126,17 @@ export function ChatRow({ chat, showProject, showMac = false, now, selected, onP
   </Pressable>;
 }
 
-// The agent's logo, with a small badge while it works, when it needs you, or when it failed.
-function AgentMark({ session, working, unreachable = false, stalled = false }: { session: Session; working: boolean; unreachable?: boolean; stalled?: boolean }) {
+// What leads a chat's row: its project's icon (its agent's logo when it has no
+// project), with a small badge while it works, when it needs you, or when it failed.
+function ChatMark({ chat, working, unreachable = false }: { chat: ChatFacts; working: boolean; unreachable?: boolean }) {
+  const session = chat.session;
+  const stalled = !unreachable && chat.stall?.state === 'stalled';
   const badge = unreachable ? tertiary : stalled ? warning : session.status === 'waiting_input' ? ink : session.status === 'errored' ? removed
     : session.status === 'running' || session.status === 'provisioning' || working ? running : null;
-  return <View style={styles.mark} accessibilityLabel={`${agentNames[session.providerId] || session.providerId}, ${stalled ? 'stalled' : session.status.replace('_', ' ')}`}>
-    <ProviderLogo provider={session.providerId} size={17} />
+  return <View style={styles.mark} accessibilityLabel={`${chat.projectName || standalone}, ${agentNames[session.providerId] || session.providerId}, ${stalled ? 'stalled' : session.status.replace('_', ' ')}`}>
+    {chat.icon.kind === 'project'
+      ? <ProjectIcon mark={chat.icon.mark} size={20} />
+      : <ProviderLogo provider={session.providerId} size={17} />}
     {badge && <View style={[styles.badge, { backgroundColor: badge }]} />}
   </View>;
 }

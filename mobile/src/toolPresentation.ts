@@ -23,10 +23,30 @@ const active: Record<string, string> = {
   task: 'Delegating', agent: 'Delegating', todowrite: 'Updating plan', todolist: 'Updating plan', todo_list: 'Updating plan', skill: 'Using skill', askuserquestion: 'Asking'
 };
 
+/** Abstract's own code-history tools under any agent's spelling, mirroring `CodeHistory.tool(inStreamName:)` on the Mac: the bare name, `mcp__abstract-code-history__code_history`, or OpenCode's `abstract-code-history_code_history`. */
+export function historyTool(name: string): 'code_history' | 'chat_excerpt' | null {
+  for (const tool of ['code_history', 'chat_excerpt'] as const)
+    if (name === tool || name.endsWith(`__${tool}`) || name.endsWith(`_${tool}`)) return tool;
+  return null;
+}
+/** "220", "220-245" or "220:245" → {first, last}; mirrors `CodeHistoryService.lineRange`. */
+export function parseLineRange(lines: unknown): { first: number; last: number } | null {
+  if (typeof lines !== 'string') return null;
+  const parts = lines.trim().split(/[-:–]/).map(part => part.trim());
+  const first = Number(parts[0]);
+  if (!parts[0] || !Number.isInteger(first) || first <= 0) return null;
+  if (parts.length === 1) return { first, last: first };
+  const last = Number(parts[1]);
+  if (parts.length !== 2 || !Number.isInteger(last) || last < first) return null;
+  return { first, last };
+}
 export function toolSymbol(name: string): string {
   return isJavaScriptTool(name) ? 'terminal' : symbols[name.toLowerCase()] || (name.startsWith('mcp__') ? 'puzzlepiece.extension' : 'wrench.and.screwdriver');
 }
 export function toolVerb(name: string, pending = false): string {
+  const history = historyTool(name);
+  if (history === 'code_history') return pending ? 'Looking up history of' : 'Looked up history of';
+  if (history === 'chat_excerpt') return pending ? 'Reading more of an earlier chat' : 'Read more of an earlier chat';
   const key = name.toLowerCase();
   if (isJavaScriptTool(name)) return pending ? 'Running' : 'Ran';
   return (pending ? active[key] : done[key]) || (name.startsWith('mcp__') ? 'Used' : name.replace(/_/g, ' '));
@@ -36,6 +56,7 @@ function isJavaScriptTool(name: string): boolean {
   return key === 'js' || key.endsWith('__js');
 }
 export function toolKind(name: string): 'command' | 'edit' | 'explore' | 'other' {
+  if (historyTool(name)) return 'explore';
   const key = name.toLowerCase();
   if (isJavaScriptTool(name) || ['bash', 'shell', 'command_execution', 'bashoutput', 'js_reset'].includes(key)) return 'command';
   if (['write', 'write_file', 'edit', 'edit_file', 'multiedit', 'notebookedit', 'applypatch', 'apply_patch', 'file_change', 'patch_apply'].includes(key)) return 'edit';
@@ -60,8 +81,20 @@ export function toolTarget(name: string, input: any): { text: string; path?: str
     const match = raw.match(/^(?:\/bin\/)?(?:zsh|bash|sh) -l?c (["'])([\s\S]*)\1$/);
     return { text: (match ? match[2] : raw).split('\n')[0] };
   }
-  const path = input?.file_path || input?.notebook_path || input?.path || input?.changes?.[0]?.path;
-  if (typeof path === 'string' && path) return { text: path.split('/').filter(Boolean).at(-1) || path, path };
+  // An MCP call's arguments ride inside the item (Codex), sometimes as JSON text.
+  let args = input?.arguments;
+  if (typeof args === 'string') { try { args = JSON.parse(args); } catch { args = undefined; } }
+  const field = (name: string) => input?.[name] ?? (args && typeof args === 'object' ? args[name] : undefined);
+  const path = field('file_path') || field('notebook_path') || field('path') || input?.changes?.[0]?.path;
+  if (typeof path === 'string' && path) {
+    let text = path.split('/').filter(Boolean).at(-1) || path;
+    // A history lookup names its lines too: "Diff.swift lines 220–245".
+    if (historyTool(name) === 'code_history') {
+      const lines = parseLineRange(field('lines'));
+      if (lines) text += lines.first === lines.last ? ` line ${lines.first}` : ` lines ${lines.first}–${lines.last}`;
+    }
+    return { text, path };
+  }
   if (key === 'file_change' && input?.changes?.length) return { text: `${input.changes.length} files` };
   for (const field of ['description', 'pattern', 'query', 'url', 'skill']) {
     if (typeof input?.[field] === 'string') return { text: input[field] };

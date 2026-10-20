@@ -642,6 +642,12 @@ public final class Store: Sendable {
         // What each turn settled, in one line, and whether a project's
         // agents may read that history (ABS-61); existing projects may.
         migrator.registerMigration("v13-code-history") { db in
+            // Earlier nightlies shipped this as v12-code-history. Its
+            // identifier changed when automation-device was merged, but
+            // those databases already have both columns and their data.
+            let legacy = try String.fetchOne(db, sql: "SELECT identifier FROM grdb_migrations WHERE identifier = ?",
+                                             arguments: ["v12-code-history"])
+            guard legacy == nil else { return }
             try db.execute(sql: "ALTER TABLE turn_records ADD COLUMN decision TEXT")
             try db.execute(sql: "ALTER TABLE projects ADD COLUMN agent_history INTEGER")
         }

@@ -232,6 +232,41 @@ extension HostedPeer {
         }
     }
 
+    /// Ask the chat that wrote some lines, for a phone: the same blame
+    /// and pre-filled prompt as Files and Review here, without opening
+    /// anything on this Mac. The chat is unarchived, as asking here does.
+    func askAuthor(root: String, path: String, lineStart: Int, lineEnd: Int, code: [String],
+                   revision: String?, sessionId: String?, model: AppModel) async -> RemoteResponse {
+        guard allowed(root) else { return .failed("That folder isn't one of this Mac's projects.") }
+        guard lineStart >= 1, lineEnd >= lineStart, lineEnd - lineStart < 500,
+              !path.hasPrefix("/"), !path.split(separator: "/").contains("..")
+        else { return .failed("Those lines can't be asked about.") }
+        let projectId = sessionId.flatMap { model.session($0)?.projectId }
+            ?? model.sessions.first { $0.worktreePath.map { AppModel.canonical($0) } == AppModel.canonical(root) }?.projectId
+            ?? model.projects.first { AppModel.canonical($0.rootPath) == AppModel.canonical(root) }?.id
+        let key = AskAuthorKey(repo: root, path: path, lines: lineStart...lineEnd, revision: revision)
+        let (target, origins) = await model.resolveAsk(key, projectId: projectId, exec: model.reader(for: sessionId))
+        switch target {
+        case let .originalChat(turn, archived, canEdit):
+            if archived { model.setArchived(turn.sessionId, false) }
+            return .askAuthor(RemoteAskAuthor(
+                sessionId: turn.sessionId, projectId: projectId,
+                draft: AskAuthor.quote(path: path, lines: key.lines, code: code,
+                                        commit: origins.last?.commit?.sha, turn: turn),
+                notice: canEdit ? nil
+                    : "This chat's worktree is gone, so it can answer questions but can't edit files there."))
+        case .newChat:
+            let turns = origins.flatMap(\.turns)
+            return .askAuthor(RemoteAskAuthor(
+                sessionId: nil, projectId: projectId,
+                draft: AskAuthor.newChatMessage(
+                    path: path, lines: key.lines, code: code,
+                    origin: origins.last?.commit ?? origins.first?.commit,
+                    deletedTurn: turns.last.flatMap { model.session($0.sessionId) == nil ? $0 : nil }),
+                notice: nil))
+        }
+    }
+
     func readFile(_ path: String) async -> RemoteResponse {
         guard allowed(path) else { return .failed("That file isn't in one of this Mac's projects.") }
         guard let info = FileInfo.local(path), !info.isDirectory else { return .failed("No file at \(path).") }

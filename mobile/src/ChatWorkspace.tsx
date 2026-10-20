@@ -27,7 +27,8 @@ import { NativeSelect } from './NativeSelect';
 import { SyntaxCode, highlightDiffLines } from './SyntaxCode';
 import type { EditPreview } from './editPreview';
 import { stallText } from './stalls';
-import { swiftDate, type PendingPermission, type Session, type Stall } from './types';
+import { MODE_CHOICES, currentPlan, effectivePlan, isReadOnlyMode, nonPlanPermissions, pendingPlanRequest, planHistory, planTitle, policyShort, policyTitle, quotedPlan } from './plan';
+import { swiftDate, type PendingPermission, type PlanState, type Session, type Stall } from './types';
 
 const ink = '#ECECEF', muted = '#A4A4AD', tertiary = '#75757E', canvas = '#1E1E21', panel = '#252529', raised = '#2B2B30', border = 'rgba(255,255,255,0.075)', warning = '#D2D2D8';
 const editStyles = StyleSheet.create({
@@ -101,6 +102,30 @@ function PermissionCard({ mac, sessionId, request }: { mac: RemoteClient; sessio
   const questions = request.toolName === 'AskUserQuestion' ? request.input?.questions || [] : [];
   const submit = (allow: boolean) => mac.request(questions.length && allow ? 'answerQuestion' : 'answer', questions.length && allow ? { sessionId, requestId: request.requestId, answers } : { sessionId, requestId: request.requestId, allow }).catch(e => Alert.alert('Abstract', String(e)));
   return <View style={s.permission}><Text style={s.permissionTitle}>{questions.length ? 'Question from agent' : `Permission · ${request.toolName}`}</Text>{questions.length ? questions.map((q: any) => <View key={q.question}><Text style={s.prose}>{q.question}</Text>{q.options?.map((o: any) => <Chip key={o.label} label={o.label} active={answers[q.question] === o.label} onPress={() => setAnswers({ ...answers, [q.question]: o.label })} />)}<TextInput value={answers[q.question] || ''} onChangeText={v => setAnswers({ ...answers, [q.question]: v })} placeholder="Your answer" placeholderTextColor={tertiary} style={s.permissionInput} /></View>) : <Text style={s.toolDetail}>{JSON.stringify(request.input, null, 2)}</Text>}<View style={s.permissionActions}><Chip label={questions.length ? 'Send answers' : 'Allow'} onPress={() => submit(true)} /><Chip label={questions.length ? 'Skip' : 'Deny'} onPress={() => submit(false)} /></View></View>;
+}
+function PlanCard({ mac, sessionId, plan, permissions, onRequestChanges }: { mac: RemoteClient; sessionId: string; plan: PlanState; permissions?: PendingPermission[]; onRequestChanges: (quoted: string) => void }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [showsHistory, setShowsHistory] = useState(false);
+  const current = currentPlan(plan);
+  const history = planHistory(plan);
+  // A Mac that takes plan decisions gets them; an older one only knows the
+  // ExitPlanMode permission, so answer that instead.
+  const act = async (action: 'approve' | 'changes' | 'discard') => {
+    if (busy) return;
+    setBusy(action);
+    try {
+      if (mac.snapshot?.planApproval) {
+        await mac.request(action === 'approve' ? 'approvePlan' : action === 'changes' ? 'requestPlanChanges' : 'discardPlan', { sessionId });
+      } else {
+        const pending = pendingPlanRequest(permissions);
+        if (!pending) throw Error('That Mac has no plan waiting.');
+        await mac.request('answer', { sessionId, requestId: pending.requestId, allow: action === 'approve' });
+      }
+      if (action === 'changes' && current) onRequestChanges(`${quotedPlan(current)}\n\n`);
+    } catch (e) { Alert.alert('Abstract', String(e)); }
+    finally { setBusy(null); }
+  };
+  return <View style={s.permission}><View style={s.permissionActions}><Glyph name="list.bullet.clipboard" size={14} color={muted} /><Text style={s.permissionTitle}>{planTitle(plan)}{plan.status === 'changesRequested' ? ' · changes requested' : ''}</Text></View>{!!current && <Markdown style={markdownStyles} rules={codeRules}>{current}</Markdown>}{history.length > 0 && <><Chip label={showsHistory ? 'Hide earlier revisions' : `Show ${history.length} earlier ${history.length === 1 ? 'revision' : 'revisions'}`} onPress={() => setShowsHistory(!showsHistory)} />{showsHistory && history.map((revision, index) => <View key={index} style={{ opacity: 0.7 }}><Text style={s.thinkingLabel}>Revision {index + 1}</Text><Markdown style={markdownStyles} rules={codeRules}>{revision}</Markdown></View>)}</>}<View style={s.permissionActions}><Chip label={busy === 'approve' ? 'Starting…' : 'Approve and start'} active onPress={() => act('approve')} /><Chip label="Request changes" onPress={() => act('changes')} /><Chip label="Discard" onPress={() => act('discard')} /></View></View>;
 }
 function ToolEditPreview({ edit }: { edit: EditPreview }) {
   const [showAll, setShowAll] = useState(false);
@@ -220,7 +245,9 @@ export function ChatWorkspace({ route, navigation }: any) {
   const id = route.params.sessionId as string;
   const chat = mac.snapshot?.sessions.find(x => x.id === id);
   const pr = mac.snapshot?.pullRequests?.[id];
-  const [message, setMessage] = useState('');
+  // Ask-author lands here with the Mac-built quote in the composer.
+  const [message, setMessage] = useState(route.params.draft || '');
+  const [notice, setNotice] = useState<string | null>(route.params.notice || null);
   const [pendingSends, setPendingSends] = useState<PendingPhoneMessage[]>([]);
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -266,8 +293,9 @@ export function ChatWorkspace({ route, navigation }: any) {
   const showWorkingRow = showWorking && (!!stall || !(lastRow?.pending && ['tool', 'prose', 'thinking'].includes(lastRow.kind)));
   const workingLabel = lastRow && (lastRow.kind === 'thinking' || (lastRow.kind === 'tool' && !lastRow.pending)) ? 'Thinking…' : 'Working…';
   const pendingPermissions = mac.snapshot?.pendingPermissions?.[id];
+  const plan = effectivePlan(mac.snapshot?.plans?.[id], pendingPermissions);
   const turnStartedAt = mac.snapshot?.turnStartedAt?.[id] ?? chat?.lastEventAt ?? undefined;
-  const transcriptFooter = useMemo(() => <View style={s.transcriptFooter}>{visibleSends.map(item => <View key={item.id} style={s.userRow}><View style={s.userBubble}>{!!item.text && <Text style={s.prose}>{item.text}</Text>}{item.attachments.map(attachment => <Text key={attachment.id} style={s.pendingAttachment}>{attachment.reference ? `${attachment.reference} ` : ''}{attachment.title}</Text>)}</View><Text style={s.pendingStatus}>{item.status === 'sending' ? 'Sending…' : 'Sent'}</Text></View>)}{(pendingPermissions || []).map(request => <PermissionCard key={request.requestId} mac={mac} sessionId={id} request={request} />)}{syncing && <Text style={s.thinkingLabel}>Syncing chat from Mac…</Text>}{showWorkingRow && (stall ? <StallStatus mac={mac} sessionId={id} stall={stall} /> : <WorkingStatus label={workingLabel} startedAt={turnStartedAt} />)}</View>, [visibleSends, mac, pendingPermissions, id, syncing, showWorkingRow, stall, workingLabel, turnStartedAt]);
+  const transcriptFooter = useMemo(() => <View style={s.transcriptFooter}>{visibleSends.map(item => <View key={item.id} style={s.userRow}><View style={s.userBubble}>{!!item.text && <Text style={s.prose}>{item.text}</Text>}{item.attachments.map(attachment => <Text key={attachment.id} style={s.pendingAttachment}>{attachment.reference ? `${attachment.reference} ` : ''}{attachment.title}</Text>)}</View><Text style={s.pendingStatus}>{item.status === 'sending' ? 'Sending…' : 'Sent'}</Text></View>)}{plan && <PlanCard mac={mac} sessionId={id} plan={plan} permissions={pendingPermissions} onRequestChanges={quoted => setMessage(quoted)} />}{nonPlanPermissions(pendingPermissions).map(request => <PermissionCard key={request.requestId} mac={mac} sessionId={id} request={request} />)}{syncing && <Text style={s.thinkingLabel}>Syncing chat from Mac…</Text>}{showWorkingRow && (stall ? <StallStatus mac={mac} sessionId={id} stall={stall} /> : <WorkingStatus label={workingLabel} startedAt={turnStartedAt} />)}</View>, [visibleSends, mac, pendingPermissions, plan, id, syncing, showWorkingRow, stall, workingLabel, turnStartedAt]);
   const loadEarlier = React.useCallback(() => {
     mayLoadOlder.current = false;
     follow.current.stopFollowing();
@@ -369,7 +397,7 @@ export function ChatWorkspace({ route, navigation }: any) {
   const modelLabel = chat.model ? modelOption?.label || chat.model : defaultModelLabel || 'Default model';
   const effortLabel = (chat.effort || modelOption?.defaultEffort || catalog?.accountDefault?.defaultEffort || 'Default effort').replace(/^./, x => x.toUpperCase());
   const providerLabel = { codex: 'Codex', claude: 'Claude Code', opencode: 'OpenCode', muse: 'Muse Code' }[chat.providerId] || chat.providerId;
-  const policyLabel = { ask: 'Ask before acting', 'auto-edits': 'Accept edits', bypass: 'Full autonomy' }[chat.permissionPolicy];
+  const policyLabel = policyTitle(chat.permissionPolicy);
   const act = (name: string, args: Record<string, unknown> = {}) => mac.request(name, { sessionId: id, ...args }).catch(e => Alert.alert('Abstract', String(e)));
   const send = () => {
     if (mac.status !== 'online' || sendLock.current || (!message.trim() && !attachments.length)) return;
@@ -385,6 +413,7 @@ export function ChatWorkspace({ route, navigation }: any) {
         setSending(true);
         setSendError(null);
         setMessage('');
+        setNotice(null);
         setAttachments([]);
         setPreviewingMarkdown(false);
       },
@@ -446,7 +475,7 @@ export function ChatWorkspace({ route, navigation }: any) {
   const providerChoices = (mac.snapshot?.providers || []).map(value => ({ id: value, title: ({ codex: 'Codex', claude: 'Claude Code', opencode: 'OpenCode', muse: 'Muse Code' } as Record<string, string>)[value] || value, selected: value === chat.providerId, image: Platform.OS === 'ios' ? providerMenuImage(value) : undefined }));
   const modelChoices = [{ id: '', title: defaultModelLabel ? `Default (${defaultModelLabel})` : 'Default model', selected: !chat.model }, ...(catalog?.models || []).map(value => ({ id: value.id, title: value.label, selected: value.id === chat.model }))];
   const effortChoices = [{ id: '', title: 'Default effort', selected: !chat.effort }, ...(modelOption?.efforts || catalog?.accountDefault?.efforts || []).map(value => ({ id: value, title: value.replace(/^./, x => x.toUpperCase()), selected: value === chat.effort }))];
-  const policyChoices = ([['ask', 'Ask before acting'], ['auto-edits', 'Accept edits'], ['bypass', 'Full autonomy']] as const).map(([id, title]) => ({ id, title, selected: id === chat.permissionPolicy }));
+  const policyChoices = MODE_CHOICES.map(({ id, title }) => ({ id, title, selected: id === chat.permissionPolicy }));
   const applySlashChoice = (action: () => void) => { action(); setMessage(''); setSlashChoosing(null); };
   const slashChoices: SlashItem[] = slashChoosing === 'agent' ? providerChoices.map(choice => ({ id: choice.id, title: choice.title, checked: choice.selected, onPress: () => applySlashChoice(() => act('setAgent', { providerId: choice.id, model: null, effort: null })) }))
     : slashChoosing === 'model' ? modelChoices.map(choice => ({ id: choice.id || 'default', title: choice.title, checked: choice.selected, onPress: () => applySlashChoice(() => act('setAgent', { providerId: chat.providerId, model: choice.id || null, effort: null })) }))
@@ -472,6 +501,7 @@ export function ChatWorkspace({ route, navigation }: any) {
     }}>
       <View style={s.contextRow}>
         <ContextPill context={context} onPress={chat.projectId ? () => navigation.navigate('Worktrees', { hostId, projectId: chat.projectId }) : undefined} />
+        {isReadOnlyMode(chat.permissionPolicy) && <View style={s.prContext} accessibilityLabel={`Mode: ${policyLabel}`}><Glyph name={chat.permissionPolicy === 'plan' ? 'list.bullet.clipboard' : 'questionmark.bubble'} size={13} color={ink} /><Text style={s.prContextLabel}>{chat.permissionPolicy === 'plan' ? 'Plan mode' : policyLabel}</Text></View>}
         {pr && <Pressable accessibilityRole="button" accessibilityLabel={`Pull request #${pr.number}`} onPress={() => navigation.navigate('PullRequest', { hostId, sessionId: id })} style={s.prContext}><PullRequestIcon pr={pr} size={14} /><Text style={s.prContextLabel}>#{pr.number}</Text></Pressable>}
         {diff.files > 0 && <Pressable accessibilityRole="button" accessibilityLabel={`Review ${diff.files} changed ${diff.files === 1 ? 'file' : 'files'}`} onPress={() => { Haptics.selectionAsync().catch(() => {}); navigation.navigate('Review', { hostId, sessionId: id }); }} style={s.changesPill}>
           <Glyph name="review" size={13} color={ink} /><Text style={s.changesPillLabel}>{diff.files} {diff.files === 1 ? 'file' : 'files'}</Text>{diff.added > 0 && <Text style={s.changesAdded}>+{diff.added}</Text>}{diff.removed > 0 && <Text style={s.changesRemoved}>−{diff.removed}</Text>}
@@ -481,6 +511,7 @@ export function ChatWorkspace({ route, navigation }: any) {
     <LinkPickerSheet kind={linkSheet} query={linkQuery} setQuery={setLinkQuery} results={linkResults} loading={linkLoading} search={() => linkSheet && searchLinks(linkSheet, linkQuery)} select={attachLink} close={() => setLinkSheet(null)} />
     <View style={[s.composerWrap, { paddingBottom: keyboardHeight ? 7 : safeArea.bottom + 7 }]}>
       {mac.status !== 'online' && <Text accessibilityRole="alert" style={s.sendError}>{macName || 'That Mac'} isn't reachable.{mac.lastSeenAt ? ` Last seen ${new Date(mac.lastSeenAt).toLocaleString()}.` : ''}{mac.error ? ` ${mac.error}` : ''}</Text>}
+      {!!notice && <Text accessibilityRole="alert" style={s.sendError} onPress={() => setNotice(null)}>{notice}</Text>}
       {!!sendError && <Text accessibilityRole="alert" style={s.sendError}>{sendError}</Text>}
       {attachments.length > 0 && <ScrollView horizontal style={s.attachments} contentContainerStyle={{ gap: 5 }}>{attachments.map(item => <Chip key={item.id} label={`${item.reference ? `${item.reference} ` : ''}${item.title} ×`} onPress={() => setAttachments(attachments.filter(x => x.id !== item.id))} />)}</ScrollView>}
       <View style={[s.composerBox, composerFocused && s.composerBoxFocused]}>
@@ -497,7 +528,7 @@ export function ChatWorkspace({ route, navigation }: any) {
           </View>
         </View>
       </View>
-      <View style={s.controls}><NativeSelect label="Agent" value={chat.providerId === 'claude' ? 'Claude' : providerLabel} leading={<ProviderLogo provider={chat.providerId} size={13} />} choices={providerChoices} flex={1.15} onSelect={providerId => act('setAgent', { providerId, model: null, effort: null })} /><NativeSelect label="Model" value={modelLabel} choices={modelChoices} flex={1.35} onSelect={model => act('setAgent', { providerId: chat.providerId, model: model || null, effort: null })} /><NativeSelect label="Reasoning effort" value={effortLabel === 'Default effort' ? 'Default' : effortLabel} choices={effortChoices} flex={0.9} onSelect={effort => act('setAgent', { providerId: chat.providerId, model: chat.model, effort: effort || null })} /><NativeSelect label="Permissions" value={policyLabel === 'Ask before acting' ? 'Ask first' : policyLabel || 'Permissions'} choices={policyChoices} flex={1.35} onSelect={policy => act('setPolicy', { policy })} /></View>
+      <View style={s.controls}><NativeSelect label="Agent" value={chat.providerId === 'claude' ? 'Claude' : providerLabel} leading={<ProviderLogo provider={chat.providerId} size={13} />} choices={providerChoices} flex={1.15} onSelect={providerId => act('setAgent', { providerId, model: null, effort: null })} /><NativeSelect label="Model" value={modelLabel} choices={modelChoices} flex={1.35} onSelect={model => act('setAgent', { providerId: chat.providerId, model: model || null, effort: null })} /><NativeSelect label="Reasoning effort" value={effortLabel === 'Default effort' ? 'Default' : effortLabel} choices={effortChoices} flex={0.9} onSelect={effort => act('setAgent', { providerId: chat.providerId, model: chat.model, effort: effort || null })} /><NativeSelect label="Mode" value={policyShort(chat.permissionPolicy)} choices={policyChoices} flex={1.35} onSelect={policy => act('setPolicy', { policy })} /></View>
       {slashPopupOpen && <SlashPopup key={slashChoosing || slashQuery || 'commands'} title={slashChoosing ? `/${slashChoosing}` : 'COMMANDS'} items={slashItems} maxHeight={slashPopupHeight} onBack={slashChoosing ? () => setSlashChoosing(null) : undefined} />}
     </View>
     </View>

@@ -140,7 +140,9 @@ export function chatTimeline(lines: RemoteLine[], cacheKey = 'default'): ChatIte
       for (const content of value.message.content) if (content.type === 'tool_result') {
         const row = tools.get(content.tool_use_id);
         if (row) {
-          row.detail = typeof content.content === 'string' ? content.content : JSON.stringify(content.content);
+          row.detail = typeof content.content === 'string' ? content.content
+            : Array.isArray(content.content) ? content.content.map((part: any) => part?.text || '').filter(Boolean).join('\n') || JSON.stringify(content.content)
+            : JSON.stringify(content.content);
           row.pending = false;
           row.failed = !!content.is_error;
           row.text = toolVerb(row.toolName || 'Tool');
@@ -173,7 +175,11 @@ export function chatTimeline(lines: RemoteLine[], cacheKey = 'default'): ChatIte
           row.pending = false;
           row.text = toolVerb(name);
           const detail = item.aggregated_output || item.result || item.error || item.changes?.map((change: any) => change.diff).filter(Boolean).join('\n') || '';
-          row.detail = typeof detail === 'string' ? detail : JSON.stringify(detail, null, 2);
+          // An MCP result is content blocks; show their text, not the JSON around it.
+          row.detail = typeof detail === 'string' ? detail
+            : Array.isArray(detail?.content) ? detail.content.map((part: any) => part?.text || '').filter(Boolean).join('\n') || JSON.stringify(detail, null, 2)
+            : detail?.message && Object.keys(detail).length <= 2 ? String(detail.message)
+            : JSON.stringify(detail, null, 2);
           row.failed = item.status === 'failed' || (typeof item.exit_code === 'number' && item.exit_code !== 0);
           Object.assign(row, editCounts(item));
           const edits = editPreviewsFromChanges(Array.isArray(item.changes) ? item.changes : []);
@@ -220,6 +226,18 @@ export function chatTimeline(lines: RemoteLine[], cacheKey = 'default'): ChatIte
       } else if (value.method === 'turn/completed') {
         if (params.terminal === 'failed') append('error', params.reason || 'Muse Code could not finish this turn.', id);
         else if (typeof params.durationMs === 'number') rows.push({ id, kind: 'turn', text: '', durationMs: params.durationMs });
+      }
+      continue;
+    }
+    // OpenCode tool parts arrive whole, once done (or failed).
+    if (value.type === 'tool_use' && value.part?.type === 'tool') {
+      const part = value.part;
+      const state = part.state || {};
+      const pending = state.status === 'pending' || state.status === 'running';
+      const row = addTool(id, part.tool || 'Tool', state.input || {}, pending);
+      if (!pending) {
+        row.failed = state.status === 'error';
+        row.detail = typeof state.output === 'string' ? state.output : state.error ? String(state.error) : row.detail;
       }
       continue;
     }

@@ -448,7 +448,10 @@ final class RemoteService {
                               unmergedWork: model.branchStates.mapValues(\.hasUnmergedWork),
                               projectIcons: projectIcons(model.projects.filter { $0.archivedAt == nil }),
                               automationDevice: true,
-                              stalls: model.stallStates.compactMapValues(RemoteStall.init))
+                              stalls: model.stallStates.compactMapValues(RemoteStall.init),
+                              codeHistory: true,
+                              plans: model.plans.filter { $0.value.current != nil }.mapValues(RemotePlan.init),
+                              planApproval: true)
     }
 
     /// Each project's uploaded icon as bytes, so a viewing Mac can show it
@@ -927,6 +930,18 @@ final class HostedPeer {
         case let .setPolicy(session, policy):
             model.setPolicy(session, policy)
             return .ok
+        case .approvePlan(let session):
+            guard model.plans[session]?.current != nil else { return .failed("That chat has no plan waiting.") }
+            model.approvePlan(session)
+            return .ok
+        case .requestPlanChanges(let session):
+            guard model.plans[session]?.current != nil else { return .failed("That chat has no plan waiting.") }
+            model.requestPlanChanges(session)
+            return .ok
+        case .discardPlan(let session):
+            guard model.plans[session]?.current != nil else { return .failed("That chat has no plan waiting.") }
+            model.discardPlan(session)
+            return .ok
         case let .stopTask(session, taskId):
             model.stopTask(session, taskId: taskId)
             return .ok
@@ -1034,6 +1049,13 @@ final class HostedPeer {
         case .closePullRequest(let session):
             do { try await model.closePullRequest(session); return .ok }
             catch { return .failed(error.localizedDescription) }
+        case let .setAgentHistory(projectId, enabled):
+            guard model.projects.contains(where: { $0.id == projectId }) else { return .failed("Project not found.") }
+            model.updateProject(projectId) { $0.agentHistory = enabled }
+            return .ok
+        case let .askAuthor(root, path, lineStart, lineEnd, code, revision, session):
+            return await askAuthor(root: root, path: path, lineStart: lineStart, lineEnd: lineEnd, code: code,
+                                   revision: revision, sessionId: session, model: model)
         case let .exec(command, args, cwd, stdin):
             return await exec(command, args, cwd: cwd, stdin: stdin)
         case .spawn(let spec):
