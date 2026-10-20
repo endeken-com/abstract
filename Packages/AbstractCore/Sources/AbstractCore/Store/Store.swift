@@ -378,6 +378,42 @@ public final class Store: Sendable {
         try writer.write { db in try RunRow(run).save(db) }
     }
 
+    // MARK: - Profiles
+
+    public func profiles() throws -> [AgentProfile] {
+        try writer.read { db in
+            try ProfileRow.fetchAll(db, sql: "SELECT * FROM profiles ORDER BY sort_order, created_at").map(\.value)
+        }
+    }
+
+    public func profile(_ id: String) throws -> AgentProfile? {
+        try writer.read { db in
+            try ProfileRow.fetchOne(db, sql: "SELECT * FROM profiles WHERE id = ?", arguments: [id])?.value
+        }
+    }
+
+    public func save(_ profile: AgentProfile) throws {
+        try writer.write { db in try ProfileRow(profile).save(db) }
+    }
+
+    /// Chats and automations that named it keep what they started with;
+    /// an automation whose profile is gone runs on its own settings.
+    public func deleteProfile(_ id: String) throws {
+        try writer.write { db in
+            try db.execute(sql: "DELETE FROM profiles WHERE id = ?", arguments: [id])
+        }
+    }
+
+    /// The starter profiles, the first time profiles are asked for.
+    /// Once seeded they are plain profiles: deleting every one stays deleted.
+    public func seedStarterProfilesIfNeeded() throws {
+        guard setting("profilesSeeded", as: Bool.self) != true else { return }
+        if try profiles().isEmpty {
+            for profile in AgentProfile.starters { try save(profile) }
+        }
+        try setSetting("profilesSeeded", true)
+    }
+
     // MARK: - Schema
 
     private static var configuration: Configuration {
@@ -624,11 +660,38 @@ public final class Store: Sendable {
                 CREATE INDEX permission_rules_project ON permission_rules(project_id);
                 """)
         }
+        // Agent profiles (ABS-101): the profiles themselves, the profile
+        // a chat started from (kept as it was then), the one an automation
+        // runs from, and which ones a project offers (empty here = the
+        // column is NULL, every profile shows).
+        migrator.registerMigration("v15-profiles") { db in
+            try db.execute(sql: """
+                CREATE TABLE profiles (
+                  id                TEXT PRIMARY KEY NOT NULL,
+                  name              TEXT NOT NULL,
+                  icon_symbol       TEXT,
+                  provider_id       TEXT NOT NULL DEFAULT 'claude',
+                  model             TEXT,
+                  effort            TEXT,
+                  permission_policy TEXT NOT NULL DEFAULT 'ask',
+                  instructions      TEXT NOT NULL DEFAULT '',
+                  skills            TEXT NOT NULL DEFAULT '[]',
+                  mcp_servers       TEXT NOT NULL DEFAULT '[]',
+                  sort_order        INTEGER NOT NULL DEFAULT 0,
+                  created_at        DATETIME NOT NULL
+                );
+                """)
+            try db.execute(sql: "ALTER TABLE sessions ADD COLUMN profile_id TEXT")
+            try db.execute(sql: "ALTER TABLE sessions ADD COLUMN profile_name TEXT")
+            try db.execute(sql: "ALTER TABLE sessions ADD COLUMN profile_instructions TEXT")
+            try db.execute(sql: "ALTER TABLE automations ADD COLUMN profile_id TEXT")
+            try db.execute(sql: "ALTER TABLE projects ADD COLUMN profile_ids TEXT")
+        }
         // What a run does while the last is still going, what missed runs
         // do (the catch_up switch becomes "run once"), and skipping when
         // the project hasn't changed. catch_up stays, kept in step, so a
         // build from before this still reads the database.
-        migrator.registerMigration("v15-automation-scheduling") { db in
+        migrator.registerMigration("v16-automation-scheduling") { db in
             try db.execute(sql: "ALTER TABLE automations ADD COLUMN concurrency TEXT")
             try db.execute(sql: "ALTER TABLE automations ADD COLUMN missed_runs TEXT")
             try db.execute(sql: "ALTER TABLE automations ADD COLUMN only_when_changed BOOLEAN NOT NULL DEFAULT 0")
@@ -673,7 +736,7 @@ private struct ProjectRow: FetchableRecord, PersistableRecord {
     init(_ value: Project) { self.value = value }
 
     init(row: Row) throws {
-        value = Project(
+        var project = Project(
             id: try row.decode(forColumn: "id"),
             name: try row.decode(forColumn: "name"),
             rootPath: try row.decode(forColumn: "root_path"),
@@ -696,6 +759,10 @@ private struct ProjectRow: FetchableRecord, PersistableRecord {
             runScript: try row.decode(forColumn: "run_script"),
             defaultDeviceId: try row.decode(forColumn: "default_device_id"),
             agentHistory: try row.decode(forColumn: "agent_history"))
+        if let picked: String = try row.decode(forColumn: "profile_ids") {
+            project.profileIds = (try? JSONDecoder().decode([String].self, from: Data(picked.utf8))) ?? []
+        }
+        value = project
     }
 
     func encode(to container: inout PersistenceContainer) throws {
@@ -721,6 +788,7 @@ private struct ProjectRow: FetchableRecord, PersistableRecord {
         container["run_script"] = value.runScript
         container["default_device_id"] = value.defaultDeviceId
         container["agent_history"] = value.agentHistory
+        container["profile_ids"] = try value.profileIds.map { try jsonText($0) }
     }
 }
 
@@ -750,6 +818,9 @@ private struct SessionRow: FetchableRecord, PersistableRecord {
             archivedAt: try row.decode(forColumn: "archived_at"),
             model: try row.decode(forColumn: "model"),
             effort: try row.decode(forColumn: "effort"))
+        value.profileId = try row.decode(forColumn: "profile_id")
+        value.profileName = try row.decode(forColumn: "profile_name")
+        value.profileInstructions = try row.decode(forColumn: "profile_instructions")
         value.handoffFrom = try row.decode(forColumn: "handoff_from")
         value.pinnedAt = try row.decode(forColumn: "pinned_at")
         value.nameSource = ChatNameSource(rawValue: try row.decode(forColumn: "name_source")) ?? .request
@@ -780,6 +851,9 @@ private struct SessionRow: FetchableRecord, PersistableRecord {
         container["last_event_at"] = value.lastEventAt
         container["archived_at"] = value.archivedAt
         container["pinned_at"] = value.pinnedAt
+        container["profile_id"] = value.profileId
+        container["profile_name"] = value.profileName
+        container["profile_instructions"] = value.profileInstructions
         container["name_source"] = value.nameSource.rawValue
     }
 }
@@ -791,7 +865,7 @@ private struct AutomationRow: FetchableRecord, PersistableRecord {
     init(_ value: Automation) { self.value = value }
 
     init(row: Row) throws {
-        value = Automation(
+        var automation = Automation(
             id: try row.decode(forColumn: "id"),
             name: try row.decode(forColumn: "name"),
             prompt: try row.decode(forColumn: "prompt"),
@@ -813,6 +887,8 @@ private struct AutomationRow: FetchableRecord, PersistableRecord {
             concurrency: (try row.decode(forColumn: "concurrency") as String?).flatMap(AutomationConcurrency.init(rawValue:)),
             missedRuns: (try row.decode(forColumn: "missed_runs") as String?).flatMap(AutomationMissedRuns.init(rawValue:)),
             onlyWhenChanged: try row.decode(forColumn: "only_when_changed"))
+        automation.profileId = try row.decode(forColumn: "profile_id")
+        value = automation
     }
 
     func encode(to container: inout PersistenceContainer) throws {
@@ -838,6 +914,7 @@ private struct AutomationRow: FetchableRecord, PersistableRecord {
         container["concurrency"] = value.concurrency.rawValue
         container["missed_runs"] = value.missedRuns.rawValue
         container["only_when_changed"] = value.onlyWhenChanged
+        container["profile_id"] = value.profileId
         container["catch_up"] = value.catchUp
         container["enabled"] = value.enabled
         container["next_run_at"] = value.nextRunAt
@@ -888,6 +965,44 @@ private enum TriggerJSON {
             return try dateStyle.parse(text)
         }
         return try decoder.decode([AutomationTrigger].self, from: Data(text.utf8))
+    }
+}
+
+private struct ProfileRow: FetchableRecord, PersistableRecord {
+    static let databaseTableName = "profiles"
+    let value: AgentProfile
+
+    init(_ value: AgentProfile) { self.value = value }
+
+    init(row: Row) throws {
+        value = AgentProfile(
+            id: try row.decode(forColumn: "id"),
+            name: try row.decode(forColumn: "name"),
+            iconSymbol: try row.decode(forColumn: "icon_symbol"),
+            providerId: try row.decode(forColumn: "provider_id"),
+            model: try row.decode(forColumn: "model"),
+            effort: try row.decode(forColumn: "effort"),
+            permissionPolicy: try row.rawEnum("permission_policy"),
+            instructions: try row.decode(forColumn: "instructions"),
+            skills: try row.stringList("skills"),
+            mcpServers: try row.stringList("mcp_servers"),
+            sortOrder: try row.decode(forColumn: "sort_order"),
+            createdAt: try row.decode(forColumn: "created_at"))
+    }
+
+    func encode(to container: inout PersistenceContainer) throws {
+        container["id"] = value.id
+        container["name"] = value.name
+        container["icon_symbol"] = value.iconSymbol
+        container["provider_id"] = value.providerId
+        container["model"] = value.model
+        container["effort"] = value.effort
+        container["permission_policy"] = value.permissionPolicy.rawValue
+        container["instructions"] = value.instructions
+        container["skills"] = try jsonText(value.skills)
+        container["mcp_servers"] = try jsonText(value.mcpServers)
+        container["sort_order"] = value.sortOrder
+        container["created_at"] = value.createdAt
     }
 }
 

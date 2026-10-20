@@ -38,6 +38,9 @@ public struct Project: Sendable, Hashable, Identifiable, Codable {
     /// Agents may look up the history of the code they change (ABS-61);
     /// nil (projects saved before) = yes.
     public var agentHistory: Bool?
+    /// The profiles the New Chat window offers in this project (ABS-101);
+    /// nil = every profile shows.
+    public var profileIds: [String]? = nil
 
     /// Whether this project's agents get the code-history tool.
     public var agentHistoryEnabled: Bool { agentHistory ?? true }
@@ -167,6 +170,12 @@ public struct Session: Sendable, Hashable, Identifiable, Codable {
     public var pinnedAt: Date? = nil
     /// Where its name came from.
     public var nameSource: ChatNameSource = .request
+    /// The profile it started from (ABS-101), as it was at the start: its
+    /// id, its name for the header, and its instructions. Editing the
+    /// profile later changes later chats, never this one.
+    public var profileId: String? = nil
+    public var profileName: String? = nil
+    public var profileInstructions: String? = nil
 
     public init(
         id: String = UUID().uuidString, projectId: String?, name: String, providerId: String,
@@ -187,7 +196,7 @@ public struct Session: Sendable, Hashable, Identifiable, Codable {
     private enum CodingKeys: String, CodingKey {
         case id, projectId, name, providerId, providerSessionId, worktreePath, branch, baseRef, status, statusDetail
         case permissionPolicy, prompt, automationId, createdAt, lastEventAt, archivedAt, model, effort, handoffFrom
-        case providerSessions, pinnedAt, nameSource
+        case providerSessions, pinnedAt, nameSource, profileId, profileName, profileInstructions
     }
 
     /// An older Mac's chats come without what it doesn't know yet.
@@ -210,6 +219,9 @@ public struct Session: Sendable, Hashable, Identifiable, Codable {
         providerSessions = try c.decodeIfPresent([String: ProviderSeat].self, forKey: .providerSessions) ?? [:]
         pinnedAt = try c.decodeIfPresent(Date.self, forKey: .pinnedAt)
         nameSource = try c.decodeIfPresent(ChatNameSource.self, forKey: .nameSource) ?? .request
+        profileId = try c.decodeIfPresent(String.self, forKey: .profileId)
+        profileName = try c.decodeIfPresent(String.self, forKey: .profileName)
+        profileInstructions = try c.decodeIfPresent(String.self, forKey: .profileInstructions)
     }
 }
 
@@ -314,6 +326,9 @@ public struct Automation: Sendable, Hashable, Identifiable, Codable {
     public var effort: String?
     /// The paired Mac its runs start on; nil = the Mac it's stored on.
     public var deviceId: String?
+    /// The profile each run starts from (ABS-101), resolved when the run
+    /// starts; nil = the automation's own agent, model, effort and policy.
+    public var profileId: String? = nil
 
     /// The switch this replaced: fire once on launch if a scheduled time
     /// was missed while closed. Kept so older Macs and older rows, which
@@ -380,7 +395,7 @@ public struct Automation: Sendable, Hashable, Identifiable, Codable {
     private enum CodingKeys: String, CodingKey {
         case id, name, prompt, providerId, projectId, triggers, workspaceMode, pinnedSessionId
         case continueAgentSession, permissionPolicy, catchUp, concurrency, missedRuns, onlyWhenChanged
-        case enabled, nextRunAt, createdAt, updatedAt, model, effort, deviceId
+        case enabled, nextRunAt, createdAt, updatedAt, model, effort, deviceId, profileId
     }
 
     /// An older Mac's automations carry the catch-up switch instead of
@@ -404,6 +419,7 @@ public struct Automation: Sendable, Hashable, Identifiable, Codable {
                   concurrency: try c.decodeIfPresent(AutomationConcurrency.self, forKey: .concurrency),
                   missedRuns: try c.decodeIfPresent(AutomationMissedRuns.self, forKey: .missedRuns),
                   onlyWhenChanged: try c.decodeIfPresent(Bool.self, forKey: .onlyWhenChanged) ?? false)
+        profileId = try c.decodeIfPresent(String.self, forKey: .profileId)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -418,7 +434,7 @@ public struct Automation: Sendable, Hashable, Identifiable, Codable {
         try c.encode(enabled, forKey: .enabled); try c.encodeIfPresent(nextRunAt, forKey: .nextRunAt)
         try c.encode(createdAt, forKey: .createdAt); try c.encode(updatedAt, forKey: .updatedAt)
         try c.encodeIfPresent(model, forKey: .model); try c.encodeIfPresent(effort, forKey: .effort)
-        try c.encodeIfPresent(deviceId, forKey: .deviceId)
+        try c.encodeIfPresent(deviceId, forKey: .deviceId); try c.encodeIfPresent(profileId, forKey: .profileId)
     }
 }
 

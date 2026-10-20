@@ -26,8 +26,10 @@ public struct MuseProvider: ProviderDefinition {
         case .readOnly: Plan.readOnlyInstruction
         default: nil as String?
         }
-        let prompt = (ctx.outputStyle.instructions.map { $0 + "\n\n" } ?? "")
-            + (mode.map { $0 + "\n\n" } ?? "") + ctx.prompt
+        // No system-prompt channel of its own here, so a profile's
+        // instructions (ABS-101) lead the first message, like the style.
+        let prompt = [ctx.instructions, ctx.outputStyle.instructions, mode].compactMap { $0 }
+            .map { $0 + "\n\n" }.joined() + ctx.prompt
         // The host's sandbox posture is fixed by launch flags; what may run
         // without asking is chosen on the wire. Abstract still cannot answer
         // an approval, so nothing is left waiting for one: unmatched work is

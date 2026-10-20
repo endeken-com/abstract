@@ -106,6 +106,9 @@ struct AutomationDraft: Equatable {
     /// The paired Mac its runs start on; nil is this one.
     var deviceId: String?
     var triggers: [TriggerDraft]
+    /// The profile each run starts from; choosing one fills the agent,
+    /// model, effort and permissions below, which can still change.
+    var profileId: String?
     var providerId: String
     var modelId: String?
     var effort: String?
@@ -138,6 +141,7 @@ struct AutomationDraft: Equatable {
         projectId = a.projectId
         deviceId = a.deviceId
         triggers = a.triggers.map(TriggerDraft.init)
+        profileId = a.profileId
         providerId = a.providerId
         modelId = a.model
         effort = a.effort
@@ -172,6 +176,7 @@ struct AutomationDraft: Equatable {
         a.projectId = projectId
         a.deviceId = deviceId
         a.triggers = triggers.map { $0.trigger(now: now) }
+        a.profileId = profileId
         a.providerId = providerId
         a.model = modelId
         a.effort = effort
@@ -202,6 +207,7 @@ struct AutomationDraft: Equatable {
     func differs(from a: Automation) -> Bool {
         let saved = automation(base: a)
         return saved.name != a.name || saved.prompt != a.prompt || saved.projectId != a.projectId || saved.deviceId != a.deviceId
+            || saved.profileId != a.profileId
             || saved.providerId != a.providerId || saved.model != a.model || saved.effort != a.effort
             || saved.permissionPolicy != a.permissionPolicy || saved.workspaceMode != a.workspaceMode
             || saved.pinnedSessionId != a.pinnedSessionId || saved.concurrency != a.concurrency
@@ -510,6 +516,10 @@ private struct ScopeSentence: View {
                 SentenceWord("on")
                 deviceMenu
                 if chat == nil {
+                    if !model.profiles.isEmpty {
+                        SentenceWord("as")
+                        profileMenu
+                    }
                     SentenceWord("using")
                     AgentChip(providerId: $draft.providerId, modelId: $draft.modelId, effort: $draft.effort, device: draft.deviceId)
                     SentenceWord("with")
@@ -621,6 +631,34 @@ private struct ScopeSentence: View {
     private var deviceSnapshot: RemoteSnapshot? {
         guard let id = draft.deviceId, let link = model.remote.links[id], link.state == .online else { return nil }
         return link.snapshot
+    }
+
+    /// The profile each run starts from, above the agent it fills in:
+    /// choosing one sets the agent, model, effort and permissions, and
+    /// its instructions go to the agent at every run.
+    private var profileMenu: some View {
+        SentenceMenu(title: model.profile(draft.profileId)?.name ?? "no profile") {
+            Picker("Profile", selection: Binding(get: { draft.profileId }, set: { chooseProfile($0) })) {
+                Text("No Profile").tag(String?.none)
+                ForEach(model.profiles) { profile in
+                    Label(profile.name, systemImage: profile.iconSymbol ?? "person.crop.circle")
+                        .tag(Optional(profile.id))
+                }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+            Divider()
+            Text("Each run starts from the profile as it is then, instructions included. Manage profiles in Settings › Profiles.")
+        }
+    }
+
+    private func chooseProfile(_ id: String?) {
+        draft.profileId = id
+        guard let profile = model.profile(id) else { return }
+        draft.providerId = profile.providerId
+        draft.modelId = profile.model
+        draft.effort = profile.effort
+        draft.policy = profile.permissionPolicy
     }
 
     private var policyMenu: some View {
