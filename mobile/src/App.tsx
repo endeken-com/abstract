@@ -12,7 +12,7 @@ import { MenuView } from '@react-native-menu/menu';
 import { BlurTargetView } from 'expo-blur';
 import { useHeaderHeight } from '@react-navigation/elements';
 import { remote, type RemoteClient } from './remote';
-import { itemKey, macChats, macProjects, macPullRequests, type MacView } from './macs';
+import { counterpartProject, defaultMacName, itemKey, macChats, macProjects, macPullRequests, resolveChatTarget, type MacView } from './macs';
 import { ChatWorkspace } from './ChatWorkspace';
 import { BranchIcon, PullRequestIcon } from './PullRequestIcon';
 import { contextSymbols } from './chatContext';
@@ -269,15 +269,25 @@ function ProjectsScreen({ navigation }: any) {
 }
 function ProjectScreen({ route, navigation }: any) {
   const hostId = route.params.hostId as string;
+  const store = useRemote();
   const state = useMac(hostId);
   const project = state.snapshot?.projects.find(x => x.id === route.params.projectId) as Project | undefined;
   if (!project) return <View style={styles.content}><Empty text="Project unavailable." /></View>;
   const chats = state.snapshot?.sessions.filter(x => x.projectId === project.id && !x.archivedAt) || [];
+  const macs = store.macs();
   const mac = remote.mac(hostId);
+  // The default Mac is kept on this record on the Mac that owns the project;
+  // changing it here asks that Mac to record it. Older Macs only show it.
+  const canSetDefault = state.snapshot?.projectDefaultDevice === true && state.status === 'online';
+  const unknownDefault = !!project.defaultDeviceId && !macs.some(m => m.id === project.defaultDeviceId);
   const projectAction = state.status === 'online' ? projectPauseAction(state.snapshot, project.id) : null;
-  return <HeaderScrollView style={styles.page} contentContainerStyle={styles.content}><Text style={styles.title}>{project.name}</Text><Text style={styles.lead}>{`${remote.mac(hostId)?.name || ''} · ${project.rootPath}`}</Text>
+  return <HeaderScrollView style={styles.page} contentContainerStyle={styles.content}><Text style={styles.title}>{project.name}</Text><Text style={styles.lead}>{`${mac?.name || ''} · ${project.rootPath}`}</Text>
     {mac && <PauseBanners macs={[mac]} projectId={project.id} />}
     <View style={styles.actions}><Button title="New chat" onPress={() => navigation.navigate('NewChat', { hostId, projectId: project.id })} />{projectAction && <Button title={projectAction === 'pause' ? 'Pause project' : 'Resume project'} secondary={projectAction === 'pause'} onPress={() => { const request = pauseRequest(projectAction, project.id); run(() => state.request(request.name, request.args)); }} />}<Button title="Worktrees" secondary onPress={() => navigation.navigate('Worktrees', { hostId, projectId: project.id })} /><Button title="Files" secondary onPress={() => navigation.navigate('Files', { hostId, root: project.rootPath })} /><Button title="Terminal" secondary onPress={() => navigation.navigate('Terminal', { hostId, root: project.rootPath })} /></View>
+    <Section title="New chats run on"><Text style={styles.body}>{mac ? defaultMacName(macs, mac, project) : 'A paired Mac'}</Text><Text style={styles.hint}>New chats for this project start on this Mac. It is kept on {mac?.name || 'the Mac'} with the project.</Text>
+      {canSetDefault ? <View style={styles.choices}>{macs.map(m => <Button key={m.id} title={m.name} secondary={(project.defaultDeviceId || hostId) !== m.id} onPress={() => run(() => state.request('setProjectDefaultDevice', { projectId: project.id, deviceId: m.id === hostId ? null : m.id }))} />)}{unknownDefault && <Button title="A paired Mac" onPress={() => {}} />}</View>
+        : <Text style={styles.hint}>{state.status === 'online' ? `Update Abstract on ${mac?.name || 'this Mac'} to change this from your phone.` : 'Reconnect to change this.'}</Text>}
+    </Section>
     {state.snapshot?.codeHistory && <Section title="Code history"><View style={styles.row}><View style={{ flex: 1 }}><Text style={styles.rowTitle}>Give agents the history of the code they change</Text><Text style={styles.subtitle}>{project.agentHistory === false ? 'Agents get no history of earlier chats in this project.' : 'Before changing code, an agent can look up what earlier chats in this project were asked, corrected and decided about it, and is told to follow those decisions.'}</Text></View><Switch accessibilityLabel="Give agents the history of the code they change" value={project.agentHistory !== false} onValueChange={enabled => run(() => state.request('setAgentHistory', { projectId: project.id, enabled }))} /></View></Section>}
     <Section title="Chats">{chats.map(chat => <Row key={chat.id} title={chat.name} subtitle={`${chat.providerId} · ${chat.branch || chat.status}${sessionProfileName(chat) ? ` · ${sessionProfileName(chat)}` : ''}`} subtitleIcon={chat.branch ? <BranchIcon size={11} color={tertiary} /> : undefined} iconNode={<ProviderLogo provider={chat.providerId} size={16} />} onPress={() => navigation.navigate('Chat', { hostId, sessionId: chat.id })} trailing={chat.status} />)}{!chats.length && <Empty text="No chats in this project." />}</Section>
   </HeaderScrollView>;
@@ -328,9 +338,28 @@ function NewChatScreen({ route, navigation }: any) {
   const [worktree, setWorktree] = useState(route.params?.worktree || '');
   const [worktrees, setWorktrees] = useState<Array<{ path: string; branch: string }>>([]);
   const [busy, setBusy] = useState(false);
+  // Why the project's default Mac wasn't used for this chat.
+  const [deviceNotice, setDeviceNotice] = useState<string | null>(null);
+  // Picking a project pre-selects the Mac its new chats default to (kept on
+  // its record on the Mac that owns it), and that Mac's own record of it.
+  const chooseProject = (ownerMacId: string, chosen: Project) => {
+    const target = resolveChatTarget(macs, ownerMacId, chosen);
+    setDeviceNotice(target.notice);
+    setStandalone(false);
+    setHostId(target.macId);
+    setProjectId(target.projectId);
+    setWorktree('');
+    setModelName('');
+    setEffort('');
+  };
+  const resolvedInitial = useRef(false);
   useEffect(() => {
-    if (!projectId && !standalone && state.snapshot?.projects.length) setProjectId(state.snapshot.projects[0].id);
-  }, [projectId, standalone, state.snapshot?.projects]);
+    if (resolvedInitial.current) return;
+    if (project && hostId) { resolvedInitial.current = true; if (!route.params?.worktree) chooseProject(hostId, project); }
+  }, [project?.id, hostId]);
+  useEffect(() => {
+    if (!projectId && !standalone && hostId && state.snapshot?.projects.length) chooseProject(hostId, state.snapshot.projects[0]);
+  }, [projectId, standalone, hostId, state.snapshot?.projects]);
   useEffect(() => {
     if (!project) return;
     setProvider(project.defaultProviderId);
@@ -385,6 +414,12 @@ function NewChatScreen({ route, navigation }: any) {
   };
   const recent = macChats(macs).slice(0, 6);
   const projectChoices = macProjects(macs).map(({ mac, project: choice }) => ({ id: itemKey(mac.id, choice.id), hostId: mac.id, projectId: choice.id, title: macs.length > 1 ? `${choice.name} · ${mac.name}` : choice.name }));
+  // The Macs that have this project, for running this one chat elsewhere
+  // than its default Mac.
+  const projectMacChoices = project ? macs.flatMap(mac => {
+    const counterpart = counterpartProject(project, mac.snapshot?.projects || []);
+    return counterpart ? [{ macId: mac.id, projectId: counterpart.id, title: mac.state === 'online' ? mac.name : `${mac.name} (${mac.state === 'connecting' ? 'connecting' : 'not reachable'})` }] : [];
+  }) : [];
   const macName = (id: string | null) => macs.find(mac => mac.id === id)?.name || 'No Mac';
   return <HeaderScrollView keyboardAware style={styles.page} contentContainerStyle={styles.launcherContent}>
     <View style={styles.launcherIntro}><BrandMark /><Text style={styles.launcherTitle}>{state.snapshot?.projects.length ? 'What should we build?' : 'Welcome to Abstract'}</Text><Text style={styles.launcherDescription}>{state.snapshot?.projects.length ? 'Each chat runs its own agent in an isolated worktree, so several can work at once without stepping on each other.' : 'Connect a Mac and start a standalone chat, or add a project on your Mac to work in isolated worktrees.'}</Text></View>
@@ -393,8 +428,9 @@ function NewChatScreen({ route, navigation }: any) {
       {attachments.length > 0 && <View style={styles.launcherAttachments}>{attachments.map(item => <Pressable key={item.id} accessibilityRole="button" accessibilityLabel={`Remove ${item.title}`} onPress={() => setAttachments(attachments.filter(x => x.id !== item.id))} style={styles.launcherAttachment}><Text numberOfLines={1} style={styles.launcherPickerText}>{item.title} ×</Text></Pressable>)}</View>}
       <View style={styles.launcherControls}>
         <Pressable accessibilityRole="button" accessibilityLabel="Attach files or images" onPress={() => run(async () => setAttachments(await pickAttachments(attachments)))} style={styles.launcherPicker}><Icon name="plus" size={16} color={muted} /></Pressable>
-        <LauncherPicker label="Project" value={project?.name || 'No project'} choices={[...projectChoices.map(x => ({ id: x.id, title: x.title, selected: x.hostId === hostId && x.projectId === projectId })), { id: '', title: 'No project', selected: !projectId }]} onSelect={id => { const choice = projectChoices.find(x => x.id === id); setStandalone(!choice); if (choice) setHostId(choice.hostId); setProjectId(choice?.projectId || null); setWorktree(''); setProfileId(null); }} />
+        <LauncherPicker label="Project" value={project?.name || 'No project'} choices={[...projectChoices.map(x => ({ id: x.id, title: x.title, selected: x.hostId === hostId && x.projectId === projectId })), { id: '', title: 'No project', selected: !projectId }]} onSelect={id => { const choice = projectChoices.find(x => x.id === id); const chosen = choice && macs.find(mac => mac.id === choice.hostId)?.snapshot?.projects.find(x => x.id === choice.projectId); setProfileId(null); if (choice && chosen) chooseProject(choice.hostId, chosen); else { setStandalone(true); setProjectId(null); setWorktree(''); setDeviceNotice(null); } }} />
         {!project && macs.length > 1 && <LauncherPicker label="Mac" value={macName(hostId)} leading={<Icon name="devices" size={13} color={muted} />} choices={macs.map(mac => ({ id: mac.id, title: mac.state === 'online' ? mac.name : `${mac.name} (${mac.state === 'connecting' ? 'connecting' : 'not reachable'})`, selected: mac.id === hostId }))} onSelect={id => { setHostId(id); setModelName(''); setEffort(''); setProfileId(null); }} />}
+        {project && projectMacChoices.length > 1 && <LauncherPicker label="Mac" value={macName(hostId)} leading={<Icon name="devices" size={13} color={muted} />} choices={projectMacChoices.map(x => ({ id: x.macId, title: x.title, selected: x.macId === hostId }))} onSelect={id => { const choice = projectMacChoices.find(x => x.macId === id); if (!choice || choice.macId === hostId) return; setDeviceNotice(null); setHostId(choice.macId); setProjectId(choice.projectId); setWorktree(''); setModelName(''); setEffort(''); setProfileId(null); }} />}
         {offeredProfiles.length > 0 && <LauncherPicker label="Profile" value={findProfile(offeredProfiles, profileId)?.name || 'No profile'} choices={[{ id: '', title: 'No profile', selected: !profileId }, ...offeredProfiles.map(x => ({ id: x.id, title: x.name, selected: x.id === profileId }))]} onSelect={chooseProfile} />}
         <LauncherPicker label="Agent" value={providerLabel(provider)} leading={<ProviderLogo provider={provider} size={13} />} choices={(state.snapshot?.providers || []).map(id => ({ id, title: providerLabel(id), selected: id === provider, image: Platform.OS === 'ios' ? providerMenuImage(id) : undefined }))} onSelect={id => { setProvider(id); setModelName(''); setEffort(''); setCustomModel(false); }} />
         <LauncherPicker label="Model" value={modelOption?.label || modelName || state.snapshot?.defaultModelNames?.[provider] || 'Default model'} choices={[{ id: '', title: 'Default model', selected: !modelName }, ...(catalog?.models || []).map(x => ({ id: x.id, title: x.label, selected: modelName === x.id })), ...(catalog?.versions || []).map(x => ({ id: x.id, title: x.label, selected: modelName === x.id })), { id: '__other__', title: 'Other Model…' }]} onSelect={id => { if (id === '__other__') setCustomModel(true); else { setModelName(id); setEffort(''); setCustomModel(false); } }} />
@@ -403,6 +439,7 @@ function NewChatScreen({ route, navigation }: any) {
         {project && <><LauncherPicker label="Worktree" value={worktreeLabel} choices={[{ id: '', title: 'New worktree', selected: !worktree }, ...worktrees.map(x => ({ id: x.path, title: x.branch || x.path.split('/').pop() || x.path, selected: x.path === worktree }))]} onSelect={setWorktree} />{!worktree && <View style={styles.launcherBase}><Text style={styles.launcherBaseLabel}>from</Text><TextInput style={styles.launcherBaseInput} value={base} onChangeText={setBase} autoCapitalize="none" autoCorrect={false} placeholder="HEAD" placeholderTextColor={tertiary} /></View>}</>}
       </View>
       {customModel && <TextInput autoFocus style={styles.launcherCustomModel} value={modelName} onChangeText={value => { setModelName(value); setEffort(''); }} autoCapitalize="none" autoCorrect={false} placeholder="Model name" placeholderTextColor={tertiary} />}
+      {deviceNotice && <Text style={styles.launcherWarning}>{deviceNotice}</Text>}
       {worktreeHolder && <Text style={styles.launcherWarning}>“{worktreeHolder.name}” works here now. Starting stops its agent and this chat takes the worktree.</Text>}
       <View style={styles.launcherFooter}><Pressable accessibilityRole="button" accessibilityState={{ disabled: !canStart }} disabled={!canStart} onPress={() => run(submit)} style={[styles.launcherStart, !canStart && styles.launcherStartDisabled]}><Text style={styles.launcherStartText}>{busy ? 'Starting…' : 'Start'}</Text><Icon name="chevron" size={13} color={bg} /></Pressable></View>
     </View>
@@ -634,12 +671,14 @@ function AutomationsScreen({ navigation }: any) {
   const macs = useRemote().macs();
   return <HeaderScrollView style={styles.page} contentContainerStyle={styles.content}><Text style={styles.title}>Automations</Text>{!macs.length && <Text style={styles.lead}>Pair a Mac to schedule automations on it.</Text>}
     {macs.map(mac => { const automations = mac.snapshot?.automations || []; return <View key={mac.id} style={mac.state === 'unreachable' && styles.unreachable}><Section title={mac.name}>{mac.state !== 'online' && <Text style={styles.hint}>{macStatus(mac)}</Text>}<Button title="New automation" onPress={() => navigation.navigate('Automation', { hostId: mac.id })} />
-      {automations.map(a => <Row key={a.id} title={a.name} subtitle={`${a.enabled ? 'Enabled' : 'Paused'} · ${a.providerId}${automationProfileName(a, mac.snapshot?.profiles) ? ` · ${automationProfileName(a, mac.snapshot?.profiles)}` : ''} · ${a.nextRunAt ? displayDate(a.nextRunAt) : 'Manual'}`} onPress={() => navigation.navigate('Automation', { hostId: mac.id, id: a.id })} />)}{!automations.length && <Empty text="No automations on this Mac." />}
+      {automations.map(a => <Row key={a.id} title={a.name} subtitle={`${a.enabled ? 'Enabled' : 'Paused'} · ${a.providerId}${automationProfileName(a, mac.snapshot?.profiles) ? ` · ${automationProfileName(a, mac.snapshot?.profiles)}` : ''} · ${a.nextRunAt ? displayDate(a.nextRunAt) : 'Manual'}${a.deviceId ? ` · on ${macs.find(m => m.id === a.deviceId)?.name || 'a paired Mac'}` : ''}`} onPress={() => navigation.navigate('Automation', { hostId: mac.id, id: a.id })} />)}{!automations.length && <Empty text="No automations on this Mac." />}
     </Section></View>; })}
   </HeaderScrollView>;
 }
 function AutomationScreen({ route, navigation }: any) {
-  const state = useMac(route.params?.hostId); const existing = state.snapshot?.automations?.find(x => x.id === route.params?.id);
+  const hostId = route.params?.hostId as string | undefined;
+  const store = useRemote();
+  const state = useMac(hostId); const existing = state.snapshot?.automations?.find(x => x.id === route.params?.id);
   const [name, setName] = useState(existing?.name || ''); const [prompt, setPrompt] = useState(existing?.prompt || '');
   const [triggers, setTriggers] = useState<AutomationTrigger[]>(existing?.triggers || []);
   const [provider, setProvider] = useState(existing?.providerId || state.snapshot?.providers[0] || 'claude');
@@ -666,6 +705,18 @@ function AutomationScreen({ route, navigation }: any) {
     setProvider(filled.providerId); setModelName(filled.model || ''); setEffort(filled.effort || ''); setPolicy(filled.policy);
   };
   const [runs, setRuns] = useState<AutomationRun[]>([]);
+  // The Mac its runs start on, kept on the automation on its home Mac
+  // (deviceId, null = home). A new automation takes its project's default.
+  const [deviceId, setDeviceId] = useState<string | null>(existing?.deviceId || null);
+  const macs = store.macs();
+  const homeName = macs.find(mac => mac.id === hostId)?.name || 'This Mac';
+  const canRunElsewhere = state.snapshot?.automationDevice === true;
+  const deviceMac = deviceId ? macs.find(mac => mac.id === deviceId) : undefined;
+  const chooseDevice = (id: string | null) => {
+    if (id === deviceId) return;
+    setDeviceId(id); setModelName(''); setEffort('');
+    if (workspaceMode === 'pinned' && id) { setWorkspaceMode('new_worktree'); setPinnedSessionId(null); }
+  };
   useEffect(() => { if (existing) state.request('automationRuns', { id: existing.id }).then(x => setRuns(x.automationRuns?._0 || [])).catch(() => {}); }, [existing?.id]);
   const save = async () => {
     if (!name.trim() || !prompt.trim()) throw Error('Name and prompt are required.');
@@ -675,7 +726,7 @@ function AutomationScreen({ route, navigation }: any) {
       triggers: triggers.filter(x => x.rrule.trim()).map(x => ({ ...x, rrule: x.rrule.trim() })),
       workspaceMode, pinnedSessionId: workspaceMode === 'pinned' ? pinnedSessionId : null,
       continueAgentSession, permissionPolicy: policy, catchUp: catchUpOf(missedRuns), concurrency, missedRuns, onlyWhenChanged,
-      enabled, nextRunAt: existing?.nextRunAt || null, createdAt: existing?.createdAt || now, updatedAt: now, model: modelName || null, effort: effort || null, deviceId: existing?.deviceId || null, profileId
+      enabled, nextRunAt: existing?.nextRunAt || null, createdAt: existing?.createdAt || now, updatedAt: now, model: modelName || null, effort: effort || null, deviceId, profileId
     };
     await state.request('saveAutomation', { _0: automation }); navigation.goBack();
   };
@@ -683,7 +734,9 @@ function AutomationScreen({ route, navigation }: any) {
     <Text style={styles.label}>Prompt</Text><TextInput style={[styles.input, styles.multiline]} value={prompt} onChangeText={setPrompt} multiline placeholder="What should run?" placeholderTextColor={muted} />
     {profiles.length > 0 && <><Text style={styles.label}>Profile</Text><View style={styles.choices}><Button title="No profile" secondary={profileId !== null} onPress={() => chooseProfile(null)} />{profiles.map(x => <Button key={x.id} title={x.name} secondary={profileId !== x.id} onPress={() => chooseProfile(x.id)} />)}</View><Text style={styles.hint}>Each run starts from the profile as it is then, instructions included.</Text></>}
     <Text style={styles.label}>Agent</Text><View style={styles.choices}>{state.snapshot?.providers.map(x => <Button key={x} title={x} secondary={provider !== x} onPress={() => setProvider(x)} />)}</View>
-    <Text style={styles.label}>Project</Text><View style={styles.choices}><Button title="No project" secondary={projectId !== null} onPress={() => setProjectId(null)} />{state.snapshot?.projects.map(x => <Button key={x.id} title={x.name} secondary={projectId !== x.id} onPress={() => setProjectId(x.id)} />)}</View>
+    <Text style={styles.label}>Project</Text><View style={styles.choices}><Button title="No project" secondary={projectId !== null} onPress={() => setProjectId(null)} />{state.snapshot?.projects.map(x => <Button key={x.id} title={x.name} secondary={projectId !== x.id} onPress={() => { setProjectId(x.id); if (!existing && canRunElsewhere) setDeviceId(x.defaultDeviceId || null); }} />)}</View>
+    <Text style={styles.label}>Runs on</Text>{canRunElsewhere ? <View style={styles.choices}><Button title={homeName} secondary={deviceId !== null} onPress={() => chooseDevice(null)} />{macs.filter(mac => mac.id !== hostId).map(mac => <Button key={mac.id} title={mac.name} secondary={deviceId !== mac.id} onPress={() => chooseDevice(mac.id)} />)}{!!deviceId && !deviceMac && <Button title="A paired Mac" onPress={() => {}} />}</View> : <Text style={styles.body}>{deviceId ? (deviceMac?.name || 'A paired Mac') : homeName}</Text>}
+    {deviceId && <Text style={styles.hint}>{`Each run starts on ${deviceMac?.name || 'a paired Mac'}, through ${homeName}, which must be paired with it.${deviceMac && deviceMac.state !== 'online' ? ` It isn't connected now; a run that comes due while it isn't is recorded as failed, with that reason.` : ''}`}</Text>}
     <Text style={styles.label}>Workspace</Text><View style={styles.choices}><Button title="New worktree each run" secondary={workspaceMode !== 'new_worktree'} onPress={() => setWorkspaceMode('new_worktree')} /><Button title="Continue one chat" secondary={workspaceMode !== 'pinned'} onPress={() => setWorkspaceMode('pinned')} /></View>
     {workspaceMode === 'pinned' && <Section title="Chat to continue">{(state.snapshot?.sessions || []).filter(x => x.projectId === projectId).map(chat => <Button key={chat.id} title={chat.name} secondary={pinnedSessionId !== chat.id} onPress={() => setPinnedSessionId(chat.id)} />)}<Text style={styles.hint}>Choose a chat, or leave this empty to create one on the first run.</Text></Section>}
     {workspaceMode === 'pinned' && <Button title={continueAgentSession ? 'Continue agent session: on' : 'Continue agent session: off'} secondary={!continueAgentSession} onPress={() => setContinueAgentSession(!continueAgentSession)} />}

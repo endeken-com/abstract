@@ -447,7 +447,7 @@ final class RemoteService {
                               backgroundTasks: model.alive.filter { model.runningBackgroundTasks($0) > 0 }.sorted(),
                               unmergedWork: model.branchStates.mapValues(\.hasUnmergedWork),
                               projectIcons: projectIcons(model.projects.filter { $0.archivedAt == nil }),
-                              automationDevice: true, profiles: model.profiles,
+                              automationDevice: true, projectDefaultDevice: true, profiles: model.profiles,
                               everythingPaused: model.pauseState.everythingPaused,
                               pausedProjectIds: model.pauseState.pausedProjectIds.sorted(),
                               pauseControl: true,
@@ -978,6 +978,13 @@ final class HostedPeer {
                                              deleteBranch: deleteBranch ? worktree.branch : nil)
                 return .ok
             } catch { return .failed(error.localizedDescription) }
+        case let .setProjectDefaultDevice(projectId, deviceId):
+            // Only this Mac's own records carry a default Mac; a mirrored
+            // project from another Mac is changed through that Mac.
+            guard var project = model.projects.first(where: { $0.id == projectId }) else { return .failed("Project not found.") }
+            project.defaultDeviceId = deviceId
+            model.updateProject(project)
+            return .ok
         case .saveAutomation(let automation):
             do { return .automation(try model.saveAutomation(automation)) }
             catch { return .failed(error.localizedDescription) }

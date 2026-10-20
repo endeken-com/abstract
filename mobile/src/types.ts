@@ -4,6 +4,9 @@ export type PlanState = { revisions: string[]; status: PlanStatus };
 export type Project = {
   id: string; name: string; rootPath: string; defaultBaseRef: string;
   defaultProviderId: string; defaultPermissionPolicy: Policy;
+  // The paired Mac new chats for this project start on, stored on this
+  // record on the Mac that owns it; null/absent = that Mac.
+  defaultDeviceId?: string | null;
   // The profiles this project offers; absent = every profile shows.
   profileIds?: string[] | null;
   /** Agents may look up code history; null/absent (older Macs) = yes. */
@@ -53,7 +56,7 @@ export type PullRequest = { number: number; title: string; state: string; isDraf
 export type ModelOption = { id: string; label: string; detail?: string | null; efforts: string[]; defaultEffort?: string | null };
 export type ModelCatalog = { accountDefault?: ModelOption | null; models: ModelOption[]; versions: ModelOption[] };
 export type Stall = { state: 'quiet' | 'stalled'; since: number };
-export type Snapshot = { projects: Project[]; sessions: Session[]; providers: string[]; alive: string[]; home?: string; modelCatalogs?: Record<string, ModelCatalog>; defaultModelNames?: Record<string, string>; automations?: Automation[]; pendingPermissions?: Record<string, PendingPermission[]>; pullRequests?: Record<string, PullRequest>; turnStartedAt?: Record<string, number>; pagedHistory?: boolean; internetAddress?: InternetAddress; backgroundTasks?: string[]; unmergedWork?: Record<string, boolean>; profiles?: AgentProfile[]; everythingPaused?: boolean; pausedProjectIds?: string[]; pauseControl?: boolean; stalls?: Record<string, Stall>; codeHistory?: boolean; plans?: Record<string, PlanState>; planApproval?: boolean; projectIcons?: Record<string, string> };
+export type Snapshot = { projects: Project[]; sessions: Session[]; providers: string[]; alive: string[]; home?: string; modelCatalogs?: Record<string, ModelCatalog>; defaultModelNames?: Record<string, string>; automations?: Automation[]; pendingPermissions?: Record<string, PendingPermission[]>; pullRequests?: Record<string, PullRequest>; turnStartedAt?: Record<string, number>; pagedHistory?: boolean; internetAddress?: InternetAddress; backgroundTasks?: string[]; unmergedWork?: Record<string, boolean>; automationDevice?: boolean; projectDefaultDevice?: boolean; profiles?: AgentProfile[]; everythingPaused?: boolean; pausedProjectIds?: string[]; pauseControl?: boolean; stalls?: Record<string, Stall>; codeHistory?: boolean; plans?: Record<string, PlanState>; planApproval?: boolean; projectIcons?: Record<string, string> };
 export type Peer = { id: string; name: string; publicKey: string };
 export type InternetAddress = { endpointId: string };
 export type Device = { peer: Peer; address: string; pairedAt: number; internetAddress?: InternetAddress };

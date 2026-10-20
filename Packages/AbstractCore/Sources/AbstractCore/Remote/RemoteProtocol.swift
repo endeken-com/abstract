@@ -67,6 +67,9 @@ public enum RemoteRequest: Codable, Sendable {
     case setArchived(sessionId: String, archived: Bool)
     case deleteChat(sessionId: String, removeWorktree: Bool)
     case removeWorktree(projectId: String, path: String, deleteBranch: Bool)
+    /// A project's default Mac, kept on its record here; nil is this Mac.
+    /// Only send it to a Mac whose snapshot says `projectDefaultDevice`.
+    case setProjectDefaultDevice(projectId: String, deviceId: String?)
     /// Automations are scheduled and persisted on the host Mac.
     case saveAutomation(Automation)
     case deleteAutomation(id: String)
@@ -280,6 +283,9 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
     /// A host that starts another Mac's automation runs (`startRun`).
     /// Optional for older peers.
     public var automationDevice: Bool?
+    /// A host that records a project's default Mac from a paired device
+    /// (`setProjectDefaultDevice`). Optional for older peers.
+    public var projectDefaultDevice: Bool?
     /// The profiles chats and automations can start from there (ABS-101).
     /// Optional for older peers, which offer none.
     public var profiles: [AgentProfile]?
@@ -313,6 +319,7 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
                 turnStartedAt: [String: Date]? = nil, pagedHistory: Bool? = nil, execInput: Bool? = nil,
                 internetAddress: InternetAddress? = nil, backgroundTasks: [String]? = nil, unmergedWork: [String: Bool]? = nil,
                 projectIcons: [String: Data]? = nil, automationDevice: Bool? = nil,
+                projectDefaultDevice: Bool? = nil,
                 profiles: [AgentProfile]? = nil,
                 everythingPaused: Bool? = nil, pausedProjectIds: [String]? = nil, pauseControl: Bool? = nil,
                 stalls: [String: RemoteStall]? = nil,
@@ -330,6 +337,7 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
         self.unmergedWork = unmergedWork
         self.projectIcons = projectIcons
         self.automationDevice = automationDevice
+        self.projectDefaultDevice = projectDefaultDevice
         self.profiles = profiles
         self.everythingPaused = everythingPaused
         self.pausedProjectIds = pausedProjectIds
