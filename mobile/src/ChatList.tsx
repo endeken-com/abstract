@@ -14,7 +14,7 @@ import {
 
 // Graphite values come from Abstract/Theme/Palette.swift.
 const ink = '#ECECEF', muted = '#A4A4AD', tertiary = '#75757E', sidebar = '#19191C', raised = '#2B2B30', inset = '#303036';
-const removed = '#EF6461', running = '#4CC38A';
+const removed = '#EF6461', running = '#4CC38A', warning = '#D2D2D8';
 const prefsKey = 'chat-list';
 const agentNames: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode' };
 
@@ -110,7 +110,7 @@ function FilterMenu({ all, prefs, setPrefs }: { all: ChatFacts[]; prefs: ChatLis
 export function ChatRow({ chat, showProject, showMac = false, now, selected, onPress }: {
   chat: ChatFacts; showProject: boolean; showMac?: boolean; now: number; selected?: boolean; onPress: () => void;
 }) {
-  const line = lineOf(chat, showProject, showMac);
+  const line = lineOf(chat, showProject, showMac, now);
   const dimmed = chat.session.archivedAt != null || chat.macState === 'unreachable';
   return <Pressable onPress={onPress} accessibilityRole="button" style={[styles.row, selected && styles.rowSelected, dimmed && { opacity: 0.5 }]}>
     <ChatMark chat={chat} working={chat.backgroundTasks} unreachable={chat.macState === 'unreachable'} />
@@ -130,9 +130,10 @@ export function ChatRow({ chat, showProject, showMac = false, now, selected, onP
 // project), with a small badge while it works, when it needs you, or when it failed.
 function ChatMark({ chat, working, unreachable = false }: { chat: ChatFacts; working: boolean; unreachable?: boolean }) {
   const session = chat.session;
-  const badge = unreachable ? tertiary : session.status === 'waiting_input' ? ink : session.status === 'errored' ? removed
+  const stalled = !unreachable && chat.stall?.state === 'stalled';
+  const badge = unreachable ? tertiary : stalled ? warning : session.status === 'waiting_input' ? ink : session.status === 'errored' ? removed
     : session.status === 'running' || session.status === 'provisioning' || working ? running : null;
-  return <View style={styles.mark} accessibilityLabel={`${chat.projectName || standalone}, ${agentNames[session.providerId] || session.providerId}, ${session.status.replace('_', ' ')}`}>
+  return <View style={styles.mark} accessibilityLabel={`${chat.projectName || standalone}, ${agentNames[session.providerId] || session.providerId}, ${stalled ? 'stalled' : session.status.replace('_', ' ')}`}>
     {chat.icon.kind === 'project'
       ? <ProjectIcon mark={chat.icon.mark} size={20} />
       : <ProviderLogo provider={session.providerId} size={17} />}
@@ -146,6 +147,7 @@ export function SecondLine({ line }: { line: ChatLine }) {
     <Text numberOfLines={1} style={[styles.part, styles.macName]}>{line.mac}</Text>
   </View> : null;
   const first: React.ReactNode[] = [];
+  if (line.stall) first.push(<Text key="stall" numberOfLines={1} style={[styles.part, { color: warning, flexShrink: 0 }]}>{line.stall}</Text>);
   if (line.project) first.push(<Text key="project" numberOfLines={1} style={[styles.part, styles.projectName]}>{line.project}</Text>);
   if (line.pullRequest) first.push(<View key="pr" style={styles.prPart}><PullRequestIcon pr={line.pullRequest} size={11} /><Text numberOfLines={1} style={styles.part}>{`#${line.pullRequest.number}`}</Text></View>);
   if (line.checks) first.push(<Text key="checks" numberOfLines={1} style={[styles.part, line.checks === 'failing' && { color: removed }]}>{line.checks}</Text>);

@@ -43,6 +43,21 @@ struct RemoteSnapshotTests {
         #expect(decodedOlderRequest.standing == nil)
     }
 
+    @Test func stallsRoundTripAndOlderSnapshotsDecode() throws {
+        let since = Date(timeIntervalSinceReferenceDate: 800_000_000)
+        let snapshot = RemoteSnapshot(projects: [], sessions: [], providers: [], alive: [],
+                                      stalls: ["chat-id": RemoteStall(state: "stalled", since: since)])
+        let decoded = try JSONDecoder().decode(RemoteSnapshot.self, from: JSONEncoder().encode(snapshot))
+        #expect(decoded.stalls?["chat-id"] == RemoteStall(state: "stalled", since: since))
+
+        let oldData = Data(#"{"projects":[],"sessions":[],"providers":[],"alive":[]}"#.utf8)
+        #expect(try JSONDecoder().decode(RemoteSnapshot.self, from: oldData).stalls == nil)
+
+        #expect(RemoteStall(.working) == nil)
+        #expect(RemoteStall(.quiet(since: since)) == RemoteStall(state: "quiet", since: since))
+        #expect(RemoteStall(.stalled(since: since)) == RemoteStall(state: "stalled", since: since))
+    }
+
     @Test func codeHistoryRequestsRoundTripAndOlderSnapshotsLackTheFlag() throws {
         let ask = RemoteMessage.request(id: 7, .askAuthor(root: "/repo", path: "Sources/A.swift", lineStart: 3, lineEnd: 5,
                                                           code: ["a", "b", "c"], revision: "HEAD", sessionId: "chat-1"))

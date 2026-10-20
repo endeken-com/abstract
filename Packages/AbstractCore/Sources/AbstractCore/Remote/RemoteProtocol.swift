@@ -41,6 +41,10 @@ public enum RemoteRequest: Codable, Sendable {
     case startStandaloneConfigured(providerId: String, prompt: String, policy: PermissionPolicy,
                                    attachments: [PromptAttachment], files: [String: Data], model: String?, effort: String?)
     case stop(sessionId: String)
+    /// A stalled chat's clock restarts; its turn keeps running.
+    case keepWaiting(sessionId: String)
+    /// End a stalled chat's turn and send its last message again.
+    case stopAndRetry(sessionId: String)
     case answer(sessionId: String, requestId: String, allow: Bool)
     /// Answers to the agent's questions, by question text.
     case answerQuestion(sessionId: String, requestId: String, answers: [String: String])
@@ -262,6 +266,10 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
     /// A host that starts another Mac's automation runs (`startRun`).
     /// Optional for older peers.
     public var automationDevice: Bool?
+    /// Working chats gone quiet or stalled, by chat id, as this Mac's stall
+    /// watch reads them. The watching device only shows them; the thresholds
+    /// and the one notification stay here. Optional for older peers.
+    public var stalls: [String: RemoteStall]?
     /// A host that answers `setAgentHistory` and `askAuthor`.
     /// Optional for older peers.
     public var codeHistory: Bool?
@@ -281,8 +289,8 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
                 pendingPermissions: [String: [RemotePendingPermission]]? = nil,
                 turnStartedAt: [String: Date]? = nil, pagedHistory: Bool? = nil, execInput: Bool? = nil,
                 internetAddress: InternetAddress? = nil, backgroundTasks: [String]? = nil, unmergedWork: [String: Bool]? = nil,
-                projectIcons: [String: Data]? = nil, automationDevice: Bool? = nil, codeHistory: Bool? = nil,
-                plans: [String: RemotePlan]? = nil, planApproval: Bool? = nil) {
+                projectIcons: [String: Data]? = nil, automationDevice: Bool? = nil, stalls: [String: RemoteStall]? = nil,
+                codeHistory: Bool? = nil, plans: [String: RemotePlan]? = nil, planApproval: Bool? = nil) {
         self.projects = projects; self.sessions = sessions; self.providers = providers; self.alive = alive
         self.home = home; self.modelCatalogs = modelCatalogs; self.defaultModelNames = defaultModelNames
         self.pullRequests = pullRequests
@@ -296,9 +304,31 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
         self.unmergedWork = unmergedWork
         self.projectIcons = projectIcons
         self.automationDevice = automationDevice
+        self.stalls = stalls
         self.codeHistory = codeHistory
         self.plans = plans
         self.planApproval = planApproval
+    }
+}
+
+/// One working chat's silence, for a watching device: `state` is "quiet" or
+/// "stalled", `since` when output last arrived. Computed on the chat's own
+/// Mac from its stall thresholds; the watcher never recomputes it.
+public struct RemoteStall: Codable, Sendable, Hashable {
+    public var state: String
+    public var since: Date
+
+    public init(state: String, since: Date) {
+        self.state = state; self.since = since
+    }
+
+    /// The stall worth showing, or nil while output is still recent.
+    public init?(_ stall: StallState) {
+        switch stall {
+        case .working: return nil
+        case .quiet(let since): self.init(state: "quiet", since: since)
+        case .stalled(let since): self.init(state: "stalled", since: since)
+        }
     }
 }
 
