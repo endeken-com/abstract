@@ -44,6 +44,10 @@ public enum RemoteRequest: Codable, Sendable {
     case answer(sessionId: String, requestId: String, allow: Bool)
     /// Answers to the agent's questions, by question text.
     case answerQuestion(sessionId: String, requestId: String, answers: [String: String])
+    /// Permission answers remembered for a project, kept on the host Mac.
+    /// Only send them to a Mac whose snapshot carries `permissionRules`.
+    case savePermissionRule(PermissionRule)
+    case deletePermissionRule(id: String)
     /// A chat's agent, model and effort, or how much it may do alone.
     case setAgent(sessionId: String, providerId: String, model: String?, effort: String?)
     case setPolicy(sessionId: String, policy: PermissionPolicy)
@@ -230,6 +234,10 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
     /// A host that starts another Mac's automation runs (`startRun`).
     /// Optional for older peers.
     public var automationDevice: Bool?
+    /// Permission answers remembered per project, keyed by project id.
+    /// Present (even when empty) only on a Mac that takes
+    /// `savePermissionRule` / `deletePermissionRule`. Optional for older peers.
+    public var permissionRules: [String: [PermissionRule]]?
 
     /// The largest uploaded icon a snapshot carries; larger ones are left out.
     public static let maxProjectIconBytes = 512 << 10
@@ -241,7 +249,8 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
                 pendingPermissions: [String: [RemotePendingPermission]]? = nil,
                 turnStartedAt: [String: Date]? = nil, pagedHistory: Bool? = nil, execInput: Bool? = nil,
                 internetAddress: InternetAddress? = nil, backgroundTasks: [String]? = nil, unmergedWork: [String: Bool]? = nil,
-                projectIcons: [String: Data]? = nil, automationDevice: Bool? = nil) {
+                projectIcons: [String: Data]? = nil, automationDevice: Bool? = nil,
+                permissionRules: [String: [PermissionRule]]? = nil) {
         self.projects = projects; self.sessions = sessions; self.providers = providers; self.alive = alive
         self.home = home; self.modelCatalogs = modelCatalogs; self.defaultModelNames = defaultModelNames
         self.pullRequests = pullRequests
@@ -255,6 +264,7 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
         self.unmergedWork = unmergedWork
         self.projectIcons = projectIcons
         self.automationDevice = automationDevice
+        self.permissionRules = permissionRules
     }
 }
 

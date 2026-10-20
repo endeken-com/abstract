@@ -30,6 +30,7 @@ import { TerminalView } from './TerminalView';
 import { SettingsScreen } from './SettingsScreen';
 import { uuid } from './secure';
 import { attachmentPayload, pickAttachments, type PickedAttachment } from './attachments';
+import { deleteRuleArgs, ruleDetail, rulesForProject } from './permissionRules';
 import { displayDate, swiftDate, type Automation, type AutomationTrigger, type Project, type Session } from './types';
 
 // Graphite values come from Abstract/Theme/Palette.swift.
@@ -231,6 +232,11 @@ function ProjectScreen({ route, navigation }: any) {
   return <HeaderScrollView style={styles.page} contentContainerStyle={styles.content}><Text style={styles.title}>{project.name}</Text><Text style={styles.lead}>{`${remote.mac(hostId)?.name || ''} · ${project.rootPath}`}</Text>
     <View style={styles.actions}><Button title="New chat" onPress={() => navigation.navigate('NewChat', { hostId, projectId: project.id })} /><Button title="Worktrees" secondary onPress={() => navigation.navigate('Worktrees', { hostId, projectId: project.id })} /><Button title="Files" secondary onPress={() => navigation.navigate('Files', { hostId, root: project.rootPath })} /><Button title="Terminal" secondary onPress={() => navigation.navigate('Terminal', { hostId, root: project.rootPath })} /></View>
     <Section title="Chats">{chats.map(chat => <Row key={chat.id} title={chat.name} subtitle={`${chat.providerId} · ${chat.branch || chat.status}`} subtitleIcon={chat.branch ? <BranchIcon size={11} color={tertiary} /> : undefined} iconNode={<ProviderLogo provider={chat.providerId} size={16} />} onPress={() => navigation.navigate('Chat', { hostId, sessionId: chat.id })} trailing={chat.status} />)}{!chats.length && <Empty text="No chats in this project." />}</Section>
+    {state.snapshot?.permissionRules !== undefined && <Section title="Permission rules">
+      <Text style={styles.empty}>Answers you've told Abstract to remember for this project. A request matching a rule is answered for you in every chat. A deny rule beats an allow rule.</Text>
+      {rulesForProject(state.snapshot, project.id).map(rule => <View key={rule.id} style={styles.row}><View style={{ flex: 1 }}><Text selectable style={[styles.rowTitle, { fontFamily: 'JetBrainsMono', fontSize: 13 }]}>{rule.pattern}</Text><Text style={styles.subtitle}>{ruleDetail(rule, swiftDate())}</Text></View><Button title="Delete" danger onPress={() => Alert.alert('Delete rule?', `${rule.pattern}\n${ruleDetail(rule, swiftDate())}`, [{ text: 'Cancel' }, { text: 'Delete', style: 'destructive', onPress: () => run(() => state.request('deletePermissionRule', deleteRuleArgs(rule))) }])} /></View>)}
+      {!rulesForProject(state.snapshot, project.id).length && <Empty text="No rules yet. When an agent asks for permission, choose “Always allow…” or “Always deny…” on its card." />}
+    </Section>}
   </HeaderScrollView>;
 }
 function ChatsScreen({ navigation }: any) {
