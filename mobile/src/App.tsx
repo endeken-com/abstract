@@ -22,6 +22,7 @@ import { useKeyboardHeight } from './useKeyboardVisible';
 import { NativeSelect } from './NativeSelect';
 import { ProviderLogo, providerMenuImage } from './ProviderLogo';
 import { ChatListHeader, ChatRow, NoMatches, StatusGroups, useChatListPrefs, useTicking } from './ChatList';
+import { KanbanBoardScreen } from './KanbanBoard';
 import { chatsFromMacs, filterIsEmpty, narrow, type ChatFacts } from './chatGroups';
 import { KeyboardAwareScrollView } from './KeyboardAwareScrollView';
 import { ProgressiveBlur } from './ProgressiveBlur';
@@ -38,7 +39,7 @@ const bg = '#1E1E21', sidebar = '#19191C', panel = '#252529', raised = '#2B2B30'
 const accent = ink, border = 'rgba(255,255,255,0.075)';
 const Stack = createNativeStackNavigator();
 
-type IconName = 'menu' | 'back' | 'plus' | 'clock' | 'worktree' | 'pull' | 'devices' | 'folder' | 'chat' | 'review' | 'files' | 'terminal' | 'settings' | 'chevron' | 'close' | 'refresh' | 'check' | 'failed' | 'pending' | 'skipped' | 'filter';
+type IconName = 'menu' | 'back' | 'plus' | 'clock' | 'worktree' | 'pull' | 'board' | 'devices' | 'folder' | 'chat' | 'review' | 'files' | 'terminal' | 'settings' | 'chevron' | 'close' | 'refresh' | 'check' | 'failed' | 'pending' | 'skipped' | 'filter';
 const symbols: Record<IconName, { ios: string; android: string; web: string }> = {
   menu: { ios: 'sidebar.left', android: 'menu', web: 'menu' },
   back: { ios: 'chevron.left', android: 'arrow_back', web: 'arrow_back' },
@@ -46,6 +47,7 @@ const symbols: Record<IconName, { ios: string; android: string; web: string }> =
   clock: { ios: 'clock.arrow.circlepath', android: 'schedule', web: 'schedule' },
   worktree: contextSymbols.worktree,
   pull: { ios: 'point.3.filled.connected.trianglepath.dotted', android: 'merge', web: 'merge' },
+  board: { ios: 'rectangle.split.3x1', android: 'view_column', web: 'view_column' },
   devices: { ios: 'laptopcomputer', android: 'laptop_mac', web: 'laptop_mac' },
   folder: { ios: 'folder', android: 'folder', web: 'folder' },
   chat: { ios: 'bubble.left', android: 'chat_bubble', web: 'chat_bubble' },
@@ -149,6 +151,7 @@ function WorkspaceRail({ navigate, selectedChat }: { navigate: (name: string, pa
       <RailAction icon="clock" title="Automations" onPress={() => navigate('Automations')} />
       <RailAction icon="worktree" title="Worktrees" onPress={() => navigate('Worktrees')} />
       <RailAction icon="pull" title="Pull Requests" detail={prs ? String(prs) : undefined} onPress={() => navigate('PullRequests')} />
+      <RailAction icon="board" title="Kanban" onPress={() => navigate('Kanban')} />
       {macs.length > 0 && prefs.arrangement === 'status' && macs.map(macRow)}
       {macs.length > 0 && <ChatListHeader all={all} prefs={prefs} setPrefs={setPrefs} searching={searching} setSearching={setSearching} query={query} setQuery={setQuery} />}
       {prefs.arrangement === 'status'
@@ -643,6 +646,7 @@ export default function App() {
         <Stack.Screen name="Review" component={ReviewScreen} />
         <Stack.Screen name="PullRequests" component={PullRequestsScreen} options={{ title: 'Pull requests' }} />
         <Stack.Screen name="PullRequest" component={PullRequestScreen} options={{ title: 'Pull request' }} />
+        <Stack.Screen name="Kanban" component={KanbanBoardScreen} options={{ title: 'Kanban' }} />
         <Stack.Screen name="Automations" component={AutomationsScreen} />
         <Stack.Screen name="Automation" component={AutomationScreen} />
       </Stack.Navigator>
