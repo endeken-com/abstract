@@ -83,8 +83,10 @@ the host already records, and a child that crashes could never call it.
 
 Neither tool blocks. `delegate` returns the moment the child chat exists; `wait_for` only
 records the pending wake in the plugin and instructs the agent to end its turn — a blocking
-wait would die on ABS-97's 30-second tool limit, and a sleeping agent process is exactly
-what Abstract's turn model avoids. When every waited-on child is finished, failed, or
+wait does not fit ABS-97's contract, which runs each tool call in the plugin's background
+script with a 30-second limit: a `wait_for` that held its call open for the minutes a
+sub-task takes would be timed out by the host, and the parent agent would sit blocked
+mid-turn instead of ending it cleanly. When every waited-on child is finished, failed, or
 stalled (§4), the plugin sends **one** `chats.message` to the parent and the parent's next
 turn starts with it. This works for both follow-up modes: stdin agents are sitting idle,
 respawn agents (Codex, OpenCode) resume with the message as their next prompt.
@@ -180,7 +182,7 @@ sub-tasks were delegated in parallel and the parent was "woken" once both reache
 
 | Step | Result |
 |---|---|
-| Delegate child 1 to **Claude** ("what does ROADMAP.md say Abstract is?") | Chat created in its own worktree/branch; finished in ~35 s with the correct one-sentence answer |
+| Delegate child 1 to **Claude** ("what does ROADMAP.md say Abstract is?") | Chat created in its own worktree/branch and reached `idle` with the correct one-sentence answer; in the completing run both children were `idle` within ~35 s of polling starting (the Claude child had been created in an earlier partial run and was adopted by the script, so no clean end-to-end timing is claimed) |
 | Delegate child 2 to **Codex** ("what must PRs never change?") | **Refused by the CLI**: "“codex” isn't an agent abstract can drive. Use: claude, muse." — the failure came back at delegate time and the script reassigned the sub-task to **Muse**, which answered correctly ("Pull requests must never change the app's version."). This is the §1 finding and the §4 reassign path, exercised live |
 | Delegate to a nonexistent agent | Refused the same way; nothing was created |
 | Guardrails (simulated plugin state) | 6th child refused (fan-out), depth-3 delegation refused, ask-first decline refused |
