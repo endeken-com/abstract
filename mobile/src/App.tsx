@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, AppState, FlatList, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type ScrollViewProps } from 'react-native';
+import { ActivityIndicator, Alert, AppState, FlatList, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View, type ScrollViewProps } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -22,16 +22,20 @@ import { useKeyboardHeight } from './useKeyboardVisible';
 import { NativeSelect } from './NativeSelect';
 import { ProviderLogo, providerMenuImage } from './ProviderLogo';
 import { ChatListHeader, ChatRow, NoMatches, StatusGroups, useChatListPrefs, useTicking } from './ChatList';
+import { KanbanBoardScreen } from './KanbanBoard';
 import { chatsFromMacs, filterIsEmpty, narrow, type ChatFacts } from './chatGroups';
 import { KeyboardAwareScrollView } from './KeyboardAwareScrollView';
 import { ProgressiveBlur } from './ProgressiveBlur';
-import { SyntaxCode, highlightDiffLines } from './SyntaxCode';
+import { SyntaxCode, highlightDiffLines, highlightLines } from './SyntaxCode';
+import { askAuthor, relativePath, type AskAuthorRequest } from './askAuthor';
 import { TerminalView } from './TerminalView';
 import { SettingsScreen } from './SettingsScreen';
 import { uuid } from './secure';
 import { attachmentPayload, pickAttachments, type PickedAttachment } from './attachments';
-import { displayDate, swiftDate, type Automation, type AutomationTrigger, type Project, type Session } from './types';
+import { displayDate, swiftDate, type Automation, type AutomationRun, type AutomationTrigger, type Policy, type Project, type Session } from './types';
 import { globalPauseAction, globalPauseConfirm, isProjectPaused, pauseBannerRows, pauseRequest, projectPauseAction } from './pause';
+import { MODE_CHOICES } from './plan';
+import { CHANGED_OPTIONS, CONCURRENCY_OPTIONS, MISSED_OPTIONS, catchUpOf, concurrencyForWorkspace, policiesOf, runDetail, runStatusLabel, showsChanged } from './automationPolicies';
 
 // Graphite values come from Abstract/Theme/Palette.swift.
 const ink = '#ECECEF', muted = '#A4A4AD', tertiary = '#75757E';
@@ -39,7 +43,7 @@ const bg = '#1E1E21', sidebar = '#19191C', panel = '#252529', raised = '#2B2B30'
 const accent = ink, border = 'rgba(255,255,255,0.075)';
 const Stack = createNativeStackNavigator();
 
-type IconName = 'menu' | 'back' | 'plus' | 'clock' | 'worktree' | 'pull' | 'devices' | 'folder' | 'chat' | 'review' | 'files' | 'terminal' | 'settings' | 'chevron' | 'close' | 'refresh' | 'check' | 'failed' | 'pending' | 'skipped' | 'filter';
+type IconName = 'menu' | 'back' | 'plus' | 'clock' | 'worktree' | 'pull' | 'board' | 'devices' | 'folder' | 'chat' | 'review' | 'files' | 'terminal' | 'settings' | 'chevron' | 'close' | 'refresh' | 'check' | 'failed' | 'pending' | 'skipped' | 'filter';
 const symbols: Record<IconName, { ios: string; android: string; web: string }> = {
   menu: { ios: 'sidebar.left', android: 'menu', web: 'menu' },
   back: { ios: 'chevron.left', android: 'arrow_back', web: 'arrow_back' },
@@ -47,6 +51,7 @@ const symbols: Record<IconName, { ios: string; android: string; web: string }> =
   clock: { ios: 'clock.arrow.circlepath', android: 'schedule', web: 'schedule' },
   worktree: contextSymbols.worktree,
   pull: { ios: 'point.3.filled.connected.trianglepath.dotted', android: 'merge', web: 'merge' },
+  board: { ios: 'rectangle.split.3x1', android: 'view_column', web: 'view_column' },
   devices: { ios: 'laptopcomputer', android: 'laptop_mac', web: 'laptop_mac' },
   folder: { ios: 'folder', android: 'folder', web: 'folder' },
   chat: { ios: 'bubble.left', android: 'chat_bubble', web: 'chat_bubble' },
@@ -140,6 +145,16 @@ function GlobalPauseButton({ mac }: { mac: MacView }) {
   const send = () => { const request = pauseRequest(action); run(() => state.client(mac.id).request(request.name, request.args)); };
   return <Button title={action === 'pause' ? 'Pause everything' : 'Resume everything'} secondary={action === 'pause'} onPress={() => action === 'pause' ? confirmPauseEverything(mac, send) : send()} />;
 }
+// Ask the chat that wrote some lines about them: the Mac blames them and
+// builds the prompt; the phone opens that chat with it in the composer,
+// or New Chat with it as the first message.
+function askAboutLines(navigation: any, hostId: string, state: RemoteClient, request: AskAuthorRequest) {
+  run(async () => {
+    const answer = await askAuthor(state, request);
+    if (answer.sessionId) navigation.navigate('Chat', { hostId, sessionId: answer.sessionId, draft: answer.draft, notice: answer.notice || undefined });
+    else navigation.navigate('NewChat', { hostId, projectId: answer.projectId || undefined, prompt: answer.draft });
+  });
+}
 function activeRoot(mac: RemoteClient, session: Session) { return session.worktreePath || mac.snapshot?.projects.find(x => x.id === session.projectId)?.rootPath || ''; }
 
 function RailAction({ icon, title, detail, onPress }: { icon: IconName; title: string; detail?: string; onPress: () => void }) {
@@ -176,6 +191,7 @@ function WorkspaceRail({ navigate, selectedChat }: { navigate: (name: string, pa
       <RailAction icon="clock" title="Automations" onPress={() => navigate('Automations')} />
       <RailAction icon="worktree" title="Worktrees" onPress={() => navigate('Worktrees')} />
       <RailAction icon="pull" title="Pull Requests" detail={prs ? String(prs) : undefined} onPress={() => navigate('PullRequests')} />
+      <RailAction icon="board" title="Kanban" onPress={() => navigate('Kanban')} />
       {macs.length > 0 && prefs.arrangement === 'status' && macs.map(macRow)}
       {macs.length > 0 && <ChatListHeader all={all} prefs={prefs} setPrefs={setPrefs} searching={searching} setSearching={setSearching} query={query} setQuery={setQuery} />}
       {prefs.arrangement === 'status'
@@ -261,6 +277,7 @@ function ProjectScreen({ route, navigation }: any) {
   return <HeaderScrollView style={styles.page} contentContainerStyle={styles.content}><Text style={styles.title}>{project.name}</Text><Text style={styles.lead}>{`${remote.mac(hostId)?.name || ''} · ${project.rootPath}`}</Text>
     {mac && <PauseBanners macs={[mac]} projectId={project.id} />}
     <View style={styles.actions}><Button title="New chat" onPress={() => navigation.navigate('NewChat', { hostId, projectId: project.id })} />{projectAction && <Button title={projectAction === 'pause' ? 'Pause project' : 'Resume project'} secondary={projectAction === 'pause'} onPress={() => { const request = pauseRequest(projectAction, project.id); run(() => state.request(request.name, request.args)); }} />}<Button title="Worktrees" secondary onPress={() => navigation.navigate('Worktrees', { hostId, projectId: project.id })} /><Button title="Files" secondary onPress={() => navigation.navigate('Files', { hostId, root: project.rootPath })} /><Button title="Terminal" secondary onPress={() => navigation.navigate('Terminal', { hostId, root: project.rootPath })} /></View>
+    {state.snapshot?.codeHistory && <Section title="Code history"><View style={styles.row}><View style={{ flex: 1 }}><Text style={styles.rowTitle}>Give agents the history of the code they change</Text><Text style={styles.subtitle}>{project.agentHistory === false ? 'Agents get no history of earlier chats in this project.' : 'Before changing code, an agent can look up what earlier chats in this project were asked, corrected and decided about it, and is told to follow those decisions.'}</Text></View><Switch accessibilityLabel="Give agents the history of the code they change" value={project.agentHistory !== false} onValueChange={enabled => run(() => state.request('setAgentHistory', { projectId: project.id, enabled }))} /></View></Section>}
     <Section title="Chats">{chats.map(chat => <Row key={chat.id} title={chat.name} subtitle={`${chat.providerId} · ${chat.branch || chat.status}`} subtitleIcon={chat.branch ? <BranchIcon size={11} color={tertiary} /> : undefined} iconNode={<ProviderLogo provider={chat.providerId} size={16} />} onPress={() => navigation.navigate('Chat', { hostId, sessionId: chat.id })} trailing={chat.status} />)}{!chats.length && <Empty text="No chats in this project." />}</Section>
   </HeaderScrollView>;
 }
@@ -294,7 +311,7 @@ function NewChatScreen({ route, navigation }: any) {
     if (!macs.some(mac => mac.id === hostId) && fallbackHost !== hostId) setHostId(fallbackHost);
   }, [hostId, fallbackHost]);
   const state = store.client(hostId);
-  const [prompt, setPrompt] = useState('');
+  const [prompt, setPrompt] = useState(route.params?.prompt || '');
   const [attachments, setAttachments] = useState<PickedAttachment[]>([]);
   const [projectId, setProjectId] = useState<string | null>(route.params?.projectId || null);
   const [standalone, setStandalone] = useState(!!route.params?.standalone);
@@ -303,7 +320,7 @@ function NewChatScreen({ route, navigation }: any) {
   const [modelName, setModelName] = useState('');
   const [customModel, setCustomModel] = useState(false);
   const [effort, setEffort] = useState('');
-  const [policy, setPolicy] = useState<'ask' | 'auto-edits' | 'bypass'>('ask');
+  const [policy, setPolicy] = useState<Policy>('ask');
   const [base, setBase] = useState('HEAD');
   const [worktree, setWorktree] = useState(route.params?.worktree || '');
   const [worktrees, setWorktrees] = useState<Array<{ path: string; branch: string }>>([]);
@@ -338,7 +355,7 @@ function NewChatScreen({ route, navigation }: any) {
   const modelOption = [...(catalog?.models || []), ...(catalog?.versions || [])].find(x => x.id === modelName);
   const effortLevels = modelOption?.efforts || catalog?.accountDefault?.efforts || [];
   const providerLabel = (id: string) => ({ claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode' } as Record<string, string>)[id] || id;
-  const policyLabels = { ask: 'Ask before acting', 'auto-edits': 'Accept edits', bypass: 'Full autonomy' };
+  const policyLabels: Record<Policy, string> = { ask: 'Ask before acting', 'auto-edits': 'Accept edits', bypass: 'Full autonomy', plan: 'Plan', 'read-only': 'Ask (read-only)' };
   const selectedWorktree = worktrees.find(x => x.path === worktree);
   const worktreeLabel = selectedWorktree?.branch || (worktree ? worktree.split('/').pop() || worktree : 'New worktree');
   const worktreeHolder = worktree && state.snapshot?.sessions.find(x => x.worktreePath === worktree && !x.archivedAt);
@@ -369,7 +386,7 @@ function NewChatScreen({ route, navigation }: any) {
         <LauncherPicker label="Agent" value={providerLabel(provider)} leading={<ProviderLogo provider={provider} size={13} />} choices={(state.snapshot?.providers || []).map(id => ({ id, title: providerLabel(id), selected: id === provider, image: Platform.OS === 'ios' ? providerMenuImage(id) : undefined }))} onSelect={id => { setProvider(id); setModelName(''); setEffort(''); setCustomModel(false); }} />
         <LauncherPicker label="Model" value={modelOption?.label || modelName || state.snapshot?.defaultModelNames?.[provider] || 'Default model'} choices={[{ id: '', title: 'Default model', selected: !modelName }, ...(catalog?.models || []).map(x => ({ id: x.id, title: x.label, selected: modelName === x.id })), ...(catalog?.versions || []).map(x => ({ id: x.id, title: x.label, selected: modelName === x.id })), { id: '__other__', title: 'Other Model…' }]} onSelect={id => { if (id === '__other__') setCustomModel(true); else { setModelName(id); setEffort(''); setCustomModel(false); } }} />
         {effortLevels.length > 0 && <LauncherPicker label="Reasoning effort" value={effort ? effort.replace(/^./, x => x.toUpperCase()) : 'Default effort'} choices={[{ id: '', title: 'Default effort', selected: !effort }, ...effortLevels.map(id => ({ id, title: id.replace(/^./, x => x.toUpperCase()), selected: effort === id }))]} onSelect={setEffort} />}
-        <LauncherPicker label="Permissions" value={policyLabels[policy]} choices={(['ask', 'auto-edits', 'bypass'] as const).map(id => ({ id, title: policyLabels[id], selected: id === policy }))} onSelect={id => setPolicy(id as typeof policy)} />
+        <LauncherPicker label="Mode" value={policyLabels[policy]} choices={MODE_CHOICES.map(({ id, title }) => ({ id, title, selected: id === policy }))} onSelect={id => setPolicy(id as Policy)} />
         {project && <><LauncherPicker label="Worktree" value={worktreeLabel} choices={[{ id: '', title: 'New worktree', selected: !worktree }, ...worktrees.map(x => ({ id: x.path, title: x.branch || x.path.split('/').pop() || x.path, selected: x.path === worktree }))]} onSelect={setWorktree} />{!worktree && <View style={styles.launcherBase}><Text style={styles.launcherBaseLabel}>from</Text><TextInput style={styles.launcherBaseInput} value={base} onChangeText={setBase} autoCapitalize="none" autoCorrect={false} placeholder="HEAD" placeholderTextColor={tertiary} /></View>}</>}
       </View>
       {customModel && <TextInput autoFocus style={styles.launcherCustomModel} value={modelName} onChangeText={value => { setModelName(value); setEffort(''); }} autoCapitalize="none" autoCorrect={false} placeholder="Model name" placeholderTextColor={tertiary} />}
@@ -413,18 +430,23 @@ function FilesScreen({ route, navigation }: any) {
       <View style={styles.filesFilterRow}><View style={styles.fileFilter}><Icon name="filter" size={16} color={tertiary} /><TextInput style={styles.fileFilterInput} placeholder="Filter files" placeholderTextColor={tertiary} value={query} onChangeText={setQuery} autoCapitalize="none" autoCorrect={false} />{query ? <Pressable style={styles.fileFilterClear} onPress={() => setQuery('')} accessibilityLabel="Clear filter"><Icon name="close" size={13} color={muted} /></Pressable> : null}</View><Pressable style={styles.fileRefreshButton} accessibilityLabel="Refresh files" onPress={() => { Haptics.selectionAsync().catch(() => {}); refresh(); }}><Icon name="refresh" size={17} color={muted} /></Pressable></View>
     </View>
     {folder ? <Pressable style={styles.breadcrumb} onPress={() => setFolder(folder.split('/').slice(0, -1).join('/'))}><Icon name="back" size={13} color={muted} /><Text numberOfLines={1} style={styles.breadcrumbText}>{folder}</Text></Pressable> : null}
-    {error ? <View style={styles.paneEmpty}><Icon name="failed" size={22} color="#EF6461" /><Text style={styles.paneEmptyTitle}>Couldn't load files</Text><Text style={styles.empty}>{error}</Text><Button title="Try again" secondary onPress={refresh} /></View> : loading && !paths.length ? <View style={styles.paneEmpty}><Text style={styles.empty}>Loading files…</Text></View> : <FlatList contentContainerStyle={styles.fileList} data={entries} keyExtractor={item => item.path} ListEmptyComponent={<View style={styles.paneEmpty}><Text style={styles.empty}>{query.trim() ? 'No matching files.' : 'No files found.'}</Text></View>} renderItem={({ item }) => <Pressable style={styles.fileTreeRow} onPress={() => item.directory ? setFolder(item.path) : navigation.navigate('File', { hostId, path: root.replace(/\/$/, '') + '/' + item.path })}><FileIcon path={item.path} directory={item.directory} size={17} /><View style={{ flex: 1, minWidth: 0 }}><Text numberOfLines={1} style={styles.fileTreeTitle}>{item.name}</Text>{query ? <Text numberOfLines={1} style={styles.fileTreeSubtitle}>{item.path}</Text> : null}</View>{item.directory ? <Icon name="chevron" size={11} color={tertiary} /> : null}</Pressable>} />}
+    {error ? <View style={styles.paneEmpty}><Icon name="failed" size={22} color="#EF6461" /><Text style={styles.paneEmptyTitle}>Couldn't load files</Text><Text style={styles.empty}>{error}</Text><Button title="Try again" secondary onPress={refresh} /></View> : loading && !paths.length ? <View style={styles.paneEmpty}><Text style={styles.empty}>Loading files…</Text></View> : <FlatList contentContainerStyle={styles.fileList} data={entries} keyExtractor={item => item.path} ListEmptyComponent={<View style={styles.paneEmpty}><Text style={styles.empty}>{query.trim() ? 'No matching files.' : 'No files found.'}</Text></View>} renderItem={({ item }) => <Pressable style={styles.fileTreeRow} onPress={() => item.directory ? setFolder(item.path) : navigation.navigate('File', { hostId, root, sessionId: route.params.sessionId, path: root.replace(/\/$/, '') + '/' + item.path })}><FileIcon path={item.path} directory={item.directory} size={17} /><View style={{ flex: 1, minWidth: 0 }}><Text numberOfLines={1} style={styles.fileTreeTitle}>{item.name}</Text>{query ? <Text numberOfLines={1} style={styles.fileTreeSubtitle}>{item.path}</Text> : null}</View>{item.directory ? <Icon name="chevron" size={11} color={tertiary} /> : null}</Pressable>} />}
   </View></SwipeForward>;
 }
 function FileScreen({ route, navigation }: any) {
   const hostId = route.params.hostId as string; const state = useMac(hostId); const path = route.params.path as string;
+  const root = route.params.root as string | undefined;
   const [content, setContent] = useState(''); const [editing, setEditing] = useState(false);
+  const [selectedLine, setSelectedLine] = useState<number | null>(null);
   useEffect(() => { state.readFile(path).then(setContent).catch(error => Alert.alert('File', String(error))); }, [hostId, path]);
   useEffect(() => { navigation.setOptions({ title: path.split('/').at(-1) || 'File' }); }, [navigation, path]);
   const save = async () => { await state.writeFile(path, content); setEditing(false); };
   const lines = content.split('\n');
-  return <KeyboardAvoidingView style={styles.page} behavior={Platform.OS === 'ios' ? 'padding' : undefined}><HeaderSpacer /><View style={styles.paneToolbar}><FileIcon path={path} size={16} /><Text style={styles.editorMeta}>{content.length} characters · {lines.length} lines{editing ? ' · Editing' : ''}</Text><View style={{ flex: 1 }} /><Pressable style={styles.editorAction} onPress={() => editing ? run(save) : setEditing(true)}><Text style={styles.editorActionText}>{editing ? 'Save' : 'Edit'}</Text></Pressable>{editing && <Pressable style={styles.editorAction} onPress={() => { setEditing(false); state.readFile(path).then(setContent).catch(() => {}); }}><Text style={styles.editorActionText}>Cancel</Text></Pressable>}</View>
-    {editing ? <ScrollView style={{ flex: 1 }} keyboardShouldPersistTaps="handled"><TextInput style={styles.editorInput} value={content} onChangeText={setContent} multiline autoCapitalize="none" autoCorrect={false} textAlignVertical="top" /></ScrollView> : <ScrollView style={{ flex: 1 }}><ScrollView horizontal contentContainerStyle={styles.editorCode}><Text selectable style={styles.editorLineNumbers}>{lines.map((_, index) => String(index + 1)).join('\n')}</Text><SyntaxCode code={content} path={path} /></ScrollView></ScrollView>}
+  const relative = root ? relativePath(root, path) : null;
+  const canAsk = !!state.snapshot?.codeHistory && !!root && !!relative && selectedLine !== null && !editing;
+  const highlighted = useMemo(() => editing ? [] : highlightLines(lines, path), [content, editing, path]);
+  return <KeyboardAvoidingView style={styles.page} behavior={Platform.OS === 'ios' ? 'padding' : undefined}><HeaderSpacer /><View style={styles.paneToolbar}><FileIcon path={path} size={16} /><Text style={styles.editorMeta}>{content.length} characters · {lines.length} lines{editing ? ' · Editing' : ''}</Text><View style={{ flex: 1 }} />{canAsk && <Pressable style={styles.editorAction} accessibilityLabel="Ask the chat that wrote this line" onPress={() => askAboutLines(navigation, hostId, state, { root: root!, path: relative!, lineStart: selectedLine! + 1, lineEnd: selectedLine! + 1, code: [lines[selectedLine!]], revision: 'HEAD', sessionId: route.params.sessionId || null })}><Text style={styles.editorActionText}>Ask who wrote line {selectedLine! + 1}</Text></Pressable>}<Pressable style={styles.editorAction} onPress={() => editing ? run(save) : setEditing(true)}><Text style={styles.editorActionText}>{editing ? 'Save' : 'Edit'}</Text></Pressable>{editing && <Pressable style={styles.editorAction} onPress={() => { setEditing(false); state.readFile(path).then(setContent).catch(() => {}); }}><Text style={styles.editorActionText}>Cancel</Text></Pressable>}</View>
+    {editing ? <ScrollView style={{ flex: 1 }} keyboardShouldPersistTaps="handled"><TextInput style={styles.editorInput} value={content} onChangeText={setContent} multiline autoCapitalize="none" autoCorrect={false} textAlignVertical="top" /></ScrollView> : <ScrollView style={{ flex: 1 }}><ScrollView horizontal contentContainerStyle={styles.editorCode}><View>{lines.map((line, index) => <Pressable key={index} accessibilityLabel={`Line ${index + 1}`} onPress={() => setSelectedLine(selectedLine === index ? null : index)} style={[styles.editorLineRow, selectedLine === index && styles.editorLineSelected]}><Text style={styles.editorLineNumber}>{String(index + 1).padStart(4)}</Text><Text style={styles.editorLineText}>{(highlighted[index] || []).map((part, partIndex) => <Text key={partIndex} style={{ color: part.color }}>{part.text}</Text>)}{line ? '' : ' '}</Text></Pressable>)}</View></ScrollView></ScrollView>}
   </KeyboardAvoidingView>;
 }
 function TerminalScreen({ route, navigation }: any) {
@@ -496,7 +518,7 @@ function ReviewScreen({ route, navigation }: any) {
         {expanded && <View style={styles.reviewFileBody}>{file.binary ? <Text style={styles.mono}>Binary file</Text> : <ReviewDiff patch={file.patch} path={file.path} onSelect={line => { if (line.old !== null || line.next !== null) { setSelected({ path: file.path, line: line.next ?? line.old!, side: line.next !== null ? 'new' : 'old', code: line.text.slice(1) }); setCommentText(''); } }} />}<View style={styles.reviewFileActions}><ReviewFileButton title="Apply to project" onPress={() => decide(file.path, true)} />{!committed && <ReviewFileButton title="Discard changes" destructive onPress={() => decide(file.path, false)} />}</View></View>}
       </View>; })}
       {!files.length && !error && <View style={styles.paneEmpty}><Icon name="check" size={23} color={tertiary} /><Text style={styles.paneEmptyTitle}>No changes to display</Text><Text style={styles.empty}>{committed ? 'This branch has no committed changes.' : 'Nothing uncommitted in this worktree.'}</Text></View>}
-      {selected && <PaneSection title={`Comment on ${selected.path}:${selected.line}`}><Text style={styles.mono}>{selected.code}</Text><TextInput style={[styles.input, styles.multiline]} multiline value={commentText} onChangeText={setCommentText} placeholder="Review comment" placeholderTextColor={muted} /><View style={styles.reviewActions}><Button title="Add comment" onPress={() => { if (commentText.trim()) setComments([...comments, { ...selected, text: commentText.trim() }]); setSelected(null); setCommentText(''); }} /><Button title="Cancel" secondary onPress={() => setSelected(null)} /></View></PaneSection>}
+      {selected && <PaneSection title={`Comment on ${selected.path}:${selected.line}`}><Text style={styles.mono}>{selected.code}</Text><TextInput style={[styles.input, styles.multiline]} multiline value={commentText} onChangeText={setCommentText} placeholder="Review comment" placeholderTextColor={muted} /><View style={styles.reviewActions}><Button title="Add comment" onPress={() => { if (commentText.trim()) setComments([...comments, { ...selected, text: commentText.trim() }]); setSelected(null); setCommentText(''); }} />{state.snapshot?.codeHistory && selected.side === 'new' && chat && activeRoot(state, chat) && <Button title="Ask the chat that wrote this…" secondary onPress={() => askAboutLines(navigation, hostId, state, { root: activeRoot(state, chat), path: selected.path, lineStart: selected.line, lineEnd: selected.line, code: [selected.code], revision: committed ? 'HEAD' : null, sessionId: chat.id })} />}<Button title="Cancel" secondary onPress={() => setSelected(null)} /></View></PaneSection>}
       {comments.length > 0 && <PaneSection title="Draft comments" detail={String(comments.length)}>{comments.map((comment, index) => <Row key={index} title={`${comment.path}:${comment.line}`} subtitle={comment.text} onPress={() => setComments(comments.filter((_, i) => i !== index))} trailing="Remove" />)}</PaneSection>}
       {(files.length > 0 || comments.length > 0) && <PaneSection title="Send review to agent"><TextInput style={[styles.input, styles.multiline]} multiline value={message} onChangeText={setMessage} placeholder="Optional summary" placeholderTextColor={muted} /><Button title="Send review" onPress={sendFeedback} /></PaneSection>}
     </KeyboardAwareScrollView>
@@ -610,14 +632,18 @@ function AutomationScreen({ route, navigation }: any) {
   const [provider, setProvider] = useState(existing?.providerId || state.snapshot?.providers[0] || 'claude');
   const [projectId, setProjectId] = useState(existing?.projectId || null as string | null);
   const [enabled, setEnabled] = useState(existing?.enabled ?? true);
-  const [workspaceMode, setWorkspaceMode] = useState(existing?.workspaceMode || 'new_worktree');
+  const [workspaceMode, setWorkspaceModeState] = useState(existing?.workspaceMode || 'new_worktree');
   const [pinnedSessionId, setPinnedSessionId] = useState(existing?.pinnedSessionId || null as string | null);
   const [continueAgentSession, setContinueAgentSession] = useState(existing?.continueAgentSession || false);
-  const [catchUp, setCatchUp] = useState(existing?.catchUp || false);
+  const [initialPolicies] = useState(() => policiesOf(existing, existing?.workspaceMode || 'new_worktree'));
+  const [concurrency, setConcurrency] = useState(initialPolicies.concurrency);
+  const [missedRuns, setMissedRuns] = useState(initialPolicies.missedRuns);
+  const [onlyWhenChanged, setOnlyWhenChanged] = useState(initialPolicies.onlyWhenChanged);
+  const setWorkspaceMode = (mode: typeof workspaceMode) => { setConcurrency(concurrencyForWorkspace(concurrency, workspaceMode, mode)); setWorkspaceModeState(mode); };
   const [policy, setPolicy] = useState(existing?.permissionPolicy || 'auto-edits');
   const [modelName, setModelName] = useState(existing?.model || '');
   const [effort, setEffort] = useState(existing?.effort || '');
-  const [runs, setRuns] = useState<any[]>([]);
+  const [runs, setRuns] = useState<AutomationRun[]>([]);
   useEffect(() => { if (existing) state.request('automationRuns', { id: existing.id }).then(x => setRuns(x.automationRuns?._0 || [])).catch(() => {}); }, [existing?.id]);
   const save = async () => {
     if (!name.trim() || !prompt.trim()) throw Error('Name and prompt are required.');
@@ -626,7 +652,7 @@ function AutomationScreen({ route, navigation }: any) {
       id: existing?.id || uuid(), name, prompt, providerId: provider, projectId,
       triggers: triggers.filter(x => x.rrule.trim()).map(x => ({ ...x, rrule: x.rrule.trim() })),
       workspaceMode, pinnedSessionId: workspaceMode === 'pinned' ? pinnedSessionId : null,
-      continueAgentSession, permissionPolicy: policy, catchUp,
+      continueAgentSession, permissionPolicy: policy, catchUp: catchUpOf(missedRuns), concurrency, missedRuns, onlyWhenChanged,
       enabled, nextRunAt: existing?.nextRunAt || null, createdAt: existing?.createdAt || now, updatedAt: now, model: modelName || null, effort: effort || null, deviceId: existing?.deviceId || null
     };
     await state.request('saveAutomation', { _0: automation }); navigation.goBack();
@@ -642,10 +668,14 @@ function AutomationScreen({ route, navigation }: any) {
     <Text style={styles.label}>Model (optional)</Text><TextInput style={styles.input} value={modelName} onChangeText={setModelName} autoCapitalize="none" />
     <Text style={styles.label}>Reasoning effort (optional)</Text><TextInput style={styles.input} value={effort} onChangeText={setEffort} autoCapitalize="none" />
     <Text style={styles.label}>Schedules (RRULE)</Text>{triggers.map((trigger, index) => <Section key={trigger.id} title={`Schedule ${index + 1}`}><TextInput style={styles.input} value={trigger.rrule} onChangeText={text => setTriggers(triggers.map(x => x.id === trigger.id ? { ...x, rrule: text } : x))} autoCapitalize="characters" placeholder="FREQ=DAILY;BYHOUR=9;BYMINUTE=0" placeholderTextColor={muted} /><TextInput style={styles.input} value={trigger.timezone} onChangeText={text => setTriggers(triggers.map(x => x.id === trigger.id ? { ...x, timezone: text } : x))} autoCapitalize="none" placeholder="IANA timezone" placeholderTextColor={muted} /><Button title="Remove schedule" secondary onPress={() => setTriggers(triggers.filter(x => x.id !== trigger.id))} /></Section>)}<Button title="Add schedule" secondary onPress={() => setTriggers([...triggers, { id: uuid(), rrule: 'FREQ=DAILY;BYHOUR=9;BYMINUTE=0', timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, dtstart: swiftDate() }])} />
-    <Button title={catchUp ? 'Catch up on launch: on' : 'Catch up on launch: off'} secondary={!catchUp} onPress={() => setCatchUp(!catchUp)} />
+    {triggers.length ? <Section title="When it runs">
+      <Text style={styles.label}>If the last run is still going,</Text><View style={styles.choices}>{CONCURRENCY_OPTIONS.map(o => <Button key={o.value} title={o.label} secondary={concurrency !== o.value} onPress={() => setConcurrency(o.value)} />)}</View>
+      <Text style={styles.label}>If runs were missed while Abstract was closed,</Text><View style={styles.choices}>{MISSED_OPTIONS.map(o => <Button key={o.value} title={o.label} secondary={missedRuns !== o.value} onPress={() => setMissedRuns(o.value)} />)}</View>
+      {showsChanged({ projectId, deviceId: existing?.deviceId }) && <><Text style={styles.label}>It runs</Text><View style={styles.choices}>{CHANGED_OPTIONS.map(o => <Button key={o.label} title={o.label} secondary={onlyWhenChanged !== o.value} onPress={() => setOnlyWhenChanged(o.value)} />)}</View></>}
+    </Section> : null}
     <View style={styles.actions}><Button title={enabled ? 'Enabled' : 'Paused'} secondary={!enabled} onPress={() => setEnabled(!enabled)} /><Button title="Save" onPress={() => run(save)} /></View>
     {existing && <Section title="Actions"><Button title="Run now" secondary onPress={() => run(() => state.request('runAutomation', { id: existing.id }))} /><Button title="Delete" danger onPress={() => Alert.alert('Delete automation?', existing.name, [{ text: 'Cancel' }, { text: 'Delete', style: 'destructive', onPress: () => run(async () => { await state.request('deleteAutomation', { id: existing.id }); navigation.goBack(); }) }])} /></Section>}
-    {runs.length ? <Section title="Recent runs">{runs.map(x => <Text style={styles.body} key={x.id}>{displayDate(x.firedAt)} · {x.status}{x.error ? ` · ${x.error}` : ''}</Text>)}</Section> : null}
+    {runs.length ? <Section title="Recent runs">{runs.map(x => <View key={x.id}><Text style={styles.body}>{displayDate(x.firedAt)} · {runStatusLabel(x)}</Text>{runDetail(x) ? <Text style={styles.hint}>{runDetail(x)}</Text> : null}</View>)}</Section> : null}
   </HeaderScrollView>;
 }
 export default function App() {
@@ -674,6 +704,7 @@ export default function App() {
         <Stack.Screen name="Review" component={ReviewScreen} />
         <Stack.Screen name="PullRequests" component={PullRequestsScreen} options={{ title: 'Pull requests' }} />
         <Stack.Screen name="PullRequest" component={PullRequestScreen} options={{ title: 'Pull request' }} />
+        <Stack.Screen name="Kanban" component={KanbanBoardScreen} options={{ title: 'Kanban' }} />
         <Stack.Screen name="Automations" component={AutomationsScreen} />
         <Stack.Screen name="Automation" component={AutomationScreen} />
       </Stack.Navigator>
@@ -783,6 +814,10 @@ const styles = StyleSheet.create({
   editorActionText: { color: ink, fontFamily: 'Inter', fontSize: 12, fontWeight: '600' },
   editorCode: { paddingVertical: 14, paddingRight: 20 },
   editorLineNumbers: { color: '#676770', fontFamily: 'JetBrainsMono', fontSize: 11, lineHeight: 18, textAlign: 'right', paddingHorizontal: 11, minWidth: 48 },
+  editorLineRow: { flexDirection: 'row', alignItems: 'flex-start' },
+  editorLineSelected: { backgroundColor: 'rgba(255,255,255,0.07)' },
+  editorLineNumber: { color: '#676770', fontFamily: 'JetBrainsMono', fontSize: 11, lineHeight: 18, textAlign: 'right', paddingHorizontal: 11, minWidth: 48 },
+  editorLineText: { fontFamily: 'JetBrainsMono', fontSize: 11, lineHeight: 18, color: '#ABB2BF' },
   editorCodeText: { color: ink, fontFamily: 'JetBrainsMono', fontSize: 11, lineHeight: 18, paddingRight: 12 },
   editorInput: { flex: 1, minHeight: 500, color: ink, fontFamily: 'JetBrainsMono', fontSize: 11, lineHeight: 18, padding: 14 },
 });

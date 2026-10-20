@@ -41,12 +41,21 @@ public enum RemoteRequest: Codable, Sendable {
     case startStandaloneConfigured(providerId: String, prompt: String, policy: PermissionPolicy,
                                    attachments: [PromptAttachment], files: [String: Data], model: String?, effort: String?)
     case stop(sessionId: String)
+    /// A stalled chat's clock restarts; its turn keeps running.
+    case keepWaiting(sessionId: String)
+    /// End a stalled chat's turn and send its last message again.
+    case stopAndRetry(sessionId: String)
     case answer(sessionId: String, requestId: String, allow: Bool)
     /// Answers to the agent's questions, by question text.
     case answerQuestion(sessionId: String, requestId: String, answers: [String: String])
     /// A chat's agent, model and effort, or how much it may do alone.
     case setAgent(sessionId: String, providerId: String, model: String?, effort: String?)
     case setPolicy(sessionId: String, policy: PermissionPolicy)
+    /// A plan written in Plan mode: approve it, ask for changes, or drop it.
+    /// Only send these to a Mac whose snapshot says `planApproval`.
+    case approvePlan(sessionId: String)
+    case requestPlanChanges(sessionId: String)
+    case discardPlan(sessionId: String)
     /// One of the agent's background tasks, or work to move there (Ctrl+B).
     case stopTask(sessionId: String, taskId: String)
     case moveToBackground(sessionId: String, toolUseId: String?)
@@ -78,6 +87,16 @@ public enum RemoteRequest: Codable, Sendable {
     case mergePullRequest(sessionId: String, method: String)
     case markPullRequestReady(sessionId: String)
     case closePullRequest(sessionId: String)
+    /// A project's code-history setting (ABS-61): whether its agents may
+    /// look up what earlier chats decided. Only send it to a Mac whose
+    /// snapshot says `codeHistory`.
+    case setAgentHistory(projectId: String, enabled: Bool)
+    /// Ask the chat that wrote some lines about them: the host blames
+    /// `path` (relative to `root`, a project root or worktree there) at
+    /// `revision` (nil = the worktree as it is) and answers with who to
+    /// ask and the pre-filled prompt. Only send it to a Mac whose
+    /// snapshot says `codeHistory`.
+    case askAuthor(root: String, path: String, lineStart: Int, lineEnd: Int, code: [String], revision: String?, sessionId: String?)
 
     // The host's worktrees, so a chat there reviews, browses and edits here
     // as it would on the host. Only inside its projects and worktrees; only
@@ -171,6 +190,23 @@ public enum RemoteResponse: Codable, Sendable {
     case automation(Automation)
     case automationRuns([AutomationRun])
     case review([RemoteReviewFile])
+    case askAuthor(RemoteAskAuthor)
+}
+
+/// Who to ask about some lines, and what the asking starts with: the
+/// chat that wrote them (`sessionId`, unarchived by the host) with
+/// `draft` for its reply box, or no chat — `draft` is then a new chat's
+/// first message in `projectId`. `notice` says when that chat can
+/// answer but no longer edit (its worktree is gone).
+public struct RemoteAskAuthor: Codable, Sendable, Hashable {
+    public var sessionId: String?
+    public var projectId: String?
+    public var draft: String
+    public var notice: String?
+
+    public init(sessionId: String?, projectId: String?, draft: String, notice: String?) {
+        self.sessionId = sessionId; self.projectId = projectId; self.draft = draft; self.notice = notice
+    }
 }
 
 public struct RemoteReviewFile: Codable, Sendable, Hashable {
@@ -244,6 +280,18 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
     public var pausedProjectIds: [String]?
     /// A host that takes the pause/resume requests. Optional for older peers.
     public var pauseControl: Bool?
+    /// Working chats gone quiet or stalled, by chat id, as this Mac's stall
+    /// watch reads them. The watching device only shows them; the thresholds
+    /// and the one notification stay here. Optional for older peers.
+    public var stalls: [String: RemoteStall]?
+    /// A host that answers `setAgentHistory` and `askAuthor`.
+    /// Optional for older peers.
+    public var codeHistory: Bool?
+    /// Each chat's plan awaiting a decision, by chat id. Optional for older peers.
+    public var plans: [String: RemotePlan]?
+    /// A host that takes plan decisions ('approvePlan' and friends).
+    /// Optional for older peers.
+    public var planApproval: Bool?
 
     /// The largest uploaded icon a snapshot carries; larger ones are left out.
     public static let maxProjectIconBytes = 512 << 10
@@ -256,7 +304,9 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
                 turnStartedAt: [String: Date]? = nil, pagedHistory: Bool? = nil, execInput: Bool? = nil,
                 internetAddress: InternetAddress? = nil, backgroundTasks: [String]? = nil, unmergedWork: [String: Bool]? = nil,
                 projectIcons: [String: Data]? = nil, automationDevice: Bool? = nil,
-                everythingPaused: Bool? = nil, pausedProjectIds: [String]? = nil, pauseControl: Bool? = nil) {
+                everythingPaused: Bool? = nil, pausedProjectIds: [String]? = nil, pauseControl: Bool? = nil,
+                stalls: [String: RemoteStall]? = nil,
+                codeHistory: Bool? = nil, plans: [String: RemotePlan]? = nil, planApproval: Bool? = nil) {
         self.projects = projects; self.sessions = sessions; self.providers = providers; self.alive = alive
         self.home = home; self.modelCatalogs = modelCatalogs; self.defaultModelNames = defaultModelNames
         self.pullRequests = pullRequests
@@ -273,6 +323,52 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
         self.everythingPaused = everythingPaused
         self.pausedProjectIds = pausedProjectIds
         self.pauseControl = pauseControl
+        self.stalls = stalls
+        self.codeHistory = codeHistory
+        self.plans = plans
+        self.planApproval = planApproval
+    }
+}
+
+/// One working chat's silence, for a watching device: `state` is "quiet" or
+/// "stalled", `since` when output last arrived. Computed on the chat's own
+/// Mac from its stall thresholds; the watcher never recomputes it.
+public struct RemoteStall: Codable, Sendable, Hashable {
+    public var state: String
+    public var since: Date
+
+    public init(state: String, since: Date) {
+        self.state = state; self.since = since
+    }
+
+    /// The stall worth showing, or nil while output is still recent.
+    public init?(_ stall: StallState) {
+        switch stall {
+        case .working: return nil
+        case .quiet(let since): self.init(state: "quiet", since: since)
+        case .stalled(let since): self.init(state: "stalled", since: since)
+        }
+    }
+}
+
+/// One chat's plan as it travels: every revision, oldest first, and where
+/// it stands (`waiting`, `changesRequested`, `approved`, `discarded`).
+public struct RemotePlan: Codable, Sendable, Hashable {
+    public var revisions: [String]
+    public var status: String
+
+    public init(revisions: [String], status: String) {
+        self.revisions = revisions; self.status = status
+    }
+
+    public init(_ plan: PlanState) {
+        revisions = plan.revisions
+        status = switch plan.status {
+        case .waiting: "waiting"
+        case .approved: "approved"
+        case .discarded: "discarded"
+        case .changesRequested: "changesRequested"
+        }
     }
 }
 
