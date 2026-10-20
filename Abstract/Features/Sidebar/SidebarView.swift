@@ -493,6 +493,11 @@ private struct RailProjectGroup: View {
         })
         .contextMenu {
             Button("New Chat") { model.showNewChat(in: project.id) }
+            if model.projectIsPaused(project.id) && !model.everythingPaused {
+                Button("Resume Project") { model.resumeProject(project.id) }
+            } else if !model.everythingPaused {
+                Button("Pause Project") { model.pauseProject(project.id) }
+            }
             Button("Show Worktrees") { model.destination = .worktrees }
             Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: project.rootPath)]) }
             Button("Project Settings…") { model.destination = .projectSettings(project.id) }

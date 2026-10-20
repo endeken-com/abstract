@@ -152,6 +152,17 @@ struct CommandPalette: View {
         items.append(Item(id: "settings", section: "App", title: "Settings", symbol: "gearshape", shortcut: ["⌘", ","]) {
             model.isSettingsOpen = true
         })
+        if model.everythingPaused {
+            items.append(Item(id: "resume-everything", section: "App", title: "Resume everything",
+                              subtitle: "Turns back on the automations Pause everything switched off", symbol: "play.circle") {
+                model.resumeEverything()
+            })
+        } else {
+            items.append(Item(id: "pause-everything", section: "App", title: "Pause everything",
+                              subtitle: "Stops every running agent and pauses every automation", symbol: "pause.circle") {
+                model.pauseEverything()
+            })
+        }
         items.append(Item(id: "new", section: "Start", title: "New chat", symbol: "square.and.pencil", shortcut: ["⌘", "N"]) {
             model.showNewChatLikeCurrent()
         })
