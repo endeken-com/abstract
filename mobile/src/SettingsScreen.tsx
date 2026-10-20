@@ -38,7 +38,7 @@ function Action({ title, onPress, disabled = false }: { title: string; onPress: 
   </Pressable>;
 }
 
-export function SettingsScreen() {
+export function SettingsScreen({ navigation }: any) {
   const state = useRemote();
   const headerHeight = useHeaderHeight();
   const name = useMemo(phoneHostName, []);
@@ -86,6 +86,7 @@ export function SettingsScreen() {
             </View>
             <MenuView actions={[{ id: 'forget', title: 'Forget Mac', image: Platform.OS === 'ios' ? 'trash' : undefined, attributes: { destructive: true } }]} onPressAction={() => forget(device)}><View accessibilityLabel={`More options for ${mac.name}`} style={styles.more}><Icon name="ellipsis" size={17} /></View></MenuView>
           </View>
+          {mac.snapshot?.profiles !== undefined ? <Action title={`Agent profiles on ${mac.name}`} onPress={() => navigation.navigate('Profiles', { hostId: mac.id })} /> : null}
           {mac.state !== 'online' ? <Action title={`Reconnect to ${mac.name}`} onPress={() => reconnect(mac.id)} /> : null}
         </View>;
       }) : <Text style={styles.empty}>Macs you pair will appear here.</Text>}

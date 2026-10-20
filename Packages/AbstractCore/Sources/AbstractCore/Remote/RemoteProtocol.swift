@@ -38,8 +38,11 @@ public enum RemoteRequest: Codable, Sendable {
     /// A chat as the New Chat window sets it up, started on the Mac its project is on.
     case startChat(RemoteStart)
     case startStandalone(providerId: String, prompt: String, policy: PermissionPolicy)
+    /// `profile` is the profile the chat starts from (ABS-101); older
+    /// Macs ignore it, as with `exec`'s `stdin`.
     case startStandaloneConfigured(providerId: String, prompt: String, policy: PermissionPolicy,
-                                   attachments: [PromptAttachment], files: [String: Data], model: String?, effort: String?)
+                                   attachments: [PromptAttachment], files: [String: Data], model: String?, effort: String?,
+                                   profile: ProfileSnapshot? = nil)
     case stop(sessionId: String)
     /// A stalled chat's clock restarts; its turn keeps running.
     case keepWaiting(sessionId: String)
@@ -67,6 +70,9 @@ public enum RemoteRequest: Codable, Sendable {
     /// Automations are scheduled and persisted on the host Mac.
     case saveAutomation(Automation)
     case deleteAutomation(id: String)
+    /// Profiles are saved on the host Mac (ABS-101).
+    case saveProfile(AgentProfile)
+    case deleteProfile(id: String)
     /// "Pause everything" on this Mac, and its per-project form: stops the
     /// agents at work in scope and pauses its automations (see `PauseState`).
     /// Resume turns back on only the automations the pause switched off.
@@ -274,6 +280,9 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
     /// A host that starts another Mac's automation runs (`startRun`).
     /// Optional for older peers.
     public var automationDevice: Bool?
+    /// The profiles chats and automations can start from there (ABS-101).
+    /// Optional for older peers, which offer none.
+    public var profiles: [AgentProfile]?
     /// "Pause everything" is on for this Mac. Optional for older peers.
     public var everythingPaused: Bool?
     /// Projects paused on their own, by id, sorted. Optional for older peers.
@@ -304,6 +313,7 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
                 turnStartedAt: [String: Date]? = nil, pagedHistory: Bool? = nil, execInput: Bool? = nil,
                 internetAddress: InternetAddress? = nil, backgroundTasks: [String]? = nil, unmergedWork: [String: Bool]? = nil,
                 projectIcons: [String: Data]? = nil, automationDevice: Bool? = nil,
+                profiles: [AgentProfile]? = nil,
                 everythingPaused: Bool? = nil, pausedProjectIds: [String]? = nil, pauseControl: Bool? = nil,
                 stalls: [String: RemoteStall]? = nil,
                 codeHistory: Bool? = nil, plans: [String: RemotePlan]? = nil, planApproval: Bool? = nil) {
@@ -320,6 +330,7 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
         self.unmergedWork = unmergedWork
         self.projectIcons = projectIcons
         self.automationDevice = automationDevice
+        self.profiles = profiles
         self.everythingPaused = everythingPaused
         self.pausedProjectIds = pausedProjectIds
         self.pauseControl = pauseControl
