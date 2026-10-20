@@ -154,7 +154,7 @@ extension AppModel {
     func pluginActionDescription(_ action: PluginAction, pluginName: String) -> String {
         action.describe(
             pluginName: pluginName,
-            chatTitle: action.chatId.flatMap { session($0)?.name },
+            chatTitle: (action.chatId ?? action.reviewOf).flatMap { session($0)?.name },
             projectName: action.projectKey.flatMap { key in
                 projects.first {
                     PluginSnapshot.projectKey(macId: remote.identity.id, projectId: $0.id) == key
@@ -171,6 +171,9 @@ extension AppModel {
         switch action.capability {
         case .chatsCreate:
             guard let prompt = action.text else { throw AbstractError.message("A new chat needs a prompt.") }
+            if let reviewed = action.reviewOf {
+                return try await startPluginReviewer(of: reviewed, agentId: action.agentId, prompt: prompt, pluginName: pluginName)
+            }
             var project: Project?
             if let projectKey = action.projectKey {
                 project = projects.first {
@@ -190,6 +193,19 @@ extension AppModel {
                 select: false)
             engine.record(sessionId: id, OutputLine(stream: .note, line: "Started by \(pluginName)."))
             return .object(["chatId": .string(id)])
+
+        case .chatsMessage where action.sendsReview:
+            guard let chatId = action.chatId, session(chatId) != nil, !chatId.hasPrefix(RemoteService.mirrorPrefix) else {
+                throw AbstractError.message("That chat isn't here any more.")
+            }
+            guard !comments(chatId).isEmpty else { throw AbstractError.message("There are no comments in Review to send.") }
+            engine.record(sessionId: chatId, OutputLine(stream: .note, line: "Review sent by \(pluginName)."))
+            // As your own Send does: the comments go with the words, are
+            // kept as notes on their lines, and leave Review.
+            try sendFollowUp(chatId, text: messageWithReview(chatId, text: action.text ?? ""))
+            keepCommentsAsNotes(chatId)
+            discardComments(chatId)
+            return .object(["sent": .bool(true)])
 
         case .chatsMessage:
             guard let chatId = action.chatId, let text = action.text, session(chatId) != nil else {
@@ -259,6 +275,60 @@ extension AppModel {
 
         default:
             throw AbstractError.message("Abstract doesn't know that action.")
+        }
+    }
+
+    // MARK: Review (ABS-112)
+
+    /// A read-only chat on another agent, in the reviewed chat's worktree,
+    /// which it reads without taking over. Named for what it reviews.
+    private func startPluginReviewer(of reviewedId: String, agentId: String?, prompt: String,
+                                     pluginName: String) async throws -> JSONValue {
+        guard let reviewed = session(reviewedId), !reviewedId.hasPrefix(RemoteService.mirrorPrefix),
+              reviewed.reviewsSessionId == nil, let path = reviewed.worktreePath else {
+            throw AbstractError.message("Only a chat on this Mac, working in its own folder, can be reviewed.")
+        }
+        let agentId = agentId ?? reviewed.providerId
+        guard ProviderRegistry.provider(agentId) != nil else { throw AbstractError.message("Abstract doesn't know that agent.") }
+        guard providerStatus[agentId]?.available != false else {
+            throw AbstractError.message("\(ProviderRegistry.name(agentId)) isn't installed on this Mac.")
+        }
+        let id = try await startChat(
+            projectId: reviewed.projectId, providerId: agentId, prompt: prompt, baseRef: nil, policy: .readOnly,
+            existing: WorktreeInfo(path: path, branch: reviewed.branch),
+            name: "\(ProviderRegistry.name(agentId))'s review of “\(reviewed.name)”", nameSource: .manual,
+            reviewing: reviewedId, select: false)
+        engine.record(sessionId: id, OutputLine(stream: .note, line: "Started by \(pluginName) to review “\(reviewed.name)”."))
+        return .object(["chatId": .string(id)])
+    }
+
+    /// A plugin's findings, as line comments in the chat's Review marked
+    /// with who wrote them. They wait there for you to send or delete.
+    func addPluginReviewComments(_ chatId: String, author: String, _ comments: [PluginReviewComment]) -> Int {
+        guard let s = session(chatId) else { return 0 }
+        var lines: [String: [Substring]] = [:]
+        for comment in comments {
+            // The line's code, quoted back to the agent, when the file reads.
+            if lines[comment.path] == nil, let root = s.worktreePath, !chatId.hasPrefix(RemoteService.mirrorPrefix) {
+                let text = (try? String(contentsOfFile: (root as NSString).appendingPathComponent(comment.path), encoding: .utf8)) ?? ""
+                lines[comment.path] = text.split(separator: "\n", omittingEmptySubsequences: false)
+            }
+            let code = lines[comment.path].flatMap { comment.line <= $0.count ? String($0[comment.line - 1]) : nil } ?? ""
+            addComment(chatId, on: LineRef(path: comment.path, line: comment.line, side: .new), code: code,
+                       text: comment.text, source: "\(author)'s review", author: author)
+        }
+        return comments.count
+    }
+
+    /// Run a plugin's Review command (ABS-112): its background script is
+    /// handed the chat, what the Review compares, and the agent picked.
+    func invokePluginReview(_ contribution: ResolvedPluginContribution, chatId: String, agentId: String?, scope: String) {
+        let invocation = PluginInvocation(place: .review, contributionId: contribution.contribution.id,
+                                          chatId: chatId, agentId: agentId, scope: scope)
+        guard pluginBackground?.invoke(contribution.pluginId, invocation) == true else {
+            flash("\(contribution.pluginName) isn't running. Turn it on, with its background script, in Settings → Plugins.",
+                  isError: true)
+            return
         }
     }
 

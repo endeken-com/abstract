@@ -49,6 +49,9 @@ final class PluginConnection {
 
     func tearDown() { dead = true }
 
+    /// A chat the person handed this plugin outside a snapshot (ABS-112).
+    func know(chatId: String) { bridge.know(chatId: chatId) }
+
     /// The grants as they stand now, not as they were when this copy
     /// started: revoking one in Settings stops the next call.
     var capabilities: Set<PluginCapability> {
@@ -108,6 +111,12 @@ final class PluginConnection {
                  payload: model.pluginTranscript(page: page, chatId: chatId, allowedProjectKeys: keys))
         case .getAutomations(let id, let page):
             send(type: "reply", id: id, payload: model.pluginAutomations(page: page))
+        case .addReviewComments(let id, let chatId, let author, let comments):
+            let added = model.addPluginReviewComments(chatId, author: author, comments)
+            send(type: "reply", id: id, payload: .object(["added": .number(Double(added))]))
+        case .notice(let id, let text):
+            model.flash("\(manifest.name): \(text)")
+            send(type: "reply", id: id, payload: .object(["shown": .bool(true)]))
         case .action(let id, let action):
             perform(action, id: id)
         case .askAction(let id, let action):

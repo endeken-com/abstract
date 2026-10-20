@@ -27,6 +27,12 @@ public struct PluginAction: Sendable, Equatable {
     /// A question's answers, by question text.
     public var answers: [String: String] = [:]
     public var automationId: String?
+    /// A new chat that reviews this chat's changes, read-only, in its
+    /// worktree (ABS-112).
+    public var reviewOf: String?
+    /// `chats.message` sending the chat's Review comments, as your own
+    /// Send would, instead of `text`.
+    public var sendsReview = false
 
     /// Stopping a chat's agent: `pause` ends its turn and leaves it
     /// resumable by the next message, `stop` ends the agent itself,
@@ -39,11 +45,12 @@ public struct PluginAction: Sendable, Equatable {
     public init(capability: PluginCapability, chatId: String? = nil, projectKey: String? = nil,
                 text: String? = nil, agentId: String? = nil, policy: String? = nil,
                 control: Control? = nil, requestId: String? = nil, allow: Bool? = nil,
-                answers: [String: String] = [:], automationId: String? = nil) {
+                answers: [String: String] = [:], automationId: String? = nil,
+                reviewOf: String? = nil, sendsReview: Bool = false) {
         self.capability = capability; self.chatId = chatId; self.projectKey = projectKey
         self.text = text; self.agentId = agentId; self.policy = policy; self.control = control
         self.requestId = requestId; self.allow = allow; self.answers = answers
-        self.automationId = automationId
+        self.automationId = automationId; self.reviewOf = reviewOf; self.sendsReview = sendsReview
     }
 
     /// The one sentence the ask shows: who is asking, and what it will do.
@@ -52,9 +59,14 @@ public struct PluginAction: Sendable, Equatable {
         let chat = chatTitle.map { "“\($0)”" } ?? "one of your chats"
         switch capability {
         case .chatsCreate:
+            if reviewOf != nil {
+                let agent = agentId.map(ProviderRegistry.name) ?? "an agent"
+                return "\(pluginName) wants \(agent) to review the changes in \(chat), without changing anything."
+            }
             if let projectName { return "\(pluginName) wants to start a chat in \(projectName)." }
             return "\(pluginName) wants to start a chat."
         case .chatsMessage:
+            if sendsReview { return "\(pluginName) wants to send your Review comments to \(chat)." }
             return "\(pluginName) wants to send a message to \(chat)."
         case .chatsControl:
             switch control {

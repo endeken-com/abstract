@@ -21,6 +21,9 @@ public enum PluginCapability: String, Sendable, Hashable, Codable, CaseIterable 
     case chatsControl = "chats.control"
     case permissionsAnswer = "permissions.answer"
     case automationsRun = "automations.run"
+    /// Add line comments to a chat's Review (ABS-112). Nothing reaches the
+    /// agent until you send them, so it doesn't ask first.
+    case reviewComment = "review.comment"
 
     /// The capabilities that do something to a chat or an automation, as
     /// opposed to reading. Each asks first until always allowed.
@@ -48,6 +51,7 @@ public enum PluginCapability: String, Sendable, Hashable, Codable, CaseIterable 
         case .chatsControl: "Stop and resume your agents"
         case .permissionsAnswer: "Answer your agents' questions and permission requests"
         case .automationsRun: "Run your automations"
+        case .reviewComment: "Add comments to your chats' Review, for you to send or delete"
         }
     }
 
@@ -117,6 +121,9 @@ public enum PluginPlace: String, Sendable, Hashable, Codable, CaseIterable {
     case palette
     case settings
     case home
+    /// A command in a chat's Review (ABS-112). Its background script is
+    /// handed the run; nothing opens.
+    case review
 
     /// The place in plain words, for the review screen.
     public var plainWords: String {
@@ -127,6 +134,7 @@ public enum PluginPlace: String, Sendable, Hashable, Codable, CaseIterable {
         case .palette: "A command in ⌘K"
         case .settings: "A page under Settings → Plugins"
         case .home: "A card on the Home screen"
+        case .review: "A command in a chat's Review"
         }
     }
 }
@@ -149,13 +157,25 @@ public struct PluginInvocation: Sendable, Hashable, Codable {
     public var place: PluginPlace
     public var contributionId: String
     public var chatId: String?
-    public init(place: PluginPlace, contributionId: String, chatId: String? = nil) {
+    /// A Review command run for one agent: the one you picked (ABS-112).
+    public var agentId: String?
+    /// What the Review compared when you ran it: "uncommitted",
+    /// "committed" or "commit <sha>".
+    public var scope: String?
+    public init(place: PluginPlace, contributionId: String, chatId: String? = nil,
+                agentId: String? = nil, scope: String? = nil) {
         self.place = place; self.contributionId = contributionId; self.chatId = chatId
+        self.agentId = agentId; self.scope = scope
     }
     public func jsonValue() -> JSONValue {
         var object: [String: JSONValue] = ["place": .string(place.rawValue),
                                            "contributionId": .string(contributionId)]
         if let chatId { object["chatId"] = .string(chatId) }
+        if let agentId {
+            object["agentId"] = .string(agentId)
+            object["agentName"] = .string(ProviderRegistry.name(agentId))
+        }
+        if let scope { object["scope"] = .string(scope) }
         return .object(object)
     }
 }
@@ -210,7 +230,7 @@ public struct PluginManifest: Sendable, Hashable, Codable {
     }
 
     /// One thing a plugin adds outside its sidebar screen: a tab, a menu
-    /// item, a ⌘K command, its Settings page, or a Home card.
+    /// item, a ⌘K command, its Settings page, a Home card or a Review command.
     public struct Contribution: Sendable, Hashable, Codable, Identifiable {
         public var id: String
         public var title: String
@@ -221,6 +241,14 @@ public struct PluginManifest: Sendable, Hashable, Codable {
         public var symbolOrFallback: String {
             symbol.flatMap { $0.isEmpty ? nil : $0 } ?? PluginManifest.fallbackSymbol
         }
+
+        /// A Review command whose title holds `{agent}` is offered once per
+        /// agent other than the chat's own, named in the title (ABS-112).
+        public static let agentPlaceholder = "{agent}"
+        public var isPerAgent: Bool { title.contains(Self.agentPlaceholder) }
+        public func title(agentName: String) -> String {
+            title.replacingOccurrences(of: Self.agentPlaceholder, with: agentName)
+        }
     }
 
     public struct Contributes: Sendable, Hashable, Codable {
@@ -230,12 +258,14 @@ public struct PluginManifest: Sendable, Hashable, Codable {
         public var paletteCommands: [Contribution]
         public var settingsPage: Contribution?
         public var homeWidgets: [Contribution]
+        public var reviewActions: [Contribution]
 
         public init(views: [View] = [], chatPanelTabs: [Contribution] = [], chatMenuItems: [Contribution] = [],
                     paletteCommands: [Contribution] = [], settingsPage: Contribution? = nil,
-                    homeWidgets: [Contribution] = []) {
+                    homeWidgets: [Contribution] = [], reviewActions: [Contribution] = []) {
             self.views = views; self.chatPanelTabs = chatPanelTabs; self.chatMenuItems = chatMenuItems
             self.paletteCommands = paletteCommands; self.settingsPage = settingsPage; self.homeWidgets = homeWidgets
+            self.reviewActions = reviewActions
         }
 
         // Manifests written before the extra places carry only `views`.
@@ -247,6 +277,7 @@ public struct PluginManifest: Sendable, Hashable, Codable {
             paletteCommands = try box.decodeIfPresent([Contribution].self, forKey: .paletteCommands) ?? []
             settingsPage = try box.decodeIfPresent(Contribution.self, forKey: .settingsPage)
             homeWidgets = try box.decodeIfPresent([Contribution].self, forKey: .homeWidgets) ?? []
+            reviewActions = try box.decodeIfPresent([Contribution].self, forKey: .reviewActions) ?? []
         }
     }
 
@@ -269,7 +300,7 @@ public struct PluginManifest: Sendable, Hashable, Codable {
                 views: [View] = [],
                 chatPanelTabs: [Contribution] = [], chatMenuItems: [Contribution] = [],
                 paletteCommands: [Contribution] = [], settingsPage: Contribution? = nil,
-                homeWidgets: [Contribution] = [], background: String? = nil) {
+                homeWidgets: [Contribution] = [], reviewActions: [Contribution] = [], background: String? = nil) {
         self.api = api; self.id = id; self.name = name; self.version = version
         self.background = background
         self.description = description; self.entry = entry
@@ -277,7 +308,8 @@ public struct PluginManifest: Sendable, Hashable, Codable {
         self.network = networkHosts.isEmpty ? nil : Network(hosts: networkHosts)
         self.secrets = secrets.isEmpty ? nil : secrets
         self.contributes = Contributes(views: views, chatPanelTabs: chatPanelTabs, chatMenuItems: chatMenuItems,
-                                       paletteCommands: paletteCommands, settingsPage: settingsPage, homeWidgets: homeWidgets)
+                                       paletteCommands: paletteCommands, settingsPage: settingsPage, homeWidgets: homeWidgets,
+                                       reviewActions: reviewActions)
     }
 
     // A plugin that only runs in the background (ABS-93) may leave out
@@ -309,9 +341,10 @@ public struct PluginManifest: Sendable, Hashable, Codable {
             (.chatPanel, contributes.chatPanelTabs), (.chatMenu, contributes.chatMenuItems),
             (.palette, contributes.paletteCommands),
             (.settings, contributes.settingsPage.map { [$0] } ?? []), (.home, contributes.homeWidgets),
+            (.review, contributes.reviewActions),
         ]
         for (place, items) in places {
-            sentences += items.map { sentence($0.title, place) }
+            sentences += items.map { sentence($0.title(agentName: "another agent"), place) }
         }
         if background != nil {
             sentences.append("In the background — it runs while it's on, even with its screen closed.")
@@ -362,7 +395,7 @@ public struct PluginManifest: Sendable, Hashable, Codable {
         }
         // Actions are API 2: an API 1 plugin was reviewed as read-only,
         // so it doesn't gain them by listing a new string.
-        if api < 2, grantedCapabilities.contains(where: \.isAction) {
+        if api < 2, grantedCapabilities.contains(where: { $0.isAction || $0 == .reviewComment }) {
             throw PluginValidationError.invalidManifest("action capabilities need api 2")
         }
         // Hosts and secrets exist only under their grants, and a grant with
@@ -400,6 +433,7 @@ public struct PluginManifest: Sendable, Hashable, Codable {
             ("chatPanelTabs", contributes.chatPanelTabs), ("chatMenuItems", contributes.chatMenuItems),
             ("paletteCommands", contributes.paletteCommands), ("homeWidgets", contributes.homeWidgets),
             ("settingsPage", contributes.settingsPage.map { [$0] } ?? []),
+            ("reviewActions", contributes.reviewActions),
         ]
         for (place, items) in places {
             guard items.count <= 8 else {
@@ -411,6 +445,11 @@ public struct PluginManifest: Sendable, Hashable, Codable {
             for item in items where !Self.isSound(id: item.id, title: item.title) {
                 throw PluginValidationError.invalidManifest("\(place) entries need an id and a title of at most 40 characters")
             }
+        }
+        // A Review command is run by the background script: there is no
+        // screen to hand it to.
+        guard contributes.reviewActions.isEmpty || background != nil else {
+            throw PluginValidationError.invalidManifest("reviewActions need a background script")
         }
         let total = contributes.views.count + places.map(\.1.count).reduce(0, +)
         guard total > 0 || background != nil else {

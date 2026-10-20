@@ -22,6 +22,11 @@ public struct PluginBridge: Sendable {
     public static let actionWindow: TimeInterval = 60
     /// A message or prompt an action may carry.
     public static let actionTextLimit = 20_000
+    /// Review comments one message may add, and how long each may be (ABS-112).
+    public static let reviewCommentLimit = 50
+    public static let reviewCommentTextLimit = 2_000
+    /// A notice is one short sentence.
+    public static let noticeTextLimit = 200
 
     public var capabilities: Set<PluginCapability>
     /// Action kinds the person always allows for this plugin; every
@@ -60,6 +65,10 @@ public struct PluginBridge: Sendable {
         case getTurns(id: String?, page: PluginPage, chatId: String?)
         case getTranscript(id: String?, page: PluginPage, chatId: String?)
         case getAutomations(id: String?, page: PluginPage)
+        /// Add these comments to the chat's Review, marked with `author` (ABS-112).
+        case addReviewComments(id: String?, chatId: String, author: String, [PluginReviewComment])
+        /// Show this, with the plugin's name, where Abstract shows its own notices.
+        case notice(id: String?, text: String)
         /// Carry this action out: its kind is always allowed (ABS-92).
         case action(id: String?, PluginAction)
         /// Ask the person first; carry it out only if they allow it.
@@ -176,7 +185,32 @@ public struct PluginBridge: Sendable {
                 return refuse(id, "This plugin hasn't been granted seeing your automations.")
             }
             return .getAutomations(id: id, page: PluginPage(payload: payload))
-        case "createChat", "sendMessage", "controlChat", "answerPermission", "answerQuestion", "runAutomation":
+        case "addReviewComments":
+            guard api >= 2, capabilities.contains(.reviewComment) else {
+                return refuse(id, "This plugin hasn't been granted adding comments to your chats' Review.")
+            }
+            guard let chatId = knownChat(payload) else { return refuse(id, "That chat isn't in the plugin's list.") }
+            guard let author = nonEmpty(payload?["author"]?.string), author.count <= 40 else {
+                return refuse(id, "Review comments need to say who wrote them.")
+            }
+            let items = payload?["comments"]?.array ?? []
+            guard !items.isEmpty, items.count <= Self.reviewCommentLimit else {
+                return refuse(id, "Send between 1 and \(Self.reviewCommentLimit) comments at a time.")
+            }
+            var comments: [PluginReviewComment] = []
+            for item in items {
+                guard let comment = PluginReviewComment(item) else {
+                    return refuse(id, "Each comment needs a file inside the project, a line and some words.")
+                }
+                comments.append(comment)
+            }
+            return .addReviewComments(id: id, chatId: chatId, author: author, comments)
+        case "showNotice":
+            guard let text = nonEmpty(payload?["text"]?.string), text.count <= Self.noticeTextLimit else {
+                return refuse(id, "A notice is one short sentence.")
+            }
+            return .notice(id: id, text: text)
+        case "createChat", "sendMessage", "sendReview", "controlChat", "answerPermission", "answerQuestion", "runAutomation":
             // Actions are API 2: an API 1 plugin was granted reading only.
             guard api >= 2 else { return refuse(id, "This plugin hasn't been granted acting on your chats.") }
             return actionOutcome(type: type, id: id, payload: payload, now: now)
@@ -241,6 +275,17 @@ public struct PluginBridge: Sendable {
                 return refuse(id, "That message needs a chat in the plugin's list and some words to send.")
             }
             built = PluginAction(capability: .chatsMessage, chatId: chatId, text: text)
+        case "sendReview":
+            // Your Review comments go as your own Send would (ABS-112).
+            guard capabilities.contains(.chatsMessage) else {
+                return refuse(id, "This plugin hasn't been granted sending messages to your chats.")
+            }
+            guard let chatId = knownChat(payload) else {
+                return refuse(id, "That chat isn't in the plugin's list.")
+            }
+            let text = nonEmpty(payload?["text"]?.string)
+            if let text, text.count > Self.actionTextLimit { return refuse(id, "That message is too long.") }
+            built = PluginAction(capability: .chatsMessage, chatId: chatId, text: text, sendsReview: true)
         case "createChat":
             guard capabilities.contains(.chatsCreate) else {
                 return refuse(id, "This plugin hasn't been granted starting chats.")
@@ -251,16 +296,32 @@ public struct PluginBridge: Sendable {
             if let projectKey = payload?["projectKey"]?.string, !knownProjectKeys.contains(projectKey) {
                 return refuse(id, "That project isn't in the plugin's list.")
             }
-            if let policy = payload?["policy"]?.string,
-               !PermissionPolicy.autonomyCases.map(\.rawValue).contains(policy) {
+            // Ask (read-only) can only take power away, so it's allowed
+            // alongside the autonomy levels (ABS-112).
+            let policies = (PermissionPolicy.autonomyCases + [.readOnly]).map(\.rawValue)
+            if let policy = payload?["policy"]?.string, !policies.contains(policy) {
                 return refuse(id, "Abstract doesn't know that permission level.")
             }
             if let agentId = payload?["agentId"]?.string, agentId.isEmpty || agentId.count > 60 {
                 return refuse(id, "That agent couldn't be read.")
             }
+            // A reviewer works read-only in the reviewed chat's worktree,
+            // and so in its project.
+            var reviewOf: String?
+            if payload?["reviewOf"] != nil {
+                guard let chatId = knownChat(.object(["chatId": payload?["reviewOf"] ?? .null])) else {
+                    return refuse(id, "That chat isn't in the plugin's list.")
+                }
+                let readOnly = PermissionPolicy.readOnly.rawValue
+                guard (payload?["policy"]?.string ?? readOnly) == readOnly, payload?["projectKey"] == nil else {
+                    return refuse(id, "A reviewer only reads, in the chat it reviews.")
+                }
+                reviewOf = chatId
+            }
             built = PluginAction(capability: .chatsCreate, projectKey: payload?["projectKey"]?.string,
                                  text: prompt, agentId: payload?["agentId"]?.string,
-                                 policy: payload?["policy"]?.string)
+                                 policy: reviewOf != nil ? PermissionPolicy.readOnly.rawValue : payload?["policy"]?.string,
+                                 reviewOf: reviewOf)
         case "controlChat":
             guard capabilities.contains(.chatsControl) else {
                 return refuse(id, "This plugin hasn't been granted stopping or resuming your agents.")
@@ -313,6 +374,10 @@ public struct PluginBridge: Sendable {
             : .askAction(id: id, built)
     }
 
+    /// A chat the host just handed the plugin, beyond its last snapshot:
+    /// the one a Review command was run from (ABS-112).
+    public mutating func know(chatId: String) { knownChatIds.insert(chatId) }
+
     private func knownChat(_ payload: JSONValue?) -> String? {
         guard let chatId = payload?["chatId"]?.string, knownChatIds.contains(chatId) else { return nil }
         return chatId
@@ -346,5 +411,27 @@ public struct PluginBridge: Sendable {
         var object: [String: JSONValue] = ["api": .number(Double(api)), "type": .string(type), "payload": payload]
         if let id { object["id"] = .string(id) }
         return JSONValue.object(object).compact()
+    }
+}
+
+/// One finding a plugin adds to a chat's Review (ABS-112): a line of a
+/// file in the chat's worktree, and what it says about it.
+public struct PluginReviewComment: Sendable, Equatable {
+    public var path: String
+    public var line: Int
+    public var text: String
+
+    public init(path: String, line: Int, text: String) {
+        self.path = path; self.line = line; self.text = text
+    }
+
+    /// Nil unless the path stays inside the worktree, the line is a
+    /// line, and there are words of a sensible length.
+    init?(_ value: JSONValue) {
+        guard let path = value["path"]?.string, PluginPackage.isContained(relativePath: path),
+              let line = value["line"]?.int, line >= 1,
+              let text = value["text"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !text.isEmpty, text.count <= PluginBridge.reviewCommentTextLimit else { return nil }
+        self.init(path: path, line: line, text: text)
     }
 }

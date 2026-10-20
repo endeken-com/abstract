@@ -697,12 +697,16 @@ struct RailChatRow: View {
         Task {
             // Commits in its submodules that no remote has go with the worktree.
             var lost: String?
-            if !standalone, let path = session.worktreePath {
+            // A reviewer only read another chat's worktree (ABS-112), which stays.
+            let reviewer = session.reviewsSessionId != nil
+            if !standalone, !reviewer, let path = session.worktreePath {
                 lost = await model.unpushedSubmoduleWarning(model.executor(for: session.id), worktree: path)
             }
             let alert = NSAlert()
             alert.messageText = "Delete “\(session.name)”?"
-            alert.informativeText = (standalone
+            alert.informativeText = (reviewer
+                ? "The agent is stopped. The worktree it reviewed stays, with the chat that works in it."
+                : standalone
                 ? "The agent is stopped and the chat's folder is removed with everything in it."
                 : "The agent is stopped and its worktree is removed. Uncommitted work in the worktree is lost; the branch is kept.")
                 + (lost.map { "\n\n" + $0 } ?? "")
