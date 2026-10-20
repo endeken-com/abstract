@@ -55,6 +55,9 @@ public enum RemoteRequest: Codable, Sendable {
     case setArchived(sessionId: String, archived: Bool)
     case deleteChat(sessionId: String, removeWorktree: Bool)
     case removeWorktree(projectId: String, path: String, deleteBranch: Bool)
+    /// A project's default Mac, kept on its record here; nil is this Mac.
+    /// Only send it to a Mac whose snapshot says `projectDefaultDevice`.
+    case setProjectDefaultDevice(projectId: String, deviceId: String?)
     /// Automations are scheduled and persisted on the host Mac.
     case saveAutomation(Automation)
     case deleteAutomation(id: String)
@@ -230,6 +233,9 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
     /// A host that starts another Mac's automation runs (`startRun`).
     /// Optional for older peers.
     public var automationDevice: Bool?
+    /// A host that records a project's default Mac from a paired device
+    /// (`setProjectDefaultDevice`). Optional for older peers.
+    public var projectDefaultDevice: Bool?
 
     /// The largest uploaded icon a snapshot carries; larger ones are left out.
     public static let maxProjectIconBytes = 512 << 10
@@ -241,7 +247,8 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
                 pendingPermissions: [String: [RemotePendingPermission]]? = nil,
                 turnStartedAt: [String: Date]? = nil, pagedHistory: Bool? = nil, execInput: Bool? = nil,
                 internetAddress: InternetAddress? = nil, backgroundTasks: [String]? = nil, unmergedWork: [String: Bool]? = nil,
-                projectIcons: [String: Data]? = nil, automationDevice: Bool? = nil) {
+                projectIcons: [String: Data]? = nil, automationDevice: Bool? = nil,
+                projectDefaultDevice: Bool? = nil) {
         self.projects = projects; self.sessions = sessions; self.providers = providers; self.alive = alive
         self.home = home; self.modelCatalogs = modelCatalogs; self.defaultModelNames = defaultModelNames
         self.pullRequests = pullRequests
@@ -255,6 +262,7 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
         self.unmergedWork = unmergedWork
         self.projectIcons = projectIcons
         self.automationDevice = automationDevice
+        self.projectDefaultDevice = projectDefaultDevice
     }
 }
 
