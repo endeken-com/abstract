@@ -30,7 +30,8 @@ import { TerminalView } from './TerminalView';
 import { SettingsScreen } from './SettingsScreen';
 import { uuid } from './secure';
 import { attachmentPayload, pickAttachments, type PickedAttachment } from './attachments';
-import { displayDate, swiftDate, type Automation, type AutomationTrigger, type Project, type Session } from './types';
+import { displayDate, swiftDate, type AgentProfile, type Automation, type AutomationTrigger, type Policy, type Project, type Session } from './types';
+import { appliedProfile, automationProfileName, findProfile, newProfile, profileIcons, profileSnapshotOf, sessionProfileName, sortedProfiles, visibleProfiles } from './profiles';
 
 // Graphite values come from Abstract/Theme/Palette.swift.
 const ink = '#ECECEF', muted = '#A4A4AD', tertiary = '#75757E';
@@ -230,7 +231,7 @@ function ProjectScreen({ route, navigation }: any) {
   const chats = state.snapshot?.sessions.filter(x => x.projectId === project.id && !x.archivedAt) || [];
   return <HeaderScrollView style={styles.page} contentContainerStyle={styles.content}><Text style={styles.title}>{project.name}</Text><Text style={styles.lead}>{`${remote.mac(hostId)?.name || ''} · ${project.rootPath}`}</Text>
     <View style={styles.actions}><Button title="New chat" onPress={() => navigation.navigate('NewChat', { hostId, projectId: project.id })} /><Button title="Worktrees" secondary onPress={() => navigation.navigate('Worktrees', { hostId, projectId: project.id })} /><Button title="Files" secondary onPress={() => navigation.navigate('Files', { hostId, root: project.rootPath })} /><Button title="Terminal" secondary onPress={() => navigation.navigate('Terminal', { hostId, root: project.rootPath })} /></View>
-    <Section title="Chats">{chats.map(chat => <Row key={chat.id} title={chat.name} subtitle={`${chat.providerId} · ${chat.branch || chat.status}`} subtitleIcon={chat.branch ? <BranchIcon size={11} color={tertiary} /> : undefined} iconNode={<ProviderLogo provider={chat.providerId} size={16} />} onPress={() => navigation.navigate('Chat', { hostId, sessionId: chat.id })} trailing={chat.status} />)}{!chats.length && <Empty text="No chats in this project." />}</Section>
+    <Section title="Chats">{chats.map(chat => <Row key={chat.id} title={chat.name} subtitle={`${chat.providerId} · ${chat.branch || chat.status}${sessionProfileName(chat) ? ` · ${sessionProfileName(chat)}` : ''}`} subtitleIcon={chat.branch ? <BranchIcon size={11} color={tertiary} /> : undefined} iconNode={<ProviderLogo provider={chat.providerId} size={16} />} onPress={() => navigation.navigate('Chat', { hostId, sessionId: chat.id })} trailing={chat.status} />)}{!chats.length && <Empty text="No chats in this project." />}</Section>
   </HeaderScrollView>;
 }
 function ChatsScreen({ navigation }: any) {
@@ -238,7 +239,7 @@ function ChatsScreen({ navigation }: any) {
   const macs = state.macs();
   const chats = macChats(macs);
   return <HeaderScrollView style={styles.page} contentContainerStyle={styles.content}><Text style={styles.title}>Chats</Text>{!macs.length && <Text style={styles.lead}>Pair a Mac to see its chats</Text>}{macs.some(mac => mac.state === 'online') && <Button title="New standalone chat" onPress={() => navigation.navigate('NewChat', { standalone: true })} />}
-    {chats.map(({ mac, chat }) => <View key={itemKey(mac.id, chat.id)} style={mac.state === 'unreachable' && styles.unreachable}><Row title={chat.name} subtitle={`${mac.snapshot?.projects.find(p => p.id === chat.projectId)?.name || 'No project'} · ${chat.providerId} · ${mac.name}`} iconNode={<ProviderLogo provider={chat.providerId} size={16} />} trailing={chat.status} onPress={() => navigation.navigate('Chat', { hostId: mac.id, sessionId: chat.id })} /></View>)}
+    {chats.map(({ mac, chat }) => <View key={itemKey(mac.id, chat.id)} style={mac.state === 'unreachable' && styles.unreachable}><Row title={chat.name} subtitle={`${mac.snapshot?.projects.find(p => p.id === chat.projectId)?.name || 'No project'} · ${chat.providerId}${sessionProfileName(chat) ? ` · ${sessionProfileName(chat)}` : ''} · ${mac.name}`} iconNode={<ProviderLogo provider={chat.providerId} size={16} />} trailing={chat.status} onPress={() => navigation.navigate('Chat', { hostId: mac.id, sessionId: chat.id })} /></View>)}
     {!chats.length && <Empty text="No chats available." />}
   </HeaderScrollView>;
 }
@@ -268,6 +269,8 @@ function NewChatScreen({ route, navigation }: any) {
   const [projectId, setProjectId] = useState<string | null>(route.params?.projectId || null);
   const [standalone, setStandalone] = useState(!!route.params?.standalone);
   const project = state.snapshot?.projects.find(x => x.id === projectId);
+  const [profileId, setProfileId] = useState<string | null>(null);
+  const offeredProfiles = visibleProfiles(state.snapshot?.profiles, standalone ? null : project, profileId);
   const [provider, setProvider] = useState('claude');
   const [modelName, setModelName] = useState('');
   const [customModel, setCustomModel] = useState(false);
@@ -312,14 +315,23 @@ function NewChatScreen({ route, navigation }: any) {
   const worktreeLabel = selectedWorktree?.branch || (worktree ? worktree.split('/').pop() || worktree : 'New worktree');
   const worktreeHolder = worktree && state.snapshot?.sessions.find(x => x.worktreePath === worktree && !x.archivedAt);
   const canStart = !busy && state.status === 'online' && !!state.snapshot?.providers.includes(provider) && (!!project || standalone || !state.snapshot?.projects.length) && (!!prompt.trim() || attachments.length > 0);
+  const chooseProfile = (id: string) => {
+    const chosen = findProfile(state.snapshot?.profiles, id || null);
+    setProfileId(chosen?.id || null);
+    if (!chosen) return;
+    const filled = appliedProfile(chosen);
+    setProvider(filled.providerId); setModelName(filled.model || ''); setEffort(filled.effort || ''); setPolicy(filled.policy); setCustomModel(false);
+  };
   const submit = async () => {
     if (!canStart) return;
     setBusy(true);
     try {
+      const chosen = findProfile(state.snapshot?.profiles, profileId);
+      const profile = chosen ? profileSnapshotOf(chosen) : null;
       const response = project
-        ? await state.request('startChat', { _0: { projectId: project.id, providerId: provider, prompt: prompt.trim(), ...attachmentPayload(attachments), baseRef: base || null, policy, model: modelName || null, effort: effort || null, worktree: worktree || null } })
+        ? await state.request('startChat', { _0: { projectId: project.id, providerId: provider, prompt: prompt.trim(), ...attachmentPayload(attachments), baseRef: base || null, policy, model: modelName || null, effort: effort || null, worktree: worktree || null, profile } })
         : await state.request('startStandaloneConfigured', { providerId: provider, prompt: prompt.trim(), policy,
-          ...attachmentPayload(attachments), model: modelName || null, effort: effort || null });
+          ...attachmentPayload(attachments), model: modelName || null, effort: effort || null, profile });
       navigation.replace('Chat', { hostId, sessionId: response.started?.sessionId });
     } catch (error) { Alert.alert('Could not start chat', String(error)); } finally { setBusy(false); }
   };
@@ -333,8 +345,9 @@ function NewChatScreen({ route, navigation }: any) {
       {attachments.length > 0 && <View style={styles.launcherAttachments}>{attachments.map(item => <Pressable key={item.id} accessibilityRole="button" accessibilityLabel={`Remove ${item.title}`} onPress={() => setAttachments(attachments.filter(x => x.id !== item.id))} style={styles.launcherAttachment}><Text numberOfLines={1} style={styles.launcherPickerText}>{item.title} ×</Text></Pressable>)}</View>}
       <View style={styles.launcherControls}>
         <Pressable accessibilityRole="button" accessibilityLabel="Attach files or images" onPress={() => run(async () => setAttachments(await pickAttachments(attachments)))} style={styles.launcherPicker}><Icon name="plus" size={16} color={muted} /></Pressable>
-        <LauncherPicker label="Project" value={project?.name || 'No project'} choices={[...projectChoices.map(x => ({ id: x.id, title: x.title, selected: x.hostId === hostId && x.projectId === projectId })), { id: '', title: 'No project', selected: !projectId }]} onSelect={id => { const choice = projectChoices.find(x => x.id === id); setStandalone(!choice); if (choice) setHostId(choice.hostId); setProjectId(choice?.projectId || null); setWorktree(''); }} />
-        {!project && macs.length > 1 && <LauncherPicker label="Mac" value={macName(hostId)} leading={<Icon name="devices" size={13} color={muted} />} choices={macs.map(mac => ({ id: mac.id, title: mac.state === 'online' ? mac.name : `${mac.name} (${mac.state === 'connecting' ? 'connecting' : 'not reachable'})`, selected: mac.id === hostId }))} onSelect={id => { setHostId(id); setModelName(''); setEffort(''); }} />}
+        <LauncherPicker label="Project" value={project?.name || 'No project'} choices={[...projectChoices.map(x => ({ id: x.id, title: x.title, selected: x.hostId === hostId && x.projectId === projectId })), { id: '', title: 'No project', selected: !projectId }]} onSelect={id => { const choice = projectChoices.find(x => x.id === id); setStandalone(!choice); if (choice) setHostId(choice.hostId); setProjectId(choice?.projectId || null); setWorktree(''); setProfileId(null); }} />
+        {!project && macs.length > 1 && <LauncherPicker label="Mac" value={macName(hostId)} leading={<Icon name="devices" size={13} color={muted} />} choices={macs.map(mac => ({ id: mac.id, title: mac.state === 'online' ? mac.name : `${mac.name} (${mac.state === 'connecting' ? 'connecting' : 'not reachable'})`, selected: mac.id === hostId }))} onSelect={id => { setHostId(id); setModelName(''); setEffort(''); setProfileId(null); }} />}
+        {offeredProfiles.length > 0 && <LauncherPicker label="Profile" value={findProfile(offeredProfiles, profileId)?.name || 'No profile'} choices={[{ id: '', title: 'No profile', selected: !profileId }, ...offeredProfiles.map(x => ({ id: x.id, title: x.name, selected: x.id === profileId }))]} onSelect={chooseProfile} />}
         <LauncherPicker label="Agent" value={providerLabel(provider)} leading={<ProviderLogo provider={provider} size={13} />} choices={(state.snapshot?.providers || []).map(id => ({ id, title: providerLabel(id), selected: id === provider, image: Platform.OS === 'ios' ? providerMenuImage(id) : undefined }))} onSelect={id => { setProvider(id); setModelName(''); setEffort(''); setCustomModel(false); }} />
         <LauncherPicker label="Model" value={modelOption?.label || modelName || state.snapshot?.defaultModelNames?.[provider] || 'Default model'} choices={[{ id: '', title: 'Default model', selected: !modelName }, ...(catalog?.models || []).map(x => ({ id: x.id, title: x.label, selected: modelName === x.id })), ...(catalog?.versions || []).map(x => ({ id: x.id, title: x.label, selected: modelName === x.id })), { id: '__other__', title: 'Other Model…' }]} onSelect={id => { if (id === '__other__') setCustomModel(true); else { setModelName(id); setEffort(''); setCustomModel(false); } }} />
         {effortLevels.length > 0 && <LauncherPicker label="Reasoning effort" value={effort ? effort.replace(/^./, x => x.toUpperCase()) : 'Default effort'} choices={[{ id: '', title: 'Default effort', selected: !effort }, ...effortLevels.map(id => ({ id, title: id.replace(/^./, x => x.toUpperCase()), selected: effort === id }))]} onSelect={setEffort} />}
@@ -568,7 +581,7 @@ function AutomationsScreen({ navigation }: any) {
   const macs = useRemote().macs();
   return <HeaderScrollView style={styles.page} contentContainerStyle={styles.content}><Text style={styles.title}>Automations</Text>{!macs.length && <Text style={styles.lead}>Pair a Mac to schedule automations on it.</Text>}
     {macs.map(mac => { const automations = mac.snapshot?.automations || []; return <View key={mac.id} style={mac.state === 'unreachable' && styles.unreachable}><Section title={mac.name}>{mac.state !== 'online' && <Text style={styles.hint}>{macStatus(mac)}</Text>}<Button title="New automation" onPress={() => navigation.navigate('Automation', { hostId: mac.id })} />
-      {automations.map(a => <Row key={a.id} title={a.name} subtitle={`${a.enabled ? 'Enabled' : 'Paused'} · ${a.providerId} · ${a.nextRunAt ? displayDate(a.nextRunAt) : 'Manual'}`} onPress={() => navigation.navigate('Automation', { hostId: mac.id, id: a.id })} />)}{!automations.length && <Empty text="No automations on this Mac." />}
+      {automations.map(a => <Row key={a.id} title={a.name} subtitle={`${a.enabled ? 'Enabled' : 'Paused'} · ${a.providerId}${automationProfileName(a, mac.snapshot?.profiles) ? ` · ${automationProfileName(a, mac.snapshot?.profiles)}` : ''} · ${a.nextRunAt ? displayDate(a.nextRunAt) : 'Manual'}`} onPress={() => navigation.navigate('Automation', { hostId: mac.id, id: a.id })} />)}{!automations.length && <Empty text="No automations on this Mac." />}
     </Section></View>; })}
   </HeaderScrollView>;
 }
@@ -586,6 +599,15 @@ function AutomationScreen({ route, navigation }: any) {
   const [policy, setPolicy] = useState(existing?.permissionPolicy || 'auto-edits');
   const [modelName, setModelName] = useState(existing?.model || '');
   const [effort, setEffort] = useState(existing?.effort || '');
+  const [profileId, setProfileId] = useState(existing?.profileId || null as string | null);
+  const profiles = sortedProfiles(state.snapshot?.profiles);
+  const chooseProfile = (id: string | null) => {
+    setProfileId(id);
+    const chosen = findProfile(profiles, id);
+    if (!chosen) return;
+    const filled = appliedProfile(chosen);
+    setProvider(filled.providerId); setModelName(filled.model || ''); setEffort(filled.effort || ''); setPolicy(filled.policy);
+  };
   const [runs, setRuns] = useState<any[]>([]);
   useEffect(() => { if (existing) state.request('automationRuns', { id: existing.id }).then(x => setRuns(x.automationRuns?._0 || [])).catch(() => {}); }, [existing?.id]);
   const save = async () => {
@@ -596,12 +618,13 @@ function AutomationScreen({ route, navigation }: any) {
       triggers: triggers.filter(x => x.rrule.trim()).map(x => ({ ...x, rrule: x.rrule.trim() })),
       workspaceMode, pinnedSessionId: workspaceMode === 'pinned' ? pinnedSessionId : null,
       continueAgentSession, permissionPolicy: policy, catchUp,
-      enabled, nextRunAt: existing?.nextRunAt || null, createdAt: existing?.createdAt || now, updatedAt: now, model: modelName || null, effort: effort || null, deviceId: existing?.deviceId || null
+      enabled, nextRunAt: existing?.nextRunAt || null, createdAt: existing?.createdAt || now, updatedAt: now, model: modelName || null, effort: effort || null, deviceId: existing?.deviceId || null, profileId
     };
     await state.request('saveAutomation', { _0: automation }); navigation.goBack();
   };
   return <HeaderScrollView keyboardAware style={styles.page} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled"><Text style={styles.label}>Name</Text><TextInput style={styles.input} value={name} onChangeText={setName} placeholder="Automation name" placeholderTextColor={muted} />
     <Text style={styles.label}>Prompt</Text><TextInput style={[styles.input, styles.multiline]} value={prompt} onChangeText={setPrompt} multiline placeholder="What should run?" placeholderTextColor={muted} />
+    {profiles.length > 0 && <><Text style={styles.label}>Profile</Text><View style={styles.choices}><Button title="No profile" secondary={profileId !== null} onPress={() => chooseProfile(null)} />{profiles.map(x => <Button key={x.id} title={x.name} secondary={profileId !== x.id} onPress={() => chooseProfile(x.id)} />)}</View><Text style={styles.hint}>Each run starts from the profile as it is then, instructions included.</Text></>}
     <Text style={styles.label}>Agent</Text><View style={styles.choices}>{state.snapshot?.providers.map(x => <Button key={x} title={x} secondary={provider !== x} onPress={() => setProvider(x)} />)}</View>
     <Text style={styles.label}>Project</Text><View style={styles.choices}><Button title="No project" secondary={projectId !== null} onPress={() => setProjectId(null)} />{state.snapshot?.projects.map(x => <Button key={x.id} title={x.name} secondary={projectId !== x.id} onPress={() => setProjectId(x.id)} />)}</View>
     <Text style={styles.label}>Workspace</Text><View style={styles.choices}><Button title="New worktree each run" secondary={workspaceMode !== 'new_worktree'} onPress={() => setWorkspaceMode('new_worktree')} /><Button title="Continue one chat" secondary={workspaceMode !== 'pinned'} onPress={() => setWorkspaceMode('pinned')} /></View>
@@ -615,6 +638,67 @@ function AutomationScreen({ route, navigation }: any) {
     <View style={styles.actions}><Button title={enabled ? 'Enabled' : 'Paused'} secondary={!enabled} onPress={() => setEnabled(!enabled)} /><Button title="Save" onPress={() => run(save)} /></View>
     {existing && <Section title="Actions"><Button title="Run now" secondary onPress={() => run(() => state.request('runAutomation', { id: existing.id }))} /><Button title="Delete" danger onPress={() => Alert.alert('Delete automation?', existing.name, [{ text: 'Cancel' }, { text: 'Delete', style: 'destructive', onPress: () => run(async () => { await state.request('deleteAutomation', { id: existing.id }); navigation.goBack(); }) }])} /></Section>}
     {runs.length ? <Section title="Recent runs">{runs.map(x => <Text style={styles.body} key={x.id}>{displayDate(x.firedAt)} · {x.status}{x.error ? ` · ${x.error}` : ''}</Text>)}</Section> : null}
+  </HeaderScrollView>;
+}
+function ProfilesScreen({ route, navigation }: any) {
+  const hostId = route.params.hostId as string;
+  const state = useMac(hostId);
+  const profiles = sortedProfiles(state.snapshot?.profiles);
+  const supported = state.snapshot?.profiles !== undefined;
+  const add = () => run(async () => {
+    const profile = newProfile(state.snapshot?.profiles, uuid());
+    await state.request('saveProfile', { _0: profile });
+    navigation.navigate('Profile', { hostId, id: profile.id, profile });
+  });
+  return <HeaderScrollView style={styles.page} contentContainerStyle={styles.content}><Text style={styles.title}>Agent profiles</Text>
+    <Text style={styles.lead}>{remote.mac(hostId)?.name || ''}</Text>
+    {!supported && <Empty text="Update Abstract on this Mac to see its profiles here." />}
+    {supported && <>
+      <Text style={styles.hint}>A profile is a saved setup — agent, model, effort, permissions and instructions — that new chats and automations fill in for you. Editing one changes later chats, never a chat already running.</Text>
+      <Button title="Add profile" onPress={add} />
+      <Section title="Profiles">{profiles.map(profile => <Row key={profile.id} title={profile.name || 'Profile'} subtitle={`${profile.providerId}${profile.model ? ` · ${profile.model}` : ''}${profile.effort ? ` · ${profile.effort}` : ''}`} iconNode={<SymbolView name={{ ios: profile.iconSymbol || 'person.crop.circle', android: 'account_circle' } as any} size={17} tintColor={tertiary} />} onPress={() => navigation.navigate('Profile', { hostId, id: profile.id })} />)}{!profiles.length && <Empty text="No profiles on this Mac." />}</Section>
+    </>}
+  </HeaderScrollView>;
+}
+function ProfileScreen({ route, navigation }: any) {
+  const hostId = route.params.hostId as string;
+  const state = useMac(hostId);
+  const existing = findProfile(state.snapshot?.profiles, route.params.id);
+  // A just-added profile may not be in the snapshot yet; it travels as a param.
+  const [draft] = useState<AgentProfile | undefined>(() => existing || route.params.profile);
+  const [name, setName] = useState(draft?.name || '');
+  const [iconSymbol, setIconSymbol] = useState(draft?.iconSymbol || 'person.crop.circle');
+  const [provider, setProvider] = useState(draft?.providerId || 'claude');
+  const [modelName, setModelName] = useState(draft?.model || '');
+  const [customModel, setCustomModel] = useState(false);
+  const [effort, setEffort] = useState(draft?.effort || '');
+  const [policy, setPolicy] = useState<string>(draft?.permissionPolicy || 'ask');
+  const [instructions, setInstructions] = useState(draft?.instructions || '');
+  if (!draft) return <View style={styles.content}><Empty text="Profile unavailable." /></View>;
+  const catalog = state.snapshot?.modelCatalogs?.[provider];
+  const modelOption = [...(catalog?.models || []), ...(catalog?.versions || [])].find(x => x.id === modelName);
+  const effortLevels = modelOption?.efforts || catalog?.accountDefault?.efforts || [];
+  const icons = profileIcons.includes(iconSymbol) ? profileIcons : [...profileIcons, iconSymbol];
+  const providers = state.snapshot?.providers.includes(provider) ? state.snapshot.providers : [provider, ...(state.snapshot?.providers || [])];
+  const policies: Array<[string, string]> = [['ask', 'Ask before acting'], ['auto-edits', 'Accept edits'], ['bypass', 'Full autonomy']];
+  if (!policies.some(([id]) => id === policy)) policies.push([policy, policy]);
+  const save = async () => {
+    if (!name.trim()) throw Error('Name is required.');
+    const profile: AgentProfile = { ...draft, name: name.trim(), iconSymbol, providerId: provider, model: modelName || null, effort: effort || null, permissionPolicy: policy as Policy, instructions };
+    await state.request('saveProfile', { _0: profile });
+    navigation.goBack();
+  };
+  return <HeaderScrollView keyboardAware style={styles.page} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+    <Text style={styles.label}>Name</Text><TextInput style={styles.input} value={name} onChangeText={setName} placeholder="e.g. Reviewer" placeholderTextColor={muted} />
+    <Text style={styles.label}>Icon</Text><View style={styles.choices}>{icons.map(symbol => <Pressable key={symbol} accessibilityRole="button" accessibilityLabel={symbol} accessibilityState={{ selected: iconSymbol === symbol }} onPress={() => setIconSymbol(symbol)} style={[styles.profileIconChoice, iconSymbol === symbol && styles.profileIconChoiceSelected]}><SymbolView name={{ ios: symbol, android: 'account_circle' } as any} size={19} tintColor={iconSymbol === symbol ? ink : muted} /></Pressable>)}</View>
+    <Text style={styles.label}>Agent</Text><View style={styles.choices}>{providers.map(x => <Button key={x} title={x} secondary={provider !== x} onPress={() => { setProvider(x); setModelName(''); setEffort(''); setCustomModel(false); }} />)}</View>
+    <Text style={styles.label}>Model</Text><LauncherPicker label="Model" value={modelOption?.label || modelName || 'Agent default'} choices={[{ id: '', title: 'Agent default', selected: !modelName }, ...(catalog?.models || []).map(x => ({ id: x.id, title: x.label, selected: modelName === x.id })), ...(catalog?.versions || []).map(x => ({ id: x.id, title: x.label, selected: modelName === x.id })), { id: '__other__', title: 'Other Model…' }]} onSelect={id => { if (id === '__other__') setCustomModel(true); else { setModelName(id); setEffort(''); setCustomModel(false); } }} />
+    {customModel && <TextInput autoFocus style={styles.input} value={modelName} onChangeText={value => { setModelName(value); setEffort(''); }} autoCapitalize="none" autoCorrect={false} placeholder="Model name" placeholderTextColor={muted} />}
+    {effortLevels.length > 0 && <><Text style={styles.label}>Effort</Text><LauncherPicker label="Effort" value={effort ? effort.replace(/^./, x => x.toUpperCase()) : 'Agent default'} choices={[{ id: '', title: 'Agent default', selected: !effort }, ...effortLevels.map(id => ({ id, title: id.replace(/^./, x => x.toUpperCase()), selected: effort === id }))]} onSelect={setEffort} /></>}
+    <Text style={styles.label}>Permissions</Text><View style={styles.choices}>{policies.map(([id, title]) => <Button key={id} title={title} secondary={policy !== id} onPress={() => setPolicy(id)} />)}</View>
+    <Text style={styles.label}>Instructions</Text><TextInput style={[styles.input, styles.multiline]} value={instructions} onChangeText={setInstructions} multiline placeholder="Given to the agent every time a chat or run starts from this profile" placeholderTextColor={muted} />
+    <View style={styles.actions}><Button title="Save" onPress={() => run(save)} /></View>
+    <Section title="Delete"><Button title="Delete profile" danger onPress={() => Alert.alert('Delete profile?', draft.name, [{ text: 'Cancel' }, { text: 'Delete', style: 'destructive', onPress: () => run(async () => { await state.request('deleteProfile', { id: draft.id }); navigation.goBack(); }) }])} /></Section>
   </HeaderScrollView>;
 }
 export default function App() {
@@ -645,6 +729,8 @@ export default function App() {
         <Stack.Screen name="PullRequest" component={PullRequestScreen} options={{ title: 'Pull request' }} />
         <Stack.Screen name="Automations" component={AutomationsScreen} />
         <Stack.Screen name="Automation" component={AutomationScreen} />
+        <Stack.Screen name="Profiles" component={ProfilesScreen} options={{ title: 'Agent profiles' }} />
+        <Stack.Screen name="Profile" component={ProfileScreen} options={{ title: 'Profile' }} />
       </Stack.Navigator>
     </NavigationContainer></SafeAreaProvider>;
 }
@@ -659,6 +745,8 @@ const styles = StyleSheet.create({
   launcherAttachment: { maxWidth: '100%', paddingHorizontal: 9, paddingVertical: 6, borderRadius: 6, backgroundColor: raised },
   launcherControls: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 3, rowGap: 2, paddingHorizontal: 8 },
   launcherPicker: { height: 32, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 7, borderRadius: 6 },
+  profileIconChoice: { width: 40, height: 40, borderRadius: 8, backgroundColor: raised, alignItems: 'center', justifyContent: 'center' },
+  profileIconChoiceSelected: { borderWidth: 1, borderColor: ink },
   launcherPickerText: { color: muted, fontFamily: 'Inter', fontSize: 12.5, fontWeight: '500', maxWidth: 150 },
   launcherBase: { height: 32, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 7, gap: 5 },
   launcherBaseLabel: { color: tertiary, fontFamily: 'Inter', fontSize: 12.5 },

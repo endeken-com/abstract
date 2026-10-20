@@ -2,7 +2,18 @@ export type Policy = 'ask' | 'auto-edits' | 'bypass';
 export type Project = {
   id: string; name: string; rootPath: string; defaultBaseRef: string;
   defaultProviderId: string; defaultPermissionPolicy: Policy;
+  // The profiles this project offers; absent = every profile shows.
+  profileIds?: string[] | null;
 };
+// A named setup a chat or automation starts from, saved on the Mac.
+export type AgentProfile = {
+  id: string; name: string; iconSymbol?: string | null; providerId: string;
+  model?: string | null; effort?: string | null; permissionPolicy: Policy;
+  instructions: string; skills: string[]; mcpServers: string[];
+  sortOrder: number; createdAt: number;
+};
+// What a chat started from a profile keeps: id, name, instructions then.
+export type ProfileSnapshot = { id: string; name: string; instructions: string };
 export type Session = {
   id: string; projectId: string | null; name: string; providerId: string;
   worktreePath: string | null; branch: string | null; baseRef: string | null;
@@ -10,6 +21,7 @@ export type Session = {
   prompt: string | null; archivedAt: number | null; createdAt: number;
   lastEventAt?: number | null; pinnedAt?: number | null;
   model: string | null; effort: string | null;
+  profileId?: string | null; profileName?: string | null; profileInstructions?: string | null;
 };
 export type AutomationTrigger = { id: string; rrule: string; timezone: string; dtstart: number };
 export type Automation = {
@@ -19,7 +31,7 @@ export type Automation = {
   continueAgentSession: boolean; permissionPolicy: Policy; catchUp: boolean;
   enabled: boolean; nextRunAt: number | null; createdAt: number;
   updatedAt: number; model: string | null; effort: string | null;
-  deviceId?: string | null;
+  deviceId?: string | null; profileId?: string | null;
 };
 export type AutomationRun = { id: string; automationId: string; firedAt: number; trigger: string; status: string; sessionId: string | null; error: string | null };
 export type PendingPermission = { requestId: string; toolName: string; input: any };
@@ -30,7 +42,7 @@ export type PullRequestThread = { id: string; path: string; line?: number | null
 export type PullRequest = { number: number; title: string; state: string; isDraft: boolean; url?: string; standing?: string | null; reviewDecision?: string | null; hasConflicts?: boolean; checks?: PullRequestCheck[]; head?: string | null; base?: string | null; author?: string | null; additions?: number | null; deletions?: number | null; body?: string | null; reviews?: PullRequestReview[]; comments?: PullRequestComment[]; threads?: PullRequestThread[] };
 export type ModelOption = { id: string; label: string; detail?: string | null; efforts: string[]; defaultEffort?: string | null };
 export type ModelCatalog = { accountDefault?: ModelOption | null; models: ModelOption[]; versions: ModelOption[] };
-export type Snapshot = { projects: Project[]; sessions: Session[]; providers: string[]; alive: string[]; home?: string; modelCatalogs?: Record<string, ModelCatalog>; defaultModelNames?: Record<string, string>; automations?: Automation[]; pendingPermissions?: Record<string, PendingPermission[]>; pullRequests?: Record<string, PullRequest>; turnStartedAt?: Record<string, number>; pagedHistory?: boolean; internetAddress?: InternetAddress; backgroundTasks?: string[]; unmergedWork?: Record<string, boolean> };
+export type Snapshot = { projects: Project[]; sessions: Session[]; providers: string[]; alive: string[]; home?: string; modelCatalogs?: Record<string, ModelCatalog>; defaultModelNames?: Record<string, string>; automations?: Automation[]; pendingPermissions?: Record<string, PendingPermission[]>; pullRequests?: Record<string, PullRequest>; turnStartedAt?: Record<string, number>; pagedHistory?: boolean; internetAddress?: InternetAddress; backgroundTasks?: string[]; unmergedWork?: Record<string, boolean>; profiles?: AgentProfile[] };
 export type Peer = { id: string; name: string; publicKey: string };
 export type InternetAddress = { endpointId: string };
 export type Device = { peer: Peer; address: string; pairedAt: number; internetAddress?: InternetAddress };

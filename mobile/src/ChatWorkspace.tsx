@@ -304,7 +304,7 @@ export function ChatWorkspace({ route, navigation }: any) {
       headerTransparent: true,
       headerStyle: { backgroundColor: 'transparent' },
       headerBackground: () => <ProgressiveBlur edge="top" blurTarget={blurTarget} />,
-      headerTitle: () => <ScrollingTitle title={chat.name} provider={chat.providerId} width={Math.max(72, Math.min(192, windowWidth - 245))} />,
+      headerTitle: () => <ScrollingTitle title={chat.name} provider={chat.providerId} subtitle={chat.profileId && chat.profileName ? chat.profileName : null} width={Math.max(72, Math.min(192, windowWidth - 245))} />,
       headerLeft: () => <ToolbarAction label="Open sidebar" onPress={() => navigation.popTo('Sidebar', { selectedChat: id })}><Glyph name="menu" size={19} color={ink} /></ToolbarAction>,
       headerRight: () => <View style={chrome.nativeActions}>
         <ToolbarAction label="Review changes" onPress={() => navigation.navigate('Review', { hostId, sessionId: id })}><Glyph name="review" size={17} color={muted} /></ToolbarAction>
@@ -327,7 +327,7 @@ export function ChatWorkspace({ route, navigation }: any) {
         }}><View style={chrome.toolbarButton} accessibilityLabel="More chat actions"><Glyph name="manage" size={20} /></View></MenuView>
       </View>,
     });
-  }, [navigation, id, windowWidth, chat?.name, chat?.providerId, chat?.archivedAt, chat?.worktreePath, pr?.state, pr?.isDraft]);
+  }, [navigation, id, windowWidth, chat?.name, chat?.providerId, chat?.profileId, chat?.profileName, chat?.archivedAt, chat?.worktreePath, pr?.state, pr?.isDraft]);
   useEffect(() => {
     if (mac.status !== 'online') { setSyncing(false); return; }
     let active = true;
