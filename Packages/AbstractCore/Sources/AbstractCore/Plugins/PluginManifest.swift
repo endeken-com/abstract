@@ -8,6 +8,8 @@ public enum PluginCapability: String, Sendable, Hashable, Codable, CaseIterable 
     case chatsRead = "chats.read"
     case chatsOpen = "chats.open"
     case storageOwn = "storage.own"
+    case network = "network"
+    case secrets = "secrets"
 
     /// The sentence shown when the person reviews the plugin.
     public var plainWords: String {
@@ -16,6 +18,8 @@ public enum PluginCapability: String, Sendable, Hashable, Codable, CaseIterable 
         case .chatsRead: "See your chats' titles, agents and progress"
         case .chatsOpen: "Open a chat when you click it"
         case .storageOwn: "Remember its own settings on this Mac"
+        case .network: "Reach the web addresses it lists"
+        case .secrets: "Use the secrets you give it, without seeing them"
         }
     }
 }
@@ -131,7 +135,35 @@ public struct PluginManifest: Sendable, Hashable, Codable {
     public var entry: String
     /// As written in the manifest, before validation.
     public var capabilities: [String]
+    public var network: Network?
+    public var secrets: [Secret]?
     public var contributes: Contributes
+
+    /// The exact hosts a plugin with `network` may reach (ABS-94). No
+    /// wildcards: every host is shown at review and checked per request.
+    public struct Network: Sendable, Hashable, Codable {
+        public var hosts: [String]
+        public init(hosts: [String]) { self.hosts = hosts }
+    }
+
+    /// One secret the user enters in Settings → Plugins (ABS-94). The
+    /// plugin knows `name`; the value stays in the Keychain and is put
+    /// into a request header by the host at send time.
+    public struct Secret: Sendable, Hashable, Codable, Identifiable {
+        public var name: String
+        public var title: String
+        public var id: String { name }
+        public init(name: String, title: String) { self.name = name; self.title = title }
+    }
+
+    /// Lowercased, as hosts are case-insensitive.
+    public var networkHosts: [String] { (network?.hosts ?? []).map { $0.lowercased() } }
+    public var secretDeclarations: [Secret] { secrets ?? [] }
+
+    /// One plain sentence per host and secret, for the review screen.
+    public var networkSentences: [String] {
+        networkHosts.map { "Reach \($0)." } + secretDeclarations.map { "Use your \($0.title), without seeing it." }
+    }
 
     /// One thing a plugin adds outside its sidebar screen: a tab, a menu
     /// item, a ⌘K command, its Settings page, or a Home card.
@@ -189,13 +221,16 @@ public struct PluginManifest: Sendable, Hashable, Codable {
 
     public init(api: Int = supportedAPI, id: String, name: String, version: String,
                 description: String? = nil, entry: String = "index.html",
-                capabilities: [String], views: [View] = [],
+                capabilities: [String], networkHosts: [String] = [], secrets: [Secret] = [],
+                views: [View] = [],
                 chatPanelTabs: [Contribution] = [], chatMenuItems: [Contribution] = [],
                 paletteCommands: [Contribution] = [], settingsPage: Contribution? = nil,
                 homeWidgets: [Contribution] = []) {
         self.api = api; self.id = id; self.name = name; self.version = version
         self.description = description; self.entry = entry
         self.capabilities = capabilities
+        self.network = networkHosts.isEmpty ? nil : Network(hosts: networkHosts)
+        self.secrets = secrets.isEmpty ? nil : secrets
         self.contributes = Contributes(views: views, chatPanelTabs: chatPanelTabs, chatMenuItems: chatMenuItems,
                                        paletteCommands: paletteCommands, settingsPage: settingsPage, homeWidgets: homeWidgets)
     }
@@ -255,6 +290,26 @@ public struct PluginManifest: Sendable, Hashable, Codable {
         for name in capabilities where PluginCapability(rawValue: name) == nil {
             throw PluginValidationError.unknownCapability(name)
         }
+        // Hosts and secrets exist only under their grants, and a grant with
+        // nothing listed is meaningless (ABS-94). Fail closed both ways.
+        let granted = grantedCapabilities
+        guard networkHosts.count <= 16, Set(networkHosts).count == networkHosts.count,
+              networkHosts.allSatisfy(Self.isExactHost) else {
+            throw PluginValidationError.invalidManifest("network hosts must be exact hosts like api.slack.com, with no wildcards")
+        }
+        guard granted.contains(.network) == !networkHosts.isEmpty else {
+            throw PluginValidationError.invalidManifest("network needs its exact hosts listed, and hosts need the network capability")
+        }
+        guard secretDeclarations.count <= 8,
+              Set(secretDeclarations.map(\.name)).count == secretDeclarations.count,
+              secretDeclarations.allSatisfy({
+                  Self.isSecretName($0.name) && !$0.title.trimmingCharacters(in: .whitespaces).isEmpty && $0.title.count <= 60
+              }) else {
+            throw PluginValidationError.invalidManifest("secrets need a short name and title")
+        }
+        guard granted.contains(.secrets) == !secretDeclarations.isEmpty else {
+            throw PluginValidationError.invalidManifest("secrets need their names listed, and listed secrets need the secrets capability")
+        }
         guard contributes.views.count <= 1 else {
             throw PluginValidationError.invalidManifest("at most one view is supported")
         }
@@ -286,6 +341,23 @@ public struct PluginManifest: Sendable, Hashable, Codable {
         guard total > 0 else {
             throw PluginValidationError.invalidManifest("the plugin doesn't add anything")
         }
+    }
+
+    /// An exact host name: dotted labels only. No wildcard, scheme, port,
+    /// path or userinfo — those would widen what was reviewed.
+    public static func isExactHost(_ host: String) -> Bool {
+        let host = host.lowercased()
+        let labels = host.split(separator: ".", omittingEmptySubsequences: false)
+        guard labels.count >= 2, host.count <= 253 else { return false }
+        return labels.allSatisfy { label in
+            !label.isEmpty && label.count <= 63 && !label.hasPrefix("-") && !label.hasSuffix("-")
+                && label.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" }
+        }
+    }
+
+    static func isSecretName(_ name: String) -> Bool {
+        !name.isEmpty && name.count <= 40
+            && name.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" || $0 == "." }
     }
 
     static func isSound(id: String, title: String) -> Bool {

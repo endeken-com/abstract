@@ -141,7 +141,7 @@ struct PluginsSettingsPane: View {
             }
             Button("Cancel", role: .cancel) { removing = nil }
         } message: {
-            Text("Its files and its saved settings are deleted from this Mac. Your chats and projects aren't affected.")
+            Text("Its files, its saved settings and any secrets you entered for it are deleted from this Mac. Your chats and projects aren't affected.")
         }
     }
 
@@ -177,6 +177,27 @@ struct PluginsSettingsPane: View {
                 Text(manifest.appearanceSentences.joined(separator: " "))
                     .font(.btCaption)
                     .foregroundStyle(Color.btTextSecondary)
+            }
+            if let manifest = plugin.manifest, !manifest.networkHosts.isEmpty {
+                Text("Can reach: \(manifest.networkHosts.joined(separator: ", ")).")
+                    .font(.btCaption)
+                    .foregroundStyle(Color.btTextSecondary)
+            }
+            if let manifest = plugin.manifest {
+                ForEach(manifest.secretDeclarations) { secret in
+                    PluginSecretRow(pluginId: plugin.id, secret: secret)
+                }
+            }
+            let activity = model.plugins.networkLogEntries(plugin.id)
+            if !activity.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Web requests").font(.btCaption).foregroundStyle(Color.btTextSecondary)
+                    ForEach(Array(activity.prefix(5)), id: \.at) { entry in
+                        Text("\(entry.host) · \(entry.status == 0 ? "refused" : String(entry.status)) · \(entry.at.formatted(date: .abbreviated, time: .shortened))")
+                            .font(.btCaption)
+                            .foregroundStyle(Color.btTextSecondary)
+                    }
+                }
             }
             HStack(spacing: Space.sm) {
                 if plugin.isUsable, let view = plugin.view {
@@ -237,7 +258,9 @@ private struct PluginReviewSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             if source == .user {
-                Text("It isn't signed. It runs in a locked-down page with no network or file access, and it can only see and do what's listed here.")
+                Text(manifest.networkHosts.isEmpty
+                     ? "It isn't signed. It runs in a locked-down page with no network or file access, and it can only see and do what's listed here."
+                     : "It isn't signed. It runs in a locked-down page, and Abstract sends its web requests for it — only to the addresses listed here.")
                     .font(.btBody).foregroundStyle(Color.btTextSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -257,6 +280,14 @@ private struct PluginReviewSheet: View {
                     Text(words).font(.btBody).foregroundStyle(Color.btTextSecondary)
                 }
             }
+            if !manifest.networkSentences.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("On the web, it will be able to:").font(.btBodyMedium).foregroundStyle(Color.btText)
+                    ForEach(manifest.networkSentences, id: \.self) { sentence in
+                        Text(sentence).font(.btBody).foregroundStyle(Color.btTextSecondary)
+                    }
+                }
+            }
             HStack(spacing: Space.sm) {
                 Spacer()
                 Button("Cancel", role: .cancel, action: cancel)
@@ -269,5 +300,41 @@ private struct PluginReviewSheet: View {
         }
         .padding(Space.xl)
         .frame(width: 440)
+    }
+}
+
+/// One secret a plugin declared (ABS-94): entered here, kept in the
+/// Keychain, and never shown again — the plugin names it in a request
+/// header and Abstract fills the value in when it sends the request.
+private struct PluginSecretRow: View {
+    @Environment(AppModel.self) private var model
+    let pluginId: String
+    let secret: PluginManifest.Secret
+    @State private var draft = ""
+    @State private var entered = false
+
+    var body: some View {
+        HStack(spacing: Space.sm) {
+            Text(secret.title).font(.btCaption).foregroundStyle(Color.btTextSecondary)
+            if entered {
+                Text("Entered — kept in your Keychain.")
+                    .font(.btCaption).foregroundStyle(Color.btTextSecondary)
+                Button("Remove") {
+                    model.plugins.setSecret(nil, pluginId: pluginId, name: secret.name)
+                    entered = false
+                }
+            } else {
+                SecureField(secret.title, text: $draft)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 220)
+                Button("Save") {
+                    model.plugins.setSecret(draft, pluginId: pluginId, name: secret.name)
+                    draft = ""
+                    entered = model.plugins.hasSecret(pluginId: pluginId, name: secret.name)
+                }
+                .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .onAppear { entered = model.plugins.hasSecret(pluginId: pluginId, name: secret.name) }
     }
 }
