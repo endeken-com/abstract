@@ -23,6 +23,10 @@ public struct PluginRecord: Sendable, Hashable, Codable, Identifiable {
     public var enabled: Bool
     /// What the person granted at review; empty until then.
     public var grantedCapabilities: Set<PluginCapability>
+    /// The exact hosts and secret names granted with `network`/`secrets`
+    /// (ABS-94); an update adding one must be reviewed again.
+    public var grantedNetworkHosts: [String]
+    public var grantedSecretNames: [String]
     /// Project keys (`macId:projectId`) whose chats' messages a
     /// `transcripts.read` grant may read, picked at review. Empty reads none.
     public var transcriptProjectKeys: [String]
@@ -31,16 +35,19 @@ public struct PluginRecord: Sendable, Hashable, Codable, Identifiable {
     public var lastError: String?
 
     public init(id: String, name: String, version: String, source: PluginSource, enabled: Bool = false,
-                grantedCapabilities: Set<PluginCapability> = [], transcriptProjectKeys: [String] = [],
+                grantedCapabilities: Set<PluginCapability> = [], grantedNetworkHosts: [String] = [],
+                grantedSecretNames: [String] = [], transcriptProjectKeys: [String] = [],
                 packageHash: String,
                 installedAt: Date = Date(), lastError: String? = nil) {
         self.id = id; self.name = name; self.version = version; self.source = source
         self.enabled = enabled; self.grantedCapabilities = grantedCapabilities
+        self.grantedNetworkHosts = grantedNetworkHosts; self.grantedSecretNames = grantedSecretNames
         self.transcriptProjectKeys = transcriptProjectKeys
         self.packageHash = packageHash; self.installedAt = installedAt; self.lastError = lastError
     }
 
-    // Records saved before transcript scoping carry no project list.
+    // Records written before ABS-94 have no host/secret grants, and records
+    // saved before transcript scoping carry no project list.
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         id = try box.decode(String.self, forKey: .id)
@@ -49,6 +56,8 @@ public struct PluginRecord: Sendable, Hashable, Codable, Identifiable {
         source = try box.decode(PluginSource.self, forKey: .source)
         enabled = try box.decode(Bool.self, forKey: .enabled)
         grantedCapabilities = try box.decode(Set<PluginCapability>.self, forKey: .grantedCapabilities)
+        grantedNetworkHosts = try box.decodeIfPresent([String].self, forKey: .grantedNetworkHosts) ?? []
+        grantedSecretNames = try box.decodeIfPresent([String].self, forKey: .grantedSecretNames) ?? []
         transcriptProjectKeys = try box.decodeIfPresent([String].self, forKey: .transcriptProjectKeys) ?? []
         packageHash = try box.decode(String.self, forKey: .packageHash)
         installedAt = try box.decode(Date.self, forKey: .installedAt)
@@ -107,6 +116,10 @@ public final class PluginManager: Sendable {
 
     public func storage(for pluginId: String) -> PluginStorage {
         PluginStorage(directory: dataRoot, pluginId: pluginId)
+    }
+
+    public func networkLog(for pluginId: String) -> PluginNetworkLog {
+        PluginNetworkLog(directory: dataRoot, pluginId: pluginId)
     }
 
     /// Every installed plugin, checked against what's on disk now. A package
@@ -188,7 +201,11 @@ public final class PluginManager: Sendable {
         var records = records()
         let existing = records.first { $0.id == manifest.id }
         let wants = manifest.grantedCapabilities
-        let grows = existing.map { !wants.isSubset(of: $0.grantedCapabilities) } ?? false
+        let grows = existing.map {
+            !wants.isSubset(of: $0.grantedCapabilities)
+                || !Set(manifest.networkHosts).isSubset(of: Set($0.grantedNetworkHosts))
+                || !Set(manifest.secretDeclarations.map(\.name)).isSubset(of: Set($0.grantedSecretNames))
+        } ?? false
 
         let idFolder = pluginsRoot.appendingPathComponent(manifest.id)
         let destination = idFolder.appendingPathComponent(manifest.version)
@@ -216,6 +233,8 @@ public final class PluginManager: Sendable {
             id: manifest.id, name: manifest.name, version: manifest.version, source: sourceKind,
             enabled: existing != nil && !grows ? (existing?.enabled ?? false) : false,
             grantedCapabilities: existing != nil && !grows ? (existing?.grantedCapabilities ?? []) : [],
+            grantedNetworkHosts: existing != nil && !grows ? manifest.networkHosts : [],
+            grantedSecretNames: existing != nil && !grows ? manifest.secretDeclarations.map(\.name) : [],
             transcriptProjectKeys: existing != nil && !grows ? (existing?.transcriptProjectKeys ?? []) : [],
             packageHash: inspection.hash, installedAt: existing?.installedAt ?? Date())
         records.removeAll { $0.id == manifest.id }
@@ -233,6 +252,8 @@ public final class PluginManager: Sendable {
         if enabled {
             guard let manifest = try? PluginPackage.inspect(folder: packageURL(for: records[index])).manifest else { return }
             records[index].grantedCapabilities = manifest.grantedCapabilities
+            records[index].grantedNetworkHosts = manifest.networkHosts
+            records[index].grantedSecretNames = manifest.secretDeclarations.map(\.name)
             if let transcriptProjectKeys {
                 records[index].transcriptProjectKeys = transcriptProjectKeys
             }
@@ -262,6 +283,8 @@ public final class PluginManager: Sendable {
         records[index].name = inspection.manifest.name
         records[index].enabled = false
         records[index].grantedCapabilities = []
+        records[index].grantedNetworkHosts = []
+        records[index].grantedSecretNames = []
         records[index].transcriptProjectKeys = []
         save(records)
     }
@@ -275,6 +298,7 @@ public final class PluginManager: Sendable {
         records.removeAll { $0.id == pluginId }
         save(records)
         storage(for: pluginId).removeAll()
+        networkLog(for: pluginId).removeAll()
     }
 
     public func noteError(_ pluginId: String, _ message: String?) {

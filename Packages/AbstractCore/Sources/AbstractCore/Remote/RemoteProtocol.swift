@@ -47,6 +47,11 @@ public enum RemoteRequest: Codable, Sendable {
     /// A chat's agent, model and effort, or how much it may do alone.
     case setAgent(sessionId: String, providerId: String, model: String?, effort: String?)
     case setPolicy(sessionId: String, policy: PermissionPolicy)
+    /// A plan written in Plan mode: approve it, ask for changes, or drop it.
+    /// Only send these to a Mac whose snapshot says `planApproval`.
+    case approvePlan(sessionId: String)
+    case requestPlanChanges(sessionId: String)
+    case discardPlan(sessionId: String)
     /// One of the agent's background tasks, or work to move there (Ctrl+B).
     case stopTask(sessionId: String, taskId: String)
     case moveToBackground(sessionId: String, toolUseId: String?)
@@ -260,6 +265,11 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
     /// A host that answers `setAgentHistory` and `askAuthor`.
     /// Optional for older peers.
     public var codeHistory: Bool?
+    /// Each chat's plan awaiting a decision, by chat id. Optional for older peers.
+    public var plans: [String: RemotePlan]?
+    /// A host that takes plan decisions ('approvePlan' and friends).
+    /// Optional for older peers.
+    public var planApproval: Bool?
 
     /// The largest uploaded icon a snapshot carries; larger ones are left out.
     public static let maxProjectIconBytes = 512 << 10
@@ -271,7 +281,8 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
                 pendingPermissions: [String: [RemotePendingPermission]]? = nil,
                 turnStartedAt: [String: Date]? = nil, pagedHistory: Bool? = nil, execInput: Bool? = nil,
                 internetAddress: InternetAddress? = nil, backgroundTasks: [String]? = nil, unmergedWork: [String: Bool]? = nil,
-                projectIcons: [String: Data]? = nil, automationDevice: Bool? = nil, codeHistory: Bool? = nil) {
+                projectIcons: [String: Data]? = nil, automationDevice: Bool? = nil, codeHistory: Bool? = nil,
+                plans: [String: RemotePlan]? = nil, planApproval: Bool? = nil) {
         self.projects = projects; self.sessions = sessions; self.providers = providers; self.alive = alive
         self.home = home; self.modelCatalogs = modelCatalogs; self.defaultModelNames = defaultModelNames
         self.pullRequests = pullRequests
@@ -286,6 +297,29 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
         self.projectIcons = projectIcons
         self.automationDevice = automationDevice
         self.codeHistory = codeHistory
+        self.plans = plans
+        self.planApproval = planApproval
+    }
+}
+
+/// One chat's plan as it travels: every revision, oldest first, and where
+/// it stands (`waiting`, `changesRequested`, `approved`, `discarded`).
+public struct RemotePlan: Codable, Sendable, Hashable {
+    public var revisions: [String]
+    public var status: String
+
+    public init(revisions: [String], status: String) {
+        self.revisions = revisions; self.status = status
+    }
+
+    public init(_ plan: PlanState) {
+        revisions = plan.revisions
+        status = switch plan.status {
+        case .waiting: "waiting"
+        case .approved: "approved"
+        case .discarded: "discarded"
+        case .changesRequested: "changesRequested"
+        }
     }
 }
 

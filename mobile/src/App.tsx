@@ -22,6 +22,7 @@ import { useKeyboardHeight } from './useKeyboardVisible';
 import { NativeSelect } from './NativeSelect';
 import { ProviderLogo, providerMenuImage } from './ProviderLogo';
 import { ChatListHeader, ChatRow, NoMatches, StatusGroups, useChatListPrefs, useTicking } from './ChatList';
+import { KanbanBoardScreen } from './KanbanBoard';
 import { chatsFromMacs, filterIsEmpty, narrow, type ChatFacts } from './chatGroups';
 import { KeyboardAwareScrollView } from './KeyboardAwareScrollView';
 import { ProgressiveBlur } from './ProgressiveBlur';
@@ -31,7 +32,9 @@ import { TerminalView } from './TerminalView';
 import { SettingsScreen } from './SettingsScreen';
 import { uuid } from './secure';
 import { attachmentPayload, pickAttachments, type PickedAttachment } from './attachments';
-import { displayDate, swiftDate, type Automation, type AutomationTrigger, type Project, type Session } from './types';
+import { displayDate, swiftDate, type Automation, type AutomationRun, type AutomationTrigger, type Policy, type Project, type Session } from './types';
+import { MODE_CHOICES } from './plan';
+import { CHANGED_OPTIONS, CONCURRENCY_OPTIONS, MISSED_OPTIONS, catchUpOf, concurrencyForWorkspace, policiesOf, runDetail, runStatusLabel, showsChanged } from './automationPolicies';
 
 // Graphite values come from Abstract/Theme/Palette.swift.
 const ink = '#ECECEF', muted = '#A4A4AD', tertiary = '#75757E';
@@ -39,7 +42,7 @@ const bg = '#1E1E21', sidebar = '#19191C', panel = '#252529', raised = '#2B2B30'
 const accent = ink, border = 'rgba(255,255,255,0.075)';
 const Stack = createNativeStackNavigator();
 
-type IconName = 'menu' | 'back' | 'plus' | 'clock' | 'worktree' | 'pull' | 'devices' | 'folder' | 'chat' | 'review' | 'files' | 'terminal' | 'settings' | 'chevron' | 'close' | 'refresh' | 'check' | 'failed' | 'pending' | 'skipped' | 'filter';
+type IconName = 'menu' | 'back' | 'plus' | 'clock' | 'worktree' | 'pull' | 'board' | 'devices' | 'folder' | 'chat' | 'review' | 'files' | 'terminal' | 'settings' | 'chevron' | 'close' | 'refresh' | 'check' | 'failed' | 'pending' | 'skipped' | 'filter';
 const symbols: Record<IconName, { ios: string; android: string; web: string }> = {
   menu: { ios: 'sidebar.left', android: 'menu', web: 'menu' },
   back: { ios: 'chevron.left', android: 'arrow_back', web: 'arrow_back' },
@@ -47,6 +50,7 @@ const symbols: Record<IconName, { ios: string; android: string; web: string }> =
   clock: { ios: 'clock.arrow.circlepath', android: 'schedule', web: 'schedule' },
   worktree: contextSymbols.worktree,
   pull: { ios: 'point.3.filled.connected.trianglepath.dotted', android: 'merge', web: 'merge' },
+  board: { ios: 'rectangle.split.3x1', android: 'view_column', web: 'view_column' },
   devices: { ios: 'laptopcomputer', android: 'laptop_mac', web: 'laptop_mac' },
   folder: { ios: 'folder', android: 'folder', web: 'folder' },
   chat: { ios: 'bubble.left', android: 'chat_bubble', web: 'chat_bubble' },
@@ -160,6 +164,7 @@ function WorkspaceRail({ navigate, selectedChat }: { navigate: (name: string, pa
       <RailAction icon="clock" title="Automations" onPress={() => navigate('Automations')} />
       <RailAction icon="worktree" title="Worktrees" onPress={() => navigate('Worktrees')} />
       <RailAction icon="pull" title="Pull Requests" detail={prs ? String(prs) : undefined} onPress={() => navigate('PullRequests')} />
+      <RailAction icon="board" title="Kanban" onPress={() => navigate('Kanban')} />
       {macs.length > 0 && prefs.arrangement === 'status' && macs.map(macRow)}
       {macs.length > 0 && <ChatListHeader all={all} prefs={prefs} setPrefs={setPrefs} searching={searching} setSearching={setSearching} query={query} setQuery={setQuery} />}
       {prefs.arrangement === 'status'
@@ -284,7 +289,7 @@ function NewChatScreen({ route, navigation }: any) {
   const [modelName, setModelName] = useState('');
   const [customModel, setCustomModel] = useState(false);
   const [effort, setEffort] = useState('');
-  const [policy, setPolicy] = useState<'ask' | 'auto-edits' | 'bypass'>('ask');
+  const [policy, setPolicy] = useState<Policy>('ask');
   const [base, setBase] = useState('HEAD');
   const [worktree, setWorktree] = useState(route.params?.worktree || '');
   const [worktrees, setWorktrees] = useState<Array<{ path: string; branch: string }>>([]);
@@ -319,7 +324,7 @@ function NewChatScreen({ route, navigation }: any) {
   const modelOption = [...(catalog?.models || []), ...(catalog?.versions || [])].find(x => x.id === modelName);
   const effortLevels = modelOption?.efforts || catalog?.accountDefault?.efforts || [];
   const providerLabel = (id: string) => ({ claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode' } as Record<string, string>)[id] || id;
-  const policyLabels = { ask: 'Ask before acting', 'auto-edits': 'Accept edits', bypass: 'Full autonomy' };
+  const policyLabels: Record<Policy, string> = { ask: 'Ask before acting', 'auto-edits': 'Accept edits', bypass: 'Full autonomy', plan: 'Plan', 'read-only': 'Ask (read-only)' };
   const selectedWorktree = worktrees.find(x => x.path === worktree);
   const worktreeLabel = selectedWorktree?.branch || (worktree ? worktree.split('/').pop() || worktree : 'New worktree');
   const worktreeHolder = worktree && state.snapshot?.sessions.find(x => x.worktreePath === worktree && !x.archivedAt);
@@ -350,7 +355,7 @@ function NewChatScreen({ route, navigation }: any) {
         <LauncherPicker label="Agent" value={providerLabel(provider)} leading={<ProviderLogo provider={provider} size={13} />} choices={(state.snapshot?.providers || []).map(id => ({ id, title: providerLabel(id), selected: id === provider, image: Platform.OS === 'ios' ? providerMenuImage(id) : undefined }))} onSelect={id => { setProvider(id); setModelName(''); setEffort(''); setCustomModel(false); }} />
         <LauncherPicker label="Model" value={modelOption?.label || modelName || state.snapshot?.defaultModelNames?.[provider] || 'Default model'} choices={[{ id: '', title: 'Default model', selected: !modelName }, ...(catalog?.models || []).map(x => ({ id: x.id, title: x.label, selected: modelName === x.id })), ...(catalog?.versions || []).map(x => ({ id: x.id, title: x.label, selected: modelName === x.id })), { id: '__other__', title: 'Other Model…' }]} onSelect={id => { if (id === '__other__') setCustomModel(true); else { setModelName(id); setEffort(''); setCustomModel(false); } }} />
         {effortLevels.length > 0 && <LauncherPicker label="Reasoning effort" value={effort ? effort.replace(/^./, x => x.toUpperCase()) : 'Default effort'} choices={[{ id: '', title: 'Default effort', selected: !effort }, ...effortLevels.map(id => ({ id, title: id.replace(/^./, x => x.toUpperCase()), selected: effort === id }))]} onSelect={setEffort} />}
-        <LauncherPicker label="Permissions" value={policyLabels[policy]} choices={(['ask', 'auto-edits', 'bypass'] as const).map(id => ({ id, title: policyLabels[id], selected: id === policy }))} onSelect={id => setPolicy(id as typeof policy)} />
+        <LauncherPicker label="Mode" value={policyLabels[policy]} choices={MODE_CHOICES.map(({ id, title }) => ({ id, title, selected: id === policy }))} onSelect={id => setPolicy(id as Policy)} />
         {project && <><LauncherPicker label="Worktree" value={worktreeLabel} choices={[{ id: '', title: 'New worktree', selected: !worktree }, ...worktrees.map(x => ({ id: x.path, title: x.branch || x.path.split('/').pop() || x.path, selected: x.path === worktree }))]} onSelect={setWorktree} />{!worktree && <View style={styles.launcherBase}><Text style={styles.launcherBaseLabel}>from</Text><TextInput style={styles.launcherBaseInput} value={base} onChangeText={setBase} autoCapitalize="none" autoCorrect={false} placeholder="HEAD" placeholderTextColor={tertiary} /></View>}</>}
       </View>
       {customModel && <TextInput autoFocus style={styles.launcherCustomModel} value={modelName} onChangeText={value => { setModelName(value); setEffort(''); }} autoCapitalize="none" autoCorrect={false} placeholder="Model name" placeholderTextColor={tertiary} />}
@@ -596,14 +601,18 @@ function AutomationScreen({ route, navigation }: any) {
   const [provider, setProvider] = useState(existing?.providerId || state.snapshot?.providers[0] || 'claude');
   const [projectId, setProjectId] = useState(existing?.projectId || null as string | null);
   const [enabled, setEnabled] = useState(existing?.enabled ?? true);
-  const [workspaceMode, setWorkspaceMode] = useState(existing?.workspaceMode || 'new_worktree');
+  const [workspaceMode, setWorkspaceModeState] = useState(existing?.workspaceMode || 'new_worktree');
   const [pinnedSessionId, setPinnedSessionId] = useState(existing?.pinnedSessionId || null as string | null);
   const [continueAgentSession, setContinueAgentSession] = useState(existing?.continueAgentSession || false);
-  const [catchUp, setCatchUp] = useState(existing?.catchUp || false);
+  const [initialPolicies] = useState(() => policiesOf(existing, existing?.workspaceMode || 'new_worktree'));
+  const [concurrency, setConcurrency] = useState(initialPolicies.concurrency);
+  const [missedRuns, setMissedRuns] = useState(initialPolicies.missedRuns);
+  const [onlyWhenChanged, setOnlyWhenChanged] = useState(initialPolicies.onlyWhenChanged);
+  const setWorkspaceMode = (mode: typeof workspaceMode) => { setConcurrency(concurrencyForWorkspace(concurrency, workspaceMode, mode)); setWorkspaceModeState(mode); };
   const [policy, setPolicy] = useState(existing?.permissionPolicy || 'auto-edits');
   const [modelName, setModelName] = useState(existing?.model || '');
   const [effort, setEffort] = useState(existing?.effort || '');
-  const [runs, setRuns] = useState<any[]>([]);
+  const [runs, setRuns] = useState<AutomationRun[]>([]);
   useEffect(() => { if (existing) state.request('automationRuns', { id: existing.id }).then(x => setRuns(x.automationRuns?._0 || [])).catch(() => {}); }, [existing?.id]);
   const save = async () => {
     if (!name.trim() || !prompt.trim()) throw Error('Name and prompt are required.');
@@ -612,7 +621,7 @@ function AutomationScreen({ route, navigation }: any) {
       id: existing?.id || uuid(), name, prompt, providerId: provider, projectId,
       triggers: triggers.filter(x => x.rrule.trim()).map(x => ({ ...x, rrule: x.rrule.trim() })),
       workspaceMode, pinnedSessionId: workspaceMode === 'pinned' ? pinnedSessionId : null,
-      continueAgentSession, permissionPolicy: policy, catchUp,
+      continueAgentSession, permissionPolicy: policy, catchUp: catchUpOf(missedRuns), concurrency, missedRuns, onlyWhenChanged,
       enabled, nextRunAt: existing?.nextRunAt || null, createdAt: existing?.createdAt || now, updatedAt: now, model: modelName || null, effort: effort || null, deviceId: existing?.deviceId || null
     };
     await state.request('saveAutomation', { _0: automation }); navigation.goBack();
@@ -628,10 +637,14 @@ function AutomationScreen({ route, navigation }: any) {
     <Text style={styles.label}>Model (optional)</Text><TextInput style={styles.input} value={modelName} onChangeText={setModelName} autoCapitalize="none" />
     <Text style={styles.label}>Reasoning effort (optional)</Text><TextInput style={styles.input} value={effort} onChangeText={setEffort} autoCapitalize="none" />
     <Text style={styles.label}>Schedules (RRULE)</Text>{triggers.map((trigger, index) => <Section key={trigger.id} title={`Schedule ${index + 1}`}><TextInput style={styles.input} value={trigger.rrule} onChangeText={text => setTriggers(triggers.map(x => x.id === trigger.id ? { ...x, rrule: text } : x))} autoCapitalize="characters" placeholder="FREQ=DAILY;BYHOUR=9;BYMINUTE=0" placeholderTextColor={muted} /><TextInput style={styles.input} value={trigger.timezone} onChangeText={text => setTriggers(triggers.map(x => x.id === trigger.id ? { ...x, timezone: text } : x))} autoCapitalize="none" placeholder="IANA timezone" placeholderTextColor={muted} /><Button title="Remove schedule" secondary onPress={() => setTriggers(triggers.filter(x => x.id !== trigger.id))} /></Section>)}<Button title="Add schedule" secondary onPress={() => setTriggers([...triggers, { id: uuid(), rrule: 'FREQ=DAILY;BYHOUR=9;BYMINUTE=0', timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, dtstart: swiftDate() }])} />
-    <Button title={catchUp ? 'Catch up on launch: on' : 'Catch up on launch: off'} secondary={!catchUp} onPress={() => setCatchUp(!catchUp)} />
+    {triggers.length ? <Section title="When it runs">
+      <Text style={styles.label}>If the last run is still going,</Text><View style={styles.choices}>{CONCURRENCY_OPTIONS.map(o => <Button key={o.value} title={o.label} secondary={concurrency !== o.value} onPress={() => setConcurrency(o.value)} />)}</View>
+      <Text style={styles.label}>If runs were missed while Abstract was closed,</Text><View style={styles.choices}>{MISSED_OPTIONS.map(o => <Button key={o.value} title={o.label} secondary={missedRuns !== o.value} onPress={() => setMissedRuns(o.value)} />)}</View>
+      {showsChanged({ projectId, deviceId: existing?.deviceId }) && <><Text style={styles.label}>It runs</Text><View style={styles.choices}>{CHANGED_OPTIONS.map(o => <Button key={o.label} title={o.label} secondary={onlyWhenChanged !== o.value} onPress={() => setOnlyWhenChanged(o.value)} />)}</View></>}
+    </Section> : null}
     <View style={styles.actions}><Button title={enabled ? 'Enabled' : 'Paused'} secondary={!enabled} onPress={() => setEnabled(!enabled)} /><Button title="Save" onPress={() => run(save)} /></View>
     {existing && <Section title="Actions"><Button title="Run now" secondary onPress={() => run(() => state.request('runAutomation', { id: existing.id }))} /><Button title="Delete" danger onPress={() => Alert.alert('Delete automation?', existing.name, [{ text: 'Cancel' }, { text: 'Delete', style: 'destructive', onPress: () => run(async () => { await state.request('deleteAutomation', { id: existing.id }); navigation.goBack(); }) }])} /></Section>}
-    {runs.length ? <Section title="Recent runs">{runs.map(x => <Text style={styles.body} key={x.id}>{displayDate(x.firedAt)} · {x.status}{x.error ? ` · ${x.error}` : ''}</Text>)}</Section> : null}
+    {runs.length ? <Section title="Recent runs">{runs.map(x => <View key={x.id}><Text style={styles.body}>{displayDate(x.firedAt)} · {runStatusLabel(x)}</Text>{runDetail(x) ? <Text style={styles.hint}>{runDetail(x)}</Text> : null}</View>)}</Section> : null}
   </HeaderScrollView>;
 }
 export default function App() {
@@ -660,6 +673,7 @@ export default function App() {
         <Stack.Screen name="Review" component={ReviewScreen} />
         <Stack.Screen name="PullRequests" component={PullRequestsScreen} options={{ title: 'Pull requests' }} />
         <Stack.Screen name="PullRequest" component={PullRequestScreen} options={{ title: 'Pull request' }} />
+        <Stack.Screen name="Kanban" component={KanbanBoardScreen} options={{ title: 'Kanban' }} />
         <Stack.Screen name="Automations" component={AutomationsScreen} />
         <Stack.Screen name="Automation" component={AutomationScreen} />
       </Stack.Navigator>

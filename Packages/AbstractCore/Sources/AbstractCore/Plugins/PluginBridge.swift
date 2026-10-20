@@ -8,18 +8,26 @@ public struct PluginBridge: Sendable {
     public static let api = 1
     /// One inbound message may not pass this many bytes.
     public static let messageByteLimit = 64 * 1024
+    /// A `fetch` message may carry a body up to the network limit (ABS-94),
+    /// plus its envelope. Every other type stays at `messageByteLimit`.
+    public static let fetchMessageByteLimit = PluginFetchService.bodyByteLimit + 64 * 1024
     /// More than this in the window is a flood.
     public static let floodCount = 100
     public static let floodWindow: TimeInterval = 10
 
     public var capabilities: Set<PluginCapability>
+    /// Granted hosts and secret names (ABS-94), from the plugin's record.
+    public var allowedHosts: Set<String>
+    public var secretNames: Set<String>
     public var knownChatIds: Set<String> = []
     public private(set) var refusalCount = 0
     public private(set) var lastRefusal: String?
     private var recent: [Date] = []
 
-    public init(capabilities: Set<PluginCapability>) {
+    public init(capabilities: Set<PluginCapability>, allowedHosts: Set<String> = [], secretNames: Set<String> = []) {
         self.capabilities = capabilities
+        self.allowedHosts = Set(allowedHosts.map { $0.lowercased() })
+        self.secretNames = secretNames
     }
 
     public enum Outcome: Sendable, Equatable {
@@ -27,6 +35,8 @@ public struct PluginBridge: Sendable {
         case reply(id: String?, JSONValue)
         case openChat(id: String?, chatId: String)
         case getSnapshot(id: String?)
+        /// Send this through `PluginFetchService`, then answer by `id`.
+        case fetch(id: String?, PluginFetchRequest)
         case getUsage(id: String?, view: String, page: PluginPage, chatId: String?)
         case getTurns(id: String?, page: PluginPage, chatId: String?)
         case getTranscript(id: String?, page: PluginPage, chatId: String?)
@@ -38,10 +48,14 @@ public struct PluginBridge: Sendable {
 
     public mutating func handle(_ data: Data, storage: PluginStorage, now: Date = Date()) -> Outcome {
         if isFlood(now: now) { return .flooded }
-        guard data.count <= Self.messageByteLimit,
+        guard data.count <= Self.fetchMessageByteLimit,
               let object = try? JSONSerialization.jsonObject(with: data),
               case .object(let message) = JSONValue(any: object) else {
             return refuse(nil, "That message couldn't be read.")
+        }
+        // Only fetch may use the larger limit.
+        if data.count > Self.messageByteLimit, message["type"]?.string != "fetch" {
+            return refuse(message["id"]?.string, "That message couldn't be read.")
         }
         return handle(message, storage: storage)
     }
@@ -85,6 +99,25 @@ public struct PluginBridge: Sendable {
             let saved = (try? storage.set(value == .null ? nil : value, forKey: key)) ?? false
             guard saved else { return refuse(id, "That would pass the plugin's storage limit.") }
             return .reply(id: id, .object(["key": .string(key), "saved": .bool(true)]))
+        case "fetch":
+            guard capabilities.contains(.network) else {
+                return refuse(id, "This plugin hasn't been granted reaching the web.")
+            }
+            guard let fetch = PluginFetchRequest(payload: payload) else {
+                return refuse(id, "That web request couldn't be read.")
+            }
+            // Early host check; the fetch service checks again before sending.
+            let host = URLComponents(string: fetch.url)?.host?.lowercased()
+            guard let host, allowedHosts.contains(host) else {
+                return refuse(id, "This plugin hasn't been granted reaching \(host ?? "that address").")
+            }
+            // A secret reference needs the secrets grant, for that name.
+            for header in fetch.secretHeaders.values {
+                guard capabilities.contains(.secrets), secretNames.contains(header.secret) else {
+                    return refuse(id, "This plugin hasn't been granted that secret.")
+                }
+            }
+            return .fetch(id: id, fetch)
         case "getUsage":
             guard capabilities.contains(.usageRead) else {
                 return refuse(id, "This plugin hasn't been granted seeing what your chats used and cost.")

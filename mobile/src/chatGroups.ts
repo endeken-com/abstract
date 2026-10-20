@@ -1,5 +1,6 @@
 import type { PullRequest, Session, Snapshot } from './types';
 import { itemKey, type MacState, type MacView } from './macs';
+import { iconFor, type ChatIcon } from './projectIcons';
 
 // The phone's chat list grouped by what each chat needs from you, as the Mac's
 // sidebar groups it (Packages/AbstractCore/Sources/AbstractCore/Sessions/SidebarChats.swift).
@@ -25,6 +26,8 @@ export type ChatFacts = {
   hasChanges?: boolean;
   backgroundTasks: boolean;
   projectName?: string | null;
+  // What leads its row: its project's icon, or its agent's logo.
+  icon: ChatIcon;
 };
 export type ChatSection = { group: ChatGroup; chats: ChatFacts[]; older: ChatFacts[] };
 
@@ -42,16 +45,20 @@ export function chatsFromMacs(macs: MacView[]): ChatFacts[] {
 
 export function chatsFromSnapshot(snapshot: Snapshot | null | undefined, mac: Pick<MacView, 'id' | 'name' | 'state' | 'lastSeenAt'>): ChatFacts[] {
   if (!snapshot) return [];
-  const projects = new Map(snapshot.projects.map(p => [p.id, p.name]));
+  const projects = new Map(snapshot.projects.map(p => [p.id, p]));
   const busy = new Set(snapshot.backgroundTasks || []);
-  return snapshot.sessions.map(session => ({
-    session, hostId: mac.id, mac: mac.name, macState: mac.state, lastSeenAt: mac.lastSeenAt,
-    pullRequest: snapshot.pullRequests?.[session.id] ?? null,
-    // A chat with no folder has nothing to review.
-    hasChanges: session.worktreePath ? snapshot.unmergedWork?.[session.id] : false,
-    backgroundTasks: busy.has(session.id),
-    projectName: session.projectId ? projects.get(session.projectId) ?? null : null,
-  }));
+  return snapshot.sessions.map(session => {
+    const project = session.projectId ? projects.get(session.projectId) : undefined;
+    return {
+      session, hostId: mac.id, mac: mac.name, macState: mac.state, lastSeenAt: mac.lastSeenAt,
+      pullRequest: snapshot.pullRequests?.[session.id] ?? null,
+      // A chat with no folder has nothing to review.
+      hasChanges: session.worktreePath ? snapshot.unmergedWork?.[session.id] : false,
+      backgroundTasks: busy.has(session.id),
+      projectName: project?.name ?? null,
+      icon: iconFor(project, session.projectId ? snapshot.projectIcons?.[session.projectId] : undefined),
+    };
+  });
 }
 
 const prState = (pr: PullRequest) => pr.state.toUpperCase();

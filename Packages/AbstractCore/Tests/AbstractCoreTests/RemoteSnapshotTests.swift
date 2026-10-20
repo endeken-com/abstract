@@ -72,4 +72,41 @@ struct RemoteSnapshotTests {
         let oldSnapshot = try JSONDecoder().decode(RemoteSnapshot.self, from: Data(#"{"projects":[],"sessions":[],"providers":[],"alive":[]}"#.utf8))
         #expect(oldSnapshot.codeHistory == nil, "an older Mac never advertises code-history requests")
     }
+
+    @Test func plansRoundTripAndOlderSnapshotsDecode() throws {
+        var state = PlanState()
+        state.add("# First")
+        state.add("# Second")
+        state.requestChanges()
+        let snapshot = RemoteSnapshot(projects: [], sessions: [], providers: [], alive: [],
+                                      plans: ["chat-id": RemotePlan(state)], planApproval: true)
+        let data = try JSONEncoder().encode(snapshot)
+        let decoded = try JSONDecoder().decode(RemoteSnapshot.self, from: data)
+        #expect(decoded.plans?["chat-id"] == RemotePlan(revisions: ["# First", "# Second"], status: "changesRequested"))
+        #expect(decoded.planApproval == true)
+        // The phone encodes requests as JSON objects keyed by case name.
+        #expect(String(decoding: data, as: UTF8.self).contains(#""planApproval":true"#))
+
+        let oldSnapshot = try JSONDecoder().decode(RemoteSnapshot.self,
+                                                   from: Data(#"{"projects":[],"sessions":[],"providers":[],"alive":[]}"#.utf8))
+        #expect(oldSnapshot.plans == nil)
+        #expect(oldSnapshot.planApproval == nil, "an older Mac can't take plan decisions")
+
+        for request in [RemoteRequest.approvePlan(sessionId: "chat-id"),
+                        .requestPlanChanges(sessionId: "chat-id"),
+                        .discardPlan(sessionId: "chat-id")] {
+            let message = RemoteMessage.request(id: 3, request)
+            guard case .request(_, let decodedRequest) = try JSONDecoder().decode(RemoteMessage.self, from: JSONEncoder().encode(message)) else {
+                Issue.record("plan request did not round-trip")
+                continue
+            }
+            #expect(String(describing: decodedRequest) == String(describing: request))
+        }
+        // Exactly what the phone sends for an approval.
+        let phone = Data(#"{"request":{"id":3,"_1":{"approvePlan":{"sessionId":"chat-id"}}}}"#.utf8)
+        guard case .request(3, .approvePlan("chat-id")) = try JSONDecoder().decode(RemoteMessage.self, from: phone) else {
+            Issue.record("the phone's approvePlan did not decode")
+            return
+        }
+    }
 }
