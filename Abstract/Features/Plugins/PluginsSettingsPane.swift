@@ -166,11 +166,29 @@ struct PluginsSettingsPane: View {
             .disabled(plugin.manifest == nil)
 
             if let manifest = plugin.manifest, !manifest.grantedCapabilities.isEmpty {
-                Text(manifest.grantedCapabilities.map {
+                // What it actually holds now; before its first review,
+                // what it asks for.
+                Text((record.grantedCapabilities.isEmpty ? manifest.grantedCapabilities : record.grantedCapabilities).map {
                     $0.plainWords(transcriptProjects: model.pluginProjectNames(record.transcriptProjectKeys))
                 }.sorted().joined(separator: " · "))
                     .font(.btCaption)
                     .foregroundStyle(Color.btTextSecondary)
+            }
+            // Action grants (ABS-92), each revocable on its own. Turning
+            // the plugin off and on again reviews the whole list anew.
+            ForEach(PluginCapability.actionCases.filter { record.grantedCapabilities.contains($0) },
+                    id: \.rawValue) { capability in
+                HStack(spacing: Space.sm) {
+                    Text(record.alwaysAllowedActions.contains(capability)
+                         ? "\(capability.plainWords) — always allowed."
+                         : "\(capability.plainWords) — asks first.")
+                        .font(.btCaption)
+                        .foregroundStyle(Color.btTextSecondary)
+                    if record.alwaysAllowedActions.contains(capability) {
+                        Button("Ask First") { model.plugins.setAlwaysAllowed(plugin.id, capability, false) }
+                    }
+                    Button("Revoke") { model.plugins.revokeCapability(plugin.id, capability) }
+                }
             }
             if let problem = plugin.problem {
                 Text(problem).font(.btCaption).foregroundStyle(Color.btRemoved)
@@ -301,6 +319,11 @@ private struct PluginReviewSheet: View {
                     $0.plainWords(transcriptProjects: pickedNames)
                 }.sorted(), id: \.self) { words in
                     Text(words).font(.btBody).foregroundStyle(Color.btTextSecondary)
+                }
+                if manifest.grantedCapabilities.contains(where: \.isAction) {
+                    Text("Before it starts a chat, sends a message, stops or resumes an agent, answers for you, or runs an automation, Abstract will ask you first. You can let it always do one of those, and take any of them back here in Settings.")
+                        .font(.btBody).foregroundStyle(Color.btTextSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             if !manifest.networkSentences.isEmpty {

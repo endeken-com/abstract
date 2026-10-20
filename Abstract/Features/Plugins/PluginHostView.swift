@@ -104,7 +104,7 @@ private struct PluginWebView: NSViewRepresentable {
         configuration.preferences.isElementFullscreenEnabled = false
         let content = WKUserContentController()
         content.add(coordinator, name: "abstractPlugin")
-        content.addUserScript(WKUserScript(source: Self.shim, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        content.addUserScript(WKUserScript(source: Self.shim(api: manifest.api), injectionTime: .atDocumentStart, forMainFrameOnly: true))
         configuration.userContentController = content
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
@@ -137,8 +137,9 @@ private struct PluginWebView: NSViewRepresentable {
     }
 
     /// `window.AbstractPlugin`: the plugin's whole API. Requests are answered
-    /// by id; the host pushes `context` and `snapshot` messages.
-    static let shim = """
+    /// by id; the host pushes `context` and `snapshot` messages. It speaks
+    /// the version its manifest declares.
+    static func shim(api: Int) -> String { """
     (() => {
       const pending = new Map();
       const listeners = new Map();
@@ -149,7 +150,7 @@ private struct PluginWebView: NSViewRepresentable {
           return new Promise((resolve) => {
             pending.set(id, resolve);
             window.webkit.messageHandlers.abstractPlugin.postMessage(
-              JSON.stringify({ api: 1, type, id, payload: payload || {} }));
+              JSON.stringify({ api: \(api), type, id, payload: payload || {} }));
           });
         },
         on(type, fn) {
@@ -184,12 +185,12 @@ private struct PluginWebView: NSViewRepresentable {
       function report(error) {
         try {
           window.webkit.messageHandlers.abstractPlugin.postMessage(
-            JSON.stringify({ api: 1, type: "__error", payload: { message: String(error) } }));
+            JSON.stringify({ api: \(api), type: "__error", payload: { message: String(error) } }));
         } catch {}
       }
       window.addEventListener("error", (event) => report(event.message || "error"));
     })();
-    """
+    """ }
 
     @MainActor
     final class Coordinator: NSObject, WKScriptMessageHandler, WKURLSchemeHandler, WKNavigationDelegate {
@@ -215,7 +216,11 @@ private struct PluginWebView: NSViewRepresentable {
             self.onFailure = onFailure
             bridge = PluginBridge(capabilities: plugin.record.grantedCapabilities,
                                   allowedHosts: Set(plugin.record.grantedNetworkHosts),
-                                  secretNames: Set(plugin.record.grantedSecretNames))
+                                  secretNames: Set(plugin.record.grantedSecretNames),
+                                  alwaysAllowedActions: plugin.record.alwaysAllowedActions)
+            // A placed showing may act on the chat it sits beside: the
+            // person opened it there (ABS-96).
+            if let chatId = placement.chatId { bridge.knownChatIds = [chatId] }
         }
 
         func tearDown() { dead = true }
@@ -281,6 +286,14 @@ private struct PluginWebView: NSViewRepresentable {
             let text = (message.body as? String) ?? ""
             // A script error is a stopped plugin, not a message to answer.
             if text.contains("\"__error\"") { fail("It stopped working."); return }
+            // Grants as they stand now, not as they were when this screen
+            // opened: revoking one in Settings stops the next call.
+            if let record = model.plugins.plugin(plugin.id)?.record {
+                bridge.capabilities = record.grantedCapabilities
+                bridge.alwaysAllowedActions = record.alwaysAllowedActions
+                bridge.allowedHosts = Set(record.grantedNetworkHosts.map { $0.lowercased() })
+                bridge.secretNames = Set(record.grantedSecretNames)
+            }
             let storage = model.plugins.manager.storage(for: plugin.id)
             switch bridge.handle(text, storage: storage) {
             case .reply(let id, let value):
@@ -322,11 +335,59 @@ private struct PluginWebView: NSViewRepresentable {
                      payload: model.pluginTranscript(page: page, chatId: chatId, allowedProjectKeys: keys))
             case .getAutomations(let id, let page):
                 send(type: "reply", id: id, payload: model.pluginAutomations(page: page))
+            case .action(let id, let action):
+                perform(action, id: id)
+            case .askAction(let id, let action):
+                ask(action, id: id)
+            case .actionRateLimited(let id):
+                // Paused, with the reason waiting in Settings (ABS-92).
+                send(type: "error", id: id,
+                     payload: .object(["message": .string("It acted too many times in a minute, so Abstract paused it.")]))
+                model.plugins.noteError(plugin.id, "It acted too many times in a minute, so it was paused. Turn it on again here when you're ready.")
+                model.setPluginEnabled(plugin.id, false)
             case .refused(let id, let reason):
                 model.plugins.noteError(plugin.id, reason)
                 send(type: "error", id: id, payload: .object(["message": .string(reason)]))
             case .flooded:
                 fail("It sent too many messages, so it was stopped.")
+            }
+        }
+
+        /// Ask first (ABS-92): who is asking and what it will do, with the
+        /// message or answers themselves to read before deciding.
+        private func ask(_ action: PluginAction, id: String?) {
+            let alert = NSAlert()
+            alert.messageText = model.pluginActionDescription(action, pluginName: manifest.name)
+            var info = action.detail.map { String($0.prefix(600)) } ?? ""
+            if !info.isEmpty { info += "\n\n" }
+            info += "Always allow lets \(manifest.name) do this kind of thing without asking. You can change your mind in Settings → Plugins."
+            alert.informativeText = info
+            alert.addButton(withTitle: "Allow Once")
+            alert.addButton(withTitle: "Always Allow")
+            alert.addButton(withTitle: "Decline")
+            switch alert.runModal() {
+            case .alertFirstButtonReturn:
+                perform(action, id: id)
+            case .alertSecondButtonReturn:
+                model.plugins.setAlwaysAllowed(plugin.id, action.capability, true)
+                bridge.alwaysAllowedActions.insert(action.capability)
+                perform(action, id: id)
+            default:
+                send(type: "error", id: id, payload: .object(["message": .string("You declined that.")]))
+            }
+        }
+
+        private func perform(_ action: PluginAction, id: String?) {
+            Task { @MainActor [weak self] in
+                guard let self, !dead else { return }
+                do {
+                    let result = try await model.performPluginAction(action, pluginName: manifest.name)
+                    send(type: "reply", id: id, payload: result)
+                    pushSnapshotSoon()
+                } catch {
+                    send(type: "error", id: id,
+                         payload: .object(["message": .string(error.localizedDescription)]))
+                }
             }
         }
 
@@ -342,23 +403,27 @@ private struct PluginWebView: NSViewRepresentable {
         }
 
         private func pushSnapshot() {
-            guard loaded, !dead, model.plugins.plugin(plugin.id)?.isUsable == true else { return }
-            let snapshot = model.pluginSnapshot(capabilities: plugin.record.grantedCapabilities,
+            guard loaded, !dead, let current = model.plugins.plugin(plugin.id), current.isUsable else { return }
+            let snapshot = model.pluginSnapshot(capabilities: current.record.grantedCapabilities,
                                                 revision: model.plugins.nextRevision())
             bridge.knownChatIds = Set(snapshot.chats?.map(\.id) ?? [])
+            if let chatId = placement.chatId { bridge.knownChatIds.insert(chatId) }
+            bridge.knownProjectKeys = Set(snapshot.projects?.map(\.key) ?? [])
             send(type: "snapshot", payload: snapshot.jsonValue())
             // A placed showing's chat moves with the snapshot.
             if placement.chatId != nil { sendContext() }
         }
 
         func sendContext(changed: Bool = false) {
+            let capabilities = model.plugins.plugin(plugin.id)?.record.grantedCapabilities
+                ?? plugin.record.grantedCapabilities
             let chat = placement.chatId.flatMap {
-                model.pluginChatRow(chatId: $0, capabilities: plugin.record.grantedCapabilities)
+                model.pluginChatRow(chatId: $0, capabilities: capabilities)
             }
             let context = PluginContext.jsonValue(
                 theme: theme, locale: Locale.current.identifier,
                 pluginId: manifest.id, pluginVersion: manifest.version,
-                capabilities: plugin.record.grantedCapabilities,
+                capabilities: capabilities,
                 placement: placement, chat: chat)
             send(type: "context", payload: context)
             if changed { send(type: "themeChanged", payload: context) }
@@ -366,7 +431,7 @@ private struct PluginWebView: NSViewRepresentable {
 
         private func send(type: String, id: String? = nil, payload: JSONValue) {
             guard let webView, !dead else { return }
-            let envelope = PluginBridge.encode(type: type, id: id, payload: payload)
+            let envelope = PluginBridge.encode(type: type, id: id, payload: payload, api: manifest.api)
             let literal = (try? JSONSerialization.data(withJSONObject: [envelope]))
                 .map { String(decoding: $0, as: UTF8.self) } ?? "[\"\"]"
             webView.evaluateJavaScript("window.__abstractHostMessage(\(literal)[0])")
