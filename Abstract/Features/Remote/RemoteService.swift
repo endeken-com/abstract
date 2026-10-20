@@ -447,7 +447,7 @@ final class RemoteService {
                               backgroundTasks: model.alive.filter { model.runningBackgroundTasks($0) > 0 }.sorted(),
                               unmergedWork: model.branchStates.mapValues(\.hasUnmergedWork),
                               projectIcons: projectIcons(model.projects.filter { $0.archivedAt == nil }),
-                              automationDevice: true)
+                              automationDevice: true, profiles: model.profiles)
     }
 
     /// Each project's uploaded icon as bytes, so a viewing Mac can show it
@@ -894,14 +894,14 @@ final class HostedPeer {
                                                    prompt: prompt, baseRef: nil, policy: policy, select: false)
                 return .started(sessionId: id)
             } catch { return .failed(error.localizedDescription) }
-        case let .startStandaloneConfigured(provider, prompt, policy, attachments, files, name, effort):
+        case let .startStandaloneConfigured(provider, prompt, policy, attachments, files, name, effort, profile):
             do {
                 let kept = try attachments.map { a in try files[a.id].map { try AttachmentStore.keep($0, for: a) } ?? a }
                 let agent = RetiredAgents.current(provider)
                 let id = try await model.startChat(projectId: nil, providerId: agent,
                                                    prompt: prompt, attachments: kept, baseRef: nil,
                                                    policy: policy, model: agent == provider ? name : nil,
-                                                   effort: agent == provider ? effort : nil, select: false)
+                                                   effort: agent == provider ? effort : nil, profile: profile, select: false)
                 return .started(sessionId: id)
             } catch { return .failed(error.localizedDescription) }
         case .stop(let session):
@@ -959,6 +959,13 @@ final class HostedPeer {
         case .deleteAutomation(let id):
             guard model.automations.contains(where: { $0.id == id }) else { return .failed("Automation not found.") }
             model.deleteAutomation(id)
+            return .ok
+        case .saveProfile(let profile):
+            model.saveProfile(profile)
+            return .ok
+        case .deleteProfile(let id):
+            guard model.profile(id) != nil else { return .failed("Profile not found.") }
+            model.deleteProfile(id)
             return .ok
         case .runAutomation(let id):
             guard let automation = model.automations.first(where: { $0.id == id }) else { return .failed("Automation not found.") }

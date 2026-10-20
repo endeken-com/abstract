@@ -38,8 +38,11 @@ public enum RemoteRequest: Codable, Sendable {
     /// A chat as the New Chat window sets it up, started on the Mac its project is on.
     case startChat(RemoteStart)
     case startStandalone(providerId: String, prompt: String, policy: PermissionPolicy)
+    /// `profile` is the profile the chat starts from (ABS-101); older
+    /// Macs ignore it, as with `exec`'s `stdin`.
     case startStandaloneConfigured(providerId: String, prompt: String, policy: PermissionPolicy,
-                                   attachments: [PromptAttachment], files: [String: Data], model: String?, effort: String?)
+                                   attachments: [PromptAttachment], files: [String: Data], model: String?, effort: String?,
+                                   profile: ProfileSnapshot? = nil)
     case stop(sessionId: String)
     case answer(sessionId: String, requestId: String, allow: Bool)
     /// Answers to the agent's questions, by question text.
@@ -58,6 +61,9 @@ public enum RemoteRequest: Codable, Sendable {
     /// Automations are scheduled and persisted on the host Mac.
     case saveAutomation(Automation)
     case deleteAutomation(id: String)
+    /// Profiles are saved on the host Mac (ABS-101).
+    case saveProfile(AgentProfile)
+    case deleteProfile(id: String)
     case runAutomation(id: String)
     case automationRuns(id: String)
     /// One run of an automation kept on the asking Mac, started here.
@@ -230,6 +236,9 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
     /// A host that starts another Mac's automation runs (`startRun`).
     /// Optional for older peers.
     public var automationDevice: Bool?
+    /// The profiles chats and automations can start from there (ABS-101).
+    /// Optional for older peers, which offer none.
+    public var profiles: [AgentProfile]?
 
     /// The largest uploaded icon a snapshot carries; larger ones are left out.
     public static let maxProjectIconBytes = 512 << 10
@@ -241,7 +250,8 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
                 pendingPermissions: [String: [RemotePendingPermission]]? = nil,
                 turnStartedAt: [String: Date]? = nil, pagedHistory: Bool? = nil, execInput: Bool? = nil,
                 internetAddress: InternetAddress? = nil, backgroundTasks: [String]? = nil, unmergedWork: [String: Bool]? = nil,
-                projectIcons: [String: Data]? = nil, automationDevice: Bool? = nil) {
+                projectIcons: [String: Data]? = nil, automationDevice: Bool? = nil,
+                profiles: [AgentProfile]? = nil) {
         self.projects = projects; self.sessions = sessions; self.providers = providers; self.alive = alive
         self.home = home; self.modelCatalogs = modelCatalogs; self.defaultModelNames = defaultModelNames
         self.pullRequests = pullRequests
@@ -255,6 +265,7 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
         self.unmergedWork = unmergedWork
         self.projectIcons = projectIcons
         self.automationDevice = automationDevice
+        self.profiles = profiles
     }
 }
 
