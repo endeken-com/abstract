@@ -31,8 +31,9 @@ import { TerminalView } from './TerminalView';
 import { SettingsScreen } from './SettingsScreen';
 import { uuid } from './secure';
 import { attachmentPayload, pickAttachments, type PickedAttachment } from './attachments';
-import { displayDate, swiftDate, type Automation, type AutomationTrigger, type Policy, type Project, type Session } from './types';
+import { displayDate, swiftDate, type Automation, type AutomationRun, type AutomationTrigger, type Policy, type Project, type Session } from './types';
 import { MODE_CHOICES } from './plan';
+import { CHANGED_OPTIONS, CONCURRENCY_OPTIONS, MISSED_OPTIONS, catchUpOf, concurrencyForWorkspace, policiesOf, runDetail, runStatusLabel, showsChanged } from './automationPolicies';
 
 // Graphite values come from Abstract/Theme/Palette.swift.
 const ink = '#ECECEF', muted = '#A4A4AD', tertiary = '#75757E';
@@ -583,14 +584,18 @@ function AutomationScreen({ route, navigation }: any) {
   const [provider, setProvider] = useState(existing?.providerId || state.snapshot?.providers[0] || 'claude');
   const [projectId, setProjectId] = useState(existing?.projectId || null as string | null);
   const [enabled, setEnabled] = useState(existing?.enabled ?? true);
-  const [workspaceMode, setWorkspaceMode] = useState(existing?.workspaceMode || 'new_worktree');
+  const [workspaceMode, setWorkspaceModeState] = useState(existing?.workspaceMode || 'new_worktree');
   const [pinnedSessionId, setPinnedSessionId] = useState(existing?.pinnedSessionId || null as string | null);
   const [continueAgentSession, setContinueAgentSession] = useState(existing?.continueAgentSession || false);
-  const [catchUp, setCatchUp] = useState(existing?.catchUp || false);
+  const [initialPolicies] = useState(() => policiesOf(existing, existing?.workspaceMode || 'new_worktree'));
+  const [concurrency, setConcurrency] = useState(initialPolicies.concurrency);
+  const [missedRuns, setMissedRuns] = useState(initialPolicies.missedRuns);
+  const [onlyWhenChanged, setOnlyWhenChanged] = useState(initialPolicies.onlyWhenChanged);
+  const setWorkspaceMode = (mode: typeof workspaceMode) => { setConcurrency(concurrencyForWorkspace(concurrency, workspaceMode, mode)); setWorkspaceModeState(mode); };
   const [policy, setPolicy] = useState(existing?.permissionPolicy || 'auto-edits');
   const [modelName, setModelName] = useState(existing?.model || '');
   const [effort, setEffort] = useState(existing?.effort || '');
-  const [runs, setRuns] = useState<any[]>([]);
+  const [runs, setRuns] = useState<AutomationRun[]>([]);
   useEffect(() => { if (existing) state.request('automationRuns', { id: existing.id }).then(x => setRuns(x.automationRuns?._0 || [])).catch(() => {}); }, [existing?.id]);
   const save = async () => {
     if (!name.trim() || !prompt.trim()) throw Error('Name and prompt are required.');
@@ -599,7 +604,7 @@ function AutomationScreen({ route, navigation }: any) {
       id: existing?.id || uuid(), name, prompt, providerId: provider, projectId,
       triggers: triggers.filter(x => x.rrule.trim()).map(x => ({ ...x, rrule: x.rrule.trim() })),
       workspaceMode, pinnedSessionId: workspaceMode === 'pinned' ? pinnedSessionId : null,
-      continueAgentSession, permissionPolicy: policy, catchUp,
+      continueAgentSession, permissionPolicy: policy, catchUp: catchUpOf(missedRuns), concurrency, missedRuns, onlyWhenChanged,
       enabled, nextRunAt: existing?.nextRunAt || null, createdAt: existing?.createdAt || now, updatedAt: now, model: modelName || null, effort: effort || null, deviceId: existing?.deviceId || null
     };
     await state.request('saveAutomation', { _0: automation }); navigation.goBack();
@@ -615,10 +620,14 @@ function AutomationScreen({ route, navigation }: any) {
     <Text style={styles.label}>Model (optional)</Text><TextInput style={styles.input} value={modelName} onChangeText={setModelName} autoCapitalize="none" />
     <Text style={styles.label}>Reasoning effort (optional)</Text><TextInput style={styles.input} value={effort} onChangeText={setEffort} autoCapitalize="none" />
     <Text style={styles.label}>Schedules (RRULE)</Text>{triggers.map((trigger, index) => <Section key={trigger.id} title={`Schedule ${index + 1}`}><TextInput style={styles.input} value={trigger.rrule} onChangeText={text => setTriggers(triggers.map(x => x.id === trigger.id ? { ...x, rrule: text } : x))} autoCapitalize="characters" placeholder="FREQ=DAILY;BYHOUR=9;BYMINUTE=0" placeholderTextColor={muted} /><TextInput style={styles.input} value={trigger.timezone} onChangeText={text => setTriggers(triggers.map(x => x.id === trigger.id ? { ...x, timezone: text } : x))} autoCapitalize="none" placeholder="IANA timezone" placeholderTextColor={muted} /><Button title="Remove schedule" secondary onPress={() => setTriggers(triggers.filter(x => x.id !== trigger.id))} /></Section>)}<Button title="Add schedule" secondary onPress={() => setTriggers([...triggers, { id: uuid(), rrule: 'FREQ=DAILY;BYHOUR=9;BYMINUTE=0', timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, dtstart: swiftDate() }])} />
-    <Button title={catchUp ? 'Catch up on launch: on' : 'Catch up on launch: off'} secondary={!catchUp} onPress={() => setCatchUp(!catchUp)} />
+    {triggers.length ? <Section title="When it runs">
+      <Text style={styles.label}>If the last run is still going,</Text><View style={styles.choices}>{CONCURRENCY_OPTIONS.map(o => <Button key={o.value} title={o.label} secondary={concurrency !== o.value} onPress={() => setConcurrency(o.value)} />)}</View>
+      <Text style={styles.label}>If runs were missed while Abstract was closed,</Text><View style={styles.choices}>{MISSED_OPTIONS.map(o => <Button key={o.value} title={o.label} secondary={missedRuns !== o.value} onPress={() => setMissedRuns(o.value)} />)}</View>
+      {showsChanged({ projectId, deviceId: existing?.deviceId }) && <><Text style={styles.label}>It runs</Text><View style={styles.choices}>{CHANGED_OPTIONS.map(o => <Button key={o.label} title={o.label} secondary={onlyWhenChanged !== o.value} onPress={() => setOnlyWhenChanged(o.value)} />)}</View></>}
+    </Section> : null}
     <View style={styles.actions}><Button title={enabled ? 'Enabled' : 'Paused'} secondary={!enabled} onPress={() => setEnabled(!enabled)} /><Button title="Save" onPress={() => run(save)} /></View>
     {existing && <Section title="Actions"><Button title="Run now" secondary onPress={() => run(() => state.request('runAutomation', { id: existing.id }))} /><Button title="Delete" danger onPress={() => Alert.alert('Delete automation?', existing.name, [{ text: 'Cancel' }, { text: 'Delete', style: 'destructive', onPress: () => run(async () => { await state.request('deleteAutomation', { id: existing.id }); navigation.goBack(); }) }])} /></Section>}
-    {runs.length ? <Section title="Recent runs">{runs.map(x => <Text style={styles.body} key={x.id}>{displayDate(x.firedAt)} · {x.status}{x.error ? ` · ${x.error}` : ''}</Text>)}</Section> : null}
+    {runs.length ? <Section title="Recent runs">{runs.map(x => <View key={x.id}><Text style={styles.body}>{displayDate(x.firedAt)} · {runStatusLabel(x)}</Text>{runDetail(x) ? <Text style={styles.hint}>{runDetail(x)}</Text> : null}</View>)}</Section> : null}
   </HeaderScrollView>;
 }
 export default function App() {

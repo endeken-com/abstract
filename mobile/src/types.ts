@@ -15,16 +15,21 @@ export type Session = {
   model: string | null; effort: string | null;
 };
 export type AutomationTrigger = { id: string; rrule: string; timezone: string; dtstart: number };
+// What a scheduled run does when the last one is still going / runs were missed.
+export type AutomationConcurrency = 'skip_if_active' | 'run_after' | 'start_another';
+export type AutomationMissedRuns = 'skip' | 'run_once' | 'run_each';
 export type Automation = {
   id: string; name: string; prompt: string; providerId: string;
   projectId: string | null; triggers: AutomationTrigger[];
   workspaceMode: 'new_worktree' | 'pinned'; pinnedSessionId: string | null;
   continueAgentSession: boolean; permissionPolicy: Policy; catchUp: boolean;
+  // Absent from an older Mac's snapshot; `policiesOf` fills them in.
+  concurrency?: AutomationConcurrency; missedRuns?: AutomationMissedRuns; onlyWhenChanged?: boolean;
   enabled: boolean; nextRunAt: number | null; createdAt: number;
   updatedAt: number; model: string | null; effort: string | null;
   deviceId?: string | null;
 };
-export type AutomationRun = { id: string; automationId: string; firedAt: number; trigger: string; status: string; sessionId: string | null; error: string | null };
+export type AutomationRun = { id: string; automationId: string; firedAt: number; trigger: string; status: string; sessionId?: string | null; error?: string | null; reason?: string | null; baseCommit?: string | null };
 export type PendingPermission = { requestId: string; toolName: string; input: any };
 export type PullRequestCheck = { name: string; workflow?: string | null; outcome: 'passed' | 'failed' | 'pending' | 'skipped'; url?: string | null };
 export type PullRequestComment = { author: string; body: string; createdAt?: number | null; isBot: boolean };
