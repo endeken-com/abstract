@@ -36,7 +36,9 @@ struct RootView: View {
 
     var body: some View {
         @Bindable var model = model
-        HStack(spacing: 0) {
+        VStack(spacing: 0) {
+            PauseBanner()
+            HStack(spacing: 0) {
             if !sidebarHidden {
                 SidebarView()
                     .frame(width: sidebarWidth)
@@ -48,6 +50,7 @@ struct RootView: View {
             DetailView()
                 .frame(minWidth: 560, maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color.btCanvas)
+        }
         }
         .frame(minHeight: 480)
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
@@ -151,6 +154,42 @@ struct DetailView: View {
         case .plugin(let id, let viewId):
             PluginHostView(pluginId: id, viewId: viewId).id("\(id)/\(viewId)")
         }
+    }
+}
+
+/// Across the top of the window while everything, or a project, is paused:
+/// agents are stopped and automations are off until you resume.
+struct PauseBanner: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if model.everythingPaused {
+                row("Everything is paused. Agents are stopped and automations are off.", button: "Resume everything") {
+                    model.resumeEverything()
+                }
+            } else {
+                ForEach(model.pausedProjects) { project in
+                    row("“\(project.name)” is paused. Its agents are stopped and its automations are off.", button: "Resume") {
+                        model.resumeProject(project.id)
+                    }
+                }
+            }
+        }
+    }
+
+    private func row(_ text: String, button: String, action: @escaping () -> Void) -> some View {
+        HStack(spacing: Space.sm) {
+            Image(systemName: "pause.circle.fill").foregroundStyle(Color.btWarning)
+            Text(text).font(.btBody).foregroundStyle(Color.btText).lineLimit(1)
+            Button(button, action: action).font(.btBody)
+            Spacer()
+        }
+        .padding(.horizontal, Space.lg)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity)
+        .background(Color.btWarning.opacity(0.12))
+        .overlay(alignment: .bottom) { Rectangle().fill(Color.btBorder).frame(height: 1) }
     }
 }
 

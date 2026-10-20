@@ -75,6 +75,9 @@ final class AppModel {
     /// Unarchived chats, most recently active first; changes only when the order does.
     private(set) var recentChats: [String] = []
     var automations: [Automation] = []
+    /// What "Pause everything" turned off, kept across launches so Resume
+    /// restores it; see AppModel+Pause.
+    var pauseState: PauseState { didSet { save("pauseState", pauseState) } }
     var providerStatus: [String: ProviderStatus] = [:]
     /// Each agent's models: the copy cached at the last launch until the CLI
     /// has been asked again. See `refreshModels`.
@@ -320,6 +323,7 @@ final class AppModel {
         claudeProfile = store.setting("claudeProfile", as: String.self)
         modelCatalogs = store.setting("modelCatalogs", as: [String: ModelCatalog].self) ?? [:]
         mainTabs = store.setting("mainTabs", as: MainTabs.self) ?? MainTabs()
+        pauseState = store.setting("pauseState", as: PauseState.self) ?? PauseState()
     }
 
     private func save<T: Codable>(_ key: String, _ value: T) {
