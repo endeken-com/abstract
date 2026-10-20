@@ -75,6 +75,16 @@ struct ChatToolbarControls: View {
                 }
                 Divider()
                 Button(session.archivedAt == nil ? "Archive" : "Unarchive") { model.setArchived(session.id, session.archivedAt == nil) }
+                // Items plugins add to a chat's menu (ABS-96).
+                let pluginItems = model.plugins.contributions(.chatMenu)
+                if !pluginItems.isEmpty {
+                    Divider()
+                    ForEach(pluginItems) { contribution in
+                        Button(contribution.contribution.title) {
+                            model.invokePlugin(contribution, chatId: session.id)
+                        }
+                    }
+                }
             }
         }
     }

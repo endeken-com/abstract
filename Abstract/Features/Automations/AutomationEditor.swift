@@ -625,7 +625,7 @@ private struct ScopeSentence: View {
 
     private var policyMenu: some View {
         SentenceMenu(title: draft.policy.phrase) {
-            ForEach(PermissionPolicy.allCases, id: \.self) { p in
+            ForEach(PermissionPolicy.autonomyCases, id: \.self) { p in
                 Toggle(isOn: Binding(get: { draft.policy == p }, set: { _ in draft.policy = p })) {
                     Text(p.title)
                     Text(p.detail)

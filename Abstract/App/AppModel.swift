@@ -34,6 +34,14 @@ struct PendingPermission: Identifiable, Hashable {
     let input: JSONValue
 }
 
+/// A permission request a project rule answered, so its tool row can name
+/// the rule. See AppModel+Permissions.
+struct RuleAnswer: Hashable {
+    let toolName: String
+    let input: JSONValue
+    let note: String
+}
+
 struct ProviderStatus: Hashable {
     var available: Bool
     var path: String?
@@ -67,6 +75,9 @@ final class AppModel {
     /// Unarchived chats, most recently active first; changes only when the order does.
     private(set) var recentChats: [String] = []
     var automations: [Automation] = []
+    /// What "Pause everything" turned off, kept across launches so Resume
+    /// restores it; see AppModel+Pause.
+    var pauseState: PauseState { didSet { save("pauseState", pauseState) } }
     var providerStatus: [String: ProviderStatus] = [:]
     /// Each agent's models: the copy cached at the last launch until the CLI
     /// has been asked again. See `refreshModels`.
@@ -75,6 +86,13 @@ final class AppModel {
     /// What each paired Mac's chats have notified here, by device.
     @ObservationIgnored private var remoteNotices: [String: RemoteNotices] = [:]
     private(set) var permissions: [String: [PendingPermission]] = [:]
+    /// Each chat's plan awaiting your decision, revision by revision (ABS-104).
+    private(set) var plans: [String: PlanState] = [:]
+    /// The autonomy level a chat was at before Plan or Ask, to return to
+    /// when its plan is approved.
+    @ObservationIgnored private var normalPolicies: [String: PermissionPolicy] = [:]
+    /// Each chat's latest finished reply: a Plan-mode turn's is its plan.
+    @ObservationIgnored private var lastReplies: [String: String] = [:]
     private(set) var alive: Set<String> = []
     /// New chats still being set up, or whose setup failed; see AppModel+Setup.
     var setups: [String: ChatSetup] = [:]
@@ -95,6 +113,9 @@ final class AppModel {
     }
     /// Panel layouts by chat id; see AppModel+Panes.
     var layouts: [String: PanelLayout] = [:]
+    /// A plugin menu item or ⌘K command waiting to be handed to that
+    /// plugin's screen, by plugin id; see AppModel+Plugins.
+    var pluginInvocations: [String: PluginInvocation] = [:]
     /// A chat waiting on "Archive?" (⇧⌘⌫, or the git actions menu).
     var requestArchive: String?
     /// The background tasks list showing, and the task open in it; see AppModel+Tasks.
@@ -124,6 +145,14 @@ final class AppModel {
     private(set) var stopRequests: [String: UUID] = [:]
     /// Tool names to approve without asking, per chat.
     var autoContinueTools: [String: Set<String>] = [:]
+    /// Remembered permission answers, by project id; see AppModel+Permissions.
+    var permissionRules: [String: [PermissionRule]] = [:]
+    /// Requests a rule answered, by chat: the note for a tool row, by the
+    /// call's id (or the request's, when the call has no row of its own).
+    var ruleNotes: [String: [String: String]] = [:]
+    /// The same answers by tool and input, for a call that reaches its row
+    /// after the answer (the feed batches rows behind the request).
+    var ruleAnswers: [String: [RuleAnswer]] = [:]
     /// A file the Changes pane should select next time it loads, per chat.
     var pendingChangeSelection: [String: String] = [:]
     /// The agents' accounts and their limits, and token use from their logs.
@@ -227,6 +256,14 @@ final class AppModel {
     var notifyAttention: Bool { didSet { save("notifyAttention", notifyAttention) } }
     var notifyFinished: Bool { didSet { save("notifyFinished", notifyFinished) } }
     var notifyAutomationFailed: Bool { didSet { save("notifyAutomationFailed", notifyAutomationFailed) } }
+    var notifyStalled: Bool { didSet { save("notifyStalled", notifyStalled) } }
+    /// How long a working chat may go without output before it reads as
+    /// quiet, then stalled; see AppModel+Stalls.
+    var stallThresholds: StallThresholds { didSet { save("stallThresholds", stallThresholds) } }
+    /// Chats gone quiet or stalled right now, by chat id. Working chats
+    /// with recent output aren't in here. Written only in AppModel+Stalls.
+    var stallStates: [String: StallState] = [:]
+    @ObservationIgnored var stallWatches: [String: StallWatch] = [:]
     var defaultTimezone: String { didSet { save("defaultTimezone", defaultTimezone) } }
     /// How agents write their answers. Running chats pick it up from their
     /// next message, by restarting into the same conversation.
@@ -282,11 +319,14 @@ final class AppModel {
         notifyAttention = store.setting("notifyAttention", as: Bool.self) ?? true
         notifyFinished = store.setting("notifyFinished", as: Bool.self) ?? true
         notifyAutomationFailed = store.setting("notifyAutomationFailed", as: Bool.self) ?? true
+        notifyStalled = store.setting("notifyStalled", as: Bool.self) ?? true
+        stallThresholds = store.setting("stallThresholds", as: StallThresholds.self) ?? .default
         defaultTimezone = store.setting("defaultTimezone", as: String.self) ?? TimeZone.current.identifier
         outputStyle = store.setting("outputStyle", as: OutputStyle.self) ?? .default
         claudeProfile = store.setting("claudeProfile", as: String.self)
         modelCatalogs = store.setting("modelCatalogs", as: [String: ModelCatalog].self) ?? [:]
         mainTabs = store.setting("mainTabs", as: MainTabs.self) ?? MainTabs()
+        pauseState = store.setting("pauseState", as: PauseState.self) ?? PauseState()
     }
 
     private func save<T: Codable>(_ key: String, _ value: T) {
@@ -310,6 +350,7 @@ final class AppModel {
         Task { await refreshModels() }
         scheduler = AutomationScheduler(model: self)
         scheduler?.start()
+        Task { await watchForStalls() }
         Task { await watchPullRequests() }
         Task { await readEveryBranch() }
         if !isDemo { Task { await accounts.seedFromLogs(engine.logsURL) } }
@@ -341,6 +382,7 @@ final class AppModel {
         projects = (try? store.projects()) ?? []
         sessions = (try? store.sessions()) ?? []
         automations = (try? store.automations()) ?? []
+        permissionRules = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, (try? store.permissionRules(projectId: $0.id)) ?? []) })
         alive = engine.aliveSessionIds
     }
 
@@ -865,6 +907,16 @@ final class AppModel {
         URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
     }
 
+    /// The code-history tool for this chat (ABS-61): nil when its project
+    /// has it off, or when this Mac has no `abstract` command to serve it.
+    func historySettings(for session: Session) -> CodeHistorySettings? {
+        guard let project = project(session.projectId), project.agentHistoryEnabled else { return nil }
+        let tool = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/abstract").path
+        guard FileManager.default.isExecutableFile(atPath: tool) else { return nil }
+        let directory = AttachmentStore.root.deletingLastPathComponent().appendingPathComponent("code-history").path
+        return CodeHistorySettings(command: tool, instructionFile: CodeHistorySettings.instructionFile(in: directory))
+    }
+
     /// Spawn (or respawn) the agent for a session.
     func launch(_ session: Session, prompt: String, resume: Bool, images: [String] = []) throws {
         // A project chat always works in its worktree, never a fallback folder.
@@ -890,7 +942,8 @@ final class AppModel {
         }
         let settings = LaunchSettings(providerOverrides: providerOverrides, outputStyle: outputStyle, claudeProfile: claudeProfile,
                                       standardClaudeProfile: accounts.standardProfilePath, attachmentsDirectory: AttachmentStore.root.path,
-                                      agentDefaults: agentDefaults, modelCatalogs: modelCatalogs)
+                                      agentDefaults: agentDefaults, modelCatalogs: modelCatalogs,
+                                      codeHistory: historySettings(for: session))
         var spec = AgentLaunch.spec(for: session, provider: provider, prompt: prompt, resumeId: resumeId, images: images,
                                     settings: settings, home: executor.homeDirectory)
         let cwd = spec.cwd
@@ -996,6 +1049,10 @@ final class AppModel {
         }
         guard !isDrivenFromCLI(sessionId), var s = session(sessionId), s.permissionPolicy != policy,
               let provider = ProviderRegistry.provider(s.providerId) else { return }
+        // Approving a plan returns to the level you were at before it.
+        if policy.isReadOnly, PermissionPolicy.autonomyCases.contains(s.permissionPolicy) {
+            normalPolicies[sessionId] = s.permissionPolicy
+        }
         s.permissionPolicy = policy
         try? store.save(s)
         reload()
@@ -1174,6 +1231,92 @@ final class AppModel {
         respond(sessionId, requestId: requestId, allow: true, input: AgentQuestion.answeredInput(request.input, answers: answers))
     }
 
+    // MARK: Plans
+
+    /// The `ExitPlanMode` approval a chat is waiting on, if it is.
+    private func pendingPlanRequest(_ sessionId: String) -> PendingPermission? {
+        permissions[sessionId]?.first { Plan.isExitPlanMode($0.toolName) }
+    }
+
+    /// What approving a plan returns the chat to: where it was before
+    /// Plan, else its project's usual level, else asking first.
+    private func normalPolicy(_ sessionId: String) -> PermissionPolicy {
+        if let normal = normalPolicies[sessionId] { return normal }
+        if let s = session(sessionId), let p = project(s.projectId),
+           PermissionPolicy.autonomyCases.contains(p.defaultPermissionPolicy) { return p.defaultPermissionPolicy }
+        return .ask
+    }
+
+    /// Start on the plan: back to your usual permissions, then either
+    /// let Claude's `ExitPlanMode` through (it starts at once) or tell
+    /// an agent whose turn already ended to implement it.
+    func approvePlan(_ sessionId: String) {
+        guard plans[sessionId]?.current != nil else { return }
+        plans[sessionId]?.approve()
+        setPolicy(sessionId, normalPolicy(sessionId))
+        if let pending = pendingPlanRequest(sessionId) {
+            answerPermission(sessionId, requestId: pending.requestId, allow: true)
+            return
+        }
+        if sessionId.hasPrefix(RemoteService.mirrorPrefix) {
+            Task {
+                do { try await sendRemoteFollowUp(sessionId, text: Plan.approveMessage) }
+                catch { flash(error.localizedDescription, isError: true) }
+            }
+        } else {
+            do { try sendFollowUp(sessionId, text: Plan.approveMessage) }
+            catch { flash(error.localizedDescription, isError: true) }
+        }
+    }
+
+    /// The plan waits in the reply box as a quote, for what you want
+    /// changed. The next plan is a new revision; this one stays in
+    /// the card's history.
+    func requestPlanChanges(_ sessionId: String) {
+        guard let plan = plans[sessionId]?.current else { return }
+        plans[sessionId]?.requestChanges()
+        if let pending = pendingPlanRequest(sessionId) {
+            answerPermission(sessionId, requestId: pending.requestId, allow: false)
+        }
+        pendingDrafts[sessionId] = Plan.quoted(plan) + "\n\n"
+    }
+
+    /// Drop the plan. The chat keeps the mode it's in.
+    func discardPlan(_ sessionId: String) {
+        guard plans[sessionId]?.current != nil else { return }
+        plans[sessionId]?.discard()
+        if let pending = pendingPlanRequest(sessionId) {
+            answerPermission(sessionId, requestId: pending.requestId, allow: false)
+        }
+    }
+
+    /// A Plan-mode turn just ended: for agents without a plan tool,
+    /// its final reply is the plan.
+    private func capturePlan(_ sessionId: String) {
+        guard let s = session(sessionId), s.providerId != "claude",
+              pendingPlanRequest(sessionId) == nil,
+              let reply = lastReplies[sessionId],
+              let text = Plan.text(fromFinalReply: reply, policy: s.permissionPolicy) else { return }
+        plans[sessionId, default: PlanState()].add(text)
+    }
+
+    /// After a relaunch, a chat still in Plan mode gets its card back
+    /// from its log: every `ExitPlanMode` it sent, or its last reply.
+    private func seedPlan(_ sessionId: String) {
+        guard plans[sessionId] == nil, let s = session(sessionId), s.permissionPolicy == .plan else { return }
+        var plan = PlanState()
+        for call in feed(sessionId).calls where Plan.isExitPlanMode(call.name) {
+            if let text = Plan.text(fromExitPlanModeInput: call.input) { plan.add(text) }
+        }
+        if plan.current == nil, s.providerId != "claude" {
+            let reply = feed(sessionId).timeline.blocks.last { if case .assistant = $0 { true } else { false } }
+            if case let .assistant(_, text, _, _) = reply, let text = Plan.text(fromFinalReply: text, policy: .plan) {
+                plan.add(text)
+            }
+        }
+        if plan.current != nil { plans[sessionId] = plan }
+    }
+
     private func respond(_ sessionId: String, requestId: String, allow: Bool, input: JSONValue?) {
         guard let session = session(sessionId), let provider = ProviderRegistry.provider(session.providerId) else { return }
         if let line = provider.buildPermissionResponse(requestId: requestId, allow: allow, input: input) {
@@ -1241,6 +1384,9 @@ final class AppModel {
             switch event {
             case let .permissionRequest(requestId, toolName, input):
                 permissions[mirrorId, default: []].append(PendingPermission(requestId: requestId, toolName: toolName, input: input))
+                if Plan.isExitPlanMode(toolName), let text = Plan.text(fromExitPlanModeInput: input) {
+                    plans[mirrorId, default: PlanState()].add(text)
+                }
             case .sessionId:
                 continue
             // The chat's status comes with the other Mac's snapshot; here it
@@ -1460,6 +1606,7 @@ final class AppModel {
             }
         case let .status(status, detail):
             setStatus(sessionId, status, detail: detail)
+            if status == .idle || status == .finished { capturePlan(sessionId) }
             if status == .idle, stopRequests.removeValue(forKey: sessionId) != nil {
                 // A turn you stopped: nothing to tell you, review or answer.
                 permissions[sessionId] = nil
@@ -1477,7 +1624,21 @@ final class AppModel {
             setStatus(sessionId, .waitingInput, detail: "Question for you")
             notify(sessionId, .waitingInput, detail: AgentQuestion.parse(input).first?.question
                 ?? "\(ProviderRegistry.name(session(sessionId)?.providerId ?? "")) has a question")
+        case let .permissionRequest(requestId, toolName, input) where Plan.isExitPlanMode(toolName):
+            // A plan to approve, never let through on its own. It stays a
+            // pending permission so Approve can answer it, but the plan
+            // card is what shows.
+            permissions[sessionId, default: []].append(PendingPermission(requestId: requestId, toolName: toolName, input: input))
+            if let text = Plan.text(fromExitPlanModeInput: input) { plans[sessionId, default: PlanState()].add(text) }
+            setStatus(sessionId, .waitingInput, detail: "Plan ready for your approval")
+            notify(sessionId, .waitingInput, detail: "\(ProviderRegistry.name(session(sessionId)?.providerId ?? "")) wrote a plan for your approval")
         case let .permissionRequest(requestId, toolName, input):
+            if let rule = permissionRuleAnswer(sessionId, toolName: toolName, input: input) {
+                recordRuleAnswer(rule, requestId: requestId, toolName: toolName, input: input, in: sessionId)
+                permissions[sessionId, default: []].append(PendingPermission(requestId: requestId, toolName: toolName, input: input))
+                answerPermission(sessionId, requestId: requestId, allow: rule.decision == .allow)
+                return
+            }
             if shouldAutoContinue(toolName, in: sessionId) {
                 permissions[sessionId, default: []].append(PendingPermission(requestId: requestId, toolName: toolName, input: input))
                 answerPermission(sessionId, requestId: requestId, allow: true)
@@ -1487,6 +1648,7 @@ final class AppModel {
             setStatus(sessionId, .waitingInput, detail: "\(toolName) needs approval")
             notify(sessionId, .waitingInput, detail: "\(ProviderRegistry.name(session(sessionId)?.providerId ?? "")) wants to use \(toolName)")
         case let .text(.assistant, text, _, false):
+            lastReplies[sessionId] = text
             nameFromReply(sessionId, text)
         case let .usage(totals, cost, duration, turns):
             let s = session(sessionId)
@@ -1541,6 +1703,7 @@ final class AppModel {
         // Each agent's part of the log is read by its own parser.
         let stream = ChatStream(providerId: ChatStream.firstProvider(in: lines, current: s.handoffFrom ?? s.providerId))
         feed(sessionId).reset(stream.replay(lines))
+        seedPlan(sessionId)
         seenSeq[sessionId] = max(seenSeq[sessionId] ?? 0, replay.last?.seq ?? 0)
         streams[sessionId] = streams[sessionId] ?? stream
     }

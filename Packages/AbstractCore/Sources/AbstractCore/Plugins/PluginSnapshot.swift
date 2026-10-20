@@ -119,10 +119,22 @@ public struct PluginSnapshot: Sendable, Hashable, Codable {
     }
 }
 
+extension PluginSnapshot.Chat {
+    public func jsonValue() -> JSONValue {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        guard let data = try? encoder.encode(self),
+              let object = try? JSONSerialization.jsonObject(with: data) else { return .object([:]) }
+        return JSONValue(any: object)
+    }
+}
+
 /// Theme and locale handed to every plugin without a grant (ABS-84 §4).
 public enum PluginContext {
     public static func jsonValue(theme: Theme, locale: String, pluginId: String, pluginVersion: String,
-                                 capabilities: Set<PluginCapability>) -> JSONValue {
+                                 capabilities: Set<PluginCapability>,
+                                 placement: PluginPlacement? = nil,
+                                 chat: PluginSnapshot.Chat? = nil) -> JSONValue {
         let roles: [PaletteRole] = [.canvas, .sidebar, .surface, .surfaceRaised, .inset, .hover, .selection,
                                     .field, .border, .borderStrong, .text, .prose, .textSecondary, .textTertiary,
                                     .accent, .onAccent, .added, .removed]
@@ -131,7 +143,7 @@ public enum PluginContext {
             let swatch = role.swatch(in: theme)
             tokens[role.rawValue] = .string(css(swatch))
         }
-        return .object([
+        var object: [String: JSONValue] = [
             "theme": .string(theme.rawValue),
             "tokens": .object(tokens),
             "fontFamily": .string("-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"),
@@ -139,7 +151,21 @@ public enum PluginContext {
             "pluginId": .string(pluginId),
             "pluginVersion": .string(pluginVersion),
             "capabilities": .array(capabilities.map(\.rawValue).sorted().map(JSONValue.string)),
-        ])
+        ]
+        // Where this showing sits (ABS-96). The chat's id is the user's own
+        // target; its snapshot row is included only under `chats.read`, and
+        // only for the chat this place sits beside.
+        if let placement {
+            object["place"] = .string(placement.place.rawValue)
+            object["contributionId"] = .string(placement.contributionId)
+            if let chatId = placement.chatId {
+                object["chatId"] = .string(chatId)
+                if capabilities.contains(.chatsRead), let chat, chat.id == chatId {
+                    object["chat"] = chat.jsonValue()
+                }
+            }
+        }
+        return .object(object)
     }
 
     static func css(_ swatch: Swatch) -> String {

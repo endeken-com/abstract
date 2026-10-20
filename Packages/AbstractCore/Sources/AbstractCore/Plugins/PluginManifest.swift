@@ -66,6 +66,58 @@ public enum PluginValidationError: Error, Sendable, Hashable, CustomStringConver
     }
 }
 
+/// Where a plugin can appear (ABS-96). Every place runs the same sandboxed
+/// web view; what differs is the context the host hands it.
+public enum PluginPlace: String, Sendable, Hashable, Codable, CaseIterable {
+    case main
+    case chatPanel
+    case chatMenu
+    case palette
+    case settings
+    case home
+
+    /// The place in plain words, for the review screen.
+    public var plainWords: String {
+        switch self {
+        case .main: "Its own screen in the sidebar"
+        case .chatPanel: "A tab in a chat's side panel, next to Review, Files and Terminal"
+        case .chatMenu: "An item in a chat's More menu"
+        case .palette: "A command in ⌘K"
+        case .settings: "A page under Settings → Plugins"
+        case .home: "A card on the Home screen"
+        }
+    }
+}
+
+/// Where one showing of a plugin sits, and the chat it sits beside when it
+/// has one. The chat's id is the user's own target (they opened this tab or
+/// menu item on that chat); the chat's details still need `chats.read`.
+public struct PluginPlacement: Sendable, Hashable, Codable {
+    public var place: PluginPlace
+    public var contributionId: String
+    public var chatId: String?
+    public init(place: PluginPlace, contributionId: String, chatId: String? = nil) {
+        self.place = place; self.contributionId = contributionId; self.chatId = chatId
+    }
+}
+
+/// A menu item or ⌘K command being run: the host opens the plugin's screen
+/// and hands it this, so the plugin can act on the chat it was run from.
+public struct PluginInvocation: Sendable, Hashable, Codable {
+    public var place: PluginPlace
+    public var contributionId: String
+    public var chatId: String?
+    public init(place: PluginPlace, contributionId: String, chatId: String? = nil) {
+        self.place = place; self.contributionId = contributionId; self.chatId = chatId
+    }
+    public func jsonValue() -> JSONValue {
+        var object: [String: JSONValue] = ["place": .string(place.rawValue),
+                                           "contributionId": .string(contributionId)]
+        if let chatId { object["chatId"] = .string(chatId) }
+        return .object(object)
+    }
+}
+
 /// A plugin's `manifest.json` (API 1). Unknown keys are ignored.
 public struct PluginManifest: Sendable, Hashable, Codable {
     public static let supportedAPI = 1
@@ -81,9 +133,45 @@ public struct PluginManifest: Sendable, Hashable, Codable {
     public var capabilities: [String]
     public var contributes: Contributes
 
+    /// One thing a plugin adds outside its sidebar screen: a tab, a menu
+    /// item, a ⌘K command, its Settings page, or a Home card.
+    public struct Contribution: Sendable, Hashable, Codable, Identifiable {
+        public var id: String
+        public var title: String
+        public var symbol: String?
+        public init(id: String, title: String, symbol: String? = nil) {
+            self.id = id; self.title = title; self.symbol = symbol
+        }
+        public var symbolOrFallback: String {
+            symbol.flatMap { $0.isEmpty ? nil : $0 } ?? PluginManifest.fallbackSymbol
+        }
+    }
+
     public struct Contributes: Sendable, Hashable, Codable {
         public var views: [View]
-        public init(views: [View]) { self.views = views }
+        public var chatPanelTabs: [Contribution]
+        public var chatMenuItems: [Contribution]
+        public var paletteCommands: [Contribution]
+        public var settingsPage: Contribution?
+        public var homeWidgets: [Contribution]
+
+        public init(views: [View] = [], chatPanelTabs: [Contribution] = [], chatMenuItems: [Contribution] = [],
+                    paletteCommands: [Contribution] = [], settingsPage: Contribution? = nil,
+                    homeWidgets: [Contribution] = []) {
+            self.views = views; self.chatPanelTabs = chatPanelTabs; self.chatMenuItems = chatMenuItems
+            self.paletteCommands = paletteCommands; self.settingsPage = settingsPage; self.homeWidgets = homeWidgets
+        }
+
+        // Manifests written before the extra places carry only `views`.
+        public init(from decoder: Decoder) throws {
+            let box = try decoder.container(keyedBy: CodingKeys.self)
+            views = try box.decodeIfPresent([View].self, forKey: .views) ?? []
+            chatPanelTabs = try box.decodeIfPresent([Contribution].self, forKey: .chatPanelTabs) ?? []
+            chatMenuItems = try box.decodeIfPresent([Contribution].self, forKey: .chatMenuItems) ?? []
+            paletteCommands = try box.decodeIfPresent([Contribution].self, forKey: .paletteCommands) ?? []
+            settingsPage = try box.decodeIfPresent(Contribution.self, forKey: .settingsPage)
+            homeWidgets = try box.decodeIfPresent([Contribution].self, forKey: .homeWidgets) ?? []
+        }
     }
 
     public struct View: Sendable, Hashable, Codable, Identifiable {
@@ -101,10 +189,34 @@ public struct PluginManifest: Sendable, Hashable, Codable {
 
     public init(api: Int = supportedAPI, id: String, name: String, version: String,
                 description: String? = nil, entry: String = "index.html",
-                capabilities: [String], views: [View]) {
+                capabilities: [String], views: [View] = [],
+                chatPanelTabs: [Contribution] = [], chatMenuItems: [Contribution] = [],
+                paletteCommands: [Contribution] = [], settingsPage: Contribution? = nil,
+                homeWidgets: [Contribution] = []) {
         self.api = api; self.id = id; self.name = name; self.version = version
         self.description = description; self.entry = entry
-        self.capabilities = capabilities; self.contributes = Contributes(views: views)
+        self.capabilities = capabilities
+        self.contributes = Contributes(views: views, chatPanelTabs: chatPanelTabs, chatMenuItems: chatMenuItems,
+                                       paletteCommands: paletteCommands, settingsPage: settingsPage, homeWidgets: homeWidgets)
+    }
+
+    /// Every place this plugin appears, one plain sentence each, for the
+    /// review screen.
+    public var appearanceSentences: [String] {
+        func sentence(_ title: String, _ place: PluginPlace) -> String {
+            let words = place.plainWords
+            return "\(title) — \(words.prefix(1).lowercased())\(words.dropFirst())."
+        }
+        var sentences: [String] = contributes.views.map { sentence($0.title, .main) }
+        let places: [(PluginPlace, [Contribution])] = [
+            (.chatPanel, contributes.chatPanelTabs), (.chatMenu, contributes.chatMenuItems),
+            (.palette, contributes.paletteCommands),
+            (.settings, contributes.settingsPage.map { [$0] } ?? []), (.home, contributes.homeWidgets),
+        ]
+        for (place, items) in places {
+            sentences += items.map { sentence($0.title, place) }
+        }
+        return sentences
     }
 
     /// The capabilities, once validated. Empty when one is unknown.
@@ -143,15 +255,41 @@ public struct PluginManifest: Sendable, Hashable, Codable {
         for name in capabilities where PluginCapability(rawValue: name) == nil {
             throw PluginValidationError.unknownCapability(name)
         }
-        guard contributes.views.count == 1, let view = contributes.views.first else {
-            throw PluginValidationError.invalidManifest("exactly one view is supported")
+        guard contributes.views.count <= 1 else {
+            throw PluginValidationError.invalidManifest("at most one view is supported")
         }
-        guard view.location == "main" else {
-            throw PluginValidationError.invalidManifest("unknown view location: \(view.location)")
+        if let view = contributes.views.first {
+            guard view.location == "main" else {
+                throw PluginValidationError.invalidManifest("unknown view location: \(view.location)")
+            }
+            guard Self.isSound(id: view.id, title: view.title) else {
+                throw PluginValidationError.invalidManifest("view needs an id and a title of at most 40 characters")
+            }
         }
-        guard !view.id.isEmpty, !view.title.isEmpty, view.title.count <= 40 else {
-            throw PluginValidationError.invalidManifest("view needs an id and a title of at most 40 characters")
+        let places: [(String, [Contribution])] = [
+            ("chatPanelTabs", contributes.chatPanelTabs), ("chatMenuItems", contributes.chatMenuItems),
+            ("paletteCommands", contributes.paletteCommands), ("homeWidgets", contributes.homeWidgets),
+            ("settingsPage", contributes.settingsPage.map { [$0] } ?? []),
+        ]
+        for (place, items) in places {
+            guard items.count <= 8 else {
+                throw PluginValidationError.invalidManifest("too many \(place)")
+            }
+            guard Set(items.map(\.id)).count == items.count else {
+                throw PluginValidationError.invalidManifest("duplicate id in \(place)")
+            }
+            for item in items where !Self.isSound(id: item.id, title: item.title) {
+                throw PluginValidationError.invalidManifest("\(place) entries need an id and a title of at most 40 characters")
+            }
         }
+        let total = contributes.views.count + places.map(\.1.count).reduce(0, +)
+        guard total > 0 else {
+            throw PluginValidationError.invalidManifest("the plugin doesn't add anything")
+        }
+    }
+
+    static func isSound(id: String, title: String) -> Bool {
+        !id.isEmpty && !title.trimmingCharacters(in: .whitespaces).isEmpty && title.count <= 40
     }
 
     static func isReverseDNS(_ id: String) -> Bool {

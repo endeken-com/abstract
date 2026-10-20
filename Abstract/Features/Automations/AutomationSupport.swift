@@ -22,6 +22,10 @@ extension AppModel {
     /// Pausing clears the next fire; resuming computes it from now.
     func setAutomationEnabled(_ id: String, _ enabled: Bool) {
         guard var a = automations.first(where: { $0.id == id }), a.enabled != enabled else { return }
+        // Switched by hand: a later "Resume everything" leaves it as put.
+        var pause = pauseState
+        pause.forget(automationId: id)
+        if pause != pauseState { pauseState = pause }
         a.enabled = enabled
         do {
             try saveAutomation(a)
@@ -194,6 +198,8 @@ extension PermissionPolicy {
         case .ask: "approval for each action"
         case .autoEdits: "edits accepted"
         case .bypass: "full autonomy"
+        case .plan: "a plan for your approval"
+        case .readOnly: "read-only answers"
         }
     }
 }

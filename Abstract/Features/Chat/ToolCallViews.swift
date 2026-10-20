@@ -148,6 +148,8 @@ struct ToolCallView: View {
     @State private var open: Bool?
     @State private var hovering = false
     @State private var answered = false
+    /// "Always allow/deny in this project…" being written, and which way.
+    @State private var ruleDecision: PermissionDecision?
 
     private var kind: ToolKind { ToolKind(call.name) }
     private var outcome: ToolOutcome { ToolOutcome(call) }
@@ -188,6 +190,13 @@ struct ToolCallView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
+            if !asking, let note = model.ruleNote(for: call, in: sessionId) {
+                Text(note)
+                    .font(.btChatCaption)
+                    .foregroundStyle(Color.btTextTertiary)
+                    .textSelection(.enabled)
+                    .padding(.bottom, Space.xs)
+            }
             if ToolThumbnail.shows(call) { ToolThumbnail(sessionId: sessionId, call: call) }
             if isOpen {
                 details
@@ -205,6 +214,15 @@ struct ToolCallView: View {
             }
         }
         .contextMenu { menu }
+        .sheet(isPresented: Binding(get: { ruleDecision != nil }, set: { if !$0 { ruleDecision = nil } })) {
+            if let decision = ruleDecision, let projectId = model.session(sessionId)?.projectId {
+                PermissionRuleSheet(projectId: projectId, seed: PermissionRuleSeed(call: call, decision: decision,
+                                                                                   root: model.session(sessionId)?.worktreePath)) {
+                    ruleDecision = nil
+                    answer(decision == .allow)
+                }
+            }
+        }
     }
 
     private var header: some View {
@@ -348,6 +366,10 @@ struct ToolCallView: View {
             Button("Always Continue for \(ToolPresentation.displayName(call.name)) in This Chat") {
                 model.autoContinue(call.name, in: sessionId)
                 answer(true)
+            }
+            if model.session(sessionId)?.projectId != nil {
+                Button("Always Allow in This Project…") { ruleDecision = .allow }
+                Button("Always Deny in This Project…") { ruleDecision = .deny }
             }
             Divider()
         }
@@ -794,6 +816,15 @@ enum ToolPresentation {
 
     /// Past tense once done, present while running: "Edited", "Editing".
     static func verb(_ name: String, pending: Bool = false) -> String {
+        // Abstract's own code-history tools, under any agent's spelling.
+        if let tool = CodeHistory.tool(inStreamName: name) {
+            return switch (tool, pending) {
+            case (CodeHistory.historyTool, true): "Looking up history of"
+            case (CodeHistory.historyTool, false): "Looked up history of"
+            case (_, true): "Reading more of an earlier chat"
+            case (_, false): "Read more of an earlier chat"
+            }
+        }
         if pending {
             switch name.lowercased() {
             case "read", "read_file", "notebookread": return "Reading"
@@ -911,9 +942,15 @@ enum ToolPresentation {
         }
         if let path = path(call) {
             let rel = relative(path, root: root)
-            let name = (rel as NSString).lastPathComponent
+            var name = (rel as NSString).lastPathComponent
+            if name.isEmpty { name = rel }
+            // A history lookup names its lines too: "Diff.swift lines 220–245".
+            if CodeHistory.tool(inStreamName: call.name) == CodeHistory.historyTool,
+               let lines = o["lines"]?.string.flatMap(CodeHistoryService.lineRange) {
+                name += lines.lowerBound == lines.upperBound ? " line \(lines.lowerBound)" : " lines \(lines.lowerBound)–\(lines.upperBound)"
+            }
             let folder = (rel as NSString).deletingLastPathComponent
-            return .path(name: name.isEmpty ? rel : name, folder: folder == "/" ? nil : folder)
+            return .path(name: name, folder: folder == "/" ? nil : folder)
         }
         if call.name.lowercased() == "skill", let skill = o["skill"]?.string { return .text(skill) }
         for key in ["pattern", "query", "url", "description", "path", "command"] {

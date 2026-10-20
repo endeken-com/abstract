@@ -21,6 +21,10 @@ public struct TurnRecord: Sendable, Hashable, Identifiable, Codable {
     public var corrections: [String]
     /// What the agent says it did: its turn summary, or its last reply cut short.
     public var summary: String?
+    /// One line saying what this turn settled, for the history an agent
+    /// reads before changing the same code (ABS-61). Derived from the
+    /// summary when the turn is recorded; nil for turns recorded before.
+    public var decision: String?
     /// Paths relative to the worktree, sorted.
     public var files: [String]
     /// Those of `files` it left uncommitted, for the Commit button to claim.
@@ -38,11 +42,11 @@ public struct TurnRecord: Sendable, Hashable, Identifiable, Codable {
 
     public init(id: String = UUID().uuidString, projectId: String?, sessionId: String, chatName: String, providerId: String,
                 number: Int, startedAt: Date? = nil, endedAt: Date? = nil, request: String? = nil, corrections: [String] = [],
-                summary: String? = nil, files: [String] = [], uncommitted: [String] = [], headBefore: String? = nil, headAfter: String? = nil,
+                summary: String? = nil, decision: String? = nil, files: [String] = [], uncommitted: [String] = [], headBefore: String? = nil, headAfter: String? = nil,
                 branch: String? = nil, pullRequest: Int? = nil, ticket: String? = nil, logStart: Int = 0, logEnd: Int = 0) {
         self.id = id; self.projectId = projectId; self.sessionId = sessionId; self.chatName = chatName
         self.providerId = providerId; self.number = number; self.startedAt = startedAt; self.endedAt = endedAt
-        self.request = request; self.corrections = corrections; self.summary = summary; self.files = files
+        self.request = request; self.corrections = corrections; self.summary = summary; self.decision = decision; self.files = files
         self.uncommitted = uncommitted
         self.headBefore = headBefore; self.headAfter = headAfter; self.branch = branch; self.pullRequest = pullRequest
         self.ticket = ticket; self.logStart = logStart; self.logEnd = logEnd
@@ -131,6 +135,14 @@ extension Store {
         try writer.read { db in
             try TurnRow.fetchOne(db, sql: "SELECT * FROM turn_records WHERE session_id = ? ORDER BY number DESC LIMIT 1",
                                  arguments: [sessionId])?.value
+        }
+    }
+
+    /// Every recorded turn of a project's chats, newest first.
+    public func turnRecords(projectId: String?) throws -> [TurnRecord] {
+        try writer.read { db in
+            try TurnRow.fetchAll(db, sql: "SELECT * FROM turn_records WHERE project_id IS ? ORDER BY ended_at DESC, number DESC",
+                                 arguments: [projectId]).map(\.value)
         }
     }
 
@@ -272,6 +284,7 @@ private struct TurnRow: FetchableRecord, PersistableRecord {
             request: try row.decode(forColumn: "request"),
             corrections: Self.list(try row.decode(forColumn: "corrections")),
             summary: try row.decode(forColumn: "summary"),
+            decision: try row.decode(forColumn: "decision"),
             files: Self.list(try row.decode(forColumn: "files")),
             uncommitted: Self.list(try row.decode(forColumn: "uncommitted")),
             headBefore: try row.decode(forColumn: "head_before"),
@@ -295,6 +308,7 @@ private struct TurnRow: FetchableRecord, PersistableRecord {
         container["request"] = value.request
         container["corrections"] = Self.text(value.corrections)
         container["summary"] = value.summary
+        container["decision"] = value.decision
         container["files"] = Self.text(value.files)
         container["uncommitted"] = Self.text(value.uncommitted)
         container["head_before"] = value.headBefore

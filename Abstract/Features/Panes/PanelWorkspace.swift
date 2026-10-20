@@ -160,6 +160,18 @@ struct PanelTabBar: View {
             ForEach(PaneKind.allCases.filter { $0.fits(slot) && $0.isAvailable }, id: \.self) { kind in
                 Button(kind.title) { model.updateLayout(session.id) { $0.add(kind, to: slot) } }
             }
+            // Tabs plugins offer beside a chat (ABS-96), side panel only.
+            if slot == .side {
+                let offered = model.plugins.contributions(.chatPanel)
+                if !offered.isEmpty {
+                    Divider()
+                    ForEach(offered) { contribution in
+                        Button(contribution.contribution.title) {
+                            model.showPluginPanelTab(contribution, in: session.id)
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -251,6 +263,13 @@ private struct PaneTabTitle: View {
     let item: PaneItem
     let session: Session
 
+    private var pluginTitle: String? {
+        guard let parsed = PluginContributions.parsePaneItemId(item.id) else { return nil }
+        return model.plugins.contributions(.chatPanel).first {
+            $0.pluginId == parsed.pluginId && $0.contribution.id == parsed.contributionId
+        }?.contribution.title
+    }
+
     var body: some View {
         switch item.kind {
         case .terminal:
@@ -262,6 +281,8 @@ private struct PaneTabTitle: View {
             Text("Files")
         case .review:
             Text(verbatim: model.pullRequests[session.id]?.label ?? "Pull Request")
+        case .plugin:
+            Text(pluginTitle ?? "Plugin")
         default:
             Text(item.kind.title)
         }
@@ -287,7 +308,7 @@ struct PaneGlyph: View {
                 Image(systemName: "apple.terminal").font(.system(size: 11.5, weight: .regular))
             case .review:
                 PullRequestGlyph(kind: .open).frame(width: 12, height: 12)
-            case .chat:
+            case .chat, .plugin:
                 Image(systemName: kind.symbol).font(.system(size: 11.5, weight: .regular))
             }
         }

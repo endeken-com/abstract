@@ -21,13 +21,19 @@ public struct MuseProvider: ProviderDefinition {
 
     private func launch(_ ctx: LaunchContext, resumeId: String?) -> LaunchSpec {
         let selectedBinary = ctx.binaryOverride?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let prompt = (ctx.outputStyle.instructions.map { $0 + "\n\n" } ?? "") + ctx.prompt
+        let mode = switch ctx.permissionPolicy {
+        case .plan: Plan.instruction
+        case .readOnly: Plan.readOnlyInstruction
+        default: nil as String?
+        }
+        let prompt = (ctx.outputStyle.instructions.map { $0 + "\n\n" } ?? "")
+            + (mode.map { $0 + "\n\n" } ?? "") + ctx.prompt
         // The host's sandbox posture is fixed by launch flags; what may run
         // without asking is chosen on the wire. Abstract still cannot answer
         // an approval, so nothing is left waiting for one: unmatched work is
         // denied, never held. Same reach as the old exec mapping.
         let flags: [String] = switch ctx.permissionPolicy {
-        case .ask: ["--disable-write", "--disable-shell"]
+        case .ask, .plan, .readOnly: ["--disable-write", "--disable-shell"]
         case .autoEdits: []
         case .bypass: ["--disable-sandbox"]
         }
@@ -69,6 +75,8 @@ public struct MuseProvider: ProviderDefinition {
         case .ask: "Muse Code is read-only here because its file edits do not ask for approval. Abstract cannot answer an approval request; use the Muse Code terminal for that."
         case .autoEdits: "Muse Code may edit the worktree. Abstract cannot answer a command approval here; stop the turn and use the Muse Code terminal."
         case .bypass: "Muse Code runs without approval or a sandbox. Only for trusted tasks."
+        case .plan: "Muse Code is read-only and writes a plan. Nothing changes until you approve it."
+        case .readOnly: "Muse Code is read-only: it can look and answer, but can't change anything."
         }
     }
 

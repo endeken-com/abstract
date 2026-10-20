@@ -1,16 +1,22 @@
 import Foundation
 
-/// How much an agent may do without asking.
+/// How much an agent may do without asking. The last two are the
+/// composer's read-only modes (ABS-104): Plan writes a plan for your
+/// approval before anything changes, Ask only looks and answers.
 public enum PermissionPolicy: String, Sendable, Codable, CaseIterable {
     case ask
     case autoEdits = "auto-edits"
     case bypass
+    case plan
+    case readOnly = "read-only"
 
     public var title: String {
         switch self {
         case .ask: "Ask before acting"
         case .autoEdits: "Accept edits"
         case .bypass: "Full autonomy"
+        case .plan: "Plan"
+        case .readOnly: "Ask (read-only)"
         }
     }
 
@@ -19,8 +25,36 @@ public enum PermissionPolicy: String, Sendable, Codable, CaseIterable {
         case .ask: "You approve each tool call in the chat."
         case .autoEdits: "File edits go through; commands still ask."
         case .bypass: "Nothing asks. Only for trusted tasks."
+        case .plan: "The agent explores and writes a plan. Nothing changes until you approve it."
+        case .readOnly: "The agent can look and answer, but can't change anything."
         }
     }
+
+    /// It may look, but it changes nothing.
+    public var isReadOnly: Bool { self == .plan || self == .readOnly }
+
+    /// The levels of autonomy a chat, project or automation runs at.
+    /// Plan and Ask are picked per message in the composer instead.
+    public static let autonomyCases: [PermissionPolicy] = [.ask, .autoEdits, .bypass]
+}
+
+/// The code-history tool handed to one chat's agent (ABS-61): the
+/// `abstract` command that serves it, for this chat only.
+public struct HistoryToolLaunch: Sendable, Hashable {
+    /// The `abstract` executable on the agent's Mac.
+    public var command: String
+    public var chatId: String
+    /// A file holding `CodeHistory.instruction`, for agents whose
+    /// instructions are files (OpenCode).
+    public var instructionFile: String?
+
+    public init(command: String, chatId: String, instructionFile: String? = nil) {
+        self.command = command; self.chatId = chatId; self.instructionFile = instructionFile
+    }
+
+    /// What runs the server: `abstract mcp --chat <id>`.
+    public var serverArgs: [String] { ["mcp", "--chat", chatId] }
+    public var serverCommand: [String] { [command] + serverArgs }
 }
 
 public struct LaunchContext: Sendable {
@@ -40,13 +74,16 @@ public struct LaunchContext: Sendable {
     public var images: [String]
     /// Folders outside the worktree the agent may read without asking (attachments).
     public var readableDirs: [String]
+    /// The code-history tool for this chat; nil when the project has it off.
+    public var historyTool: HistoryToolLaunch?
 
     public init(cwd: String, prompt: String, resumeId: String? = nil, permissionPolicy: PermissionPolicy,
                 extraArgs: [String] = [], binaryOverride: String? = nil, model: String? = nil, effort: String? = nil,
-                outputStyle: OutputStyle = .default, images: [String] = [], readableDirs: [String] = []) {
+                outputStyle: OutputStyle = .default, images: [String] = [], readableDirs: [String] = [],
+                historyTool: HistoryToolLaunch? = nil) {
         self.cwd = cwd; self.prompt = prompt; self.resumeId = resumeId; self.permissionPolicy = permissionPolicy
         self.extraArgs = extraArgs; self.binaryOverride = binaryOverride; self.outputStyle = outputStyle
-        self.images = images; self.readableDirs = readableDirs
+        self.images = images; self.readableDirs = readableDirs; self.historyTool = historyTool
         self.model = Self.nonBlank(model)
         self.effort = Self.nonBlank(effort)
     }

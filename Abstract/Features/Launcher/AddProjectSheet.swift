@@ -78,7 +78,7 @@ struct AddProjectSheet: View {
                     GridRow {
                         Text("Permissions").foregroundStyle(Color.btTextSecondary)
                         Picker("", selection: $policy) {
-                            ForEach(PermissionPolicy.allCases, id: \.self) { p in Text(p.title).tag(p) }
+                            ForEach(PermissionPolicy.autonomyCases, id: \.self) { p in Text(p.title).tag(p) }
                         }
                         .labelsHidden()
                     }

@@ -229,6 +229,27 @@ public final class Store: Sendable {
         }
     }
 
+    // MARK: - Permission rules
+
+    /// A project's remembered permission answers, oldest first.
+    public func permissionRules(projectId: String) throws -> [PermissionRule] {
+        try writer.read { db in
+            try PermissionRuleRow.fetchAll(
+                db, sql: "SELECT * FROM permission_rules WHERE project_id = ? ORDER BY created_at, rowid",
+                arguments: [projectId]).map(\.value)
+        }
+    }
+
+    public func save(_ rule: PermissionRule) throws {
+        try writer.write { db in try PermissionRuleRow(rule).save(db) }
+    }
+
+    public func deletePermissionRule(_ id: String) throws {
+        try writer.write { db in
+            try db.execute(sql: "DELETE FROM permission_rules WHERE id = ?", arguments: [id])
+        }
+    }
+
     // MARK: - Usage
 
     public func record(_ usage: UsageRecord) throws {
@@ -582,11 +603,32 @@ public final class Store: Sendable {
         migrator.registerMigration("v12-automation-device") { db in
             try db.execute(sql: "ALTER TABLE automations ADD COLUMN device_id TEXT")
         }
+        // What each turn settled, in one line, and whether a project's
+        // agents may read that history (ABS-61); existing projects may.
+        migrator.registerMigration("v13-code-history") { db in
+            try db.execute(sql: "ALTER TABLE turn_records ADD COLUMN decision TEXT")
+            try db.execute(sql: "ALTER TABLE projects ADD COLUMN agent_history INTEGER")
+        }
+        // Remembered permission answers, per project.
+        migrator.registerMigration("v14-permission-rules") { db in
+            try db.execute(sql: """
+                CREATE TABLE permission_rules (
+                  id         TEXT PRIMARY KEY NOT NULL,
+                  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                  kind       TEXT NOT NULL,
+                  pattern    TEXT NOT NULL,
+                  decision   TEXT NOT NULL,
+                  expires_at DATETIME,
+                  created_at DATETIME NOT NULL
+                );
+                CREATE INDEX permission_rules_project ON permission_rules(project_id);
+                """)
+        }
         // What a run does while the last is still going, what missed runs
         // do (the catch_up switch becomes "run once"), and skipping when
         // the project hasn't changed. catch_up stays, kept in step, so a
         // build from before this still reads the database.
-        migrator.registerMigration("v13-automation-scheduling") { db in
+        migrator.registerMigration("v15-automation-scheduling") { db in
             try db.execute(sql: "ALTER TABLE automations ADD COLUMN concurrency TEXT")
             try db.execute(sql: "ALTER TABLE automations ADD COLUMN missed_runs TEXT")
             try db.execute(sql: "ALTER TABLE automations ADD COLUMN only_when_changed BOOLEAN NOT NULL DEFAULT 0")
@@ -652,7 +694,8 @@ private struct ProjectRow: FetchableRecord, PersistableRecord {
             setupScript: try row.decode(forColumn: "setup_script"),
             teardownScript: try row.decode(forColumn: "teardown_script"),
             runScript: try row.decode(forColumn: "run_script"),
-            defaultDeviceId: try row.decode(forColumn: "default_device_id"))
+            defaultDeviceId: try row.decode(forColumn: "default_device_id"),
+            agentHistory: try row.decode(forColumn: "agent_history"))
     }
 
     func encode(to container: inout PersistenceContainer) throws {
@@ -677,6 +720,7 @@ private struct ProjectRow: FetchableRecord, PersistableRecord {
         container["teardown_script"] = value.teardownScript
         container["run_script"] = value.runScript
         container["default_device_id"] = value.defaultDeviceId
+        container["agent_history"] = value.agentHistory
     }
 }
 
@@ -876,6 +920,34 @@ private struct RunRow: FetchableRecord, PersistableRecord {
         container["error"] = value.error
         container["reason"] = value.reason
         container["base_commit"] = value.baseCommit
+    }
+}
+
+private struct PermissionRuleRow: FetchableRecord, PersistableRecord {
+    static let databaseTableName = "permission_rules"
+    let value: PermissionRule
+
+    init(_ value: PermissionRule) { self.value = value }
+
+    init(row: Row) throws {
+        value = PermissionRule(
+            id: try row.decode(forColumn: "id"),
+            projectId: try row.decode(forColumn: "project_id"),
+            kind: try row.rawEnum("kind"),
+            pattern: try row.decode(forColumn: "pattern"),
+            decision: try row.rawEnum("decision"),
+            expiresAt: try row.decode(forColumn: "expires_at"),
+            createdAt: try row.decode(forColumn: "created_at"))
+    }
+
+    func encode(to container: inout PersistenceContainer) throws {
+        container["id"] = value.id
+        container["project_id"] = value.projectId
+        container["kind"] = value.kind.rawValue
+        container["pattern"] = value.pattern
+        container["decision"] = value.decision.rawValue
+        container["expires_at"] = value.expiresAt
+        container["created_at"] = value.createdAt
     }
 }
 

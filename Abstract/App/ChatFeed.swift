@@ -47,6 +47,10 @@ final class ChatFeed {
     /// When the turn under way started, as its log says: known after a
     /// relaunch, and for chats `abstract` or another Mac runs.
     private(set) var turnStartedAt: Date?
+    /// When the newest logged event arrived: the stall watch reads it.
+    private(set) var lastOutputAt: Date?
+    /// Your newest message: what "Stop and retry" sends again.
+    private(set) var lastUserMessage: String?
     private(set) var last: AgentEvent?
     /// The agent's suggested next message, until you send one yourself.
     private(set) var suggestion: String?
@@ -118,6 +122,8 @@ final class ChatFeed {
         if lastTurnId != self.lastTurnId { self.lastTurnId = lastTurnId }
         let started = timeline.turnStartedAt
         if started != turnStartedAt { turnStartedAt = started }
+        if timeline.lastOutputAt != lastOutputAt { lastOutputAt = timeline.lastOutputAt }
+        if timeline.lastUserMessage != lastUserMessage { lastUserMessage = timeline.lastUserMessage }
         if timeline.last != last { last = timeline.last }
         if timeline.pendingSuggestion != suggestion { suggestion = timeline.pendingSuggestion }
         if timeline.latestCommands != commands { commands = timeline.latestCommands }

@@ -33,6 +33,12 @@ final class PluginService {
     /// Enabled plugins that can run: a sidebar row each.
     var usable: [InstalledPlugin] { installed.filter(\.isUsable) }
 
+    /// Where usable plugins appear besides the sidebar (ABS-96). Derived
+    /// from what's installed now, so disabling a plugin empties its places.
+    func contributions(_ place: PluginPlace) -> [ResolvedPluginContribution] {
+        PluginContributions.resolve(installed, place: place)
+    }
+
     func plugin(_ id: String) -> InstalledPlugin? {
         installed.first { $0.id == id }
     }

@@ -44,6 +44,9 @@ public struct ClaudeProvider: ProviderDefinition {
         case .ask: []
         case .autoEdits: ["--permission-mode", "acceptEdits"]
         case .bypass: ["--permission-mode", "bypassPermissions"]
+        // Its plan mode is the read-only one: it explores, then asks
+        // to start through `ExitPlanMode`, whatever the message was.
+        case .plan, .readOnly: ["--permission-mode", "plan"]
         }
         return mode + ["--permission-prompt-tool", "stdio", "--allow-dangerously-skip-permissions"]
     }
@@ -55,6 +58,7 @@ public struct ClaudeProvider: ProviderDefinition {
         case .ask: "default"
         case .autoEdits: "acceptEdits"
         case .bypass: "bypassPermissions"
+        case .plan, .readOnly: "plan"
         }
         return #"{"type":"control_request","request_id":"# + ClaudeWire.quoted(requestId)
             + #","request":{"subtype":"set_permission_mode","mode":"# + ClaudeWire.quoted(mode) + "}}\n"
@@ -130,12 +134,32 @@ public struct ClaudeProvider: ProviderDefinition {
             command: override.flatMap { $0.isEmpty ? nil : $0 } ?? binary,
             args: Self.baseArgs + Self.policyArgs(ctx.permissionPolicy) + ctx.readableDirs.flatMap { ["--add-dir", $0] }
                 + (ctx.model.map { ["--model", $0] } ?? [])
-                + (ctx.effort.map { ["--effort", $0] } ?? []) + Self.styleArgs(ctx.outputStyle) + resumeArgs + ctx.extraArgs,
+                + (ctx.effort.map { ["--effort", $0] } ?? []) + Self.styleArgs(ctx.outputStyle)
+                + Self.historyArgs(ctx.historyTool) + resumeArgs + ctx.extraArgs,
             cwd: ctx.cwd,
             env: ["CLAUDE_CODE_BASH_EDIT_DIFF": "1"],
             stdinInitial: Self.userMessageLine(ctx.prompt, images: ctx.images),
             keepStdinOpen: true
         )
+    }
+
+    /// The code-history tool (ABS-61, checked in ABS-60): inline MCP
+    /// config beside the user's own servers (never `--strict-mcp-config`,
+    /// which would drop theirs), both tools allowed outright or each
+    /// call becomes an approval request, and the instruction. Passed on
+    /// every resume too, or the tool disappears.
+    static func historyArgs(_ tool: HistoryToolLaunch?) -> [String] {
+        guard let tool else { return [] }
+        let config = JSONValue.object(["mcpServers": .object([
+            CodeHistory.serverName: .object([
+                "command": .string(tool.command),
+                "args": .array(tool.serverArgs.map(JSONValue.string)),
+            ]),
+        ])]).compact()
+        let allowed = [CodeHistory.historyTool, CodeHistory.excerptTool]
+            .map(CodeHistory.streamName).joined(separator: ",")
+        return ["--mcp-config", config, "--allowedTools", allowed,
+                "--append-system-prompt", CodeHistory.instruction]
     }
 
     /// Claude's built-in styles go by their display name in its settings.

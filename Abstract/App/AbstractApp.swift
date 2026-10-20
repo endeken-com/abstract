@@ -72,6 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Notifier.shared.onOpenSession { [model] id in model.open(id) }
+        Notifier.shared.onStallAction { [model] id, action in model.stallAction(id, action) }
         Task {
             await model.bootstrap()
             if let demo = DemoBootstrap.current { await demo.run(model) }
@@ -235,6 +236,12 @@ struct AbstractCommands: Commands {
                 .disabled(model.selectedSession.map { !model.isAlive($0.id) } ?? true)
             Button("Resume Agent") { if let s = model.selectedSession { model.resume(s.id) } }
                 .disabled(model.selectedSession.map { model.isAlive($0.id) } ?? true)
+            Divider()
+            if model.everythingPaused {
+                Button("Resume Everything") { model.resumeEverything() }
+            } else {
+                Button("Pause Everything") { model.pauseEverything() }
+            }
             // As Ctrl+B in Claude Code: the command or subagent at work carries on while the chat does.
             Button("Run in Background") { if let s = model.selectedSession { model.moveToBackground(s.id) } }
                 .keyboardShortcut("b", modifiers: .control)

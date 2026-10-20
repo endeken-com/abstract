@@ -236,10 +236,14 @@ public final class TurnRecorder: Sendable {
         } else {
             files.formUnion(transcript.editedPaths)
         }
+        // What a record keeps is read by later agents (ABS-61), so a
+        // secret pasted into a prompt is masked before it's stored.
+        let summary = SecretMasking.mask(transcript.summary)
         let record = TurnRecord(
             projectId: session.projectId, sessionId: session.id, chatName: session.name, providerId: session.providerId,
             number: (previous?.number ?? 0) + 1, startedAt: transcript.startedAt, endedAt: transcript.endedAt ?? Date(),
-            request: transcript.request, corrections: transcript.corrections, summary: transcript.summary,
+            request: SecretMasking.mask(transcript.request), corrections: transcript.corrections.map(SecretMasking.mask),
+            summary: summary, decision: HistoryEntry.derivedDecision(from: summary),
             files: files.sorted(), uncommitted: files.filter { after?.dirty[$0] != nil }.sorted(),
             headBefore: headBefore, headAfter: after?.head ?? headBefore, branch: session.branch,
             pullRequest: pullRequest?.number, ticket: Self.ticket(pullRequestBody: pullRequest?.body, branch: session.branch),

@@ -4,8 +4,8 @@ import UniformTypeIdentifiers
 import AbstractCore
 
 /// A project's settings as one quiet document: the header, then General,
-/// Branches & naming, New chats, Location & checkout, Lifecycle scripts and the danger
-/// zone. Every change is stored at once; text is stored after a pause.
+/// Branches & naming, New chats, Permissions, Location & checkout, Lifecycle scripts
+/// and the danger zone. Every change is stored at once; text is stored after a pause.
 struct ProjectSettingsView: View {
     @Environment(AppModel.self) private var model
     let projectId: String
@@ -21,6 +21,7 @@ struct ProjectSettingsView: View {
                     GeneralSection(project: project, origin: origin, owner: owner)
                     BranchSection(project: project)
                     NewChatSection(project: project)
+                    PermissionsSection(project: project)
                     LocationSection(project: project)
                     ScriptsSection(project: project)
                     DangerSection(project: project)
@@ -503,7 +504,7 @@ private struct NewChatSection: View {
             }
             SettingRow(title: "Permissions", detail: project.defaultPermissionPolicy.detail) {
                 SentenceMenu(title: project.defaultPermissionPolicy.title) {
-                    ForEach(PermissionPolicy.allCases, id: \.self) { p in
+                    ForEach(PermissionPolicy.autonomyCases, id: \.self) { p in
                         Toggle(isOn: Binding(get: { project.defaultPermissionPolicy == p },
                                              set: { _ in model.updateProject(project.id) { $0.defaultPermissionPolicy = p } })) {
                             Text(p.title)
@@ -513,6 +514,15 @@ private struct NewChatSection: View {
                 }
                 .padding(.leading, -Chip.inset)
                 .frame(minHeight: ProjectPage.controlHeight)
+            }
+            SettingRow(title: "Code history",
+                       detail: project.agentHistoryEnabled
+                           ? "Before changing code, an agent can look up what earlier chats in this project were asked, corrected and decided about it, and is told to follow those decisions."
+                           : "Agents get no history of earlier chats in this project.") {
+                Toggle("Give agents the history of the code they change", isOn: Binding(
+                    get: { project.agentHistoryEnabled },
+                    set: { on in model.updateProject(project.id) { $0.agentHistory = on } }))
+                    .frame(minHeight: ProjectPage.controlHeight)
             }
             SettingRow(title: "Branch from", detail: "The branch or commit each new chat's worktree starts from.") {
                 BTTextField("Branch from", text: $baseRef, prompt: "HEAD", mono: true)
@@ -534,6 +544,57 @@ enum BranchPrefixCheck {
             return "Git doesn't allow .., ~, ^, : or \\ in branch names."
         }
         return nil
+    }
+}
+
+// MARK: - Permissions
+
+/// The permission answers remembered for this project. Each rule answers
+/// matching requests in every chat; deleting one brings the card back.
+private struct PermissionsSection: View {
+    @Environment(AppModel.self) private var model
+    let project: Project
+    /// The rule being edited, or a new one being written.
+    @State private var editing: PermissionRule?
+    @State private var adding = false
+
+    var body: some View {
+        PageSection(title: "Permissions",
+                    detail: "Answers you've told Abstract to remember for this project. A request matching a rule is answered for you, and its row in the chat names the rule. A deny rule beats an allow rule.") {
+            let rules = model.permissionRules(for: project.id)
+            if rules.isEmpty {
+                Text("No rules yet. When an agent asks for permission, choose “Always Allow in This Project…” or “Always Deny in This Project…” from its menu.")
+                    .font(.btBody).foregroundStyle(Color.btTextTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            ForEach(rules) { rule in
+                HStack(spacing: Space.sm) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        PathText(text: rule.pattern)
+                        Text(detail(rule)).font(.btCallout).foregroundStyle(Color.btTextTertiary)
+                    }
+                    Spacer(minLength: Space.md)
+                    Button("Edit") { editing = rule }.buttonStyle(.bt(.ghost, size: .small))
+                    Button("Delete") { model.deletePermissionRule(rule) }.buttonStyle(.bt(.ghost, size: .small))
+                }
+            }
+            Button("Add a Rule…") { adding = true }.buttonStyle(.bt(.ghost, size: .small))
+        }
+        .sheet(isPresented: $adding) {
+            PermissionRuleSheet(projectId: project.id, seed: PermissionRuleSeed())
+        }
+        .sheet(item: $editing) { rule in
+            PermissionRuleSheet(projectId: project.id, existing: rule, seed: PermissionRuleSeed(rule: rule))
+        }
+    }
+
+    private func detail(_ rule: PermissionRule) -> String {
+        var text = "\(rule.decision.title) · \(rule.kind.title)"
+        if let expiresAt = rule.expiresAt {
+            text += rule.isExpired() ? " · expired \(expiresAt.formatted(date: .abbreviated, time: .shortened))"
+                                      : " · expires \(expiresAt.formatted(date: .abbreviated, time: .shortened))"
+        }
+        return text
     }
 }
 

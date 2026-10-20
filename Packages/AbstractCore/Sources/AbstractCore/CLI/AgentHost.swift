@@ -189,7 +189,15 @@ final class AgentHost: @unchecked Sendable {
         }
         engine.recordInput(sessionId: sessionId, text: request.prompt)
         let executor = LocalExecutor.shared
-        let settings = LaunchSettings(store: store, dataDirectory: URL(fileURLWithPath: storePath).deletingLastPathComponent())
+        var settings = LaunchSettings(store: store, dataDirectory: URL(fileURLWithPath: storePath).deletingLastPathComponent())
+        // The chat's agent gets the code-history tool (ABS-61) unless its
+        // project has it off; this program itself serves it.
+        if let project = try? session.projectId.flatMap({ try store.project($0) }), project.agentHistoryEnabled,
+           let executable = Bundle.main.executablePath {
+            let directory = URL(fileURLWithPath: storePath).deletingLastPathComponent().path + "/code-history"
+            settings.codeHistory = CodeHistorySettings(
+                command: executable, instructionFile: CodeHistorySettings.instructionFile(in: directory))
+        }
         let spec = AgentLaunch.spec(for: session, provider: provider, prompt: request.prompt, resumeId: nil,
                                     settings: settings, home: executor.homeDirectory)
         do {
@@ -303,8 +311,16 @@ final class AgentHost: @unchecked Sendable {
 
     private func apply(_ event: AgentEvent, asked: Bool) {
         switch event {
-        case let .permissionRequest(requestId, _, _):
-            if let line = provider.buildPermissionResponse(requestId: requestId, allow: false, input: nil) {
+        case let .permissionRequest(requestId, toolName, input):
+            // A remembered answer for the chat's project still answers here;
+            // anything else is refused, as nobody is there to ask.
+            var allow = false
+            if session.permissionPolicy != .bypass, let projectId = session.projectId,
+               let rules = try? store.permissionRules(projectId: projectId),
+               let rule = PermissionRule.answer(rules, toolName: toolName, input: input, root: session.worktreePath) {
+                allow = rule.decision == .allow
+            }
+            if let line = provider.buildPermissionResponse(requestId: requestId, allow: allow, input: allow ? input : nil) {
                 try? engine.write(sessionId: sessionId, line)
             }
         case .status(.waitingInput, _) where asked:
