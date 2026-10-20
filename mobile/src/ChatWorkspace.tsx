@@ -26,9 +26,10 @@ import { useKeyboardHeight } from './useKeyboardVisible';
 import { NativeSelect } from './NativeSelect';
 import { SyntaxCode, highlightDiffLines } from './SyntaxCode';
 import type { EditPreview } from './editPreview';
-import type { PendingPermission, Session } from './types';
+import { stallText } from './stalls';
+import { swiftDate, type PendingPermission, type Session, type Stall } from './types';
 
-const ink = '#ECECEF', muted = '#A4A4AD', tertiary = '#75757E', canvas = '#1E1E21', panel = '#252529', raised = '#2B2B30', border = 'rgba(255,255,255,0.075)';
+const ink = '#ECECEF', muted = '#A4A4AD', tertiary = '#75757E', canvas = '#1E1E21', panel = '#252529', raised = '#2B2B30', border = 'rgba(255,255,255,0.075)', warning = '#D2D2D8';
 const editStyles = StyleSheet.create({
   previews: { marginLeft: 22, gap: 8, paddingBottom: 6 },
   preview: { backgroundColor: panel, borderRadius: 6, overflow: 'hidden' },
@@ -158,6 +159,16 @@ function WorkingStatus({ label, startedAt }: { label: string; startedAt?: number
   const started = startedAt == null ? fallback.current : (startedAt + 978307200) * 1000;
   return <View style={s.working}><DotLoader /><Text style={s.workingLabel}>{label}</Text><Text style={s.workingDuration}>{duration(now - started)}</Text></View>;
 }
+// No output for a while, as the Mac's working line words it; stalled adds what you can do about it.
+// The state came in the snapshot from the chat's Mac; only the minutes tick here.
+function StallStatus({ mac, sessionId, stall }: { mac: RemoteClient; sessionId: string; stall: Stall }) {
+  const [now, setNow] = useState(swiftDate());
+  useEffect(() => { const timer = setInterval(() => setNow(swiftDate()), 1000); return () => clearInterval(timer); }, []);
+  const act = (name: string) => mac.request(name, { sessionId }).catch(e => Alert.alert('Abstract', String(e)));
+  return <View style={s.working}><DotLoader /><Text style={[s.workingLabel, { color: warning }]}>{stallText(stall, now)}</Text>
+    {stall.state === 'stalled' && <><Chip label="Keep waiting" onPress={() => act('keepWaiting')} /><Chip label="Stop" onPress={() => act('stop')} /><Chip label="Stop and retry" onPress={() => act('stopAndRetry')} /></>}
+  </View>;
+}
 type TranscriptGroupItem = { id: string; kind: 'group'; groupKind: 'command' | 'explore'; rows: ChatItem[] };
 function groupToolRows(rows: ChatItem[]): Array<ChatItem | TranscriptGroupItem> {
   const result: Array<ChatItem | TranscriptGroupItem> = [];
@@ -250,11 +261,13 @@ export function ChatWorkspace({ route, navigation }: any) {
     ? [{ id: 'prompt', kind: 'user' as const, text: chat.prompt }, ...displayRows] : displayRows, [chat?.prompt, lines.length, displayRows]);
   const lastRow = rows.at(-1);
   const showWorking = mac.status === 'online' && (chat?.status === 'running' || chat?.status === 'provisioning');
-  const showWorkingRow = showWorking && !(lastRow?.pending && ['tool', 'prose', 'thinking'].includes(lastRow.kind));
+  const stall = showWorking ? mac.snapshot?.stalls?.[id] : undefined;
+  // A chat gone quiet says so whatever its last event was: a stuck tool call is exactly what goes quiet.
+  const showWorkingRow = showWorking && (!!stall || !(lastRow?.pending && ['tool', 'prose', 'thinking'].includes(lastRow.kind)));
   const workingLabel = lastRow && (lastRow.kind === 'thinking' || (lastRow.kind === 'tool' && !lastRow.pending)) ? 'Thinking…' : 'Working…';
   const pendingPermissions = mac.snapshot?.pendingPermissions?.[id];
   const turnStartedAt = mac.snapshot?.turnStartedAt?.[id] ?? chat?.lastEventAt ?? undefined;
-  const transcriptFooter = useMemo(() => <View style={s.transcriptFooter}>{visibleSends.map(item => <View key={item.id} style={s.userRow}><View style={s.userBubble}>{!!item.text && <Text style={s.prose}>{item.text}</Text>}{item.attachments.map(attachment => <Text key={attachment.id} style={s.pendingAttachment}>{attachment.reference ? `${attachment.reference} ` : ''}{attachment.title}</Text>)}</View><Text style={s.pendingStatus}>{item.status === 'sending' ? 'Sending…' : 'Sent'}</Text></View>)}{(pendingPermissions || []).map(request => <PermissionCard key={request.requestId} mac={mac} sessionId={id} request={request} />)}{syncing && <Text style={s.thinkingLabel}>Syncing chat from Mac…</Text>}{showWorkingRow && <WorkingStatus label={workingLabel} startedAt={turnStartedAt} />}</View>, [visibleSends, mac, pendingPermissions, id, syncing, showWorkingRow, workingLabel, turnStartedAt]);
+  const transcriptFooter = useMemo(() => <View style={s.transcriptFooter}>{visibleSends.map(item => <View key={item.id} style={s.userRow}><View style={s.userBubble}>{!!item.text && <Text style={s.prose}>{item.text}</Text>}{item.attachments.map(attachment => <Text key={attachment.id} style={s.pendingAttachment}>{attachment.reference ? `${attachment.reference} ` : ''}{attachment.title}</Text>)}</View><Text style={s.pendingStatus}>{item.status === 'sending' ? 'Sending…' : 'Sent'}</Text></View>)}{(pendingPermissions || []).map(request => <PermissionCard key={request.requestId} mac={mac} sessionId={id} request={request} />)}{syncing && <Text style={s.thinkingLabel}>Syncing chat from Mac…</Text>}{showWorkingRow && (stall ? <StallStatus mac={mac} sessionId={id} stall={stall} /> : <WorkingStatus label={workingLabel} startedAt={turnStartedAt} />)}</View>, [visibleSends, mac, pendingPermissions, id, syncing, showWorkingRow, stall, workingLabel, turnStartedAt]);
   const loadEarlier = React.useCallback(() => {
     mayLoadOlder.current = false;
     follow.current.stopFollowing();

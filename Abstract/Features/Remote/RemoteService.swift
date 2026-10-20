@@ -447,7 +447,8 @@ final class RemoteService {
                               backgroundTasks: model.alive.filter { model.runningBackgroundTasks($0) > 0 }.sorted(),
                               unmergedWork: model.branchStates.mapValues(\.hasUnmergedWork),
                               projectIcons: projectIcons(model.projects.filter { $0.archivedAt == nil }),
-                              automationDevice: true)
+                              automationDevice: true,
+                              stalls: model.stallStates.compactMapValues(RemoteStall.init))
     }
 
     /// Each project's uploaded icon as bytes, so a viewing Mac can show it
@@ -906,6 +907,12 @@ final class HostedPeer {
             } catch { return .failed(error.localizedDescription) }
         case .stop(let session):
             model.stop(session)
+            return .ok
+        case .keepWaiting(let session):
+            model.keepWaiting(session)
+            return .ok
+        case .stopAndRetry(let session):
+            model.stopAndRetry(session)
             return .ok
         case let .answer(session, requestId, allow):
             model.answerPermission(session, requestId: requestId, allow: allow)
