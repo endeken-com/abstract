@@ -155,6 +155,11 @@ private struct PluginWebView: NSViewRepresentable {
         on(type, fn) {
           if (!listeners.has(type)) listeners.set(type, []);
           listeners.get(type).push(fn);
+        },
+        fetch(url, options) {
+          const o = options || {};
+          return api.send("fetch", { url, method: o.method || "GET", headers: o.headers || {},
+                                     secretHeaders: o.secretHeaders || {}, body: o.body || null });
         }
       };
       window.AbstractPlugin = api;
@@ -208,7 +213,9 @@ private struct PluginWebView: NSViewRepresentable {
             self.theme = theme
             self.placement = placement
             self.onFailure = onFailure
-            bridge = PluginBridge(capabilities: plugin.record.grantedCapabilities)
+            bridge = PluginBridge(capabilities: plugin.record.grantedCapabilities,
+                                  allowedHosts: Set(plugin.record.grantedNetworkHosts),
+                                  secretNames: Set(plugin.record.grantedSecretNames))
         }
 
         func tearDown() { dead = true }
@@ -283,6 +290,23 @@ private struct PluginWebView: NSViewRepresentable {
             case .openChat(let id, let chatId):
                 send(type: "reply", id: id, payload: .object(["opened": .bool(true)]))
                 model.open(chatId)
+            case .fetch(let id, let fetch):
+                // The host sends it (ABS-94): hosts and secrets were
+                // checked at the bridge and are checked again in the
+                // service, against this plugin's record.
+                guard let current = model.plugins.plugin(plugin.id) else { return }
+                let service = model.plugins.fetchService(for: current)
+                Task { @MainActor [weak self] in
+                    do {
+                        let response = try await service.perform(fetch)
+                        self?.model.plugins.noteNetworkActivity()
+                        self?.send(type: "reply", id: id, payload: response.jsonValue())
+                    } catch {
+                        self?.model.plugins.noteNetworkActivity()
+                        self?.send(type: "error", id: id,
+                                   payload: .object(["message": .string(String(describing: error))]))
+                    }
+                }
             case .getUsage(let id, let view, let page, let chatId):
                 Task { @MainActor [weak self] in
                     guard let self, !dead else { return }
