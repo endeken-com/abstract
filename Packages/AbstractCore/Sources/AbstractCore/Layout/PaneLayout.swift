@@ -36,16 +36,19 @@ public enum PaneKind: String, Codable, Sendable, CaseIterable, Hashable {
     case terminal
     /// GitHub pull-request review. Reserved for the GitHub integration.
     case review
+    /// A plugin's tab in the side panel (ABS-96). Which plugin and which
+    /// contribution rides in the pane item's id (`PluginContributions`).
+    case plugin
 
     /// Kinds that can be open more than once.
-    public var allowsMultiple: Bool { self == .terminal }
+    public var allowsMultiple: Bool { self == .terminal || self == .plugin }
 
     /// Where a kind may live. Reviewing changes needs the tall side panel;
     /// the chat is the window's main area, never a tab.
     public func fits(_ slot: PanelSlot) -> Bool {
         switch self {
         case .chat: false
-        case .changes, .review: slot == .side
+        case .changes, .review, .plugin: slot == .side
         default: true
         }
     }
@@ -184,6 +187,23 @@ public struct PanelLayout: Codable, Hashable, Sendable {
 
     public mutating func resize(_ slot: PanelSlot, to size: Double) {
         self[slot].size = min(max(size, slot.sizes.lowerBound), slot.sizes.upperBound)
+    }
+
+    /// Bring a plugin's side-panel tab forward, adding it the first time
+    /// (ABS-96). Its steady id keeps one tab per contribution.
+    public mutating func showPluginTab(paneItemId: String) {
+        if items.contains(where: { $0.id == paneItemId }) {
+            activate(paneItemId)
+        } else {
+            add(.plugin, to: .side, id: paneItemId)
+        }
+    }
+
+    /// Take a plugin's tabs away — what turning it off does to every chat.
+    public mutating func removePluginTabs(pluginId: String) {
+        for item in items(of: .plugin) where PluginContributions.parsePaneItemId(item.id)?.pluginId == pluginId {
+            close(item.id)
+        }
     }
 }
 

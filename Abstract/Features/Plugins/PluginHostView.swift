@@ -9,6 +9,8 @@ struct PluginHostView: View {
     @Environment(AppModel.self) private var model
     let pluginId: String
     let viewId: String
+    /// Where this showing sits (ABS-96); nil is the sidebar screen.
+    var placement: PluginPlacement? = nil
     @State private var failed = false
     @State private var reloadToken = 0
     @AppStorage("theme") private var themeChoice: ThemeChoice = .graphite
@@ -38,6 +40,7 @@ struct PluginHostView: View {
                     stoppedWorking(name: manifest.name)
                 } else {
                     PluginWebView(plugin: plugin, manifest: manifest, theme: model.pluginTheme(),
+                                  placement: placement ?? PluginPlacement(place: .main, contributionId: viewId),
                                   fingerprint: fingerprint) {
                         failed = true
                     }
@@ -84,11 +87,13 @@ private struct PluginWebView: NSViewRepresentable {
     let plugin: InstalledPlugin
     let manifest: PluginManifest
     let theme: Theme
+    let placement: PluginPlacement
     let fingerprint: Int
     let onFailure: () -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(model: model, plugin: plugin, manifest: manifest, theme: theme, onFailure: onFailure)
+        Coordinator(model: model, plugin: plugin, manifest: manifest, theme: theme,
+                    placement: placement, onFailure: onFailure)
     }
 
     func makeNSView(context: Context) -> WKWebView {
@@ -120,6 +125,7 @@ private struct PluginWebView: NSViewRepresentable {
             context.coordinator.theme = theme
             context.coordinator.sendContext(changed: true)
         }
+        context.coordinator.deliverInvocation()
         context.coordinator.pushSnapshotSoon()
     }
 
@@ -185,6 +191,7 @@ private struct PluginWebView: NSViewRepresentable {
         private let model: AppModel
         private let plugin: InstalledPlugin
         private let manifest: PluginManifest
+        private let placement: PluginPlacement
         private let onFailure: () -> Void
         private var bridge: PluginBridge
         private var loaded = false
@@ -193,11 +200,13 @@ private struct PluginWebView: NSViewRepresentable {
         var theme: Theme
         weak var webView: WKWebView?
 
-        init(model: AppModel, plugin: InstalledPlugin, manifest: PluginManifest, theme: Theme, onFailure: @escaping () -> Void) {
+        init(model: AppModel, plugin: InstalledPlugin, manifest: PluginManifest, theme: Theme,
+             placement: PluginPlacement, onFailure: @escaping () -> Void) {
             self.model = model
             self.plugin = plugin
             self.manifest = manifest
             self.theme = theme
+            self.placement = placement
             self.onFailure = onFailure
             bridge = PluginBridge(capabilities: plugin.record.grantedCapabilities)
         }
@@ -237,6 +246,16 @@ private struct PluginWebView: NSViewRepresentable {
             loaded = true
             sendContext()
             pushSnapshot()
+            deliverInvocation()
+        }
+
+        /// A menu item or ⌘K command that opened this screen, handed over
+        /// once the plugin can hear it.
+        func deliverInvocation() {
+            guard loaded, !dead, placement.place == .main,
+                  let invocation = model.pluginInvocations[plugin.id] else { return }
+            model.pluginInvocations[plugin.id] = nil
+            send(type: "invoke", payload: invocation.jsonValue())
         }
 
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error) {
@@ -289,13 +308,19 @@ private struct PluginWebView: NSViewRepresentable {
                                                 revision: model.plugins.nextRevision())
             bridge.knownChatIds = Set(snapshot.chats?.map(\.id) ?? [])
             send(type: "snapshot", payload: snapshot.jsonValue())
+            // A placed showing's chat moves with the snapshot.
+            if placement.chatId != nil { sendContext() }
         }
 
         func sendContext(changed: Bool = false) {
+            let chat = placement.chatId.flatMap {
+                model.pluginChatRow(chatId: $0, capabilities: plugin.record.grantedCapabilities)
+            }
             let context = PluginContext.jsonValue(
                 theme: theme, locale: Locale.current.identifier,
                 pluginId: manifest.id, pluginVersion: manifest.version,
-                capabilities: plugin.record.grantedCapabilities)
+                capabilities: plugin.record.grantedCapabilities,
+                placement: placement, chat: chat)
             send(type: "context", payload: context)
             if changed { send(type: "themeChanged", payload: context) }
         }

@@ -56,8 +56,39 @@ extension AppModel {
         leavePluginScreen(id)
     }
 
-    /// A plugin that's off loses its screen: Abstract goes home.
+    /// A plugin that's off loses its screen and its side-panel tabs:
+    /// Abstract goes home, and every chat's panels forget the plugin.
+    /// Its menu items, ⌘K commands, Settings page and Home cards are
+    /// derived from what's usable, so they are already gone.
     private func leavePluginScreen(_ id: String) {
         if case .plugin(let showing, _) = destination, showing == id { destination = .home }
+        pluginInvocations[id] = nil
+        for sessionId in Set(sessions.map(\.id)).union(layouts.keys) {
+            if layout(for: sessionId).items(of: .plugin)
+                .contains(where: { PluginContributions.parsePaneItemId($0.id)?.pluginId == id }) {
+                updateLayout(sessionId) { $0.removePluginTabs(pluginId: id) }
+            }
+        }
+    }
+
+    /// Open a plugin's tab in this chat's side panel (ABS-96).
+    func showPluginPanelTab(_ contribution: ResolvedPluginContribution, in sessionId: String) {
+        updateLayout(sessionId) { $0.showPluginTab(paneItemId: PluginContributions.paneItemId(for: contribution)) }
+    }
+
+    /// Run a plugin's chat menu item or ⌘K command: its screen opens and is
+    /// handed the invocation, with the chat it was run from when it has one.
+    func invokePlugin(_ contribution: ResolvedPluginContribution, chatId: String? = nil) {
+        pluginInvocations[contribution.pluginId] = PluginInvocation(
+            place: contribution.place, contributionId: contribution.contribution.id, chatId: chatId)
+        let viewId = plugins.plugin(contribution.pluginId)?.view?.id ?? contribution.contribution.id
+        destination = .plugin(contribution.pluginId, viewId)
+    }
+
+    /// The one chat a placed plugin sits beside, as its snapshot row —
+    /// only built under `chats.read` (the context builder checks again).
+    func pluginChatRow(chatId: String, capabilities: Set<PluginCapability>) -> PluginSnapshot.Chat? {
+        guard capabilities.contains(.chatsRead) else { return nil }
+        return pluginSnapshot(capabilities: capabilities, revision: 0).chats?.first { $0.id == chatId }
     }
 }

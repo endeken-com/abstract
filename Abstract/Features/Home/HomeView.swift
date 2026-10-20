@@ -51,6 +51,26 @@ struct HomeView: View {
                     .padding(.top, 44)
                 }
 
+                // Cards plugins add to Home (ABS-96).
+                let widgets = model.plugins.contributions(.home)
+                if !widgets.isEmpty {
+                    VStack(alignment: .leading, spacing: Space.md) {
+                        ForEach(widgets) { widget in
+                            VStack(alignment: .leading, spacing: Space.sm) {
+                                SectionLabel(title: widget.contribution.title)
+                                    .padding(.horizontal, Space.sm)
+                                PluginHostView(pluginId: widget.pluginId, viewId: widget.contribution.id,
+                                               placement: PluginPlacement(place: .home,
+                                                                          contributionId: widget.contribution.id))
+                                    .frame(height: 220)
+                                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            }
+                        }
+                    }
+                    .frame(maxWidth: 680)
+                    .padding(.top, 44)
+                }
+
                 HStack(spacing: Space.xl) {
                     ShortcutHint(keys: ["⌘", "K"], label: "Jump anywhere")
                     ShortcutHint(keys: ["⌘", "N"], label: "New chat")
