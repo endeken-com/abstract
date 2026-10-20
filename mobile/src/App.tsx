@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, AppState, FlatList, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type ScrollViewProps } from 'react-native';
+import { ActivityIndicator, Alert, AppState, FlatList, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View, type ScrollViewProps } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -26,7 +26,8 @@ import { KanbanBoardScreen } from './KanbanBoard';
 import { chatsFromMacs, filterIsEmpty, narrow, type ChatFacts } from './chatGroups';
 import { KeyboardAwareScrollView } from './KeyboardAwareScrollView';
 import { ProgressiveBlur } from './ProgressiveBlur';
-import { SyntaxCode, highlightDiffLines } from './SyntaxCode';
+import { SyntaxCode, highlightDiffLines, highlightLines } from './SyntaxCode';
+import { askAuthor, relativePath, type AskAuthorRequest } from './askAuthor';
 import { TerminalView } from './TerminalView';
 import { SettingsScreen } from './SettingsScreen';
 import { uuid } from './secure';
@@ -119,6 +120,16 @@ function HeaderSpacer() {
   return <View style={{ height: useHeaderHeight() }} />;
 }
 function run(action: () => Promise<unknown>) { action().catch(error => Alert.alert('Abstract', String(error.message || error))); }
+// Ask the chat that wrote some lines about them: the Mac blames them and
+// builds the prompt; the phone opens that chat with it in the composer,
+// or New Chat with it as the first message.
+function askAboutLines(navigation: any, hostId: string, state: RemoteClient, request: AskAuthorRequest) {
+  run(async () => {
+    const answer = await askAuthor(state, request);
+    if (answer.sessionId) navigation.navigate('Chat', { hostId, sessionId: answer.sessionId, draft: answer.draft, notice: answer.notice || undefined });
+    else navigation.navigate('NewChat', { hostId, projectId: answer.projectId || undefined, prompt: answer.draft });
+  });
+}
 function activeRoot(mac: RemoteClient, session: Session) { return session.worktreePath || mac.snapshot?.projects.find(x => x.id === session.projectId)?.rootPath || ''; }
 
 function RailAction({ icon, title, detail, onPress }: { icon: IconName; title: string; detail?: string; onPress: () => void }) {
@@ -235,6 +246,7 @@ function ProjectScreen({ route, navigation }: any) {
   const chats = state.snapshot?.sessions.filter(x => x.projectId === project.id && !x.archivedAt) || [];
   return <HeaderScrollView style={styles.page} contentContainerStyle={styles.content}><Text style={styles.title}>{project.name}</Text><Text style={styles.lead}>{`${remote.mac(hostId)?.name || ''} · ${project.rootPath}`}</Text>
     <View style={styles.actions}><Button title="New chat" onPress={() => navigation.navigate('NewChat', { hostId, projectId: project.id })} /><Button title="Worktrees" secondary onPress={() => navigation.navigate('Worktrees', { hostId, projectId: project.id })} /><Button title="Files" secondary onPress={() => navigation.navigate('Files', { hostId, root: project.rootPath })} /><Button title="Terminal" secondary onPress={() => navigation.navigate('Terminal', { hostId, root: project.rootPath })} /></View>
+    {state.snapshot?.codeHistory && <Section title="Code history"><View style={styles.row}><View style={{ flex: 1 }}><Text style={styles.rowTitle}>Give agents the history of the code they change</Text><Text style={styles.subtitle}>{project.agentHistory === false ? 'Agents get no history of earlier chats in this project.' : 'Before changing code, an agent can look up what earlier chats in this project were asked, corrected and decided about it, and is told to follow those decisions.'}</Text></View><Switch accessibilityLabel="Give agents the history of the code they change" value={project.agentHistory !== false} onValueChange={enabled => run(() => state.request('setAgentHistory', { projectId: project.id, enabled }))} /></View></Section>}
     <Section title="Chats">{chats.map(chat => <Row key={chat.id} title={chat.name} subtitle={`${chat.providerId} · ${chat.branch || chat.status}`} subtitleIcon={chat.branch ? <BranchIcon size={11} color={tertiary} /> : undefined} iconNode={<ProviderLogo provider={chat.providerId} size={16} />} onPress={() => navigation.navigate('Chat', { hostId, sessionId: chat.id })} trailing={chat.status} />)}{!chats.length && <Empty text="No chats in this project." />}</Section>
   </HeaderScrollView>;
 }
@@ -268,7 +280,7 @@ function NewChatScreen({ route, navigation }: any) {
     if (!macs.some(mac => mac.id === hostId) && fallbackHost !== hostId) setHostId(fallbackHost);
   }, [hostId, fallbackHost]);
   const state = store.client(hostId);
-  const [prompt, setPrompt] = useState('');
+  const [prompt, setPrompt] = useState(route.params?.prompt || '');
   const [attachments, setAttachments] = useState<PickedAttachment[]>([]);
   const [projectId, setProjectId] = useState<string | null>(route.params?.projectId || null);
   const [standalone, setStandalone] = useState(!!route.params?.standalone);
@@ -387,18 +399,23 @@ function FilesScreen({ route, navigation }: any) {
       <View style={styles.filesFilterRow}><View style={styles.fileFilter}><Icon name="filter" size={16} color={tertiary} /><TextInput style={styles.fileFilterInput} placeholder="Filter files" placeholderTextColor={tertiary} value={query} onChangeText={setQuery} autoCapitalize="none" autoCorrect={false} />{query ? <Pressable style={styles.fileFilterClear} onPress={() => setQuery('')} accessibilityLabel="Clear filter"><Icon name="close" size={13} color={muted} /></Pressable> : null}</View><Pressable style={styles.fileRefreshButton} accessibilityLabel="Refresh files" onPress={() => { Haptics.selectionAsync().catch(() => {}); refresh(); }}><Icon name="refresh" size={17} color={muted} /></Pressable></View>
     </View>
     {folder ? <Pressable style={styles.breadcrumb} onPress={() => setFolder(folder.split('/').slice(0, -1).join('/'))}><Icon name="back" size={13} color={muted} /><Text numberOfLines={1} style={styles.breadcrumbText}>{folder}</Text></Pressable> : null}
-    {error ? <View style={styles.paneEmpty}><Icon name="failed" size={22} color="#EF6461" /><Text style={styles.paneEmptyTitle}>Couldn't load files</Text><Text style={styles.empty}>{error}</Text><Button title="Try again" secondary onPress={refresh} /></View> : loading && !paths.length ? <View style={styles.paneEmpty}><Text style={styles.empty}>Loading files…</Text></View> : <FlatList contentContainerStyle={styles.fileList} data={entries} keyExtractor={item => item.path} ListEmptyComponent={<View style={styles.paneEmpty}><Text style={styles.empty}>{query.trim() ? 'No matching files.' : 'No files found.'}</Text></View>} renderItem={({ item }) => <Pressable style={styles.fileTreeRow} onPress={() => item.directory ? setFolder(item.path) : navigation.navigate('File', { hostId, path: root.replace(/\/$/, '') + '/' + item.path })}><FileIcon path={item.path} directory={item.directory} size={17} /><View style={{ flex: 1, minWidth: 0 }}><Text numberOfLines={1} style={styles.fileTreeTitle}>{item.name}</Text>{query ? <Text numberOfLines={1} style={styles.fileTreeSubtitle}>{item.path}</Text> : null}</View>{item.directory ? <Icon name="chevron" size={11} color={tertiary} /> : null}</Pressable>} />}
+    {error ? <View style={styles.paneEmpty}><Icon name="failed" size={22} color="#EF6461" /><Text style={styles.paneEmptyTitle}>Couldn't load files</Text><Text style={styles.empty}>{error}</Text><Button title="Try again" secondary onPress={refresh} /></View> : loading && !paths.length ? <View style={styles.paneEmpty}><Text style={styles.empty}>Loading files…</Text></View> : <FlatList contentContainerStyle={styles.fileList} data={entries} keyExtractor={item => item.path} ListEmptyComponent={<View style={styles.paneEmpty}><Text style={styles.empty}>{query.trim() ? 'No matching files.' : 'No files found.'}</Text></View>} renderItem={({ item }) => <Pressable style={styles.fileTreeRow} onPress={() => item.directory ? setFolder(item.path) : navigation.navigate('File', { hostId, root, sessionId: route.params.sessionId, path: root.replace(/\/$/, '') + '/' + item.path })}><FileIcon path={item.path} directory={item.directory} size={17} /><View style={{ flex: 1, minWidth: 0 }}><Text numberOfLines={1} style={styles.fileTreeTitle}>{item.name}</Text>{query ? <Text numberOfLines={1} style={styles.fileTreeSubtitle}>{item.path}</Text> : null}</View>{item.directory ? <Icon name="chevron" size={11} color={tertiary} /> : null}</Pressable>} />}
   </View></SwipeForward>;
 }
 function FileScreen({ route, navigation }: any) {
   const hostId = route.params.hostId as string; const state = useMac(hostId); const path = route.params.path as string;
+  const root = route.params.root as string | undefined;
   const [content, setContent] = useState(''); const [editing, setEditing] = useState(false);
+  const [selectedLine, setSelectedLine] = useState<number | null>(null);
   useEffect(() => { state.readFile(path).then(setContent).catch(error => Alert.alert('File', String(error))); }, [hostId, path]);
   useEffect(() => { navigation.setOptions({ title: path.split('/').at(-1) || 'File' }); }, [navigation, path]);
   const save = async () => { await state.writeFile(path, content); setEditing(false); };
   const lines = content.split('\n');
-  return <KeyboardAvoidingView style={styles.page} behavior={Platform.OS === 'ios' ? 'padding' : undefined}><HeaderSpacer /><View style={styles.paneToolbar}><FileIcon path={path} size={16} /><Text style={styles.editorMeta}>{content.length} characters · {lines.length} lines{editing ? ' · Editing' : ''}</Text><View style={{ flex: 1 }} /><Pressable style={styles.editorAction} onPress={() => editing ? run(save) : setEditing(true)}><Text style={styles.editorActionText}>{editing ? 'Save' : 'Edit'}</Text></Pressable>{editing && <Pressable style={styles.editorAction} onPress={() => { setEditing(false); state.readFile(path).then(setContent).catch(() => {}); }}><Text style={styles.editorActionText}>Cancel</Text></Pressable>}</View>
-    {editing ? <ScrollView style={{ flex: 1 }} keyboardShouldPersistTaps="handled"><TextInput style={styles.editorInput} value={content} onChangeText={setContent} multiline autoCapitalize="none" autoCorrect={false} textAlignVertical="top" /></ScrollView> : <ScrollView style={{ flex: 1 }}><ScrollView horizontal contentContainerStyle={styles.editorCode}><Text selectable style={styles.editorLineNumbers}>{lines.map((_, index) => String(index + 1)).join('\n')}</Text><SyntaxCode code={content} path={path} /></ScrollView></ScrollView>}
+  const relative = root ? relativePath(root, path) : null;
+  const canAsk = !!state.snapshot?.codeHistory && !!root && !!relative && selectedLine !== null && !editing;
+  const highlighted = useMemo(() => editing ? [] : highlightLines(lines, path), [content, editing, path]);
+  return <KeyboardAvoidingView style={styles.page} behavior={Platform.OS === 'ios' ? 'padding' : undefined}><HeaderSpacer /><View style={styles.paneToolbar}><FileIcon path={path} size={16} /><Text style={styles.editorMeta}>{content.length} characters · {lines.length} lines{editing ? ' · Editing' : ''}</Text><View style={{ flex: 1 }} />{canAsk && <Pressable style={styles.editorAction} accessibilityLabel="Ask the chat that wrote this line" onPress={() => askAboutLines(navigation, hostId, state, { root: root!, path: relative!, lineStart: selectedLine! + 1, lineEnd: selectedLine! + 1, code: [lines[selectedLine!]], revision: 'HEAD', sessionId: route.params.sessionId || null })}><Text style={styles.editorActionText}>Ask who wrote line {selectedLine! + 1}</Text></Pressable>}<Pressable style={styles.editorAction} onPress={() => editing ? run(save) : setEditing(true)}><Text style={styles.editorActionText}>{editing ? 'Save' : 'Edit'}</Text></Pressable>{editing && <Pressable style={styles.editorAction} onPress={() => { setEditing(false); state.readFile(path).then(setContent).catch(() => {}); }}><Text style={styles.editorActionText}>Cancel</Text></Pressable>}</View>
+    {editing ? <ScrollView style={{ flex: 1 }} keyboardShouldPersistTaps="handled"><TextInput style={styles.editorInput} value={content} onChangeText={setContent} multiline autoCapitalize="none" autoCorrect={false} textAlignVertical="top" /></ScrollView> : <ScrollView style={{ flex: 1 }}><ScrollView horizontal contentContainerStyle={styles.editorCode}><View>{lines.map((line, index) => <Pressable key={index} accessibilityLabel={`Line ${index + 1}`} onPress={() => setSelectedLine(selectedLine === index ? null : index)} style={[styles.editorLineRow, selectedLine === index && styles.editorLineSelected]}><Text style={styles.editorLineNumber}>{String(index + 1).padStart(4)}</Text><Text style={styles.editorLineText}>{(highlighted[index] || []).map((part, partIndex) => <Text key={partIndex} style={{ color: part.color }}>{part.text}</Text>)}{line ? '' : ' '}</Text></Pressable>)}</View></ScrollView></ScrollView>}
   </KeyboardAvoidingView>;
 }
 function TerminalScreen({ route, navigation }: any) {
@@ -470,7 +487,7 @@ function ReviewScreen({ route, navigation }: any) {
         {expanded && <View style={styles.reviewFileBody}>{file.binary ? <Text style={styles.mono}>Binary file</Text> : <ReviewDiff patch={file.patch} path={file.path} onSelect={line => { if (line.old !== null || line.next !== null) { setSelected({ path: file.path, line: line.next ?? line.old!, side: line.next !== null ? 'new' : 'old', code: line.text.slice(1) }); setCommentText(''); } }} />}<View style={styles.reviewFileActions}><ReviewFileButton title="Apply to project" onPress={() => decide(file.path, true)} />{!committed && <ReviewFileButton title="Discard changes" destructive onPress={() => decide(file.path, false)} />}</View></View>}
       </View>; })}
       {!files.length && !error && <View style={styles.paneEmpty}><Icon name="check" size={23} color={tertiary} /><Text style={styles.paneEmptyTitle}>No changes to display</Text><Text style={styles.empty}>{committed ? 'This branch has no committed changes.' : 'Nothing uncommitted in this worktree.'}</Text></View>}
-      {selected && <PaneSection title={`Comment on ${selected.path}:${selected.line}`}><Text style={styles.mono}>{selected.code}</Text><TextInput style={[styles.input, styles.multiline]} multiline value={commentText} onChangeText={setCommentText} placeholder="Review comment" placeholderTextColor={muted} /><View style={styles.reviewActions}><Button title="Add comment" onPress={() => { if (commentText.trim()) setComments([...comments, { ...selected, text: commentText.trim() }]); setSelected(null); setCommentText(''); }} /><Button title="Cancel" secondary onPress={() => setSelected(null)} /></View></PaneSection>}
+      {selected && <PaneSection title={`Comment on ${selected.path}:${selected.line}`}><Text style={styles.mono}>{selected.code}</Text><TextInput style={[styles.input, styles.multiline]} multiline value={commentText} onChangeText={setCommentText} placeholder="Review comment" placeholderTextColor={muted} /><View style={styles.reviewActions}><Button title="Add comment" onPress={() => { if (commentText.trim()) setComments([...comments, { ...selected, text: commentText.trim() }]); setSelected(null); setCommentText(''); }} />{state.snapshot?.codeHistory && selected.side === 'new' && chat && activeRoot(state, chat) && <Button title="Ask the chat that wrote this…" secondary onPress={() => askAboutLines(navigation, hostId, state, { root: activeRoot(state, chat), path: selected.path, lineStart: selected.line, lineEnd: selected.line, code: [selected.code], revision: committed ? 'HEAD' : null, sessionId: chat.id })} />}<Button title="Cancel" secondary onPress={() => setSelected(null)} /></View></PaneSection>}
       {comments.length > 0 && <PaneSection title="Draft comments" detail={String(comments.length)}>{comments.map((comment, index) => <Row key={index} title={`${comment.path}:${comment.line}`} subtitle={comment.text} onPress={() => setComments(comments.filter((_, i) => i !== index))} trailing="Remove" />)}</PaneSection>}
       {(files.length > 0 || comments.length > 0) && <PaneSection title="Send review to agent"><TextInput style={[styles.input, styles.multiline]} multiline value={message} onChangeText={setMessage} placeholder="Optional summary" placeholderTextColor={muted} /><Button title="Send review" onPress={sendFeedback} /></PaneSection>}
     </KeyboardAwareScrollView>
@@ -766,6 +783,10 @@ const styles = StyleSheet.create({
   editorActionText: { color: ink, fontFamily: 'Inter', fontSize: 12, fontWeight: '600' },
   editorCode: { paddingVertical: 14, paddingRight: 20 },
   editorLineNumbers: { color: '#676770', fontFamily: 'JetBrainsMono', fontSize: 11, lineHeight: 18, textAlign: 'right', paddingHorizontal: 11, minWidth: 48 },
+  editorLineRow: { flexDirection: 'row', alignItems: 'flex-start' },
+  editorLineSelected: { backgroundColor: 'rgba(255,255,255,0.07)' },
+  editorLineNumber: { color: '#676770', fontFamily: 'JetBrainsMono', fontSize: 11, lineHeight: 18, textAlign: 'right', paddingHorizontal: 11, minWidth: 48 },
+  editorLineText: { fontFamily: 'JetBrainsMono', fontSize: 11, lineHeight: 18, color: '#ABB2BF' },
   editorCodeText: { color: ink, fontFamily: 'JetBrainsMono', fontSize: 11, lineHeight: 18, paddingRight: 12 },
   editorInput: { flex: 1, minHeight: 500, color: ink, fontFamily: 'JetBrainsMono', fontSize: 11, lineHeight: 18, padding: 14 },
 });

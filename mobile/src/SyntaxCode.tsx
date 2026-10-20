@@ -64,6 +64,10 @@ function tokenizeLines(lines: string[], language: string): ColoredText[][] {
   }
   return result;
 }
+/** One file's lines, highlighted as a whole so multi-line tokens stay right. */
+export function highlightLines(lines: string[], path: string): ColoredText[][] {
+  return tokenizeLines(lines, languageForPath(path));
+}
 export function highlightDiffLines(lines: Array<{ kind: string; text: string; startsHunk?: boolean }>, path: string): ColoredText[][] {
   const language = languageForPath(path);
   const highlighted = lines.map(() => [] as ColoredText[]);

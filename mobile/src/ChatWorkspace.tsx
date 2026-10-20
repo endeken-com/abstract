@@ -234,7 +234,9 @@ export function ChatWorkspace({ route, navigation }: any) {
   const id = route.params.sessionId as string;
   const chat = mac.snapshot?.sessions.find(x => x.id === id);
   const pr = mac.snapshot?.pullRequests?.[id];
-  const [message, setMessage] = useState('');
+  // Ask-author lands here with the Mac-built quote in the composer.
+  const [message, setMessage] = useState(route.params.draft || '');
+  const [notice, setNotice] = useState<string | null>(route.params.notice || null);
   const [pendingSends, setPendingSends] = useState<PendingPhoneMessage[]>([]);
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -398,6 +400,7 @@ export function ChatWorkspace({ route, navigation }: any) {
         setSending(true);
         setSendError(null);
         setMessage('');
+        setNotice(null);
         setAttachments([]);
         setPreviewingMarkdown(false);
       },
@@ -495,6 +498,7 @@ export function ChatWorkspace({ route, navigation }: any) {
     <LinkPickerSheet kind={linkSheet} query={linkQuery} setQuery={setLinkQuery} results={linkResults} loading={linkLoading} search={() => linkSheet && searchLinks(linkSheet, linkQuery)} select={attachLink} close={() => setLinkSheet(null)} />
     <View style={[s.composerWrap, { paddingBottom: keyboardHeight ? 7 : safeArea.bottom + 7 }]}>
       {mac.status !== 'online' && <Text accessibilityRole="alert" style={s.sendError}>{macName || 'That Mac'} isn't reachable.{mac.lastSeenAt ? ` Last seen ${new Date(mac.lastSeenAt).toLocaleString()}.` : ''}{mac.error ? ` ${mac.error}` : ''}</Text>}
+      {!!notice && <Text accessibilityRole="alert" style={s.sendError} onPress={() => setNotice(null)}>{notice}</Text>}
       {!!sendError && <Text accessibilityRole="alert" style={s.sendError}>{sendError}</Text>}
       {attachments.length > 0 && <ScrollView horizontal style={s.attachments} contentContainerStyle={{ gap: 5 }}>{attachments.map(item => <Chip key={item.id} label={`${item.reference ? `${item.reference} ` : ''}${item.title} ×`} onPress={() => setAttachments(attachments.filter(x => x.id !== item.id))} />)}</ScrollView>}
       <View style={[s.composerBox, composerFocused && s.composerBoxFocused]}>
