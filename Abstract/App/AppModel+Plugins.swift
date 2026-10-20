@@ -125,6 +125,121 @@ extension AppModel {
         return PluginData.automations(items: items, page: page)
     }
 
+    // MARK: Actions (ABS-92)
+
+    /// The ask for one action, named the way the person knows the chat,
+    /// project or automation it touches.
+    func pluginActionDescription(_ action: PluginAction, pluginName: String) -> String {
+        action.describe(
+            pluginName: pluginName,
+            chatTitle: action.chatId.flatMap { session($0)?.name },
+            projectName: action.projectKey.flatMap { key in
+                projects.first {
+                    PluginSnapshot.projectKey(macId: remote.identity.id, projectId: $0.id) == key
+                }?.name
+            },
+            automationName: action.automationId.flatMap { id in automations.first { $0.id == id }?.name })
+    }
+
+    /// Carries out one action the bridge granted and, where its kind
+    /// asks first, the person allowed. Everything it does in a chat is
+    /// marked with the plugin's name, so the chat never reads as if the
+    /// person had done it themselves.
+    func performPluginAction(_ action: PluginAction, pluginName: String) async throws -> JSONValue {
+        switch action.capability {
+        case .chatsCreate:
+            guard let prompt = action.text else { throw AbstractError.message("A new chat needs a prompt.") }
+            var project: Project?
+            if let projectKey = action.projectKey {
+                project = projects.first {
+                    PluginSnapshot.projectKey(macId: remote.identity.id, projectId: $0.id) == projectKey
+                }
+                guard project != nil else { throw AbstractError.message("That project isn't on this Mac.") }
+            }
+            if let agentId = action.agentId, ProviderRegistry.provider(agentId) == nil {
+                throw AbstractError.message("Abstract doesn't know that agent.")
+            }
+            let id = try await startChat(
+                projectId: project?.id,
+                providerId: action.agentId ?? project?.defaultProviderId ?? "claude",
+                prompt: prompt, baseRef: nil,
+                policy: action.policy.flatMap(PermissionPolicy.init(rawValue:))
+                    ?? project?.defaultPermissionPolicy ?? .ask,
+                select: false)
+            engine.record(sessionId: id, OutputLine(stream: .note, line: "Started by \(pluginName)."))
+            return .object(["chatId": .string(id)])
+
+        case .chatsMessage:
+            guard let chatId = action.chatId, let text = action.text, session(chatId) != nil else {
+                throw AbstractError.message("That chat isn't here any more.")
+            }
+            if chatId.hasPrefix(RemoteService.mirrorPrefix) {
+                try await sendRemoteFollowUp(chatId, text: text)
+            } else {
+                engine.record(sessionId: chatId, OutputLine(stream: .note, line: "Sent by \(pluginName)."))
+                do {
+                    try sendFollowUp(chatId, text: text)
+                } catch {
+                    engine.record(sessionId: chatId,
+                                  OutputLine(stream: .note, line: "\(pluginName)'s message couldn't be sent."))
+                    throw error
+                }
+            }
+            return .object(["sent": .bool(true)])
+
+        case .chatsControl:
+            guard let chatId = action.chatId, let control = action.control, session(chatId) != nil else {
+                throw AbstractError.message("That chat isn't here any more.")
+            }
+            let words = switch control {
+            case .stop: "stopped this agent"
+            case .pause: "paused this agent"
+            case .resume: "resumed this agent"
+            }
+            switch control {
+            case .stop: stopAgent(chatId)
+            case .pause: stop(chatId)
+            case .resume: resume(chatId)
+            }
+            if !chatId.hasPrefix(RemoteService.mirrorPrefix) {
+                engine.record(sessionId: chatId, OutputLine(stream: .note, line: "\(pluginName) \(words)."))
+            }
+            return .object(["done": .bool(true)])
+
+        case .permissionsAnswer:
+            guard let chatId = action.chatId, let requestId = action.requestId else {
+                throw AbstractError.message("That answer needs the chat and the request it answers.")
+            }
+            guard pendingPermissions(chatId).contains(where: { $0.requestId == requestId }) else {
+                throw AbstractError.message("That request isn't waiting any more.")
+            }
+            if !action.answers.isEmpty {
+                answerQuestion(chatId, requestId: requestId, answers: action.answers)
+            } else if let allow = action.allow {
+                answerPermission(chatId, requestId: requestId, allow: allow)
+            } else {
+                throw AbstractError.message("That answer couldn't be read.")
+            }
+            if !chatId.hasPrefix(RemoteService.mirrorPrefix) {
+                engine.record(sessionId: chatId,
+                              OutputLine(stream: .note, line: "Answered by \(pluginName)."))
+            }
+            return .object(["done": .bool(true)])
+
+        case .automationsRun:
+            guard let automationId = action.automationId,
+                  let automation = automations.first(where: { $0.id == automationId }) else {
+                throw AbstractError.message("That automation isn't here any more.")
+            }
+            let run = await runAutomationNow(automation)
+            return .object(["started": .bool(run != nil && run?.status != .failed),
+                            "automationId": .string(automationId)])
+
+        default:
+            throw AbstractError.message("Abstract doesn't know that action.")
+        }
+    }
+
     func removePlugin(_ id: String) {
         plugins.remove(id)
         leavePluginScreen(id)

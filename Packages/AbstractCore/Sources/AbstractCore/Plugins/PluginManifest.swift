@@ -1,8 +1,10 @@
 import Foundation
 
-/// A capability a plugin may ask for (API 1). The list is closed: an unknown
+/// A capability a plugin may ask for. The list is closed: an unknown
 /// string fails the install, so a plugin built for a newer host is never
-/// half-granted. See docs/spikes/ABS-84.md §4.
+/// half-granted. See docs/spikes/ABS-84.md §4. The action capabilities
+/// (ABS-92) arrived with API 2 and ask first, one kind at a time, until
+/// the person always allows that kind.
 public enum PluginCapability: String, Sendable, Hashable, Codable, CaseIterable {
     case projectsRead = "projects.read"
     case chatsRead = "chats.read"
@@ -14,6 +16,19 @@ public enum PluginCapability: String, Sendable, Hashable, Codable, CaseIterable 
     case turnsRead = "turns.read"
     case transcriptsRead = "transcripts.read"
     case automationsRead = "automations.read"
+    case chatsCreate = "chats.create"
+    case chatsMessage = "chats.message"
+    case chatsControl = "chats.control"
+    case permissionsAnswer = "permissions.answer"
+    case automationsRun = "automations.run"
+
+    /// The capabilities that do something to a chat or an automation, as
+    /// opposed to reading. Each asks first until always allowed.
+    public static let actionCases: [PluginCapability] = [
+        .chatsCreate, .chatsMessage, .chatsControl, .permissionsAnswer, .automationsRun,
+    ]
+
+    public var isAction: Bool { Self.actionCases.contains(self) }
 
     /// The sentence shown when the person reviews the plugin.
     public var plainWords: String {
@@ -28,6 +43,11 @@ public enum PluginCapability: String, Sendable, Hashable, Codable, CaseIterable 
         case .turnsRead: "See when your agents worked"
         case .transcriptsRead: "Read your chats' messages in the projects you pick"
         case .automationsRead: "See your automations and when they last ran"
+        case .chatsCreate: "Start chats in your projects"
+        case .chatsMessage: "Send messages to your chats"
+        case .chatsControl: "Stop and resume your agents"
+        case .permissionsAnswer: "Answer your agents' questions and permission requests"
+        case .automationsRun: "Run your automations"
         }
     }
 
@@ -140,9 +160,12 @@ public struct PluginInvocation: Sendable, Hashable, Codable {
     }
 }
 
-/// A plugin's `manifest.json` (API 1). Unknown keys are ignored.
+/// A plugin's `manifest.json`. Unknown keys are ignored. API 1 plugins
+/// keep working under API 2 (ABS-84 §3); only an API 2 manifest may ask
+/// for action capabilities.
 public struct PluginManifest: Sendable, Hashable, Codable {
-    public static let supportedAPI = 1
+    public static let supportedAPI = 2
+    public static let supportedAPIs: Set<Int> = [1, 2]
     public static let fallbackSymbol = "puzzlepiece.extension"
 
     public var api: Int
@@ -287,9 +310,9 @@ public struct PluginManifest: Sendable, Hashable, Codable {
         }
     }
 
-    /// Fails closed on anything outside API 1 (ABS-84 §3).
+    /// Fails closed on anything outside the supported APIs (ABS-84 §3).
     public func validate() throws {
-        guard api == Self.supportedAPI else {
+        guard Self.supportedAPIs.contains(api) else {
             throw PluginValidationError.unsupportedAPI(api, plugin: name.isEmpty ? "This plugin" : "\(name) \(version)")
         }
         guard Self.isReverseDNS(id) else {
@@ -307,6 +330,11 @@ public struct PluginManifest: Sendable, Hashable, Codable {
         }
         for name in capabilities where PluginCapability(rawValue: name) == nil {
             throw PluginValidationError.unknownCapability(name)
+        }
+        // Actions are API 2: an API 1 plugin was reviewed as read-only,
+        // so it doesn't gain them by listing a new string.
+        if api < 2, grantedCapabilities.contains(where: \.isAction) {
+            throw PluginValidationError.invalidManifest("action capabilities need api 2")
         }
         // Hosts and secrets exist only under their grants, and a grant with
         // nothing listed is meaningless (ABS-94). Fail closed both ways.

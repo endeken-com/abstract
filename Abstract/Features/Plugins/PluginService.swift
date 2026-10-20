@@ -72,6 +72,18 @@ final class PluginService {
         refresh()
     }
 
+    /// Always allow one action kind for this plugin, or ask first again.
+    func setAlwaysAllowed(_ id: String, _ capability: PluginCapability, _ allowed: Bool) {
+        manager.setAlwaysAllowed(id, capability, allowed)
+        refresh()
+    }
+
+    /// Take one grant back; the plugin stays on without it.
+    func revokeCapability(_ id: String, _ capability: PluginCapability) {
+        manager.revokeCapability(id, capability)
+        refresh()
+    }
+
     func reviewChangedPackage(_ id: String) {
         manager.reviewChangedPackage(id)
         refresh()

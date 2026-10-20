@@ -378,12 +378,14 @@ import Testing
             Issue.record("unknown type wasn't refused")
         }
         if case .refused = bridge.handle("not json", storage: store) {} else { Issue.record("garbage wasn't refused") }
-        if case .refused = bridge.handle(#"{"api":2,"type":"getSnapshot"}"#, storage: store) {} else {
+        if case .refused = bridge.handle(#"{"api":99,"type":"getSnapshot"}"#, storage: store) {} else {
             Issue.record("newer api wasn't refused")
         }
         #expect(bridge.refusalCount == 3)
+        // API 1 and API 2 plugins both speak to this host (ABS-92).
         let snapshot = bridge.handle(#"{"api":1,"type":"getSnapshot","id":"9"}"#, storage: store)
         #expect(snapshot == .getSnapshot(id: "9"))
+        #expect(bridge.handle(#"{"api":2,"type":"getSnapshot","id":"10"}"#, storage: store) == .getSnapshot(id: "10"))
     }
 
     @Test func floodingTheBridgeIsDetected() throws {
