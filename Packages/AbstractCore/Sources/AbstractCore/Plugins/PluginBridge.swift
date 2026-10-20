@@ -27,6 +27,10 @@ public struct PluginBridge: Sendable {
         case reply(id: String?, JSONValue)
         case openChat(id: String?, chatId: String)
         case getSnapshot(id: String?)
+        case getUsage(id: String?, view: String, page: PluginPage, chatId: String?)
+        case getTurns(id: String?, page: PluginPage, chatId: String?)
+        case getTranscript(id: String?, page: PluginPage, chatId: String?)
+        case getAutomations(id: String?, page: PluginPage)
         case refused(id: String?, reason: String)
         /// The plugin flooded the bridge; the host tears its view down.
         case flooded
@@ -81,6 +85,30 @@ public struct PluginBridge: Sendable {
             let saved = (try? storage.set(value == .null ? nil : value, forKey: key)) ?? false
             guard saved else { return refuse(id, "That would pass the plugin's storage limit.") }
             return .reply(id: id, .object(["key": .string(key), "saved": .bool(true)]))
+        case "getUsage":
+            guard capabilities.contains(.usageRead) else {
+                return refuse(id, "This plugin hasn't been granted seeing what your chats used and cost.")
+            }
+            let view = payload?["view"]?.string ?? "chats"
+            guard ["chats", "entries", "days"].contains(view) else {
+                return refuse(id, "Abstract doesn't know that usage view.")
+            }
+            return .getUsage(id: id, view: view, page: PluginPage(payload: payload), chatId: payload?["chatId"]?.string)
+        case "getTurns":
+            guard capabilities.contains(.turnsRead) else {
+                return refuse(id, "This plugin hasn't been granted seeing when your agents worked.")
+            }
+            return .getTurns(id: id, page: PluginPage(payload: payload), chatId: payload?["chatId"]?.string)
+        case "getTranscript":
+            guard capabilities.contains(.transcriptsRead) else {
+                return refuse(id, "This plugin hasn't been granted reading your chats' messages.")
+            }
+            return .getTranscript(id: id, page: PluginPage(payload: payload), chatId: payload?["chatId"]?.string)
+        case "getAutomations":
+            guard capabilities.contains(.automationsRead) else {
+                return refuse(id, "This plugin hasn't been granted seeing your automations.")
+            }
+            return .getAutomations(id: id, page: PluginPage(payload: payload))
         case "__error":
             return refuse(id, "The plugin reported an error.")
         default:

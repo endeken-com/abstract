@@ -283,6 +283,21 @@ private struct PluginWebView: NSViewRepresentable {
             case .openChat(let id, let chatId):
                 send(type: "reply", id: id, payload: .object(["opened": .bool(true)]))
                 model.open(chatId)
+            case .getUsage(let id, let view, let page, let chatId):
+                Task { @MainActor [weak self] in
+                    guard let self, !dead else { return }
+                    let payload = await model.pluginUsage(view: view, page: page, chatId: chatId)
+                    send(type: "reply", id: id, payload: payload)
+                }
+            case .getTurns(let id, let page, let chatId):
+                send(type: "reply", id: id, payload: model.pluginTurns(page: page, chatId: chatId))
+            case .getTranscript(let id, let page, let chatId):
+                // The grant as it stands now, not as it was when the screen opened.
+                let keys = model.plugins.plugin(plugin.id)?.record.transcriptProjectKeys ?? []
+                send(type: "reply", id: id,
+                     payload: model.pluginTranscript(page: page, chatId: chatId, allowedProjectKeys: keys))
+            case .getAutomations(let id, let page):
+                send(type: "reply", id: id, payload: model.pluginAutomations(page: page))
             case .refused(let id, let reason):
                 model.plugins.noteError(plugin.id, reason)
                 send(type: "error", id: id, payload: .object(["message": .string(reason)]))

@@ -23,16 +23,36 @@ public struct PluginRecord: Sendable, Hashable, Codable, Identifiable {
     public var enabled: Bool
     /// What the person granted at review; empty until then.
     public var grantedCapabilities: Set<PluginCapability>
+    /// Project keys (`macId:projectId`) whose chats' messages a
+    /// `transcripts.read` grant may read, picked at review. Empty reads none.
+    public var transcriptProjectKeys: [String]
     public var packageHash: String
     public var installedAt: Date
     public var lastError: String?
 
     public init(id: String, name: String, version: String, source: PluginSource, enabled: Bool = false,
-                grantedCapabilities: Set<PluginCapability> = [], packageHash: String,
+                grantedCapabilities: Set<PluginCapability> = [], transcriptProjectKeys: [String] = [],
+                packageHash: String,
                 installedAt: Date = Date(), lastError: String? = nil) {
         self.id = id; self.name = name; self.version = version; self.source = source
         self.enabled = enabled; self.grantedCapabilities = grantedCapabilities
+        self.transcriptProjectKeys = transcriptProjectKeys
         self.packageHash = packageHash; self.installedAt = installedAt; self.lastError = lastError
+    }
+
+    // Records saved before transcript scoping carry no project list.
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        id = try box.decode(String.self, forKey: .id)
+        name = try box.decode(String.self, forKey: .name)
+        version = try box.decode(String.self, forKey: .version)
+        source = try box.decode(PluginSource.self, forKey: .source)
+        enabled = try box.decode(Bool.self, forKey: .enabled)
+        grantedCapabilities = try box.decode(Set<PluginCapability>.self, forKey: .grantedCapabilities)
+        transcriptProjectKeys = try box.decodeIfPresent([String].self, forKey: .transcriptProjectKeys) ?? []
+        packageHash = try box.decode(String.self, forKey: .packageHash)
+        installedAt = try box.decode(Date.self, forKey: .installedAt)
+        lastError = try box.decodeIfPresent(String.self, forKey: .lastError)
     }
 }
 
@@ -196,6 +216,7 @@ public final class PluginManager: Sendable {
             id: manifest.id, name: manifest.name, version: manifest.version, source: sourceKind,
             enabled: existing != nil && !grows ? (existing?.enabled ?? false) : false,
             grantedCapabilities: existing != nil && !grows ? (existing?.grantedCapabilities ?? []) : [],
+            transcriptProjectKeys: existing != nil && !grows ? (existing?.transcriptProjectKeys ?? []) : [],
             packageHash: inspection.hash, installedAt: existing?.installedAt ?? Date())
         records.removeAll { $0.id == manifest.id }
         records.append(record)
@@ -204,17 +225,30 @@ public final class PluginManager: Sendable {
     }
 
     /// Enables or disables. Enabling is the grant: the manifest's whole
-    /// capability list, or nothing.
-    public func setEnabled(_ pluginId: String, _ enabled: Bool) {
+    /// capability list, or nothing. `transcriptProjectKeys` is the project
+    /// list picked at this review; passing nil keeps the last pick.
+    public func setEnabled(_ pluginId: String, _ enabled: Bool, transcriptProjectKeys: [String]? = nil) {
         var records = records()
         guard let index = records.firstIndex(where: { $0.id == pluginId }) else { return }
         if enabled {
             guard let manifest = try? PluginPackage.inspect(folder: packageURL(for: records[index])).manifest else { return }
             records[index].grantedCapabilities = manifest.grantedCapabilities
+            if let transcriptProjectKeys {
+                records[index].transcriptProjectKeys = transcriptProjectKeys
+            }
             records[index].enabled = true
         } else {
             records[index].enabled = false
         }
+        save(records)
+    }
+
+    /// Changes which projects' messages the plugin may read, without
+    /// turning it off first.
+    public func setTranscriptProjectKeys(_ pluginId: String, _ keys: [String]) {
+        var records = records()
+        guard let index = records.firstIndex(where: { $0.id == pluginId }) else { return }
+        records[index].transcriptProjectKeys = keys
         save(records)
     }
 
@@ -228,6 +262,7 @@ public final class PluginManager: Sendable {
         records[index].name = inspection.manifest.name
         records[index].enabled = false
         records[index].grantedCapabilities = []
+        records[index].transcriptProjectKeys = []
         save(records)
     }
 
