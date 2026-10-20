@@ -30,7 +30,8 @@ import { TerminalView } from './TerminalView';
 import { SettingsScreen } from './SettingsScreen';
 import { uuid } from './secure';
 import { attachmentPayload, pickAttachments, type PickedAttachment } from './attachments';
-import { displayDate, swiftDate, type Automation, type AutomationTrigger, type Project, type Session } from './types';
+import { displayDate, swiftDate, type Automation, type AutomationTrigger, type Policy, type Project, type Session } from './types';
+import { MODE_CHOICES } from './plan';
 
 // Graphite values come from Abstract/Theme/Palette.swift.
 const ink = '#ECECEF', muted = '#A4A4AD', tertiary = '#75757E';
@@ -272,7 +273,7 @@ function NewChatScreen({ route, navigation }: any) {
   const [modelName, setModelName] = useState('');
   const [customModel, setCustomModel] = useState(false);
   const [effort, setEffort] = useState('');
-  const [policy, setPolicy] = useState<'ask' | 'auto-edits' | 'bypass'>('ask');
+  const [policy, setPolicy] = useState<Policy>('ask');
   const [base, setBase] = useState('HEAD');
   const [worktree, setWorktree] = useState(route.params?.worktree || '');
   const [worktrees, setWorktrees] = useState<Array<{ path: string; branch: string }>>([]);
@@ -307,7 +308,7 @@ function NewChatScreen({ route, navigation }: any) {
   const modelOption = [...(catalog?.models || []), ...(catalog?.versions || [])].find(x => x.id === modelName);
   const effortLevels = modelOption?.efforts || catalog?.accountDefault?.efforts || [];
   const providerLabel = (id: string) => ({ claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode' } as Record<string, string>)[id] || id;
-  const policyLabels = { ask: 'Ask before acting', 'auto-edits': 'Accept edits', bypass: 'Full autonomy' };
+  const policyLabels: Record<Policy, string> = { ask: 'Ask before acting', 'auto-edits': 'Accept edits', bypass: 'Full autonomy', plan: 'Plan', 'read-only': 'Ask (read-only)' };
   const selectedWorktree = worktrees.find(x => x.path === worktree);
   const worktreeLabel = selectedWorktree?.branch || (worktree ? worktree.split('/').pop() || worktree : 'New worktree');
   const worktreeHolder = worktree && state.snapshot?.sessions.find(x => x.worktreePath === worktree && !x.archivedAt);
@@ -338,7 +339,7 @@ function NewChatScreen({ route, navigation }: any) {
         <LauncherPicker label="Agent" value={providerLabel(provider)} leading={<ProviderLogo provider={provider} size={13} />} choices={(state.snapshot?.providers || []).map(id => ({ id, title: providerLabel(id), selected: id === provider, image: Platform.OS === 'ios' ? providerMenuImage(id) : undefined }))} onSelect={id => { setProvider(id); setModelName(''); setEffort(''); setCustomModel(false); }} />
         <LauncherPicker label="Model" value={modelOption?.label || modelName || state.snapshot?.defaultModelNames?.[provider] || 'Default model'} choices={[{ id: '', title: 'Default model', selected: !modelName }, ...(catalog?.models || []).map(x => ({ id: x.id, title: x.label, selected: modelName === x.id })), ...(catalog?.versions || []).map(x => ({ id: x.id, title: x.label, selected: modelName === x.id })), { id: '__other__', title: 'Other Model…' }]} onSelect={id => { if (id === '__other__') setCustomModel(true); else { setModelName(id); setEffort(''); setCustomModel(false); } }} />
         {effortLevels.length > 0 && <LauncherPicker label="Reasoning effort" value={effort ? effort.replace(/^./, x => x.toUpperCase()) : 'Default effort'} choices={[{ id: '', title: 'Default effort', selected: !effort }, ...effortLevels.map(id => ({ id, title: id.replace(/^./, x => x.toUpperCase()), selected: effort === id }))]} onSelect={setEffort} />}
-        <LauncherPicker label="Permissions" value={policyLabels[policy]} choices={(['ask', 'auto-edits', 'bypass'] as const).map(id => ({ id, title: policyLabels[id], selected: id === policy }))} onSelect={id => setPolicy(id as typeof policy)} />
+        <LauncherPicker label="Mode" value={policyLabels[policy]} choices={MODE_CHOICES.map(({ id, title }) => ({ id, title, selected: id === policy }))} onSelect={id => setPolicy(id as Policy)} />
         {project && <><LauncherPicker label="Worktree" value={worktreeLabel} choices={[{ id: '', title: 'New worktree', selected: !worktree }, ...worktrees.map(x => ({ id: x.path, title: x.branch || x.path.split('/').pop() || x.path, selected: x.path === worktree }))]} onSelect={setWorktree} />{!worktree && <View style={styles.launcherBase}><Text style={styles.launcherBaseLabel}>from</Text><TextInput style={styles.launcherBaseInput} value={base} onChangeText={setBase} autoCapitalize="none" autoCorrect={false} placeholder="HEAD" placeholderTextColor={tertiary} /></View>}</>}
       </View>
       {customModel && <TextInput autoFocus style={styles.launcherCustomModel} value={modelName} onChangeText={value => { setModelName(value); setEffort(''); }} autoCapitalize="none" autoCorrect={false} placeholder="Model name" placeholderTextColor={tertiary} />}
