@@ -448,6 +448,9 @@ final class RemoteService {
                               unmergedWork: model.branchStates.mapValues(\.hasUnmergedWork),
                               projectIcons: projectIcons(model.projects.filter { $0.archivedAt == nil }),
                               automationDevice: true,
+                              everythingPaused: model.pauseState.everythingPaused,
+                              pausedProjectIds: model.pauseState.pausedProjectIds.sorted(),
+                              pauseControl: true,
                               stalls: model.stallStates.compactMapValues(RemoteStall.init),
                               codeHistory: true,
                               plans: model.plans.filter { $0.value.current != nil }.mapValues(RemotePlan.init),
@@ -981,6 +984,20 @@ final class HostedPeer {
         case .deleteAutomation(let id):
             guard model.automations.contains(where: { $0.id == id }) else { return .failed("Automation not found.") }
             model.deleteAutomation(id)
+            return .ok
+        case .pauseEverything:
+            model.pauseEverything()
+            return .ok
+        case .resumeEverything:
+            model.resumeEverything()
+            return .ok
+        case .pauseProject(let projectId):
+            guard model.projects.contains(where: { $0.id == projectId }) else { return .failed("Project not found.") }
+            model.pauseProject(projectId)
+            return .ok
+        case .resumeProject(let projectId):
+            guard model.projects.contains(where: { $0.id == projectId }) else { return .failed("Project not found.") }
+            model.resumeProject(projectId)
             return .ok
         case .runAutomation(let id):
             guard let automation = model.automations.first(where: { $0.id == id }) else { return .failed("Automation not found.") }
