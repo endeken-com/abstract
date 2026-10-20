@@ -110,6 +110,9 @@ final class AppModel {
     }
     /// Panel layouts by chat id; see AppModel+Panes.
     var layouts: [String: PanelLayout] = [:]
+    /// A plugin menu item or ⌘K command waiting to be handed to that
+    /// plugin's screen, by plugin id; see AppModel+Plugins.
+    var pluginInvocations: [String: PluginInvocation] = [:]
     /// A chat waiting on "Archive?" (⇧⌘⌫, or the git actions menu).
     var requestArchive: String?
     /// The background tasks list showing, and the task open in it; see AppModel+Tasks.

@@ -10,6 +10,8 @@ struct PluginsSettingsPane: View {
     @State private var enabling: InstalledPlugin?
     @State private var removing: InstalledPlugin?
     @State private var pickedProblem: String?
+    /// A usable plugin whose own Settings page is showing (ABS-96).
+    @State private var settingsPageFor: InstalledPlugin?
 
     struct PendingInstall: Identifiable {
         let id = UUID()
@@ -40,7 +42,7 @@ struct PluginsSettingsPane: View {
             } header: {
                 Text("Installed")
             } footer: {
-                SettingsCaption("Plugins run on this Mac. They don't run on your phone. A plugin sees only what you granted it below, and turning it off takes that away and removes its screen.")
+                SettingsCaption("Plugins run on this Mac. They don't run on your phone. A plugin sees only what you granted it below, and turning it off takes that away and removes its screen, tabs, menu items and commands.")
             }
 
             Section {
@@ -92,6 +94,22 @@ struct PluginsSettingsPane: View {
             } cancel: {
                 if let cleanup = item.cleanup { try? FileManager.default.removeItem(at: cleanup) }
                 pending = nil
+            }
+        }
+        .sheet(item: $settingsPageFor) { plugin in
+            if let page = plugin.manifest?.contributes.settingsPage {
+                VStack(alignment: .leading, spacing: Space.md) {
+                    HStack {
+                        Text(page.title).font(.btHeadline).foregroundStyle(Color.btText)
+                        Spacer()
+                        Button("Done") { settingsPageFor = nil }.buttonStyle(.btPrimary)
+                    }
+                    PluginHostView(pluginId: plugin.id, viewId: page.id,
+                                   placement: PluginPlacement(place: .settings, contributionId: page.id))
+                        .frame(height: 420)
+                }
+                .padding(Space.xl)
+                .frame(width: 560)
             }
         }
         .sheet(item: $enabling) { plugin in
@@ -155,12 +173,20 @@ struct PluginsSettingsPane: View {
             } else if let lastError = record.lastError {
                 Text("Last error: \(lastError)").font(.btCaption).foregroundStyle(Color.btTextSecondary)
             }
+            if let manifest = plugin.manifest, manifest.contributes.views.count < manifest.appearanceSentences.count {
+                Text(manifest.appearanceSentences.joined(separator: " "))
+                    .font(.btCaption)
+                    .foregroundStyle(Color.btTextSecondary)
+            }
             HStack(spacing: Space.sm) {
                 if plugin.isUsable, let view = plugin.view {
                     Button("Open") {
                         model.destination = .plugin(plugin.id, view.id)
                         model.isSettingsOpen = false
                     }
+                }
+                if plugin.isUsable, let page = plugin.manifest?.contributes.settingsPage {
+                    Button(page.title) { settingsPageFor = plugin }
                 }
                 Button("Remove", role: .destructive) { removing = plugin }
             }
@@ -214,6 +240,12 @@ private struct PluginReviewSheet: View {
                 Text("It isn't signed. It runs in a locked-down page with no network or file access, and it can only see and do what's listed here.")
                     .font(.btBody).foregroundStyle(Color.btTextSecondary)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text("It will appear:").font(.btBodyMedium).foregroundStyle(Color.btText)
+                ForEach(manifest.appearanceSentences, id: \.self) { sentence in
+                    Text(sentence).font(.btBody).foregroundStyle(Color.btTextSecondary)
+                }
             }
             VStack(alignment: .leading, spacing: 4) {
                 Text("It will be able to:").font(.btBodyMedium).foregroundStyle(Color.btText)

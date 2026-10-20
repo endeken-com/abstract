@@ -122,7 +122,7 @@ struct DetailView: View {
         case .worktrees: "Worktrees"
         case .pullRequests: "Pull Requests"
         case .projectSettings(let id): model.project(id)?.name ?? ""
-        case .plugin(let id, _): model.plugins.plugin(id)?.view?.title ?? ""
+        case .plugin(let id, _): model.plugins.plugin(id)?.view?.title ?? model.plugins.plugin(id)?.record.name ?? ""
         }
     }
 
@@ -253,7 +253,7 @@ private struct WindowTitle: View {
         case .worktrees: "Worktrees"
         case .pullRequests: "Pull Requests"
         case .projectSettings(let id): model.project(id)?.name ?? ""
-        case .plugin(let id, _): model.plugins.plugin(id)?.view?.title ?? ""
+        case .plugin(let id, _): model.plugins.plugin(id)?.view?.title ?? model.plugins.plugin(id)?.record.name ?? ""
         default: ""
         }
     }
