@@ -2,6 +2,8 @@ export type Policy = 'ask' | 'auto-edits' | 'bypass';
 export type Project = {
   id: string; name: string; rootPath: string; defaultBaseRef: string;
   defaultProviderId: string; defaultPermissionPolicy: Policy;
+  /** Agents may look up code history; null/absent (older Macs) = yes. */
+  agentHistory?: boolean | null;
 };
 export type Session = {
   id: string; projectId: string | null; name: string; providerId: string;
@@ -30,7 +32,7 @@ export type PullRequestThread = { id: string; path: string; line?: number | null
 export type PullRequest = { number: number; title: string; state: string; isDraft: boolean; url?: string; standing?: string | null; reviewDecision?: string | null; hasConflicts?: boolean; checks?: PullRequestCheck[]; head?: string | null; base?: string | null; author?: string | null; additions?: number | null; deletions?: number | null; body?: string | null; reviews?: PullRequestReview[]; comments?: PullRequestComment[]; threads?: PullRequestThread[] };
 export type ModelOption = { id: string; label: string; detail?: string | null; efforts: string[]; defaultEffort?: string | null };
 export type ModelCatalog = { accountDefault?: ModelOption | null; models: ModelOption[]; versions: ModelOption[] };
-export type Snapshot = { projects: Project[]; sessions: Session[]; providers: string[]; alive: string[]; home?: string; modelCatalogs?: Record<string, ModelCatalog>; defaultModelNames?: Record<string, string>; automations?: Automation[]; pendingPermissions?: Record<string, PendingPermission[]>; pullRequests?: Record<string, PullRequest>; turnStartedAt?: Record<string, number>; pagedHistory?: boolean; internetAddress?: InternetAddress; backgroundTasks?: string[]; unmergedWork?: Record<string, boolean> };
+export type Snapshot = { projects: Project[]; sessions: Session[]; providers: string[]; alive: string[]; home?: string; modelCatalogs?: Record<string, ModelCatalog>; defaultModelNames?: Record<string, string>; automations?: Automation[]; pendingPermissions?: Record<string, PendingPermission[]>; pullRequests?: Record<string, PullRequest>; turnStartedAt?: Record<string, number>; pagedHistory?: boolean; internetAddress?: InternetAddress; backgroundTasks?: string[]; unmergedWork?: Record<string, boolean>; codeHistory?: boolean };
 export type Peer = { id: string; name: string; publicKey: string };
 export type InternetAddress = { endpointId: string };
 export type Device = { peer: Peer; address: string; pairedAt: number; internetAddress?: InternetAddress };

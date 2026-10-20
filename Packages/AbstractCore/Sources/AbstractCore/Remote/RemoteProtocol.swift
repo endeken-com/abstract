@@ -70,6 +70,16 @@ public enum RemoteRequest: Codable, Sendable {
     case mergePullRequest(sessionId: String, method: String)
     case markPullRequestReady(sessionId: String)
     case closePullRequest(sessionId: String)
+    /// A project's code-history setting (ABS-61): whether its agents may
+    /// look up what earlier chats decided. Only send it to a Mac whose
+    /// snapshot says `codeHistory`.
+    case setAgentHistory(projectId: String, enabled: Bool)
+    /// Ask the chat that wrote some lines about them: the host blames
+    /// `path` (relative to `root`, a project root or worktree there) at
+    /// `revision` (nil = the worktree as it is) and answers with who to
+    /// ask and the pre-filled prompt. Only send it to a Mac whose
+    /// snapshot says `codeHistory`.
+    case askAuthor(root: String, path: String, lineStart: Int, lineEnd: Int, code: [String], revision: String?, sessionId: String?)
 
     // The host's worktrees, so a chat there reviews, browses and edits here
     // as it would on the host. Only inside its projects and worktrees; only
@@ -163,6 +173,23 @@ public enum RemoteResponse: Codable, Sendable {
     case automation(Automation)
     case automationRuns([AutomationRun])
     case review([RemoteReviewFile])
+    case askAuthor(RemoteAskAuthor)
+}
+
+/// Who to ask about some lines, and what the asking starts with: the
+/// chat that wrote them (`sessionId`, unarchived by the host) with
+/// `draft` for its reply box, or no chat — `draft` is then a new chat's
+/// first message in `projectId`. `notice` says when that chat can
+/// answer but no longer edit (its worktree is gone).
+public struct RemoteAskAuthor: Codable, Sendable, Hashable {
+    public var sessionId: String?
+    public var projectId: String?
+    public var draft: String
+    public var notice: String?
+
+    public init(sessionId: String?, projectId: String?, draft: String, notice: String?) {
+        self.sessionId = sessionId; self.projectId = projectId; self.draft = draft; self.notice = notice
+    }
 }
 
 public struct RemoteReviewFile: Codable, Sendable, Hashable {
@@ -230,6 +257,9 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
     /// A host that starts another Mac's automation runs (`startRun`).
     /// Optional for older peers.
     public var automationDevice: Bool?
+    /// A host that answers `setAgentHistory` and `askAuthor`.
+    /// Optional for older peers.
+    public var codeHistory: Bool?
 
     /// The largest uploaded icon a snapshot carries; larger ones are left out.
     public static let maxProjectIconBytes = 512 << 10
@@ -241,7 +271,7 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
                 pendingPermissions: [String: [RemotePendingPermission]]? = nil,
                 turnStartedAt: [String: Date]? = nil, pagedHistory: Bool? = nil, execInput: Bool? = nil,
                 internetAddress: InternetAddress? = nil, backgroundTasks: [String]? = nil, unmergedWork: [String: Bool]? = nil,
-                projectIcons: [String: Data]? = nil, automationDevice: Bool? = nil) {
+                projectIcons: [String: Data]? = nil, automationDevice: Bool? = nil, codeHistory: Bool? = nil) {
         self.projects = projects; self.sessions = sessions; self.providers = providers; self.alive = alive
         self.home = home; self.modelCatalogs = modelCatalogs; self.defaultModelNames = defaultModelNames
         self.pullRequests = pullRequests
@@ -255,6 +285,7 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
         self.unmergedWork = unmergedWork
         self.projectIcons = projectIcons
         self.automationDevice = automationDevice
+        self.codeHistory = codeHistory
     }
 }
 

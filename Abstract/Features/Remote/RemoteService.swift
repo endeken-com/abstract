@@ -447,7 +447,7 @@ final class RemoteService {
                               backgroundTasks: model.alive.filter { model.runningBackgroundTasks($0) > 0 }.sorted(),
                               unmergedWork: model.branchStates.mapValues(\.hasUnmergedWork),
                               projectIcons: projectIcons(model.projects.filter { $0.archivedAt == nil }),
-                              automationDevice: true)
+                              automationDevice: true, codeHistory: true)
     }
 
     /// Each project's uploaded icon as bytes, so a viewing Mac can show it
@@ -1027,6 +1027,13 @@ final class HostedPeer {
         case .closePullRequest(let session):
             do { try await model.closePullRequest(session); return .ok }
             catch { return .failed(error.localizedDescription) }
+        case let .setAgentHistory(projectId, enabled):
+            guard model.projects.contains(where: { $0.id == projectId }) else { return .failed("Project not found.") }
+            model.updateProject(projectId) { $0.agentHistory = enabled }
+            return .ok
+        case let .askAuthor(root, path, lineStart, lineEnd, code, revision, session):
+            return await askAuthor(root: root, path: path, lineStart: lineStart, lineEnd: lineEnd, code: code,
+                                   revision: revision, sessionId: session, model: model)
         case let .exec(command, args, cwd, stdin):
             return await exec(command, args, cwd: cwd, stdin: stdin)
         case .spawn(let spec):
