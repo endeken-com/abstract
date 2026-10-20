@@ -38,6 +38,9 @@ public struct Project: Sendable, Hashable, Identifiable, Codable {
     /// Agents may look up the history of the code they change (ABS-61);
     /// nil (projects saved before) = yes.
     public var agentHistory: Bool?
+    /// The profiles the New Chat window offers in this project (ABS-101);
+    /// nil = every profile shows.
+    public var profileIds: [String]? = nil
 
     /// Whether this project's agents get the code-history tool.
     public var agentHistoryEnabled: Bool { agentHistory ?? true }
@@ -167,6 +170,12 @@ public struct Session: Sendable, Hashable, Identifiable, Codable {
     public var pinnedAt: Date? = nil
     /// Where its name came from.
     public var nameSource: ChatNameSource = .request
+    /// The profile it started from (ABS-101), as it was at the start: its
+    /// id, its name for the header, and its instructions. Editing the
+    /// profile later changes later chats, never this one.
+    public var profileId: String? = nil
+    public var profileName: String? = nil
+    public var profileInstructions: String? = nil
 
     public init(
         id: String = UUID().uuidString, projectId: String?, name: String, providerId: String,
@@ -187,7 +196,7 @@ public struct Session: Sendable, Hashable, Identifiable, Codable {
     private enum CodingKeys: String, CodingKey {
         case id, projectId, name, providerId, providerSessionId, worktreePath, branch, baseRef, status, statusDetail
         case permissionPolicy, prompt, automationId, createdAt, lastEventAt, archivedAt, model, effort, handoffFrom
-        case providerSessions, pinnedAt, nameSource
+        case providerSessions, pinnedAt, nameSource, profileId, profileName, profileInstructions
     }
 
     /// An older Mac's chats come without what it doesn't know yet.
@@ -210,6 +219,9 @@ public struct Session: Sendable, Hashable, Identifiable, Codable {
         providerSessions = try c.decodeIfPresent([String: ProviderSeat].self, forKey: .providerSessions) ?? [:]
         pinnedAt = try c.decodeIfPresent(Date.self, forKey: .pinnedAt)
         nameSource = try c.decodeIfPresent(ChatNameSource.self, forKey: .nameSource) ?? .request
+        profileId = try c.decodeIfPresent(String.self, forKey: .profileId)
+        profileName = try c.decodeIfPresent(String.self, forKey: .profileName)
+        profileInstructions = try c.decodeIfPresent(String.self, forKey: .profileInstructions)
     }
 }
 
@@ -286,6 +298,9 @@ public struct Automation: Sendable, Hashable, Identifiable, Codable {
     public var effort: String?
     /// The paired Mac its runs start on; nil = the Mac it's stored on.
     public var deviceId: String?
+    /// The profile each run starts from (ABS-101), resolved when the run
+    /// starts; nil = the automation's own agent, model, effort and policy.
+    public var profileId: String? = nil
 
     public init(
         id: String = UUID().uuidString, name: String, prompt: String, providerId: String, projectId: String?,

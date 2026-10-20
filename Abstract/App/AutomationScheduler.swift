@@ -116,6 +116,10 @@ final class AutomationScheduler {
     /// runs on one: the chat starts through the remote channel, and a Mac
     /// that can't start it fails the run with that reason.
     private func newChat(_ a: Automation, name: String, nameSource: ChatNameSource = .manual, slug: String? = nil) async throws -> String {
+        // A run starts from its profile as it is now (ABS-101); a profile
+        // that was deleted leaves the automation on its own settings.
+        let profile = model.profile(a.profileId)
+        let run = a.resolved(with: profile)
         if let deviceId = a.deviceId {
             let link = model.remote.links[deviceId]
             let deviceName = link?.device.peer.name
@@ -123,11 +127,12 @@ final class AutomationScheduler {
             let start = try AutomationDeviceRun.plan(
                 a, deviceName: deviceName, snapshot: link?.state == .online ? link?.snapshot : nil,
                 localProject: a.projectId.flatMap { id in model.projects.first { $0.id == id } },
-                name: name, nameSource: nameSource, slug: slug)
+                name: name, nameSource: nameSource, slug: slug, profile: profile)
             return try await model.remote.startAutomationRun(on: deviceId, start)
         }
-        return try await model.startChat(projectId: a.projectId, providerId: a.providerId, prompt: a.prompt, baseRef: nil,
-                                         policy: a.permissionPolicy, model: a.model, effort: a.effort,
-                                         name: name, nameSource: nameSource, slug: a.projectId == nil ? nil : slug, automationId: a.id, select: false)
+        return try await model.startChat(projectId: run.projectId, providerId: run.providerId, prompt: run.prompt, baseRef: nil,
+                                         policy: run.permissionPolicy, model: run.model, effort: run.effort,
+                                         name: name, nameSource: nameSource, slug: run.projectId == nil ? nil : slug,
+                                         automationId: run.id, profile: profile?.snapshot, select: false)
     }
 }

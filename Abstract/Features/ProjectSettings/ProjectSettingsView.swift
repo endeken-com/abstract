@@ -515,6 +515,18 @@ private struct NewChatSection: View {
                 .padding(.leading, -Chip.inset)
                 .frame(minHeight: ProjectPage.controlHeight)
             }
+            if !model.profiles.isEmpty {
+                SettingRow(title: "Profiles", detail: "The saved setups the New Chat window offers in this project. Manage them in Settings › Profiles.") {
+                    VStack(alignment: .leading, spacing: Space.xs) {
+                        ForEach(model.profiles) { profile in
+                            Toggle(profile.name, isOn: Binding(
+                                get: { project.profileIds?.contains(profile.id) ?? true },
+                                set: { on in offer(profile.id, on) }))
+                        }
+                    }
+                    .frame(minHeight: ProjectPage.controlHeight)
+                }
+            }
             SettingRow(title: "Code history",
                        detail: project.agentHistoryEnabled
                            ? "Before changing code, an agent can look up what earlier chats in this project were asked, corrected and decided about it, and is told to follow those decisions."
@@ -532,6 +544,18 @@ private struct NewChatSection: View {
                         model.updateProject(project.id) { $0.defaultBaseRef = ref }
                     }
             }
+        }
+    }
+
+    /// Offer a profile in this project, or stop offering it. Every
+    /// profile on is kept as no choice at all, so a profile added later
+    /// shows here too.
+    private func offer(_ profileId: String, _ on: Bool) {
+        let all = model.profiles.map(\.id)
+        model.updateProject(project.id) { p in
+            var picked = Set(p.profileIds ?? all)
+            if on { picked.insert(profileId) } else { picked.remove(profileId) }
+            p.profileIds = picked == Set(all) ? nil : all.filter { picked.contains($0) }
         }
     }
 }

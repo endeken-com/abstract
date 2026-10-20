@@ -85,6 +85,13 @@ private struct MainTabChip: View {
                 .foregroundStyle(active ? Color.btText : hovering ? Color.btTextSecondary : Color.btTextTertiary)
                 .lineLimit(1)
                 .truncationMode(.tail)
+            if case .chat = tab.kind, let profile = session?.profileName {
+                Text(profile)
+                    .font(BTFont.ui(11.5))
+                    .foregroundStyle(Color.btTextTertiary)
+                    .lineLimit(1)
+                    .help("Started from the \(profile) profile")
+            }
             if dirty {
                 Circle().fill(Color.btTextTertiary).frame(width: 7, height: 7).help("Unsaved changes")
             }

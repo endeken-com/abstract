@@ -10,7 +10,11 @@ public enum AutomationDeviceRun {
     ///   - localProject: the automation's project as this Mac has it, so
     ///     its record on the other Mac can be found.
     public static func plan(_ a: Automation, deviceName: String, snapshot: RemoteSnapshot?, localProject: Project?,
-                            name: String, nameSource: ChatNameSource, slug: String?) throws -> RemoteRunStart {
+                            name: String, nameSource: ChatNameSource, slug: String?,
+                            profile: AgentProfile? = nil) throws -> RemoteRunStart {
+        // A run from a profile starts with the profile's setup as it is
+        // now (ABS-101), on the other Mac as here.
+        let a = a.resolved(with: profile)
         guard let snapshot else {
             throw AbstractError.message("\(deviceName) isn't connected, so this run didn't start.")
         }
@@ -34,7 +38,8 @@ public enum AutomationDeviceRun {
         return RemoteRunStart(projectId: projectId, providerId: a.providerId, prompt: a.prompt,
                               policy: a.permissionPolicy, model: a.model, effort: a.effort,
                               name: name, nameSource: nameSource,
-                              slug: projectId == nil ? nil : slug, automationId: a.id)
+                              slug: projectId == nil ? nil : slug, automationId: a.id,
+                              profile: profile.flatMap { $0.id == a.profileId ? $0.snapshot : nil })
     }
 
     /// Whether that Mac has its own record of `project`, for the edit page
