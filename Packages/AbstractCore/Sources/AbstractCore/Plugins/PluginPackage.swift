@@ -50,6 +50,9 @@ public enum PluginPackage {
         guard files.contains(manifest.entry) else {
             throw PluginValidationError.missingEntry(manifest.entry)
         }
+        if let background = manifest.background, !files.contains(background) {
+            throw PluginValidationError.missingEntry(background)
+        }
         let hex = hash.finalize().map { String(format: "%02x", $0) }.joined()
         return Inspection(manifest: manifest, hash: hex, fileCount: files.count, totalBytes: total)
     }

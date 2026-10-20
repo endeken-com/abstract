@@ -33,6 +33,9 @@ public struct PluginRecord: Sendable, Hashable, Codable, Identifiable {
     /// Project keys (`macId:projectId`) whose chats' messages a
     /// `transcripts.read` grant may read, picked at review. Empty reads none.
     public var transcriptProjectKeys: [String]
+    /// Whether running its background script was reviewed (ABS-93); an
+    /// update that adds one must be reviewed again.
+    public var grantedBackground: Bool
     public var packageHash: String
     public var installedAt: Date
     public var lastError: String?
@@ -41,13 +44,14 @@ public struct PluginRecord: Sendable, Hashable, Codable, Identifiable {
                 grantedCapabilities: Set<PluginCapability> = [], alwaysAllowedActions: Set<PluginCapability> = [],
                 grantedNetworkHosts: [String] = [],
                 grantedSecretNames: [String] = [], transcriptProjectKeys: [String] = [],
-                packageHash: String,
+                grantedBackground: Bool = false, packageHash: String,
                 installedAt: Date = Date(), lastError: String? = nil) {
         self.id = id; self.name = name; self.version = version; self.source = source
         self.enabled = enabled; self.grantedCapabilities = grantedCapabilities
         self.alwaysAllowedActions = alwaysAllowedActions
         self.grantedNetworkHosts = grantedNetworkHosts; self.grantedSecretNames = grantedSecretNames
         self.transcriptProjectKeys = transcriptProjectKeys
+        self.grantedBackground = grantedBackground
         self.packageHash = packageHash; self.installedAt = installedAt; self.lastError = lastError
     }
 
@@ -66,6 +70,7 @@ public struct PluginRecord: Sendable, Hashable, Codable, Identifiable {
         grantedNetworkHosts = try box.decodeIfPresent([String].self, forKey: .grantedNetworkHosts) ?? []
         grantedSecretNames = try box.decodeIfPresent([String].self, forKey: .grantedSecretNames) ?? []
         transcriptProjectKeys = try box.decodeIfPresent([String].self, forKey: .transcriptProjectKeys) ?? []
+        grantedBackground = try box.decodeIfPresent(Bool.self, forKey: .grantedBackground) ?? false
         packageHash = try box.decode(String.self, forKey: .packageHash)
         installedAt = try box.decode(Date.self, forKey: .installedAt)
         lastError = try box.decodeIfPresent(String.self, forKey: .lastError)
@@ -212,6 +217,7 @@ public final class PluginManager: Sendable {
             !wants.isSubset(of: $0.grantedCapabilities)
                 || !Set(manifest.networkHosts).isSubset(of: Set($0.grantedNetworkHosts))
                 || !Set(manifest.secretDeclarations.map(\.name)).isSubset(of: Set($0.grantedSecretNames))
+                || (manifest.background != nil && !$0.grantedBackground)
         } ?? false
 
         let idFolder = pluginsRoot.appendingPathComponent(manifest.id)
@@ -245,6 +251,7 @@ public final class PluginManager: Sendable {
             grantedNetworkHosts: existing != nil && !grows ? manifest.networkHosts : [],
             grantedSecretNames: existing != nil && !grows ? manifest.secretDeclarations.map(\.name) : [],
             transcriptProjectKeys: existing != nil && !grows ? (existing?.transcriptProjectKeys ?? []) : [],
+            grantedBackground: existing != nil && !grows && manifest.background != nil,
             packageHash: inspection.hash, installedAt: existing?.installedAt ?? Date())
         records.removeAll { $0.id == manifest.id }
         records.append(record)
@@ -263,6 +270,7 @@ public final class PluginManager: Sendable {
             records[index].grantedCapabilities = manifest.grantedCapabilities
             records[index].grantedNetworkHosts = manifest.networkHosts
             records[index].grantedSecretNames = manifest.secretDeclarations.map(\.name)
+            records[index].grantedBackground = manifest.background != nil
             if let transcriptProjectKeys {
                 records[index].transcriptProjectKeys = transcriptProjectKeys
             }
@@ -323,6 +331,7 @@ public final class PluginManager: Sendable {
         records[index].grantedNetworkHosts = []
         records[index].grantedSecretNames = []
         records[index].transcriptProjectKeys = []
+        records[index].grantedBackground = false
         save(records)
     }
 
