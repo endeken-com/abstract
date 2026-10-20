@@ -1,5 +1,7 @@
-import type { PullRequest, Session, Snapshot } from './types';
+import { swiftDate, type PullRequest, type Session, type Snapshot, type Stall } from './types';
+import { stallRowText } from './stalls';
 import { itemKey, type MacState, type MacView } from './macs';
+import { iconFor, type ChatIcon } from './projectIcons';
 
 // The phone's chat list grouped by what each chat needs from you, as the Mac's
 // sidebar groups it (Packages/AbstractCore/Sources/AbstractCore/Sessions/SidebarChats.swift).
@@ -25,6 +27,10 @@ export type ChatFacts = {
   hasChanges?: boolean;
   backgroundTasks: boolean;
   projectName?: string | null;
+  // Working but silent past its Mac's quiet/stalled threshold; null otherwise.
+  stall?: Stall | null;
+  // What leads its row: its project's icon, or its agent's logo.
+  icon: ChatIcon;
 };
 export type ChatSection = { group: ChatGroup; chats: ChatFacts[]; older: ChatFacts[] };
 
@@ -42,16 +48,21 @@ export function chatsFromMacs(macs: MacView[]): ChatFacts[] {
 
 export function chatsFromSnapshot(snapshot: Snapshot | null | undefined, mac: Pick<MacView, 'id' | 'name' | 'state' | 'lastSeenAt'>): ChatFacts[] {
   if (!snapshot) return [];
-  const projects = new Map(snapshot.projects.map(p => [p.id, p.name]));
+  const projects = new Map(snapshot.projects.map(p => [p.id, p]));
   const busy = new Set(snapshot.backgroundTasks || []);
-  return snapshot.sessions.map(session => ({
-    session, hostId: mac.id, mac: mac.name, macState: mac.state, lastSeenAt: mac.lastSeenAt,
-    pullRequest: snapshot.pullRequests?.[session.id] ?? null,
-    // A chat with no folder has nothing to review.
-    hasChanges: session.worktreePath ? snapshot.unmergedWork?.[session.id] : false,
-    backgroundTasks: busy.has(session.id),
-    projectName: session.projectId ? projects.get(session.projectId) ?? null : null,
-  }));
+  return snapshot.sessions.map(session => {
+    const project = session.projectId ? projects.get(session.projectId) : undefined;
+    return {
+      session, hostId: mac.id, mac: mac.name, macState: mac.state, lastSeenAt: mac.lastSeenAt,
+      pullRequest: snapshot.pullRequests?.[session.id] ?? null,
+      // A chat with no folder has nothing to review.
+      hasChanges: session.worktreePath ? snapshot.unmergedWork?.[session.id] : false,
+      backgroundTasks: busy.has(session.id),
+      projectName: project?.name ?? null,
+      stall: snapshot.stalls?.[session.id] ?? null,
+      icon: iconFor(project, session.projectId ? snapshot.projectIcons?.[session.projectId] : undefined),
+    };
+  });
 }
 
 const prState = (pr: PullRequest) => pr.state.toUpperCase();
@@ -66,6 +77,8 @@ export function checksOf(pr: PullRequest | null | undefined): Checks | null {
 
 // Where a chat belongs, pins and archive aside: what it needs from you.
 export function statusOf(chat: ChatFacts): ChatGroup {
+  // A stalled chat waits on your call: keep waiting, stop, or stop and retry.
+  if (chat.stall?.state === 'stalled') return 'needsYou';
   switch (chat.session.status) {
     case 'waiting_input': case 'errored': return 'needsYou';
     case 'running': case 'provisioning': return 'working';
@@ -95,14 +108,16 @@ export function sections(chats: ChatFacts[], now: number): ChatSection[] {
 }
 
 // The quiet second line under a chat's title. Empty parts are left out.
-export type ChatLine = { project?: string; pullRequest?: PullRequest; checks?: Checks; changesRequested: boolean; mac?: string };
+export type ChatLine = { stall?: string; stalled: boolean; project?: string; pullRequest?: PullRequest; checks?: Checks; changesRequested: boolean; mac?: string };
 
 // Checks and requested changes only matter while the pull request is open. The
 // Mac is named only when more than one is paired.
-export function lineOf(chat: ChatFacts, showProject: boolean, showMac = false): ChatLine {
+export function lineOf(chat: ChatFacts, showProject: boolean, showMac = false, now = swiftDate()): ChatLine {
   const pr = chat.pullRequest || undefined;
   const open = !!pr && prState(pr) === 'OPEN';
   return {
+    stall: chat.stall ? stallRowText(chat.stall, now) : undefined,
+    stalled: chat.stall?.state === 'stalled',
     project: showProject ? chat.projectName || undefined : undefined,
     pullRequest: pr,
     checks: open ? checksOf(pr) || undefined : undefined,
@@ -111,11 +126,11 @@ export function lineOf(chat: ChatFacts, showProject: boolean, showMac = false): 
   };
 }
 
-export const lineIsEmpty = (line: ChatLine) => !line.project && !line.pullRequest && !line.mac;
+export const lineIsEmpty = (line: ChatLine) => !line.stall && !line.project && !line.pullRequest && !line.mac;
 
 // "abstract · #3981 · passed · changes requested · Studio", as VoiceOver and the tests read it.
 export function lineText(line: ChatLine): string {
-  return [line.project, line.pullRequest && `#${line.pullRequest.number}`, line.checks, line.changesRequested && 'changes requested', line.mac]
+  return [line.stall, line.project, line.pullRequest && `#${line.pullRequest.number}`, line.checks, line.changesRequested && 'changes requested', line.mac]
     .filter(Boolean).join(' · ');
 }
 

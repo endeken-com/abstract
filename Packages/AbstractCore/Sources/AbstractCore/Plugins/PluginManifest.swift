@@ -1,17 +1,34 @@
 import Foundation
 
-/// A capability a plugin may ask for (API 1). The list is closed: an unknown
+/// A capability a plugin may ask for. The list is closed: an unknown
 /// string fails the install, so a plugin built for a newer host is never
-/// half-granted. See docs/spikes/ABS-84.md §4.
+/// half-granted. See docs/spikes/ABS-84.md §4. The action capabilities
+/// (ABS-92) arrived with API 2 and ask first, one kind at a time, until
+/// the person always allows that kind.
 public enum PluginCapability: String, Sendable, Hashable, Codable, CaseIterable {
     case projectsRead = "projects.read"
     case chatsRead = "chats.read"
     case chatsOpen = "chats.open"
     case storageOwn = "storage.own"
+    case network = "network"
+    case secrets = "secrets"
     case usageRead = "usage.read"
     case turnsRead = "turns.read"
     case transcriptsRead = "transcripts.read"
     case automationsRead = "automations.read"
+    case chatsCreate = "chats.create"
+    case chatsMessage = "chats.message"
+    case chatsControl = "chats.control"
+    case permissionsAnswer = "permissions.answer"
+    case automationsRun = "automations.run"
+
+    /// The capabilities that do something to a chat or an automation, as
+    /// opposed to reading. Each asks first until always allowed.
+    public static let actionCases: [PluginCapability] = [
+        .chatsCreate, .chatsMessage, .chatsControl, .permissionsAnswer, .automationsRun,
+    ]
+
+    public var isAction: Bool { Self.actionCases.contains(self) }
 
     /// The sentence shown when the person reviews the plugin.
     public var plainWords: String {
@@ -20,10 +37,17 @@ public enum PluginCapability: String, Sendable, Hashable, Codable, CaseIterable 
         case .chatsRead: "See your chats' titles, agents and progress"
         case .chatsOpen: "Open a chat when you click it"
         case .storageOwn: "Remember its own settings on this Mac"
+        case .network: "Reach the web addresses it lists"
+        case .secrets: "Use the secrets you give it, without seeing them"
         case .usageRead: "See what your chats used and cost"
         case .turnsRead: "See when your agents worked"
         case .transcriptsRead: "Read your chats' messages in the projects you pick"
         case .automationsRead: "See your automations and when they last ran"
+        case .chatsCreate: "Start chats in your projects"
+        case .chatsMessage: "Send messages to your chats"
+        case .chatsControl: "Stop and resume your agents"
+        case .permissionsAnswer: "Answer your agents' questions and permission requests"
+        case .automationsRun: "Run your automations"
         }
     }
 
@@ -136,9 +160,12 @@ public struct PluginInvocation: Sendable, Hashable, Codable {
     }
 }
 
-/// A plugin's `manifest.json` (API 1). Unknown keys are ignored.
+/// A plugin's `manifest.json`. Unknown keys are ignored. API 1 plugins
+/// keep working under API 2 (ABS-84 §3); only an API 2 manifest may ask
+/// for action capabilities.
 public struct PluginManifest: Sendable, Hashable, Codable {
-    public static let supportedAPI = 1
+    public static let supportedAPI = 2
+    public static let supportedAPIs: Set<Int> = [1, 2]
     public static let fallbackSymbol = "puzzlepiece.extension"
 
     public var api: Int
@@ -149,7 +176,35 @@ public struct PluginManifest: Sendable, Hashable, Codable {
     public var entry: String
     /// As written in the manifest, before validation.
     public var capabilities: [String]
+    public var network: Network?
+    public var secrets: [Secret]?
     public var contributes: Contributes
+
+    /// The exact hosts a plugin with `network` may reach (ABS-94). No
+    /// wildcards: every host is shown at review and checked per request.
+    public struct Network: Sendable, Hashable, Codable {
+        public var hosts: [String]
+        public init(hosts: [String]) { self.hosts = hosts }
+    }
+
+    /// One secret the user enters in Settings → Plugins (ABS-94). The
+    /// plugin knows `name`; the value stays in the Keychain and is put
+    /// into a request header by the host at send time.
+    public struct Secret: Sendable, Hashable, Codable, Identifiable {
+        public var name: String
+        public var title: String
+        public var id: String { name }
+        public init(name: String, title: String) { self.name = name; self.title = title }
+    }
+
+    /// Lowercased, as hosts are case-insensitive.
+    public var networkHosts: [String] { (network?.hosts ?? []).map { $0.lowercased() } }
+    public var secretDeclarations: [Secret] { secrets ?? [] }
+
+    /// One plain sentence per host and secret, for the review screen.
+    public var networkSentences: [String] {
+        networkHosts.map { "Reach \($0)." } + secretDeclarations.map { "Use your \($0.title), without seeing it." }
+    }
 
     /// One thing a plugin adds outside its sidebar screen: a tab, a menu
     /// item, a ⌘K command, its Settings page, or a Home card.
@@ -207,13 +262,16 @@ public struct PluginManifest: Sendable, Hashable, Codable {
 
     public init(api: Int = supportedAPI, id: String, name: String, version: String,
                 description: String? = nil, entry: String = "index.html",
-                capabilities: [String], views: [View] = [],
+                capabilities: [String], networkHosts: [String] = [], secrets: [Secret] = [],
+                views: [View] = [],
                 chatPanelTabs: [Contribution] = [], chatMenuItems: [Contribution] = [],
                 paletteCommands: [Contribution] = [], settingsPage: Contribution? = nil,
                 homeWidgets: [Contribution] = []) {
         self.api = api; self.id = id; self.name = name; self.version = version
         self.description = description; self.entry = entry
         self.capabilities = capabilities
+        self.network = networkHosts.isEmpty ? nil : Network(hosts: networkHosts)
+        self.secrets = secrets.isEmpty ? nil : secrets
         self.contributes = Contributes(views: views, chatPanelTabs: chatPanelTabs, chatMenuItems: chatMenuItems,
                                        paletteCommands: paletteCommands, settingsPage: settingsPage, homeWidgets: homeWidgets)
     }
@@ -252,9 +310,9 @@ public struct PluginManifest: Sendable, Hashable, Codable {
         }
     }
 
-    /// Fails closed on anything outside API 1 (ABS-84 §3).
+    /// Fails closed on anything outside the supported APIs (ABS-84 §3).
     public func validate() throws {
-        guard api == Self.supportedAPI else {
+        guard Self.supportedAPIs.contains(api) else {
             throw PluginValidationError.unsupportedAPI(api, plugin: name.isEmpty ? "This plugin" : "\(name) \(version)")
         }
         guard Self.isReverseDNS(id) else {
@@ -272,6 +330,31 @@ public struct PluginManifest: Sendable, Hashable, Codable {
         }
         for name in capabilities where PluginCapability(rawValue: name) == nil {
             throw PluginValidationError.unknownCapability(name)
+        }
+        // Actions are API 2: an API 1 plugin was reviewed as read-only,
+        // so it doesn't gain them by listing a new string.
+        if api < 2, grantedCapabilities.contains(where: \.isAction) {
+            throw PluginValidationError.invalidManifest("action capabilities need api 2")
+        }
+        // Hosts and secrets exist only under their grants, and a grant with
+        // nothing listed is meaningless (ABS-94). Fail closed both ways.
+        let granted = grantedCapabilities
+        guard networkHosts.count <= 16, Set(networkHosts).count == networkHosts.count,
+              networkHosts.allSatisfy(Self.isExactHost) else {
+            throw PluginValidationError.invalidManifest("network hosts must be exact hosts like api.slack.com, with no wildcards")
+        }
+        guard granted.contains(.network) == !networkHosts.isEmpty else {
+            throw PluginValidationError.invalidManifest("network needs its exact hosts listed, and hosts need the network capability")
+        }
+        guard secretDeclarations.count <= 8,
+              Set(secretDeclarations.map(\.name)).count == secretDeclarations.count,
+              secretDeclarations.allSatisfy({
+                  Self.isSecretName($0.name) && !$0.title.trimmingCharacters(in: .whitespaces).isEmpty && $0.title.count <= 60
+              }) else {
+            throw PluginValidationError.invalidManifest("secrets need a short name and title")
+        }
+        guard granted.contains(.secrets) == !secretDeclarations.isEmpty else {
+            throw PluginValidationError.invalidManifest("secrets need their names listed, and listed secrets need the secrets capability")
         }
         guard contributes.views.count <= 1 else {
             throw PluginValidationError.invalidManifest("at most one view is supported")
@@ -304,6 +387,23 @@ public struct PluginManifest: Sendable, Hashable, Codable {
         guard total > 0 else {
             throw PluginValidationError.invalidManifest("the plugin doesn't add anything")
         }
+    }
+
+    /// An exact host name: dotted labels only. No wildcard, scheme, port,
+    /// path or userinfo — those would widen what was reviewed.
+    public static func isExactHost(_ host: String) -> Bool {
+        let host = host.lowercased()
+        let labels = host.split(separator: ".", omittingEmptySubsequences: false)
+        guard labels.count >= 2, host.count <= 253 else { return false }
+        return labels.allSatisfy { label in
+            !label.isEmpty && label.count <= 63 && !label.hasPrefix("-") && !label.hasSuffix("-")
+                && label.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" }
+        }
+    }
+
+    static func isSecretName(_ name: String) -> Bool {
+        !name.isEmpty && name.count <= 40
+            && name.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" || $0 == "." }
     }
 
     static func isSound(id: String, title: String) -> Bool {

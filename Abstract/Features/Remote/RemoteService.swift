@@ -447,7 +447,14 @@ final class RemoteService {
                               backgroundTasks: model.alive.filter { model.runningBackgroundTasks($0) > 0 }.sorted(),
                               unmergedWork: model.branchStates.mapValues(\.hasUnmergedWork),
                               projectIcons: projectIcons(model.projects.filter { $0.archivedAt == nil }),
-                              automationDevice: true,
+                              automationDevice: true, projectDefaultDevice: true, profiles: model.profiles,
+                              everythingPaused: model.pauseState.everythingPaused,
+                              pausedProjectIds: model.pauseState.pausedProjectIds.sorted(),
+                              pauseControl: true,
+                              stalls: model.stallStates.compactMapValues(RemoteStall.init),
+                              codeHistory: true,
+                              plans: model.plans.filter { $0.value.current != nil }.mapValues(RemotePlan.init),
+                              planApproval: true,
                               permissionRules: Dictionary(uniqueKeysWithValues: model.projects.filter { $0.archivedAt == nil }.map {
                                   ($0.id, model.permissionRules(for: $0.id))
                               }))
@@ -897,18 +904,24 @@ final class HostedPeer {
                                                    prompt: prompt, baseRef: nil, policy: policy, select: false)
                 return .started(sessionId: id)
             } catch { return .failed(error.localizedDescription) }
-        case let .startStandaloneConfigured(provider, prompt, policy, attachments, files, name, effort):
+        case let .startStandaloneConfigured(provider, prompt, policy, attachments, files, name, effort, profile):
             do {
                 let kept = try attachments.map { a in try files[a.id].map { try AttachmentStore.keep($0, for: a) } ?? a }
                 let agent = RetiredAgents.current(provider)
                 let id = try await model.startChat(projectId: nil, providerId: agent,
                                                    prompt: prompt, attachments: kept, baseRef: nil,
                                                    policy: policy, model: agent == provider ? name : nil,
-                                                   effort: agent == provider ? effort : nil, select: false)
+                                                   effort: agent == provider ? effort : nil, profile: profile, select: false)
                 return .started(sessionId: id)
             } catch { return .failed(error.localizedDescription) }
         case .stop(let session):
             model.stop(session)
+            return .ok
+        case .keepWaiting(let session):
+            model.keepWaiting(session)
+            return .ok
+        case .stopAndRetry(let session):
+            model.stopAndRetry(session)
             return .ok
         case let .answer(session, requestId, allow):
             model.answerPermission(session, requestId: requestId, allow: allow)
@@ -933,6 +946,18 @@ final class HostedPeer {
             return .ok
         case let .setPolicy(session, policy):
             model.setPolicy(session, policy)
+            return .ok
+        case .approvePlan(let session):
+            guard model.plans[session]?.current != nil else { return .failed("That chat has no plan waiting.") }
+            model.approvePlan(session)
+            return .ok
+        case .requestPlanChanges(let session):
+            guard model.plans[session]?.current != nil else { return .failed("That chat has no plan waiting.") }
+            model.requestPlanChanges(session)
+            return .ok
+        case .discardPlan(let session):
+            guard model.plans[session]?.current != nil else { return .failed("That chat has no plan waiting.") }
+            model.discardPlan(session)
             return .ok
         case let .stopTask(session, taskId):
             model.stopTask(session, taskId: taskId)
@@ -967,12 +992,40 @@ final class HostedPeer {
                                              deleteBranch: deleteBranch ? worktree.branch : nil)
                 return .ok
             } catch { return .failed(error.localizedDescription) }
+        case let .setProjectDefaultDevice(projectId, deviceId):
+            // Only this Mac's own records carry a default Mac; a mirrored
+            // project from another Mac is changed through that Mac.
+            guard var project = model.projects.first(where: { $0.id == projectId }) else { return .failed("Project not found.") }
+            project.defaultDeviceId = deviceId
+            model.updateProject(project)
+            return .ok
         case .saveAutomation(let automation):
             do { return .automation(try model.saveAutomation(automation)) }
             catch { return .failed(error.localizedDescription) }
         case .deleteAutomation(let id):
             guard model.automations.contains(where: { $0.id == id }) else { return .failed("Automation not found.") }
             model.deleteAutomation(id)
+            return .ok
+        case .saveProfile(let profile):
+            model.saveProfile(profile)
+            return .ok
+        case .deleteProfile(let id):
+            guard model.profile(id) != nil else { return .failed("Profile not found.") }
+            model.deleteProfile(id)
+            return .ok
+        case .pauseEverything:
+            model.pauseEverything()
+            return .ok
+        case .resumeEverything:
+            model.resumeEverything()
+            return .ok
+        case .pauseProject(let projectId):
+            guard model.projects.contains(where: { $0.id == projectId }) else { return .failed("Project not found.") }
+            model.pauseProject(projectId)
+            return .ok
+        case .resumeProject(let projectId):
+            guard model.projects.contains(where: { $0.id == projectId }) else { return .failed("Project not found.") }
+            model.resumeProject(projectId)
             return .ok
         case .runAutomation(let id):
             guard let automation = model.automations.first(where: { $0.id == id }) else { return .failed("Automation not found.") }
@@ -1041,6 +1094,13 @@ final class HostedPeer {
         case .closePullRequest(let session):
             do { try await model.closePullRequest(session); return .ok }
             catch { return .failed(error.localizedDescription) }
+        case let .setAgentHistory(projectId, enabled):
+            guard model.projects.contains(where: { $0.id == projectId }) else { return .failed("Project not found.") }
+            model.updateProject(projectId) { $0.agentHistory = enabled }
+            return .ok
+        case let .askAuthor(root, path, lineStart, lineEnd, code, revision, session):
+            return await askAuthor(root: root, path: path, lineStart: lineStart, lineEnd: lineEnd, code: code,
+                                   revision: revision, sessionId: session, model: model)
         case let .exec(command, args, cwd, stdin):
             return await exec(command, args, cwd: cwd, stdin: stdin)
         case .spawn(let spec):

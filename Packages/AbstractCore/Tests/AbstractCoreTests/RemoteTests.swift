@@ -276,6 +276,57 @@ struct RemoteAccessTests {
         }
         #expect(before == 161 && hasMore)
     }
+
+    @Test func profilesCrossTheWire() throws {
+        let profile = AgentProfile(name: "Reviewer", iconSymbol: "magnifyingglass", providerId: "codex",
+                                   effort: "high", permissionPolicy: .ask, instructions: "Review it.")
+        // A snapshot carries the profiles a paired device may start from.
+        let snapshot = RemoteSnapshot(projects: [], sessions: [], providers: ["codex"], alive: [], profiles: [profile])
+        guard case .event(.snapshot(let decoded)) = try JSONDecoder().decode(
+            RemoteMessage.self, from: JSONEncoder().encode(RemoteMessage.event(.snapshot(snapshot)))) else {
+            Issue.record("snapshot failed to decode"); return
+        }
+        #expect(decoded.profiles == [profile])
+        // A snapshot from before profiles still decodes, offering none.
+        let plain = try JSONEncoder().encode(RemoteMessage.event(.snapshot(
+            RemoteSnapshot(projects: [], sessions: [], providers: [], alive: []))))
+        #expect(!String(decoding: plain, as: UTF8.self).contains("profiles"))
+        guard case .event(.snapshot(let older)) = try JSONDecoder().decode(RemoteMessage.self, from: plain) else {
+            Issue.record("older snapshot failed to decode"); return
+        }
+        #expect(older.profiles == nil)
+
+        // Saving and deleting one from a paired device.
+        for request: RemoteRequest in [.saveProfile(profile), .deleteProfile(id: profile.id)] {
+            let encoded = try JSONEncoder().encode(RemoteMessage.request(id: 8, request))
+            guard case .request(id: 8, _) = try JSONDecoder().decode(RemoteMessage.self, from: encoded) else {
+                Issue.record("profile request failed to decode"); return
+            }
+        }
+        guard case let .request(_, .saveProfile(saved)) = try JSONDecoder().decode(
+            RemoteMessage.self, from: JSONEncoder().encode(RemoteMessage.request(id: 8, .saveProfile(profile)))) else {
+            Issue.record("saveProfile lost its profile"); return
+        }
+        #expect(saved == profile)
+
+        // A standalone chat can start from a profile; without one, the
+        // request is the one older Macs send and read.
+        let started = RemoteMessage.request(id: 9, .startStandaloneConfigured(
+            providerId: "codex", prompt: "hi", policy: .ask, attachments: [], files: [:],
+            model: nil, effort: "high", profile: profile.snapshot))
+        guard case let .request(_, .startStandaloneConfigured(_, _, _, _, _, _, _, kept)) = try JSONDecoder().decode(
+            RemoteMessage.self, from: JSONEncoder().encode(started)) else {
+            Issue.record("standalone start failed to decode"); return
+        }
+        #expect(kept == profile.snapshot)
+        let bare = try JSONEncoder().encode(RemoteMessage.request(id: 10, .startStandaloneConfigured(
+            providerId: "claude", prompt: "hi", policy: .ask, attachments: [], files: [:], model: nil, effort: nil)))
+        #expect(!String(decoding: bare, as: UTF8.self).contains("profile"))
+        guard case .request(_, .startStandaloneConfigured(_, _, _, _, _, _, _, nil)) = try JSONDecoder().decode(
+            RemoteMessage.self, from: bare) else {
+            Issue.record("plain standalone start failed to decode"); return
+        }
+    }
 }
 
 @Suite("Remote history batches")

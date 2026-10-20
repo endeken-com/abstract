@@ -72,18 +72,90 @@ final class PluginService {
         refresh()
     }
 
+    /// Always allow one action kind for this plugin, or ask first again.
+    func setAlwaysAllowed(_ id: String, _ capability: PluginCapability, _ allowed: Bool) {
+        manager.setAlwaysAllowed(id, capability, allowed)
+        refresh()
+    }
+
+    /// Take one grant back; the plugin stays on without it.
+    func revokeCapability(_ id: String, _ capability: PluginCapability) {
+        manager.revokeCapability(id, capability)
+        refresh()
+    }
+
     func reviewChangedPackage(_ id: String) {
         manager.reviewChangedPackage(id)
         refresh()
     }
 
     func remove(_ id: String) {
+        // Its secrets go with it (ABS-94).
+        if let plugin = plugin(id) {
+            for name in Set(plugin.record.grantedSecretNames + (plugin.manifest?.secretDeclarations.map(\.name) ?? [])) {
+                setSecret(nil, pluginId: id, name: name)
+            }
+        }
         manager.remove(id)
         refresh()
+    }
+
+    // MARK: Secrets and network activity (ABS-94)
+
+    /// Bumped after every plugin web request, so Settings shows it.
+    private(set) var networkActivity = 0
+
+    func noteNetworkActivity() { networkActivity += 1 }
+
+    func networkLogEntries(_ id: String) -> [PluginNetworkLog.Entry] {
+        _ = networkActivity
+        return manager.networkLog(for: id).entries()
+    }
+
+    nonisolated static func secretAccount(pluginId: String, name: String) -> String {
+        "plugin.\(pluginId).\(name)"
+    }
+
+    /// Whether a value is kept — the value itself is never shown.
+    func hasSecret(pluginId: String, name: String) -> Bool {
+        Keychain.read(Self.secretAccount(pluginId: pluginId, name: name)) != nil
+    }
+
+    /// nil (or empty) removes it.
+    func setSecret(_ value: String?, pluginId: String, name: String) {
+        let value = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+        Keychain.write(Self.secretAccount(pluginId: pluginId, name: name),
+                       value?.isEmpty == false ? value : nil)
+    }
+
+    /// The fetcher for one showing of a plugin: the record's grants,
+    /// Keychain secrets, the live transport and its activity log.
+    func fetchService(for plugin: InstalledPlugin) -> PluginFetchService {
+        PluginFetchService(pluginId: plugin.id,
+                           allowedHosts: Set(plugin.record.grantedNetworkHosts),
+                           secretNames: Set(plugin.record.grantedSecretNames),
+                           secrets: KeychainPluginSecrets(),
+                           transport: URLSessionPluginTransport(),
+                           log: manager.networkLog(for: plugin.id))
     }
 
     func noteError(_ id: String, _ message: String?) {
         manager.noteError(id, message)
         refresh()
+    }
+}
+
+/// Plugin secrets from the login Keychain (ABS-94). Read only while a
+/// request is being sent, and only into its headers. Its own read because
+/// a send may not be on the main actor; Keychain calls are thread-safe.
+struct KeychainPluginSecrets: PluginSecretResolving {
+    nonisolated func secretValue(pluginId: String, name: String) -> String? {
+        let account = PluginService.secretAccount(pluginId: pluginId, name: name)
+        let query: [CFString: Any] = [kSecClass: kSecClassGenericPassword, kSecAttrService: "Abstract",
+                                      kSecAttrAccount: account, kSecReturnData: true, kSecMatchLimit: kSecMatchLimitOne]
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let data = result as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
     }
 }

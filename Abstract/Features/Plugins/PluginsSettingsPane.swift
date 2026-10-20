@@ -146,7 +146,7 @@ struct PluginsSettingsPane: View {
             }
             Button("Cancel", role: .cancel) { removing = nil }
         } message: {
-            Text("Its files and its saved settings are deleted from this Mac. Your chats and projects aren't affected.")
+            Text("Its files, its saved settings and any secrets you entered for it are deleted from this Mac. Your chats and projects aren't affected.")
         }
     }
 
@@ -166,11 +166,29 @@ struct PluginsSettingsPane: View {
             .disabled(plugin.manifest == nil)
 
             if let manifest = plugin.manifest, !manifest.grantedCapabilities.isEmpty {
-                Text(manifest.grantedCapabilities.map {
+                // What it actually holds now; before its first review,
+                // what it asks for.
+                Text((record.grantedCapabilities.isEmpty ? manifest.grantedCapabilities : record.grantedCapabilities).map {
                     $0.plainWords(transcriptProjects: model.pluginProjectNames(record.transcriptProjectKeys))
                 }.sorted().joined(separator: " · "))
                     .font(.btCaption)
                     .foregroundStyle(Color.btTextSecondary)
+            }
+            // Action grants (ABS-92), each revocable on its own. Turning
+            // the plugin off and on again reviews the whole list anew.
+            ForEach(PluginCapability.actionCases.filter { record.grantedCapabilities.contains($0) },
+                    id: \.rawValue) { capability in
+                HStack(spacing: Space.sm) {
+                    Text(record.alwaysAllowedActions.contains(capability)
+                         ? "\(capability.plainWords) — always allowed."
+                         : "\(capability.plainWords) — asks first.")
+                        .font(.btCaption)
+                        .foregroundStyle(Color.btTextSecondary)
+                    if record.alwaysAllowedActions.contains(capability) {
+                        Button("Ask First") { model.plugins.setAlwaysAllowed(plugin.id, capability, false) }
+                    }
+                    Button("Revoke") { model.plugins.revokeCapability(plugin.id, capability) }
+                }
             }
             if let problem = plugin.problem {
                 Text(problem).font(.btCaption).foregroundStyle(Color.btRemoved)
@@ -184,6 +202,27 @@ struct PluginsSettingsPane: View {
                 Text(manifest.appearanceSentences.joined(separator: " "))
                     .font(.btCaption)
                     .foregroundStyle(Color.btTextSecondary)
+            }
+            if let manifest = plugin.manifest, !manifest.networkHosts.isEmpty {
+                Text("Can reach: \(manifest.networkHosts.joined(separator: ", ")).")
+                    .font(.btCaption)
+                    .foregroundStyle(Color.btTextSecondary)
+            }
+            if let manifest = plugin.manifest {
+                ForEach(manifest.secretDeclarations) { secret in
+                    PluginSecretRow(pluginId: plugin.id, secret: secret)
+                }
+            }
+            let activity = model.plugins.networkLogEntries(plugin.id)
+            if !activity.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Web requests").font(.btCaption).foregroundStyle(Color.btTextSecondary)
+                    ForEach(Array(activity.prefix(5)), id: \.at) { entry in
+                        Text("\(entry.host) · \(entry.status == 0 ? "refused" : String(entry.status)) · \(entry.at.formatted(date: .abbreviated, time: .shortened))")
+                            .font(.btCaption)
+                            .foregroundStyle(Color.btTextSecondary)
+                    }
+                }
             }
             HStack(spacing: Space.sm) {
                 if plugin.isUsable, let view = plugin.view {
@@ -258,7 +297,9 @@ private struct PluginReviewSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             if source == .user {
-                Text("It isn't signed. It runs in a locked-down page with no network or file access, and it can only see and do what's listed here.")
+                Text(manifest.networkHosts.isEmpty
+                     ? "It isn't signed. It runs in a locked-down page with no network or file access, and it can only see and do what's listed here."
+                     : "It isn't signed. It runs in a locked-down page, and Abstract sends its web requests for it — only to the addresses listed here.")
                     .font(.btBody).foregroundStyle(Color.btTextSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -278,6 +319,19 @@ private struct PluginReviewSheet: View {
                     $0.plainWords(transcriptProjects: pickedNames)
                 }.sorted(), id: \.self) { words in
                     Text(words).font(.btBody).foregroundStyle(Color.btTextSecondary)
+                }
+                if manifest.grantedCapabilities.contains(where: \.isAction) {
+                    Text("Before it starts a chat, sends a message, stops or resumes an agent, answers for you, or runs an automation, Abstract will ask you first. You can let it always do one of those, and take any of them back here in Settings.")
+                        .font(.btBody).foregroundStyle(Color.btTextSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            if !manifest.networkSentences.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("On the web, it will be able to:").font(.btBodyMedium).foregroundStyle(Color.btText)
+                    ForEach(manifest.networkSentences, id: \.self) { sentence in
+                        Text(sentence).font(.btBody).foregroundStyle(Color.btTextSecondary)
+                    }
                 }
             }
             if manifest.grantedCapabilities.contains(.transcriptsRead) {
@@ -313,5 +367,41 @@ private struct PluginReviewSheet: View {
         .padding(Space.xl)
         .frame(width: 440)
         .onAppear { pickedProjects = Set(initialProjectKeys) }
+    }
+}
+
+/// One secret a plugin declared (ABS-94): entered here, kept in the
+/// Keychain, and never shown again — the plugin names it in a request
+/// header and Abstract fills the value in when it sends the request.
+private struct PluginSecretRow: View {
+    @Environment(AppModel.self) private var model
+    let pluginId: String
+    let secret: PluginManifest.Secret
+    @State private var draft = ""
+    @State private var entered = false
+
+    var body: some View {
+        HStack(spacing: Space.sm) {
+            Text(secret.title).font(.btCaption).foregroundStyle(Color.btTextSecondary)
+            if entered {
+                Text("Entered — kept in your Keychain.")
+                    .font(.btCaption).foregroundStyle(Color.btTextSecondary)
+                Button("Remove") {
+                    model.plugins.setSecret(nil, pluginId: pluginId, name: secret.name)
+                    entered = false
+                }
+            } else {
+                SecureField(secret.title, text: $draft)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 220)
+                Button("Save") {
+                    model.plugins.setSecret(draft, pluginId: pluginId, name: secret.name)
+                    draft = ""
+                    entered = model.plugins.hasSecret(pluginId: pluginId, name: secret.name)
+                }
+                .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .onAppear { entered = model.plugins.hasSecret(pluginId: pluginId, name: secret.name) }
     }
 }

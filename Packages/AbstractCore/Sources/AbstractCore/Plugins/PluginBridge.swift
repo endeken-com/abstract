@@ -5,21 +5,45 @@ import Foundation
 /// `openChat` only for a chat in the last snapshot. A bad message is refused
 /// and counted; it can never throw into the app.
 public struct PluginBridge: Sendable {
-    public static let api = 1
+    /// The newest bridge version; API 1 plugins still speak 1 (ABS-92).
+    public static let api = 2
+    public static let supportedAPIs: Set<Int> = [1, 2]
     /// One inbound message may not pass this many bytes.
     public static let messageByteLimit = 64 * 1024
+    /// A `fetch` message may carry a body up to the network limit (ABS-94),
+    /// plus its envelope. Every other type stays at `messageByteLimit`.
+    public static let fetchMessageByteLimit = PluginFetchService.bodyByteLimit + 64 * 1024
     /// More than this in the window is a flood.
     public static let floodCount = 100
     public static let floodWindow: TimeInterval = 10
+    /// Actions are rarer than messages: more than this in a minute
+    /// pauses the plugin (ABS-92).
+    public static let actionLimit = 10
+    public static let actionWindow: TimeInterval = 60
+    /// A message or prompt an action may carry.
+    public static let actionTextLimit = 20_000
 
     public var capabilities: Set<PluginCapability>
+    /// Action kinds the person always allows for this plugin; every
+    /// other granted kind asks first (ABS-92).
+    public var alwaysAllowedActions: Set<PluginCapability>
+    /// Granted hosts and secret names (ABS-94), from the plugin's record.
+    public var allowedHosts: Set<String>
+    public var secretNames: Set<String>
     public var knownChatIds: Set<String> = []
+    /// Projects from the last snapshot, the ones a new chat may start in.
+    public var knownProjectKeys: Set<String> = []
     public private(set) var refusalCount = 0
     public private(set) var lastRefusal: String?
     private var recent: [Date] = []
+    private var recentActions: [Date] = []
 
-    public init(capabilities: Set<PluginCapability>) {
+    public init(capabilities: Set<PluginCapability>, allowedHosts: Set<String> = [], secretNames: Set<String> = [],
+                alwaysAllowedActions: Set<PluginCapability> = []) {
         self.capabilities = capabilities
+        self.allowedHosts = Set(allowedHosts.map { $0.lowercased() })
+        self.secretNames = secretNames
+        self.alwaysAllowedActions = alwaysAllowedActions
     }
 
     public enum Outcome: Sendable, Equatable {
@@ -27,10 +51,18 @@ public struct PluginBridge: Sendable {
         case reply(id: String?, JSONValue)
         case openChat(id: String?, chatId: String)
         case getSnapshot(id: String?)
+        /// Send this through `PluginFetchService`, then answer by `id`.
+        case fetch(id: String?, PluginFetchRequest)
         case getUsage(id: String?, view: String, page: PluginPage, chatId: String?)
         case getTurns(id: String?, page: PluginPage, chatId: String?)
         case getTranscript(id: String?, page: PluginPage, chatId: String?)
         case getAutomations(id: String?, page: PluginPage)
+        /// Carry this action out: its kind is always allowed (ABS-92).
+        case action(id: String?, PluginAction)
+        /// Ask the person first; carry it out only if they allow it.
+        case askAction(id: String?, PluginAction)
+        /// The plugin acted too often; the host pauses it with a notice.
+        case actionRateLimited(id: String?)
         case refused(id: String?, reason: String)
         /// The plugin flooded the bridge; the host tears its view down.
         case flooded
@@ -38,21 +70,27 @@ public struct PluginBridge: Sendable {
 
     public mutating func handle(_ data: Data, storage: PluginStorage, now: Date = Date()) -> Outcome {
         if isFlood(now: now) { return .flooded }
-        guard data.count <= Self.messageByteLimit,
+        guard data.count <= Self.fetchMessageByteLimit,
               let object = try? JSONSerialization.jsonObject(with: data),
               case .object(let message) = JSONValue(any: object) else {
             return refuse(nil, "That message couldn't be read.")
         }
-        return handle(message, storage: storage)
+        // Only fetch may use the larger limit.
+        if data.count > Self.messageByteLimit, message["type"]?.string != "fetch" {
+            return refuse(message["id"]?.string, "That message couldn't be read.")
+        }
+        return handle(message, storage: storage, now: now)
     }
 
     public mutating func handle(_ text: String, storage: PluginStorage, now: Date = Date()) -> Outcome {
         handle(Data(text.utf8), storage: storage, now: now)
     }
 
-    private mutating func handle(_ message: [String: JSONValue], storage: PluginStorage) -> Outcome {
+    private mutating func handle(_ message: [String: JSONValue], storage: PluginStorage, now: Date) -> Outcome {
         let id = message["id"]?.string
-        guard message["api"]?.int == Self.api else { return refuse(id, "Unsupported bridge version.") }
+        guard let api = message["api"]?.int, Self.supportedAPIs.contains(api) else {
+            return refuse(id, "Unsupported bridge version.")
+        }
         guard let type = message["type"]?.string else { return refuse(id, "That message has no type.") }
         let payload = message["payload"]
         switch type {
@@ -85,6 +123,25 @@ public struct PluginBridge: Sendable {
             let saved = (try? storage.set(value == .null ? nil : value, forKey: key)) ?? false
             guard saved else { return refuse(id, "That would pass the plugin's storage limit.") }
             return .reply(id: id, .object(["key": .string(key), "saved": .bool(true)]))
+        case "fetch":
+            guard capabilities.contains(.network) else {
+                return refuse(id, "This plugin hasn't been granted reaching the web.")
+            }
+            guard let fetch = PluginFetchRequest(payload: payload) else {
+                return refuse(id, "That web request couldn't be read.")
+            }
+            // Early host check; the fetch service checks again before sending.
+            let host = URLComponents(string: fetch.url)?.host?.lowercased()
+            guard let host, allowedHosts.contains(host) else {
+                return refuse(id, "This plugin hasn't been granted reaching \(host ?? "that address").")
+            }
+            // A secret reference needs the secrets grant, for that name.
+            for header in fetch.secretHeaders.values {
+                guard capabilities.contains(.secrets), secretNames.contains(header.secret) else {
+                    return refuse(id, "This plugin hasn't been granted that secret.")
+                }
+            }
+            return .fetch(id: id, fetch)
         case "getUsage":
             guard capabilities.contains(.usageRead) else {
                 return refuse(id, "This plugin hasn't been granted seeing what your chats used and cost.")
@@ -109,11 +166,118 @@ public struct PluginBridge: Sendable {
                 return refuse(id, "This plugin hasn't been granted seeing your automations.")
             }
             return .getAutomations(id: id, page: PluginPage(payload: payload))
+        case "createChat", "sendMessage", "controlChat", "answerPermission", "answerQuestion", "runAutomation":
+            // Actions are API 2: an API 1 plugin was granted reading only.
+            guard api >= 2 else { return refuse(id, "This plugin hasn't been granted acting on your chats.") }
+            return actionOutcome(type: type, id: id, payload: payload, now: now)
         case "__error":
             return refuse(id, "The plugin reported an error.")
         default:
             return refuse(id, "Abstract doesn't know that message.")
         }
+    }
+
+    // MARK: Actions (ABS-92)
+
+    /// Builds the action behind one action message, or refuses it. A
+    /// well-formed action counts toward the rate limit whether it ends
+    /// up asked about or always allowed.
+    private mutating func actionOutcome(type: String, id: String?, payload: JSONValue?, now: Date) -> Outcome {
+        let built: PluginAction
+        switch type {
+        case "sendMessage":
+            guard capabilities.contains(.chatsMessage) else {
+                return refuse(id, "This plugin hasn't been granted sending messages to your chats.")
+            }
+            guard let chatId = knownChat(payload), let text = actionText(payload, key: "text") else {
+                return refuse(id, "That message needs a chat in the plugin's list and some words to send.")
+            }
+            built = PluginAction(capability: .chatsMessage, chatId: chatId, text: text)
+        case "createChat":
+            guard capabilities.contains(.chatsCreate) else {
+                return refuse(id, "This plugin hasn't been granted starting chats.")
+            }
+            guard let prompt = actionText(payload, key: "prompt") else {
+                return refuse(id, "A new chat needs a prompt.")
+            }
+            if let projectKey = payload?["projectKey"]?.string, !knownProjectKeys.contains(projectKey) {
+                return refuse(id, "That project isn't in the plugin's list.")
+            }
+            if let policy = payload?["policy"]?.string,
+               !PermissionPolicy.autonomyCases.map(\.rawValue).contains(policy) {
+                return refuse(id, "Abstract doesn't know that permission level.")
+            }
+            if let agentId = payload?["agentId"]?.string, agentId.isEmpty || agentId.count > 60 {
+                return refuse(id, "That agent couldn't be read.")
+            }
+            built = PluginAction(capability: .chatsCreate, projectKey: payload?["projectKey"]?.string,
+                                 text: prompt, agentId: payload?["agentId"]?.string,
+                                 policy: payload?["policy"]?.string)
+        case "controlChat":
+            guard capabilities.contains(.chatsControl) else {
+                return refuse(id, "This plugin hasn't been granted stopping or resuming your agents.")
+            }
+            guard let chatId = knownChat(payload),
+                  let control = payload?["control"]?.string.flatMap(PluginAction.Control.init(rawValue:)) else {
+                return refuse(id, "That needs a chat in the plugin's list, and stop, pause or resume.")
+            }
+            built = PluginAction(capability: .chatsControl, chatId: chatId, control: control)
+        case "answerPermission":
+            guard capabilities.contains(.permissionsAnswer) else {
+                return refuse(id, "This plugin hasn't been granted answering your agents' questions and permission requests.")
+            }
+            guard let chatId = knownChat(payload), let requestId = nonEmpty(payload?["requestId"]?.string),
+                  let allow = payload?["allow"]?.bool else {
+                return refuse(id, "That answer needs the chat and the request it answers.")
+            }
+            built = PluginAction(capability: .permissionsAnswer, chatId: chatId, requestId: requestId, allow: allow)
+        case "answerQuestion":
+            guard capabilities.contains(.permissionsAnswer) else {
+                return refuse(id, "This plugin hasn't been granted answering your agents' questions and permission requests.")
+            }
+            var answers: [String: String] = [:]
+            for (question, answer) in payload?["answers"]?.object ?? [:] {
+                if let answer = answer.string { answers[question] = answer }
+            }
+            guard let chatId = knownChat(payload), let requestId = nonEmpty(payload?["requestId"]?.string),
+                  !answers.isEmpty, answers.count <= 16,
+                  answers.allSatisfy({ $0.key.count <= 500 && $0.value.count <= 2_000 }) else {
+                return refuse(id, "That answer needs the chat, the question it answers, and the answers.")
+            }
+            built = PluginAction(capability: .permissionsAnswer, chatId: chatId, requestId: requestId, answers: answers)
+        case "runAutomation":
+            guard capabilities.contains(.automationsRun) else {
+                return refuse(id, "This plugin hasn't been granted running your automations.")
+            }
+            guard let automationId = nonEmpty(payload?["automationId"]?.string) else {
+                return refuse(id, "That needs the automation to run.")
+            }
+            built = PluginAction(capability: .automationsRun, automationId: automationId)
+        default:
+            return refuse(id, "Abstract doesn't know that message.")
+        }
+
+        recentActions.append(now)
+        recentActions.removeAll { now.timeIntervalSince($0) > Self.actionWindow }
+        guard recentActions.count <= Self.actionLimit else { return .actionRateLimited(id: id) }
+        return alwaysAllowedActions.contains(built.capability)
+            ? .action(id: id, built)
+            : .askAction(id: id, built)
+    }
+
+    private func knownChat(_ payload: JSONValue?) -> String? {
+        guard let chatId = payload?["chatId"]?.string, knownChatIds.contains(chatId) else { return nil }
+        return chatId
+    }
+
+    private func nonEmpty(_ text: String?) -> String? {
+        guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return text
+    }
+
+    private func actionText(_ payload: JSONValue?, key: String) -> String? {
+        guard let text = nonEmpty(payload?[key]?.string), text.count <= Self.actionTextLimit else { return nil }
+        return text
     }
 
     private mutating func isFlood(now: Date) -> Bool {
@@ -128,8 +292,9 @@ public struct PluginBridge: Sendable {
         return .refused(id: id, reason: reason)
     }
 
-    /// A host-to-plugin envelope, as JSON text for the web view.
-    public static func encode(type: String, id: String? = nil, payload: JSONValue) -> String {
+    /// A host-to-plugin envelope, as JSON text for the web view, in the
+    /// version the plugin's manifest speaks.
+    public static func encode(type: String, id: String? = nil, payload: JSONValue, api: Int = PluginBridge.api) -> String {
         var object: [String: JSONValue] = ["api": .number(Double(api)), "type": .string(type), "payload": payload]
         if let id { object["id"] = .string(id) }
         return JSONValue.object(object).compact()

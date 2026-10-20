@@ -77,4 +77,29 @@ import Testing
         #expect(Project.counterpart(of: Project(name: "nope", rootPath: "/r/nope"), in: there) == nil)
         #expect(Project.counterpart(of: here, in: []) == nil)
     }
+
+    // MARK: - Changing it from a paired device
+
+    @Test func settingADefaultMacFromAPairedDeviceRoundTrips() throws {
+        for deviceId in ["mac-studio", nil] as [String?] {
+            let request = RemoteRequest.setProjectDefaultDevice(projectId: "p1", deviceId: deviceId)
+            let decoded = try JSONDecoder().decode(RemoteRequest.self, from: JSONEncoder().encode(request))
+            guard case .setProjectDefaultDevice(let projectId, let decodedId) = decoded else {
+                Issue.record("decoded as a different request"); return
+            }
+            #expect(projectId == "p1" && decodedId == deviceId)
+        }
+    }
+
+    @Test func aSnapshotFromBeforeTheCapabilityDecodesWithoutIt() throws {
+        let snapshot = RemoteSnapshot(projects: [Project(id: "p1", name: "api", rootPath: "/r/api", createdAt: Self.created, defaultDeviceId: "mac-studio")],
+                                      sessions: [], providers: [], alive: [], automationDevice: true, projectDefaultDevice: true)
+        let data = try JSONEncoder().encode(snapshot)
+        #expect(try JSONDecoder().decode(RemoteSnapshot.self, from: data) == snapshot)
+        var older = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        older["projectDefaultDevice"] = nil
+        let decoded = try JSONDecoder().decode(RemoteSnapshot.self, from: JSONSerialization.data(withJSONObject: older))
+        #expect(decoded.projectDefaultDevice == nil)
+        #expect(decoded.projects.first?.defaultDeviceId == "mac-studio")
+    }
 }
