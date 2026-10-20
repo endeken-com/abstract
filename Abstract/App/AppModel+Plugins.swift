@@ -41,6 +41,28 @@ extension AppModel {
                                     macs: macs, projects: projects, chats: chats)
     }
 
+    /// What a plugin's live data is made of. Reading it under observation
+    /// is how a screen redraws, and the background host notices, when a
+    /// chat moves — without polling.
+    var pluginLiveFingerprint: Int {
+        var hasher = Hasher()
+        for session in sessions {
+            hasher.combine(session.id); hasher.combine(session.status); hasher.combine(session.name)
+            hasher.combine(session.archivedAt); hasher.combine(session.pinnedAt); hasher.combine(session.lastEventAt)
+            hasher.combine(session.branch); hasher.combine(session.projectId)
+        }
+        hasher.combine(projects.map(\.id))
+        // A pull request's checks and review move without the count moving.
+        for id in pullRequests.keys.sorted() {
+            hasher.combine(id)
+            if let pr = pullRequests[id] { hasher.combine(SidebarChats.PullRequestFacts(pr)) }
+        }
+        for id in branchStates.keys.sorted() { hasher.combine(id); hasher.combine(branchStates[id]?.dirty) }
+        hasher.combine(remote.paired.map(\.id))
+        for (id, link) in remote.links { hasher.combine(id); hasher.combine(link.snapshot?.sessions.count ?? -1) }
+        return hasher.finalize()
+    }
+
     /// The current palette, the way a plugin receives it.
     func pluginTheme() -> Theme {
         ThemeState.shared.theme(for: NSApp.effectiveAppearance)

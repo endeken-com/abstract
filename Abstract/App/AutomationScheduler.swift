@@ -153,6 +153,7 @@ final class AutomationScheduler {
         } catch {
             run.status = .failed
             run.error = error.localizedDescription
+            model.pluginBackground?.deliver(.automationRunFinished(automationId: a.id, outcome: "failed", at: Date(), chatId: nil))
             if model.notifyAutomationFailed {
                 Notifier.shared.post(title: "\(a.name) failed", body: error.localizedDescription, sessionId: "")
             }

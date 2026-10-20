@@ -280,6 +280,23 @@ public struct PluginManifest: Sendable, Hashable, Codable {
                                        paletteCommands: paletteCommands, settingsPage: settingsPage, homeWidgets: homeWidgets)
     }
 
+    // A plugin that only runs in the background (ABS-93) may leave out
+    // `contributes`.
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        api = try box.decode(Int.self, forKey: .api)
+        id = try box.decode(String.self, forKey: .id)
+        name = try box.decode(String.self, forKey: .name)
+        version = try box.decode(String.self, forKey: .version)
+        description = try box.decodeIfPresent(String.self, forKey: .description)
+        entry = try box.decode(String.self, forKey: .entry)
+        capabilities = try box.decode([String].self, forKey: .capabilities)
+        network = try box.decodeIfPresent(Network.self, forKey: .network)
+        secrets = try box.decodeIfPresent([Secret].self, forKey: .secrets)
+        contributes = try box.decodeIfPresent(Contributes.self, forKey: .contributes) ?? Contributes()
+        background = try box.decodeIfPresent(String.self, forKey: .background)
+    }
+
     /// Every place this plugin appears, one plain sentence each, for the
     /// review screen.
     public var appearanceSentences: [String] {

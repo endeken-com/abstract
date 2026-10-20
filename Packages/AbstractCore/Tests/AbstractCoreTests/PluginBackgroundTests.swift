@@ -61,6 +61,12 @@ import Testing
         }
         let inspected = try PluginPackage.inspect(folder: package(in: root))
         #expect(inspected.manifest.background == "background.js")
+
+        // A background-only manifest needs no `contributes`.
+        let backgroundOnly = #"{"api":2,"id":"sh.example.notify","name":"Notify","version":"1.0.0","entry":"index.html","capabilities":["chats.read"],"background":"bg.js"}"#
+        let decoded = try PluginManifest.decode(Data(backgroundOnly.utf8))
+        try decoded.validate()
+        #expect(decoded.contributes.views.isEmpty && decoded.background == "bg.js")
     }
 
     @Test func enablingGrantsTheBackgroundAndAnUpdateAddingOneIsReviewedAgain() throws {

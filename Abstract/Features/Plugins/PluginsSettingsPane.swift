@@ -195,6 +195,14 @@ struct PluginsSettingsPane: View {
                 if plugin.manifest != nil {
                     Button("Review") { model.plugins.reviewChangedPackage(plugin.id) }
                 }
+            } else if let note = model.plugins.backgroundProblems[plugin.id] {
+                // Its background script misbehaved (ABS-93); its screen
+                // and places still work.
+                HStack(spacing: Space.sm) {
+                    Text("Its background work stopped working. \(note)")
+                        .font(.btCaption).foregroundStyle(Color.btRemoved)
+                    Button("Restart") { model.plugins.restartBackground(plugin.id) }
+                }
             } else if let lastError = record.lastError {
                 Text("Last error: \(lastError)").font(.btCaption).foregroundStyle(Color.btTextSecondary)
             }
