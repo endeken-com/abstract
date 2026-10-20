@@ -13,6 +13,12 @@ final class PluginService {
     private(set) var orphans: [(name: String, problem: String)] = []
     /// Monotonic snapshot revision, shared by every open plugin view.
     private(set) var revision = 0
+    /// Background scripts stopped for misbehaving (ABS-93), with why.
+    /// They stay stopped until restarted or the plugin is turned back on.
+    private(set) var backgroundProblems: [String: String] = [:]
+    /// Called after every change to what's installed, enabled or granted,
+    /// so background scripts follow.
+    @ObservationIgnored var onChange: () -> Void = {}
 
     init(store: Store) {
         manager = PluginManager(store: store)
@@ -46,6 +52,7 @@ final class PluginService {
     func refresh() {
         installed = manager.installed()
         orphans = manager.orphanedProblems()
+        onChange()
     }
 
     func nextRevision() -> Int {
@@ -69,6 +76,19 @@ final class PluginService {
 
     func setEnabled(_ id: String, _ enabled: Bool, transcriptProjectKeys: [String]? = nil) {
         manager.setEnabled(id, enabled, transcriptProjectKeys: transcriptProjectKeys)
+        // Turning it off and on again is a fresh start.
+        backgroundProblems[id] = nil
+        refresh()
+    }
+
+    func noteBackgroundStopped(_ id: String, _ note: String) {
+        backgroundProblems[id] = note
+        noteError(id, note)
+    }
+
+    /// Runs a stopped background script again.
+    func restartBackground(_ id: String) {
+        backgroundProblems[id] = nil
         refresh()
     }
 
@@ -97,6 +117,7 @@ final class PluginService {
             }
         }
         manager.remove(id)
+        backgroundProblems[id] = nil
         refresh()
     }
 

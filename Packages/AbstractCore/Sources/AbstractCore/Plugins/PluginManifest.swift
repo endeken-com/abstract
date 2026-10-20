@@ -179,6 +179,9 @@ public struct PluginManifest: Sendable, Hashable, Codable {
     public var network: Network?
     public var secrets: [Secret]?
     public var contributes: Contributes
+    /// A script Abstract runs from launch while the plugin is on, with its
+    /// screen closed (ABS-93): same sandbox, no page of its own.
+    public var background: String?
 
     /// The exact hosts a plugin with `network` may reach (ABS-94). No
     /// wildcards: every host is shown at review and checked per request.
@@ -266,14 +269,32 @@ public struct PluginManifest: Sendable, Hashable, Codable {
                 views: [View] = [],
                 chatPanelTabs: [Contribution] = [], chatMenuItems: [Contribution] = [],
                 paletteCommands: [Contribution] = [], settingsPage: Contribution? = nil,
-                homeWidgets: [Contribution] = []) {
+                homeWidgets: [Contribution] = [], background: String? = nil) {
         self.api = api; self.id = id; self.name = name; self.version = version
+        self.background = background
         self.description = description; self.entry = entry
         self.capabilities = capabilities
         self.network = networkHosts.isEmpty ? nil : Network(hosts: networkHosts)
         self.secrets = secrets.isEmpty ? nil : secrets
         self.contributes = Contributes(views: views, chatPanelTabs: chatPanelTabs, chatMenuItems: chatMenuItems,
                                        paletteCommands: paletteCommands, settingsPage: settingsPage, homeWidgets: homeWidgets)
+    }
+
+    // A plugin that only runs in the background (ABS-93) may leave out
+    // `contributes`.
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        api = try box.decode(Int.self, forKey: .api)
+        id = try box.decode(String.self, forKey: .id)
+        name = try box.decode(String.self, forKey: .name)
+        version = try box.decode(String.self, forKey: .version)
+        description = try box.decodeIfPresent(String.self, forKey: .description)
+        entry = try box.decode(String.self, forKey: .entry)
+        capabilities = try box.decode([String].self, forKey: .capabilities)
+        network = try box.decodeIfPresent(Network.self, forKey: .network)
+        secrets = try box.decodeIfPresent([Secret].self, forKey: .secrets)
+        contributes = try box.decodeIfPresent(Contributes.self, forKey: .contributes) ?? Contributes()
+        background = try box.decodeIfPresent(String.self, forKey: .background)
     }
 
     /// Every place this plugin appears, one plain sentence each, for the
@@ -291,6 +312,9 @@ public struct PluginManifest: Sendable, Hashable, Codable {
         ]
         for (place, items) in places {
             sentences += items.map { sentence($0.title, place) }
+        }
+        if background != nil {
+            sentences.append("In the background — it runs while it's on, even with its screen closed.")
         }
         return sentences
     }
@@ -327,6 +351,11 @@ public struct PluginManifest: Sendable, Hashable, Codable {
         guard !entry.isEmpty else { throw PluginValidationError.missingEntry(entry) }
         guard PluginPackage.isContained(relativePath: entry) else {
             throw PluginValidationError.escapingPath(entry)
+        }
+        if let background {
+            guard background.hasSuffix(".js"), PluginPackage.isContained(relativePath: background) else {
+                throw PluginValidationError.invalidManifest("background must be a .js file inside the package")
+            }
         }
         for name in capabilities where PluginCapability(rawValue: name) == nil {
             throw PluginValidationError.unknownCapability(name)
@@ -384,7 +413,7 @@ public struct PluginManifest: Sendable, Hashable, Codable {
             }
         }
         let total = contributes.views.count + places.map(\.1.count).reduce(0, +)
-        guard total > 0 else {
+        guard total > 0 || background != nil else {
             throw PluginValidationError.invalidManifest("the plugin doesn't add anything")
         }
     }

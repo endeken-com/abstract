@@ -33,6 +33,9 @@ public struct PluginBridge: Sendable {
     public var knownChatIds: Set<String> = []
     /// Projects from the last snapshot, the ones a new chat may start in.
     public var knownProjectKeys: Set<String> = []
+    /// Set for a background script (ABS-93): only it may subscribe to
+    /// events and schedule jobs.
+    public var isBackground = false
     public private(set) var refusalCount = 0
     public private(set) var lastRefusal: String?
     private var recent: [Date] = []
@@ -63,6 +66,13 @@ public struct PluginBridge: Sendable {
         case askAction(id: String?, PluginAction)
         /// The plugin acted too often; the host pauses it with a notice.
         case actionRateLimited(id: String?)
+        /// Deliver these events to the background script from now on.
+        case subscribe(id: String?, Set<PluginEventType>)
+        /// Add or replace a job; the host checks the schedule (ABS-93).
+        case scheduleJob(id: String?, jobId: String, rrule: String, timezone: String?)
+        case cancelJob(id: String?, jobId: String)
+        /// The script finished one run of this job.
+        case jobDone(jobId: String)
         case refused(id: String?, reason: String)
         /// The plugin flooded the bridge; the host tears its view down.
         case flooded
@@ -170,10 +180,48 @@ public struct PluginBridge: Sendable {
             // Actions are API 2: an API 1 plugin was granted reading only.
             guard api >= 2 else { return refuse(id, "This plugin hasn't been granted acting on your chats.") }
             return actionOutcome(type: type, id: id, payload: payload, now: now)
+        case "events.subscribe", "jobs.schedule", "jobs.cancel", "jobs.done":
+            guard isBackground else {
+                return refuse(id, "Only a plugin's background script can listen for events or schedule jobs.")
+            }
+            return backgroundOutcome(type: type, id: id, payload: payload)
         case "__error":
             return refuse(id, "The plugin reported an error.")
         default:
             return refuse(id, "Abstract doesn't know that message.")
+        }
+    }
+
+    // MARK: Background (ABS-93)
+
+    private mutating func backgroundOutcome(type: String, id: String?, payload: JSONValue?) -> Outcome {
+        switch type {
+        case "events.subscribe":
+            let names = payload?["types"]?.array?.compactMap(\.string) ?? []
+            guard !names.isEmpty else { return refuse(id, "Say which events to listen for.") }
+            var types: Set<PluginEventType> = []
+            for name in names {
+                guard let type = PluginEventType(rawValue: name) else {
+                    return refuse(id, "Abstract doesn't know the event \(name).")
+                }
+                guard capabilities.contains(type.capability) else {
+                    return refuse(id, "This plugin hasn't been granted what \(name) needs: \(type.capability.plainWords.lowercased()).")
+                }
+                types.insert(type)
+            }
+            return .subscribe(id: id, types)
+        case "jobs.schedule":
+            guard let jobId = nonEmpty(payload?["id"]?.string), let rrule = nonEmpty(payload?["rrule"]?.string),
+                  jobId.count <= 60, rrule.count <= 500 else {
+                return refuse(id, "A job needs an id and a schedule.")
+            }
+            return .scheduleJob(id: id, jobId: jobId, rrule: rrule, timezone: payload?["timezone"]?.string)
+        case "jobs.cancel":
+            guard let jobId = nonEmpty(payload?["id"]?.string) else { return refuse(id, "Say which job to cancel.") }
+            return .cancelJob(id: id, jobId: jobId)
+        default:
+            guard let jobId = nonEmpty(payload?["id"]?.string) else { return refuse(id, "Say which job finished.") }
+            return .jobDone(jobId: jobId)
         }
     }
 

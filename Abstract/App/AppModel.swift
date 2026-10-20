@@ -308,6 +308,10 @@ final class AppModel {
     @ObservationIgnored var startWaits: [String: CheckedContinuation<AgentStart.Outcome, Never>] = [:]
     @ObservationIgnored private var configuredModels: [String: (model: String?, read: Date)] = [:]
     @ObservationIgnored var scheduler: AutomationScheduler?
+    /// Plugins' background scripts (ABS-93), started at launch.
+    @ObservationIgnored var pluginBackground: PluginBackgroundHost?
+    /// Automation chats whose run was already reported to plugins.
+    @ObservationIgnored private var reportedAutomationRuns: Set<String> = []
 
     init(store: Store, engine: SessionEngine, executor: any Executor, isDemo: Bool = false) {
         self.store = store
@@ -358,6 +362,9 @@ final class AppModel {
         Task { await refreshModels() }
         scheduler = AutomationScheduler(model: self)
         scheduler?.start()
+        pluginBackground = PluginBackgroundHost(model: self)
+        plugins.onChange = { [weak self] in self?.pluginBackground?.reconcile() }
+        pluginBackground?.reconcile()
         Task { await watchForStalls() }
         Task { await watchPullRequests() }
         Task { await readEveryBranch() }
@@ -1664,6 +1671,8 @@ final class AppModel {
             // Never answered for you, whatever else is allowed: it needs your choice.
             permissions[sessionId, default: []].append(PendingPermission(requestId: requestId, toolName: toolName, input: input))
             setStatus(sessionId, .waitingInput, detail: "Question for you")
+            pluginBackground?.deliver(.permissionRequested(chatId: sessionId, requestId: requestId, kind: "question", toolName: toolName,
+                                                           questions: AgentQuestion.parse(input).map(\.question)))
             notify(sessionId, .waitingInput, detail: AgentQuestion.parse(input).first?.question
                 ?? "\(ProviderRegistry.name(session(sessionId)?.providerId ?? "")) has a question")
         case let .permissionRequest(requestId, toolName, input) where Plan.isExitPlanMode(toolName):
@@ -1673,6 +1682,8 @@ final class AppModel {
             permissions[sessionId, default: []].append(PendingPermission(requestId: requestId, toolName: toolName, input: input))
             if let text = Plan.text(fromExitPlanModeInput: input) { plans[sessionId, default: PlanState()].add(text) }
             setStatus(sessionId, .waitingInput, detail: "Plan ready for your approval")
+            pluginBackground?.deliver(.permissionRequested(chatId: sessionId, requestId: requestId, kind: "plan",
+                                                           toolName: toolName, questions: []))
             notify(sessionId, .waitingInput, detail: "\(ProviderRegistry.name(session(sessionId)?.providerId ?? "")) wrote a plan for your approval")
         case let .permissionRequest(requestId, toolName, input):
             if let rule = permissionRuleAnswer(sessionId, toolName: toolName, input: input) {
@@ -1688,6 +1699,8 @@ final class AppModel {
             }
             permissions[sessionId, default: []].append(PendingPermission(requestId: requestId, toolName: toolName, input: input))
             setStatus(sessionId, .waitingInput, detail: "\(toolName) needs approval")
+            pluginBackground?.deliver(.permissionRequested(chatId: sessionId, requestId: requestId, kind: "permission",
+                                                           toolName: toolName, questions: []))
             notify(sessionId, .waitingInput, detail: "\(ProviderRegistry.name(session(sessionId)?.providerId ?? "")) wants to use \(toolName)")
         case let .text(.assistant, text, _, false):
             lastReplies[sessionId] = text
@@ -1723,6 +1736,18 @@ final class AppModel {
         if wasWorking, [.idle, .finished, .errored].contains(status) {
             Task { await refreshBranch(sessionId) }
             Task { await recordTurn(sessionId) }
+            reportTurnToPlugins(s, status: status)
+        }
+    }
+
+    /// A finished turn, for plugins' background scripts (ABS-93); an
+    /// automation's run finishes with its chat's first turn.
+    private func reportTurnToPlugins(_ s: Session, status: SessionStatus) {
+        guard let background = pluginBackground else { return }
+        let outcome = status == .errored ? "failed" : stopRequests[s.id] != nil ? "stopped" : "done"
+        background.deliver(.turnFinished(chatId: s.id, outcome: outcome, endedAt: Date()))
+        if let automationId = s.automationId, reportedAutomationRuns.insert(s.id).inserted {
+            background.deliver(.automationRunFinished(automationId: automationId, outcome: outcome, at: Date(), chatId: s.id))
         }
     }
 
