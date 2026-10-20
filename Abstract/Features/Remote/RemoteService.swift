@@ -454,7 +454,10 @@ final class RemoteService {
                               stalls: model.stallStates.compactMapValues(RemoteStall.init),
                               codeHistory: true,
                               plans: model.plans.filter { $0.value.current != nil }.mapValues(RemotePlan.init),
-                              planApproval: true)
+                              planApproval: true,
+                              permissionRules: Dictionary(uniqueKeysWithValues: model.projects.filter { $0.archivedAt == nil }.map {
+                                  ($0.id, model.permissionRules(for: $0.id))
+                              }))
     }
 
     /// Each project's uploaded icon as bytes, so a viewing Mac can show it
@@ -925,6 +928,17 @@ final class HostedPeer {
             return .ok
         case let .answerQuestion(session, requestId, answers):
             model.answerQuestion(session, requestId: requestId, answers: answers)
+            return .ok
+        case .savePermissionRule(var rule):
+            rule.pattern = rule.pattern.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard model.project(rule.projectId) != nil else { return .failed("Project not found.") }
+            guard !rule.pattern.isEmpty else { return .failed("A rule needs a pattern.") }
+            model.savePermissionRule(rule)
+            return .ok
+        case .deletePermissionRule(let id):
+            guard let rule = model.permissionRules.values.lazy.flatMap({ $0 }).first(where: { $0.id == id })
+            else { return .failed("Rule not found.") }
+            model.deletePermissionRule(rule)
             return .ok
         case let .setAgent(session, provider, name, effort):
             let agent = RetiredAgents.current(provider)

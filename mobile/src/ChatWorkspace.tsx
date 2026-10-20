@@ -26,9 +26,10 @@ import { useKeyboardHeight } from './useKeyboardVisible';
 import { NativeSelect } from './NativeSelect';
 import { SyntaxCode, highlightDiffLines } from './SyntaxCode';
 import type { EditPreview } from './editPreview';
+import { buildRule, ruleKindTitle, saveRuleArgs, suggestedRule } from './permissionRules';
 import { stallText } from './stalls';
 import { MODE_CHOICES, currentPlan, effectivePlan, isReadOnlyMode, nonPlanPermissions, pendingPlanRequest, planHistory, planTitle, policyShort, policyTitle, quotedPlan } from './plan';
-import { swiftDate, type PendingPermission, type PlanState, type Session, type Stall } from './types';
+import { swiftDate, type PendingPermission, type PermissionDecision, type PermissionRuleKind, type PlanState, type Session, type Stall } from './types';
 import { chatPauseRow } from './pause';
 
 const ink = '#ECECEF', muted = '#A4A4AD', tertiary = '#75757E', canvas = '#1E1E21', panel = '#252529', raised = '#2B2B30', border = 'rgba(255,255,255,0.075)', warning = '#D2D2D8';
@@ -98,11 +99,62 @@ function LinkPickerSheet({ kind, query, setQuery, results, loading, search, sele
     </KeyboardAvoidingView>
   </Modal>;
 }
-function PermissionCard({ mac, sessionId, request }: { mac: RemoteClient; sessionId: string; request: PendingPermission }) {
+const ruleStyles = StyleSheet.create({
+  body: { gap: 14, paddingBottom: 28 },
+  lead: { color: muted, fontFamily: 'Inter', fontSize: 13, lineHeight: 19 },
+  label: { color: muted, fontFamily: 'Inter', fontSize: 12, fontWeight: '600' },
+  group: { gap: 7 },
+  chips: { flexDirection: 'row', flexWrap: 'wrap' },
+  pattern: { color: ink, backgroundColor: panel, borderRadius: 8, paddingHorizontal: 11, paddingVertical: 10, fontFamily: 'JetBrainsMono', fontSize: 13 },
+  remember: { backgroundColor: ink, borderRadius: 8, paddingHorizontal: 16, paddingVertical: 12, alignSelf: 'flex-start' },
+  rememberDisabled: { opacity: 0.4 },
+  rememberText: { color: canvas, fontFamily: 'Inter', fontSize: 14, fontWeight: '600' },
+});
+/// Writing one remembered permission answer for the chat's project, as on
+/// the Mac: pre-filled from the request, `*` where the rest may differ.
+function PermissionRuleSheet({ mac, sessionId, request, projectId, root, initialDecision, close }: { mac: RemoteClient; sessionId: string; request: PendingPermission; projectId: string; root: string; initialDecision: PermissionDecision; close: () => void }) {
+  const suggested = useMemo(() => suggestedRule(request.toolName, request.input, root), [request, root]);
+  const [ruleId] = useState(uuid);
+  const [kind, setKind] = useState<PermissionRuleKind>(suggested.kind);
+  const [pattern, setPattern] = useState(suggested.pattern);
+  const [decision, setDecision] = useState<PermissionDecision>(initialDecision);
+  const [expiresInDays, setExpiresInDays] = useState<number | null>(null);
+  const [saving, setSaving] = useState(false);
+  const ios = Platform.OS === 'ios';
+  const save = async () => {
+    if (saving || !pattern.trim()) return;
+    setSaving(true);
+    try {
+      const rule = buildRule({ id: ruleId, projectId, kind, pattern, decision, expiresInDays, now: swiftDate() });
+      await mac.request('savePermissionRule', saveRuleArgs(rule));
+      await mac.request('answer', { sessionId, requestId: request.requestId, allow: decision === 'allow' });
+      close();
+    } catch (e) { Alert.alert('Abstract', String(e)); } finally { setSaving(false); }
+  };
+  return <Modal visible animationType="slide" presentationStyle={ios ? 'pageSheet' : 'overFullScreen'} transparent={!ios} onRequestClose={close}>
+    <KeyboardAvoidingView style={ios ? s.sheetRoot : s.sheetBackdrop} behavior={ios ? 'padding' : undefined}>
+      {!ios && <Pressable style={StyleSheet.absoluteFill} onPress={close} accessibilityLabel="Cancel" />}
+      <SafeAreaView edges={['bottom']} style={[s.sheetPanel, ios && { flex: 1, maxHeight: '100%' }]}>
+        <View style={s.sheetHandle} />
+        <View style={s.sheetHeader}><Text style={s.sheetTitle}>Remember This Answer</Text><Pressable accessibilityRole="button" accessibilityLabel="Cancel" onPress={close} style={s.sheetClose}><Glyph name="close" size={17} color={ink} /></Pressable></View>
+        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={ruleStyles.body}>
+          <Text style={ruleStyles.lead}>Requests matching the pattern are answered for you in every chat of this project. Use * where the rest may differ, like npm test* or src/**. A deny rule beats an allow rule.</Text>
+          <View style={ruleStyles.group}><Text style={ruleStyles.label}>Answer</Text><View style={ruleStyles.chips}>{(['allow', 'deny'] as const).map(d => <Chip key={d} label={d === 'allow' ? 'Always allow' : 'Always deny'} active={decision === d} onPress={() => setDecision(d)} />)}</View></View>
+          <View style={ruleStyles.group}><Text style={ruleStyles.label}>Matches</Text><View style={ruleStyles.chips}>{(['command', 'path', 'tool'] as const).map(k => <Chip key={k} label={ruleKindTitle(k)} active={kind === k} onPress={() => setKind(k)} />)}</View></View>
+          <View style={ruleStyles.group}><Text style={ruleStyles.label}>Pattern</Text><TextInput value={pattern} onChangeText={setPattern} autoCapitalize="none" autoCorrect={false} placeholder="Pattern" placeholderTextColor={tertiary} style={ruleStyles.pattern} /></View>
+          <View style={ruleStyles.group}><Text style={ruleStyles.label}>Expires</Text><View style={ruleStyles.chips}><Chip label="Never" active={expiresInDays === null} onPress={() => setExpiresInDays(null)} /><Chip label="In 7 days" active={expiresInDays === 7} onPress={() => setExpiresInDays(7)} /><Chip label="In 30 days" active={expiresInDays === 30} onPress={() => setExpiresInDays(30)} /></View></View>
+          <Pressable accessibilityRole="button" accessibilityLabel="Remember" accessibilityState={{ disabled: !pattern.trim() || saving, busy: saving }} disabled={!pattern.trim() || saving} onPress={() => { Haptics.selectionAsync().catch(() => {}); save(); }} style={[ruleStyles.remember, (!pattern.trim() || saving) && ruleStyles.rememberDisabled]}><Text style={ruleStyles.rememberText}>{saving ? 'Remembering…' : 'Remember'}</Text></Pressable>
+        </ScrollView>
+      </SafeAreaView>
+    </KeyboardAvoidingView>
+  </Modal>;
+}
+function PermissionCard({ mac, sessionId, request, projectId, root, canRemember }: { mac: RemoteClient; sessionId: string; request: PendingPermission; projectId?: string | null; root: string; canRemember?: boolean }) {
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [remember, setRemember] = useState<PermissionDecision | null>(null);
   const questions = request.toolName === 'AskUserQuestion' ? request.input?.questions || [] : [];
   const submit = (allow: boolean) => mac.request(questions.length && allow ? 'answerQuestion' : 'answer', questions.length && allow ? { sessionId, requestId: request.requestId, answers } : { sessionId, requestId: request.requestId, allow }).catch(e => Alert.alert('Abstract', String(e)));
-  return <View style={s.permission}><Text style={s.permissionTitle}>{questions.length ? 'Question from agent' : `Permission · ${request.toolName}`}</Text>{questions.length ? questions.map((q: any) => <View key={q.question}><Text style={s.prose}>{q.question}</Text>{q.options?.map((o: any) => <Chip key={o.label} label={o.label} active={answers[q.question] === o.label} onPress={() => setAnswers({ ...answers, [q.question]: o.label })} />)}<TextInput value={answers[q.question] || ''} onChangeText={v => setAnswers({ ...answers, [q.question]: v })} placeholder="Your answer" placeholderTextColor={tertiary} style={s.permissionInput} /></View>) : <Text style={s.toolDetail}>{JSON.stringify(request.input, null, 2)}</Text>}<View style={s.permissionActions}><Chip label={questions.length ? 'Send answers' : 'Allow'} onPress={() => submit(true)} /><Chip label={questions.length ? 'Skip' : 'Deny'} onPress={() => submit(false)} /></View></View>;
+  return <View style={s.permission}><Text style={s.permissionTitle}>{questions.length ? 'Question from agent' : `Permission · ${request.toolName}`}</Text>{questions.length ? questions.map((q: any) => <View key={q.question}><Text style={s.prose}>{q.question}</Text>{q.options?.map((o: any) => <Chip key={o.label} label={o.label} active={answers[q.question] === o.label} onPress={() => setAnswers({ ...answers, [q.question]: o.label })} />)}<TextInput value={answers[q.question] || ''} onChangeText={v => setAnswers({ ...answers, [q.question]: v })} placeholder="Your answer" placeholderTextColor={tertiary} style={s.permissionInput} /></View>) : <Text style={s.toolDetail}>{JSON.stringify(request.input, null, 2)}</Text>}<View style={s.permissionActions}><Chip label={questions.length ? 'Send answers' : 'Allow'} onPress={() => submit(true)} /><Chip label={questions.length ? 'Skip' : 'Deny'} onPress={() => submit(false)} /></View>{!!canRemember && !!projectId && !questions.length && <View style={[s.permissionActions, { flexWrap: 'wrap' }]}><Chip label="Always allow…" onPress={() => setRemember('allow')} /><Chip label="Always deny…" onPress={() => setRemember('deny')} /></View>}{remember && projectId && <PermissionRuleSheet key={`${request.requestId}-${remember}`} mac={mac} sessionId={sessionId} request={request} projectId={projectId} root={root} initialDecision={remember} close={() => setRemember(null)} />}</View>;
 }
 function PlanCard({ mac, sessionId, plan, permissions, onRequestChanges }: { mac: RemoteClient; sessionId: string; plan: PlanState; permissions?: PendingPermission[]; onRequestChanges: (quoted: string) => void }) {
   const [busy, setBusy] = useState<string | null>(null);
@@ -294,11 +346,13 @@ export function ChatWorkspace({ route, navigation }: any) {
   const showWorkingRow = showWorking && (!!stall || !(lastRow?.pending && ['tool', 'prose', 'thinking'].includes(lastRow.kind)));
   const workingLabel = lastRow && (lastRow.kind === 'thinking' || (lastRow.kind === 'tool' && !lastRow.pending)) ? 'Thinking…' : 'Working…';
   const pendingPermissions = mac.snapshot?.pendingPermissions?.[id];
+  const permissionRoot = chat?.worktreePath || mac.snapshot?.projects.find(x => x.id === chat?.projectId)?.rootPath || '';
+  const canRemember = mac.snapshot?.permissionRules !== undefined;
   const plan = effectivePlan(mac.snapshot?.plans?.[id], pendingPermissions);
   const turnStartedAt = mac.snapshot?.turnStartedAt?.[id] ?? chat?.lastEventAt ?? undefined;
   const macView = remote.mac(hostId);
   const pauseRow = macView && chat ? chatPauseRow(macView, chat.projectId) : null;
-  const transcriptFooter = useMemo(() => <View style={s.transcriptFooter}>{visibleSends.map(item => <View key={item.id} style={s.userRow}><View style={s.userBubble}>{!!item.text && <Text style={s.prose}>{item.text}</Text>}{item.attachments.map(attachment => <Text key={attachment.id} style={s.pendingAttachment}>{attachment.reference ? `${attachment.reference} ` : ''}{attachment.title}</Text>)}</View><Text style={s.pendingStatus}>{item.status === 'sending' ? 'Sending…' : 'Sent'}</Text></View>)}{plan && <PlanCard mac={mac} sessionId={id} plan={plan} permissions={pendingPermissions} onRequestChanges={quoted => setMessage(quoted)} />}{nonPlanPermissions(pendingPermissions).map(request => <PermissionCard key={request.requestId} mac={mac} sessionId={id} request={request} />)}{syncing && <Text style={s.thinkingLabel}>Syncing chat from Mac…</Text>}{showWorkingRow && (stall ? <StallStatus mac={mac} sessionId={id} stall={stall} /> : <WorkingStatus label={workingLabel} startedAt={turnStartedAt} />)}</View>, [visibleSends, mac, pendingPermissions, plan, id, syncing, showWorkingRow, stall, workingLabel, turnStartedAt]);
+  const transcriptFooter = useMemo(() => <View style={s.transcriptFooter}>{visibleSends.map(item => <View key={item.id} style={s.userRow}><View style={s.userBubble}>{!!item.text && <Text style={s.prose}>{item.text}</Text>}{item.attachments.map(attachment => <Text key={attachment.id} style={s.pendingAttachment}>{attachment.reference ? `${attachment.reference} ` : ''}{attachment.title}</Text>)}</View><Text style={s.pendingStatus}>{item.status === 'sending' ? 'Sending…' : 'Sent'}</Text></View>)}{plan && <PlanCard mac={mac} sessionId={id} plan={plan} permissions={pendingPermissions} onRequestChanges={quoted => setMessage(quoted)} />}{nonPlanPermissions(pendingPermissions).map(request => <PermissionCard key={request.requestId} mac={mac} sessionId={id} request={request} projectId={chat?.projectId} root={permissionRoot} canRemember={canRemember} />)}{syncing && <Text style={s.thinkingLabel}>Syncing chat from Mac…</Text>}{showWorkingRow && (stall ? <StallStatus mac={mac} sessionId={id} stall={stall} /> : <WorkingStatus label={workingLabel} startedAt={turnStartedAt} />)}</View>, [visibleSends, mac, pendingPermissions, plan, id, syncing, showWorkingRow, stall, workingLabel, turnStartedAt, chat?.projectId, permissionRoot, canRemember]);
   const loadEarlier = React.useCallback(() => {
     mayLoadOlder.current = false;
     follow.current.stopFollowing();

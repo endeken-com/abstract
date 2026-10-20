@@ -51,6 +51,10 @@ public enum RemoteRequest: Codable, Sendable {
     case answer(sessionId: String, requestId: String, allow: Bool)
     /// Answers to the agent's questions, by question text.
     case answerQuestion(sessionId: String, requestId: String, answers: [String: String])
+    /// Permission answers remembered for a project, kept on the host Mac.
+    /// Only send them to a Mac whose snapshot carries `permissionRules`.
+    case savePermissionRule(PermissionRule)
+    case deletePermissionRule(id: String)
     /// A chat's agent, model and effort, or how much it may do alone.
     case setAgent(sessionId: String, providerId: String, model: String?, effort: String?)
     case setPolicy(sessionId: String, policy: PermissionPolicy)
@@ -307,6 +311,10 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
     /// A host that takes plan decisions ('approvePlan' and friends).
     /// Optional for older peers.
     public var planApproval: Bool?
+    /// Permission answers remembered per project, keyed by project id.
+    /// Present (even when empty) only on a Mac that takes
+    /// `savePermissionRule` / `deletePermissionRule`. Optional for older peers.
+    public var permissionRules: [String: [PermissionRule]]?
 
     /// The largest uploaded icon a snapshot carries; larger ones are left out.
     public static let maxProjectIconBytes = 512 << 10
@@ -323,7 +331,8 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
                 profiles: [AgentProfile]? = nil,
                 everythingPaused: Bool? = nil, pausedProjectIds: [String]? = nil, pauseControl: Bool? = nil,
                 stalls: [String: RemoteStall]? = nil,
-                codeHistory: Bool? = nil, plans: [String: RemotePlan]? = nil, planApproval: Bool? = nil) {
+                codeHistory: Bool? = nil, plans: [String: RemotePlan]? = nil, planApproval: Bool? = nil,
+                permissionRules: [String: [PermissionRule]]? = nil) {
         self.projects = projects; self.sessions = sessions; self.providers = providers; self.alive = alive
         self.home = home; self.modelCatalogs = modelCatalogs; self.defaultModelNames = defaultModelNames
         self.pullRequests = pullRequests
@@ -346,6 +355,7 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
         self.codeHistory = codeHistory
         self.plans = plans
         self.planApproval = planApproval
+        self.permissionRules = permissionRules
     }
 }
 

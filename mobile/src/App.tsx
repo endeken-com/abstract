@@ -32,6 +32,7 @@ import { TerminalView } from './TerminalView';
 import { SettingsScreen } from './SettingsScreen';
 import { uuid } from './secure';
 import { attachmentPayload, pickAttachments, type PickedAttachment } from './attachments';
+import { deleteRuleArgs, ruleDetail, rulesForProject } from './permissionRules';
 import { displayDate, swiftDate, type AgentProfile, type Automation, type AutomationRun, type AutomationTrigger, type Policy, type Project, type Session } from './types';
 import { appliedProfile, automationProfileName, findProfile, newProfile, profileIcons, profileSnapshotOf, sessionProfileName, sortedProfiles, visibleProfiles } from './profiles';
 import { globalPauseAction, globalPauseConfirm, isProjectPaused, pauseBannerRows, pauseRequest, projectPauseAction } from './pause';
@@ -290,6 +291,11 @@ function ProjectScreen({ route, navigation }: any) {
     </Section>
     {state.snapshot?.codeHistory && <Section title="Code history"><View style={styles.row}><View style={{ flex: 1 }}><Text style={styles.rowTitle}>Give agents the history of the code they change</Text><Text style={styles.subtitle}>{project.agentHistory === false ? 'Agents get no history of earlier chats in this project.' : 'Before changing code, an agent can look up what earlier chats in this project were asked, corrected and decided about it, and is told to follow those decisions.'}</Text></View><Switch accessibilityLabel="Give agents the history of the code they change" value={project.agentHistory !== false} onValueChange={enabled => run(() => state.request('setAgentHistory', { projectId: project.id, enabled }))} /></View></Section>}
     <Section title="Chats">{chats.map(chat => <Row key={chat.id} title={chat.name} subtitle={`${chat.providerId} · ${chat.branch || chat.status}${sessionProfileName(chat) ? ` · ${sessionProfileName(chat)}` : ''}`} subtitleIcon={chat.branch ? <BranchIcon size={11} color={tertiary} /> : undefined} iconNode={<ProviderLogo provider={chat.providerId} size={16} />} onPress={() => navigation.navigate('Chat', { hostId, sessionId: chat.id })} trailing={chat.status} />)}{!chats.length && <Empty text="No chats in this project." />}</Section>
+    {state.snapshot?.permissionRules !== undefined && <Section title="Permission rules">
+      <Text style={styles.empty}>Answers you've told Abstract to remember for this project. A request matching a rule is answered for you in every chat. A deny rule beats an allow rule.</Text>
+      {rulesForProject(state.snapshot, project.id).map(rule => <View key={rule.id} style={styles.row}><View style={{ flex: 1 }}><Text selectable style={[styles.rowTitle, { fontFamily: 'JetBrainsMono', fontSize: 13 }]}>{rule.pattern}</Text><Text style={styles.subtitle}>{ruleDetail(rule, swiftDate())}</Text></View><Button title="Delete" danger onPress={() => Alert.alert('Delete rule?', `${rule.pattern}\n${ruleDetail(rule, swiftDate())}`, [{ text: 'Cancel' }, { text: 'Delete', style: 'destructive', onPress: () => run(() => state.request('deletePermissionRule', deleteRuleArgs(rule))) }])} /></View>)}
+      {!rulesForProject(state.snapshot, project.id).length && <Empty text="No rules yet. When an agent asks for permission, choose “Always allow…” or “Always deny…” on its card." />}
+    </Section>}
   </HeaderScrollView>;
 }
 function ChatsScreen({ navigation }: any) {
