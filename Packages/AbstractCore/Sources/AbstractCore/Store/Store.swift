@@ -687,6 +687,22 @@ public final class Store: Sendable {
             try db.execute(sql: "ALTER TABLE automations ADD COLUMN profile_id TEXT")
             try db.execute(sql: "ALTER TABLE projects ADD COLUMN profile_ids TEXT")
         }
+        // What a run does while the last is still going, what missed runs
+        // do (the catch_up switch becomes "run once"), and skipping when
+        // the project hasn't changed. catch_up stays, kept in step, so a
+        // build from before this still reads the database.
+        migrator.registerMigration("v16-automation-scheduling") { db in
+            try db.execute(sql: "ALTER TABLE automations ADD COLUMN concurrency TEXT")
+            try db.execute(sql: "ALTER TABLE automations ADD COLUMN missed_runs TEXT")
+            try db.execute(sql: "ALTER TABLE automations ADD COLUMN only_when_changed BOOLEAN NOT NULL DEFAULT 0")
+            try db.execute(sql: "ALTER TABLE automation_runs ADD COLUMN reason TEXT")
+            try db.execute(sql: "ALTER TABLE automation_runs ADD COLUMN base_commit TEXT")
+            try db.execute(sql: """
+                UPDATE automations SET
+                  concurrency = CASE WHEN workspace_mode = 'pinned' THEN 'skip_if_active' ELSE 'start_another' END,
+                  missed_runs = CASE WHEN catch_up THEN 'run_once' ELSE 'skip' END
+                """)
+        }
         return migrator
     }
 }
@@ -867,7 +883,10 @@ private struct AutomationRow: FetchableRecord, PersistableRecord {
             updatedAt: try row.decode(forColumn: "updated_at"),
             model: try row.decode(forColumn: "model"),
             effort: try row.decode(forColumn: "effort"),
-            deviceId: try row.decode(forColumn: "device_id"))
+            deviceId: try row.decode(forColumn: "device_id"),
+            concurrency: (try row.decode(forColumn: "concurrency") as String?).flatMap(AutomationConcurrency.init(rawValue:)),
+            missedRuns: (try row.decode(forColumn: "missed_runs") as String?).flatMap(AutomationMissedRuns.init(rawValue:)),
+            onlyWhenChanged: try row.decode(forColumn: "only_when_changed"))
         automation.profileId = try row.decode(forColumn: "profile_id")
         value = automation
     }
@@ -892,6 +911,9 @@ private struct AutomationRow: FetchableRecord, PersistableRecord {
         container["model"] = value.model
         container["effort"] = value.effort
         container["device_id"] = value.deviceId
+        container["concurrency"] = value.concurrency.rawValue
+        container["missed_runs"] = value.missedRuns.rawValue
+        container["only_when_changed"] = value.onlyWhenChanged
         container["profile_id"] = value.profileId
         container["catch_up"] = value.catchUp
         container["enabled"] = value.enabled
@@ -998,7 +1020,9 @@ private struct RunRow: FetchableRecord, PersistableRecord {
             trigger: try row.rawEnum("trigger"),
             status: try row.rawEnum("status"),
             sessionId: try row.decode(forColumn: "session_id"),
-            error: try row.decode(forColumn: "error"))
+            error: try row.decode(forColumn: "error"),
+            reason: try row.decode(forColumn: "reason"),
+            baseCommit: try row.decode(forColumn: "base_commit"))
     }
 
     func encode(to container: inout PersistenceContainer) throws {
@@ -1009,6 +1033,8 @@ private struct RunRow: FetchableRecord, PersistableRecord {
         container["status"] = value.status.rawValue
         container["session_id"] = value.sessionId
         container["error"] = value.error
+        container["reason"] = value.reason
+        container["base_commit"] = value.baseCommit
     }
 }
 

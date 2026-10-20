@@ -10,6 +10,10 @@ public enum PluginCapability: String, Sendable, Hashable, Codable, CaseIterable 
     case storageOwn = "storage.own"
     case network = "network"
     case secrets = "secrets"
+    case usageRead = "usage.read"
+    case turnsRead = "turns.read"
+    case transcriptsRead = "transcripts.read"
+    case automationsRead = "automations.read"
 
     /// The sentence shown when the person reviews the plugin.
     public var plainWords: String {
@@ -20,7 +24,21 @@ public enum PluginCapability: String, Sendable, Hashable, Codable, CaseIterable 
         case .storageOwn: "Remember its own settings on this Mac"
         case .network: "Reach the web addresses it lists"
         case .secrets: "Use the secrets you give it, without seeing them"
+        case .usageRead: "See what your chats used and cost"
+        case .turnsRead: "See when your agents worked"
+        case .transcriptsRead: "Read your chats' messages in the projects you pick"
+        case .automationsRead: "See your automations and when they last ran"
         }
+    }
+
+    /// The review sentence, with the picked projects named for
+    /// `transcripts.read`. No projects picked means no messages at all.
+    public func plainWords(transcriptProjects: [String]) -> String {
+        guard self == .transcriptsRead else { return plainWords }
+        guard !transcriptProjects.isEmpty else {
+            return "Read your chats' messages in no projects yet"
+        }
+        return "Read your chats' messages in \(transcriptProjects.joined(separator: ", "))"
     }
 }
 

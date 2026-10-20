@@ -46,9 +46,83 @@ extension AppModel {
         ThemeState.shared.theme(for: NSApp.effectiveAppearance)
     }
 
-    func setPluginEnabled(_ id: String, _ enabled: Bool) {
-        plugins.setEnabled(id, enabled)
+    func setPluginEnabled(_ id: String, _ enabled: Bool, transcriptProjectKeys: [String]? = nil) {
+        plugins.setEnabled(id, enabled, transcriptProjectKeys: transcriptProjectKeys)
         if !enabled { leavePluginScreen(id) }
+    }
+
+    /// The project keys a plugin may pick from at review: this Mac's projects.
+    func pluginProjectChoices() -> [(key: String, name: String)] {
+        projects.map { (PluginSnapshot.projectKey(macId: remote.identity.id, projectId: $0.id), $0.name) }
+    }
+
+    /// Names for picked project keys, in pick order, for review sentences.
+    func pluginProjectNames(_ keys: [String]) -> [String] {
+        let byKey = Dictionary(uniqueKeysWithValues: pluginProjectChoices().map { ($0.key, $0.name) })
+        return keys.compactMap { byKey[$0] }
+    }
+
+    // MARK: Data pulls (ABS-95)
+
+    /// Usage from the same ledger Settings → Usage reads, with each
+    /// response attributed to the chat whose worktree it ran in.
+    func pluginUsage(view: String, page: PluginPage, chatId: String?) async -> JSONValue {
+        if usage.loadedAt == nil { await usage.load() }
+        let entries = usage.records.map { record in
+            PluginData.UsageEntry(chatId: pluginChatId(forCwd: record.cwd), record: record)
+        }
+        return PluginData.usage(entries: entries, view: view, chatId: chatId, page: page)
+    }
+
+    /// The chat a folder belongs to, the way Usage names its workspaces:
+    /// the chat whose worktree holds it, if any.
+    private func pluginChatId(forCwd cwd: String) -> String? {
+        let path = cwd.hasPrefix("/private/") ? String(cwd.dropFirst("/private".count)) : cwd
+        guard !path.isEmpty else { return nil }
+        return sessions.first { session in
+            guard let root = session.worktreePath, !root.isEmpty else { return false }
+            return path == root || path.hasPrefix(root.hasSuffix("/") ? root : root + "/")
+        }?.id
+    }
+
+    /// Finished turns across this Mac's chats (or one chat's), oldest first.
+    func pluginTurns(page: PluginPage, chatId: String?) -> JSONValue {
+        PluginData.turns(chats: pluginTimelines(chatId: chatId).map { (chatId: $0.id, timeline: $0.timeline) }, page: page)
+    }
+
+    /// Messages from the picked projects' chats only. A chat named in the
+    /// request still has to be in one of them.
+    func pluginTranscript(page: PluginPage, chatId: String?, allowedProjectKeys: [String]) -> JSONValue {
+        let thisMac = remote.identity.id
+        let chats = pluginTimelines(chatId: chatId).map { chat in
+            (chatId: chat.id,
+             projectKey: chat.projectId.map { PluginSnapshot.projectKey(macId: thisMac, projectId: $0) },
+             timeline: chat.timeline)
+        }
+        return PluginData.transcript(chats: chats, allowedProjectKeys: Set(allowedProjectKeys), page: page)
+    }
+
+    /// This Mac's chats with their logs read, oldest first. Reading a log
+    /// is the same work opening the chat does; a paired Mac's chats keep
+    /// their messages on that Mac, so they aren't included.
+    private func pluginTimelines(chatId: String?) -> [(id: String, projectId: String?, timeline: Timeline)] {
+        sessions
+            .filter { chatId == nil || $0.id == chatId }
+            .sorted { $0.createdAt < $1.createdAt }
+            .map { session in
+                loadTimelineIfNeeded(session.id)
+                return (id: session.id, projectId: session.projectId, timeline: feed(session.id).timeline)
+            }
+    }
+
+    func pluginAutomations(page: PluginPage) -> JSONValue {
+        let thisMac = remote.identity.id
+        let items = automations.map { automation in
+            (automation: automation,
+             projectKey: automation.projectId.map { PluginSnapshot.projectKey(macId: thisMac, projectId: $0) },
+             lastRun: (try? store.lastRun(automationId: automation.id)) ?? nil)
+        }
+        return PluginData.automations(items: items, page: page)
     }
 
     func removePlugin(_ id: String) {

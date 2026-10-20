@@ -79,10 +79,13 @@ struct PluginsSettingsPane: View {
                 manifest: item.inspection.manifest,
                 source: item.source,
                 primaryLabel: "Install and Enable",
-                secondaryLabel: "Install Only"
-            ) { enable in
+                secondaryLabel: "Install Only",
+                projectChoices: model.pluginProjectChoices(),
+                initialProjectKeys: []
+            ) { enable, transcriptProjectKeys in
                 do {
-                    let record = try model.plugins.install(from: item.folder, sourceKind: item.source, enable: enable)
+                    let record = try model.plugins.install(from: item.folder, sourceKind: item.source, enable: enable,
+                                                           transcriptProjectKeys: transcriptProjectKeys)
                     model.flash(enable ? "\(record.name) is installed and on" : "\(record.name) is installed")
                 } catch let error as PluginValidationError {
                     pickedProblem = error.description
@@ -121,9 +124,11 @@ struct PluginsSettingsPane: View {
                     views: [PluginManifest.View(id: "main", title: plugin.record.name)]),
                 source: plugin.record.source,
                 primaryLabel: "Enable",
-                secondaryLabel: nil
-            ) { _ in
-                model.setPluginEnabled(plugin.id, true)
+                secondaryLabel: nil,
+                projectChoices: model.pluginProjectChoices(),
+                initialProjectKeys: plugin.record.transcriptProjectKeys
+            ) { _, transcriptProjectKeys in
+                model.setPluginEnabled(plugin.id, true, transcriptProjectKeys: transcriptProjectKeys)
                 model.plugins.noteError(plugin.id, nil)
                 enabling = nil
             } cancel: {
@@ -161,7 +166,9 @@ struct PluginsSettingsPane: View {
             .disabled(plugin.manifest == nil)
 
             if let manifest = plugin.manifest, !manifest.grantedCapabilities.isEmpty {
-                Text(manifest.grantedCapabilities.map(\.plainWords).sorted().joined(separator: " · "))
+                Text(manifest.grantedCapabilities.map {
+                    $0.plainWords(transcriptProjects: model.pluginProjectNames(record.transcriptProjectKeys))
+                }.sorted().joined(separator: " · "))
                     .font(.btCaption)
                     .foregroundStyle(Color.btTextSecondary)
             }
@@ -209,6 +216,9 @@ struct PluginsSettingsPane: View {
                 if plugin.isUsable, let page = plugin.manifest?.contributes.settingsPage {
                     Button(page.title) { settingsPageFor = plugin }
                 }
+                if plugin.isUsable, plugin.manifest?.grantedCapabilities.contains(.transcriptsRead) == true {
+                    Button("Choose Projects…") { enabling = plugin }
+                }
                 Button("Remove", role: .destructive) { removing = plugin }
             }
         }
@@ -245,8 +255,19 @@ private struct PluginReviewSheet: View {
     let source: PluginSource
     let primaryLabel: String
     let secondaryLabel: String?
-    let confirm: (_ enable: Bool) -> Void
+    /// Projects a `transcripts.read` grant can be scoped to.
+    let projectChoices: [(key: String, name: String)]
+    let initialProjectKeys: [String]
+    let confirm: (_ enable: Bool, _ transcriptProjectKeys: [String]) -> Void
     let cancel: () -> Void
+    @State private var pickedProjects: Set<String> = []
+
+    private var pickedNames: [String] {
+        projectChoices.filter { pickedProjects.contains($0.key) }.map(\.name)
+    }
+    private var pickedKeys: [String] {
+        projectChoices.filter { pickedProjects.contains($0.key) }.map(\.key)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.md) {
@@ -276,7 +297,9 @@ private struct PluginReviewSheet: View {
                     Text("Nothing beyond showing its own screen.")
                         .font(.btBody).foregroundStyle(Color.btTextSecondary)
                 }
-                ForEach(manifest.grantedCapabilities.map(\.plainWords).sorted(), id: \.self) { words in
+                ForEach(manifest.grantedCapabilities.map {
+                    $0.plainWords(transcriptProjects: pickedNames)
+                }.sorted(), id: \.self) { words in
                     Text(words).font(.btBody).foregroundStyle(Color.btTextSecondary)
                 }
             }
@@ -288,18 +311,39 @@ private struct PluginReviewSheet: View {
                     }
                 }
             }
+            if manifest.grantedCapabilities.contains(.transcriptsRead) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("It may read messages in:").font(.btBodyMedium).foregroundStyle(Color.btText)
+                    if projectChoices.isEmpty {
+                        Text("You have no projects yet, so it will read no messages.")
+                            .font(.btBody).foregroundStyle(Color.btTextSecondary)
+                    }
+                    ForEach(projectChoices, id: \.key) { choice in
+                        Toggle(choice.name, isOn: Binding(
+                            get: { pickedProjects.contains(choice.key) },
+                            set: { if $0 { pickedProjects.insert(choice.key) } else { pickedProjects.remove(choice.key) } }
+                        ))
+                        .toggleStyle(.checkbox)
+                        .font(.btBody).foregroundStyle(Color.btTextSecondary)
+                    }
+                    Text("It sees your messages, the agents' replies, tool names and file names — never file contents or what a tool printed.")
+                        .font(.btBody).foregroundStyle(Color.btTextSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
             HStack(spacing: Space.sm) {
                 Spacer()
                 Button("Cancel", role: .cancel, action: cancel)
                 if let secondaryLabel {
-                    Button(secondaryLabel) { confirm(false) }
+                    Button(secondaryLabel) { confirm(false, pickedKeys) }
                 }
-                Button(primaryLabel) { confirm(true) }.buttonStyle(.btPrimary)
+                Button(primaryLabel) { confirm(true, pickedKeys) }.buttonStyle(.btPrimary)
             }
             .padding(.top, Space.xs)
         }
         .padding(Space.xl)
         .frame(width: 440)
+        .onAppear { pickedProjects = Set(initialProjectKeys) }
     }
 }
 

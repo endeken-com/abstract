@@ -27,21 +27,27 @@ public struct PluginRecord: Sendable, Hashable, Codable, Identifiable {
     /// (ABS-94); an update adding one must be reviewed again.
     public var grantedNetworkHosts: [String]
     public var grantedSecretNames: [String]
+    /// Project keys (`macId:projectId`) whose chats' messages a
+    /// `transcripts.read` grant may read, picked at review. Empty reads none.
+    public var transcriptProjectKeys: [String]
     public var packageHash: String
     public var installedAt: Date
     public var lastError: String?
 
     public init(id: String, name: String, version: String, source: PluginSource, enabled: Bool = false,
                 grantedCapabilities: Set<PluginCapability> = [], grantedNetworkHosts: [String] = [],
-                grantedSecretNames: [String] = [], packageHash: String,
+                grantedSecretNames: [String] = [], transcriptProjectKeys: [String] = [],
+                packageHash: String,
                 installedAt: Date = Date(), lastError: String? = nil) {
         self.id = id; self.name = name; self.version = version; self.source = source
         self.enabled = enabled; self.grantedCapabilities = grantedCapabilities
         self.grantedNetworkHosts = grantedNetworkHosts; self.grantedSecretNames = grantedSecretNames
+        self.transcriptProjectKeys = transcriptProjectKeys
         self.packageHash = packageHash; self.installedAt = installedAt; self.lastError = lastError
     }
 
-    // Records written before ABS-94 have no host/secret grants.
+    // Records written before ABS-94 have no host/secret grants, and records
+    // saved before transcript scoping carry no project list.
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         id = try box.decode(String.self, forKey: .id)
@@ -52,6 +58,7 @@ public struct PluginRecord: Sendable, Hashable, Codable, Identifiable {
         grantedCapabilities = try box.decode(Set<PluginCapability>.self, forKey: .grantedCapabilities)
         grantedNetworkHosts = try box.decodeIfPresent([String].self, forKey: .grantedNetworkHosts) ?? []
         grantedSecretNames = try box.decodeIfPresent([String].self, forKey: .grantedSecretNames) ?? []
+        transcriptProjectKeys = try box.decodeIfPresent([String].self, forKey: .transcriptProjectKeys) ?? []
         packageHash = try box.decode(String.self, forKey: .packageHash)
         installedAt = try box.decode(Date.self, forKey: .installedAt)
         lastError = try box.decodeIfPresent(String.self, forKey: .lastError)
@@ -228,6 +235,7 @@ public final class PluginManager: Sendable {
             grantedCapabilities: existing != nil && !grows ? (existing?.grantedCapabilities ?? []) : [],
             grantedNetworkHosts: existing != nil && !grows ? manifest.networkHosts : [],
             grantedSecretNames: existing != nil && !grows ? manifest.secretDeclarations.map(\.name) : [],
+            transcriptProjectKeys: existing != nil && !grows ? (existing?.transcriptProjectKeys ?? []) : [],
             packageHash: inspection.hash, installedAt: existing?.installedAt ?? Date())
         records.removeAll { $0.id == manifest.id }
         records.append(record)
@@ -236,8 +244,9 @@ public final class PluginManager: Sendable {
     }
 
     /// Enables or disables. Enabling is the grant: the manifest's whole
-    /// capability list, or nothing.
-    public func setEnabled(_ pluginId: String, _ enabled: Bool) {
+    /// capability list, or nothing. `transcriptProjectKeys` is the project
+    /// list picked at this review; passing nil keeps the last pick.
+    public func setEnabled(_ pluginId: String, _ enabled: Bool, transcriptProjectKeys: [String]? = nil) {
         var records = records()
         guard let index = records.firstIndex(where: { $0.id == pluginId }) else { return }
         if enabled {
@@ -245,10 +254,22 @@ public final class PluginManager: Sendable {
             records[index].grantedCapabilities = manifest.grantedCapabilities
             records[index].grantedNetworkHosts = manifest.networkHosts
             records[index].grantedSecretNames = manifest.secretDeclarations.map(\.name)
+            if let transcriptProjectKeys {
+                records[index].transcriptProjectKeys = transcriptProjectKeys
+            }
             records[index].enabled = true
         } else {
             records[index].enabled = false
         }
+        save(records)
+    }
+
+    /// Changes which projects' messages the plugin may read, without
+    /// turning it off first.
+    public func setTranscriptProjectKeys(_ pluginId: String, _ keys: [String]) {
+        var records = records()
+        guard let index = records.firstIndex(where: { $0.id == pluginId }) else { return }
+        records[index].transcriptProjectKeys = keys
         save(records)
     }
 
@@ -264,6 +285,7 @@ public final class PluginManager: Sendable {
         records[index].grantedCapabilities = []
         records[index].grantedNetworkHosts = []
         records[index].grantedSecretNames = []
+        records[index].transcriptProjectKeys = []
         save(records)
     }
 

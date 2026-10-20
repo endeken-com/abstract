@@ -55,6 +55,13 @@ public enum Git {
         (try? await git(exec, cwd: root, ["rev-parse", "--verify", "--quiet", branch]))?.ok ?? false
     }
 
+    /// The commit `ref` names, or nil when it doesn't name one here.
+    public static func commit(_ exec: any Executor, root: String, ref: String) async -> String? {
+        guard let out = try? await git(exec, cwd: root, ["rev-parse", "--verify", "--quiet", ref + "^{commit}"]), out.ok else { return nil }
+        let sha = GitText.trimmed(out.stdout)
+        return sha.isEmpty ? nil : sha
+    }
+
     /// Whether `ancestor` is `descendant` or one of its ancestors.
     static func isAncestor(_ exec: any Executor, root: String, _ ancestor: String, of descendant: String) async -> Bool {
         (try? await git(exec, cwd: root, ["merge-base", "--is-ancestor", ancestor, descendant]))?.ok ?? false

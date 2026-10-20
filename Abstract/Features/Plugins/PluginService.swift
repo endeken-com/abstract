@@ -59,15 +59,16 @@ final class PluginService {
     }
 
     @discardableResult
-    func install(from folder: URL, sourceKind: PluginSource, enable: Bool) throws -> PluginRecord {
+    func install(from folder: URL, sourceKind: PluginSource, enable: Bool,
+                 transcriptProjectKeys: [String] = []) throws -> PluginRecord {
         let record = try manager.install(from: folder, sourceKind: sourceKind)
-        if enable { manager.setEnabled(record.id, true) }
+        if enable { manager.setEnabled(record.id, true, transcriptProjectKeys: transcriptProjectKeys) }
         refresh()
         return record
     }
 
-    func setEnabled(_ id: String, _ enabled: Bool) {
-        manager.setEnabled(id, enabled)
+    func setEnabled(_ id: String, _ enabled: Bool, transcriptProjectKeys: [String]? = nil) {
+        manager.setEnabled(id, enabled, transcriptProjectKeys: transcriptProjectKeys)
         refresh()
     }
 
