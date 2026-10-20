@@ -58,6 +58,14 @@ public enum RemoteRequest: Codable, Sendable {
     /// Automations are scheduled and persisted on the host Mac.
     case saveAutomation(Automation)
     case deleteAutomation(id: String)
+    /// "Pause everything" on this Mac, and its per-project form: stops the
+    /// agents at work in scope and pauses its automations (see `PauseState`).
+    /// Resume turns back on only the automations the pause switched off.
+    /// Only send these to a Mac whose snapshot says `pauseControl`.
+    case pauseEverything
+    case resumeEverything
+    case pauseProject(projectId: String)
+    case resumeProject(projectId: String)
     case runAutomation(id: String)
     case automationRuns(id: String)
     /// One run of an automation kept on the asking Mac, started here.
@@ -230,6 +238,12 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
     /// A host that starts another Mac's automation runs (`startRun`).
     /// Optional for older peers.
     public var automationDevice: Bool?
+    /// "Pause everything" is on for this Mac. Optional for older peers.
+    public var everythingPaused: Bool?
+    /// Projects paused on their own, by id, sorted. Optional for older peers.
+    public var pausedProjectIds: [String]?
+    /// A host that takes the pause/resume requests. Optional for older peers.
+    public var pauseControl: Bool?
 
     /// The largest uploaded icon a snapshot carries; larger ones are left out.
     public static let maxProjectIconBytes = 512 << 10
@@ -241,7 +255,8 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
                 pendingPermissions: [String: [RemotePendingPermission]]? = nil,
                 turnStartedAt: [String: Date]? = nil, pagedHistory: Bool? = nil, execInput: Bool? = nil,
                 internetAddress: InternetAddress? = nil, backgroundTasks: [String]? = nil, unmergedWork: [String: Bool]? = nil,
-                projectIcons: [String: Data]? = nil, automationDevice: Bool? = nil) {
+                projectIcons: [String: Data]? = nil, automationDevice: Bool? = nil,
+                everythingPaused: Bool? = nil, pausedProjectIds: [String]? = nil, pauseControl: Bool? = nil) {
         self.projects = projects; self.sessions = sessions; self.providers = providers; self.alive = alive
         self.home = home; self.modelCatalogs = modelCatalogs; self.defaultModelNames = defaultModelNames
         self.pullRequests = pullRequests
@@ -255,6 +270,9 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
         self.unmergedWork = unmergedWork
         self.projectIcons = projectIcons
         self.automationDevice = automationDevice
+        self.everythingPaused = everythingPaused
+        self.pausedProjectIds = pausedProjectIds
+        self.pauseControl = pauseControl
     }
 }
 

@@ -42,4 +42,33 @@ struct RemoteSnapshotTests {
         #expect(decodedOlderRequest.threads.isEmpty)
         #expect(decodedOlderRequest.standing == nil)
     }
+
+    @Test func pauseFieldsRoundTripAndOlderSnapshotsDecode() throws {
+        let snapshot = RemoteSnapshot(projects: [], sessions: [], providers: [], alive: [],
+                                      everythingPaused: true, pausedProjectIds: ["api", "web"], pauseControl: true)
+        let decoded = try JSONDecoder().decode(RemoteSnapshot.self, from: JSONEncoder().encode(snapshot))
+        #expect(decoded.everythingPaused == true)
+        #expect(decoded.pausedProjectIds == ["api", "web"])
+        #expect(decoded.pauseControl == true)
+
+        let oldData = Data(#"{"projects":[],"sessions":[],"providers":[],"alive":[]}"#.utf8)
+        let oldSnapshot = try JSONDecoder().decode(RemoteSnapshot.self, from: oldData)
+        #expect(oldSnapshot.everythingPaused == nil)
+        #expect(oldSnapshot.pausedProjectIds == nil)
+        #expect(oldSnapshot.pauseControl == nil, "an older Mac doesn't take pause requests")
+    }
+
+    @Test func pauseRequestsDecodeAsThePhoneSendsThem() throws {
+        func request(_ json: String) throws -> RemoteRequest {
+            guard case let .request(_, request) = try JSONDecoder().decode(RemoteMessage.self, from: Data(json.utf8))
+            else { throw AbstractError.message("not a request") }
+            return request
+        }
+        guard case .pauseEverything = try request(#"{"request":{"id":1,"_1":{"pauseEverything":{}}}}"#) else { Issue.record("pauseEverything"); return }
+        guard case .resumeEverything = try request(#"{"request":{"id":2,"_1":{"resumeEverything":{}}}}"#) else { Issue.record("resumeEverything"); return }
+        guard case .pauseProject(let paused) = try request(#"{"request":{"id":3,"_1":{"pauseProject":{"projectId":"web"}}}}"#) else { Issue.record("pauseProject"); return }
+        #expect(paused == "web")
+        guard case .resumeProject(let resumed) = try request(#"{"request":{"id":4,"_1":{"resumeProject":{"projectId":"web"}}}}"#) else { Issue.record("resumeProject"); return }
+        #expect(resumed == "web")
+    }
 }

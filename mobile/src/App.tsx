@@ -31,6 +31,7 @@ import { SettingsScreen } from './SettingsScreen';
 import { uuid } from './secure';
 import { attachmentPayload, pickAttachments, type PickedAttachment } from './attachments';
 import { displayDate, swiftDate, type Automation, type AutomationTrigger, type Project, type Session } from './types';
+import { globalPauseAction, globalPauseConfirm, isProjectPaused, pauseBannerRows, pauseRequest, projectPauseAction } from './pause';
 
 // Graphite values come from Abstract/Theme/Palette.swift.
 const ink = '#ECECEF', muted = '#A4A4AD', tertiary = '#75757E';
@@ -115,6 +116,30 @@ function HeaderSpacer() {
   return <View style={{ height: useHeaderHeight() }} />;
 }
 function run(action: () => Promise<unknown>) { action().catch(error => Alert.alert('Abstract', String(error.message || error))); }
+// Pausing everything on a Mac stops every agent at work there, so it asks first.
+function confirmPauseEverything(mac: MacView, act: () => void) {
+  const { title, message } = globalPauseConfirm(mac.name);
+  Alert.alert(title, message, [{ text: 'Cancel' }, { text: 'Pause everything', style: 'destructive', onPress: act }]);
+}
+// The paused banner, as across the top of the Mac's window: what is paused,
+// and the resume that turns back on only what that pause switched off.
+function PauseBanners({ macs, projectId }: { macs: MacView[]; projectId?: string }) {
+  const state = useRemote();
+  const rows = pauseBannerRows(macs, projectId);
+  if (!rows.length) return null;
+  return <>{rows.map(row => <View key={row.key} style={styles.pauseBanner}>
+    <SymbolView name={{ ios: 'pause.circle.fill', android: 'pause_circle', web: 'pause_circle' } as any} size={16} tintColor="#E8B34A" style={{ width: 16, height: 16 }} />
+    <Text style={styles.pauseBannerText}>{row.text}</Text>
+    <Pressable accessibilityRole="button" accessibilityLabel={row.button} accessibilityState={{ disabled: !row.canAct }} disabled={!row.canAct} onPress={() => run(() => state.client(row.hostId).request(row.request.name, row.request.args))} style={[styles.pauseBannerButton, !row.canAct && styles.pauseBannerButtonDisabled]}><Text style={styles.pauseBannerButtonText}>{row.button}</Text></Pressable>
+  </View>)}</>;
+}
+function GlobalPauseButton({ mac }: { mac: MacView }) {
+  const state = useRemote();
+  const action = globalPauseAction(mac.snapshot);
+  if (!action || mac.state !== 'online') return null;
+  const send = () => { const request = pauseRequest(action); run(() => state.client(mac.id).request(request.name, request.args)); };
+  return <Button title={action === 'pause' ? 'Pause everything' : 'Resume everything'} secondary={action === 'pause'} onPress={() => action === 'pause' ? confirmPauseEverything(mac, send) : send()} />;
+}
 function activeRoot(mac: RemoteClient, session: Session) { return session.worktreePath || mac.snapshot?.projects.find(x => x.id === session.projectId)?.rootPath || ''; }
 
 function RailAction({ icon, title, detail, onPress }: { icon: IconName; title: string; detail?: string; onPress: () => void }) {
@@ -142,9 +167,11 @@ function WorkspaceRail({ navigate, selectedChat }: { navigate: (name: string, pa
   const macRow = (mac: MacView) => <View key={`host-${mac.id}`}>
     <Pressable onPress={() => navigate('Settings')} style={styles.railHost}><Icon name="devices" size={14} color={tertiary} /><Text numberOfLines={1} style={styles.railHostTitle}>{mac.name}</Text><View style={[styles.connectionDot, mac.state !== 'online' && { backgroundColor: tertiary }]} /></Pressable>
     {mac.state !== 'online' && <Text style={styles.railMacStatus}>{macStatus(mac)}</Text>}
+    <View style={styles.railPause}><GlobalPauseButton mac={mac} /></View>
   </View>;
   return <View style={styles.rail}>
     <HeaderScrollView contentContainerStyle={styles.railContent}>
+      <PauseBanners macs={macs} />
       <RailAction icon="plus" title="New" onPress={() => navigate('NewChat', {})} />
       <RailAction icon="clock" title="Automations" onPress={() => navigate('Automations')} />
       <RailAction icon="worktree" title="Worktrees" onPress={() => navigate('Worktrees')} />
@@ -164,7 +191,7 @@ function WorkspaceRail({ navigate, selectedChat }: { navigate: (name: string, pa
                 if (narrowing && !rows.length) return null;
                 return <View key={project.id} style={styles.railGroup}>
                   <Pressable onPress={() => navigate('Project', { hostId: mac.id, projectId: project.id })} style={styles.railGroupHeader}>
-                    <Text numberOfLines={1} style={styles.railGroupTitle}>{project.name}</Text><Icon name="chevron" size={12} color={tertiary} />
+                    <Text numberOfLines={1} style={styles.railGroupTitle}>{project.name}</Text>{isProjectPaused(mac.snapshot, project.id) && <Text style={styles.pausedLabel}>Paused</Text>}<Icon name="chevron" size={12} color={tertiary} />
                   </Pressable>
                   {rows.map(row)}
                 </View>;
@@ -215,9 +242,10 @@ function ProjectsScreen({ navigation }: any) {
   const state = useRemote();
   const macs = state.macs();
   return <HeaderScrollView style={styles.page} contentContainerStyle={styles.content}><Text style={styles.title}>Projects</Text>{!macs.length && <Text style={styles.lead}>Pair a Mac to see its projects</Text>}
-    {macs.map(mac => <View key={mac.id} style={mac.state === 'unreachable' && styles.unreachable}><Section title={mac.name}>
+    {macs.map(mac => <View key={mac.id} style={mac.state === 'unreachable' && styles.unreachable}><PauseBanners macs={[mac]} /><Section title={mac.name}>
       {mac.state !== 'online' && <Text style={styles.hint}>{macStatus(mac)}</Text>}
-      {(mac.snapshot?.projects || []).map(project => <Row key={project.id} title={project.name} subtitle={project.rootPath} onPress={() => navigation.navigate('Project', { hostId: mac.id, projectId: project.id })} />)}
+      <GlobalPauseButton mac={mac} />
+      {(mac.snapshot?.projects || []).map(project => <Row key={project.id} title={project.name} subtitle={project.rootPath} trailing={isProjectPaused(mac.snapshot, project.id) ? 'Paused' : undefined} onPress={() => navigation.navigate('Project', { hostId: mac.id, projectId: project.id })} />)}
       {!mac.snapshot?.projects.length && <Empty text="No projects available." />}
     </Section></View>)}
   </HeaderScrollView>;
@@ -228,8 +256,11 @@ function ProjectScreen({ route, navigation }: any) {
   const project = state.snapshot?.projects.find(x => x.id === route.params.projectId) as Project | undefined;
   if (!project) return <View style={styles.content}><Empty text="Project unavailable." /></View>;
   const chats = state.snapshot?.sessions.filter(x => x.projectId === project.id && !x.archivedAt) || [];
+  const mac = remote.mac(hostId);
+  const projectAction = state.status === 'online' ? projectPauseAction(state.snapshot, project.id) : null;
   return <HeaderScrollView style={styles.page} contentContainerStyle={styles.content}><Text style={styles.title}>{project.name}</Text><Text style={styles.lead}>{`${remote.mac(hostId)?.name || ''} · ${project.rootPath}`}</Text>
-    <View style={styles.actions}><Button title="New chat" onPress={() => navigation.navigate('NewChat', { hostId, projectId: project.id })} /><Button title="Worktrees" secondary onPress={() => navigation.navigate('Worktrees', { hostId, projectId: project.id })} /><Button title="Files" secondary onPress={() => navigation.navigate('Files', { hostId, root: project.rootPath })} /><Button title="Terminal" secondary onPress={() => navigation.navigate('Terminal', { hostId, root: project.rootPath })} /></View>
+    {mac && <PauseBanners macs={[mac]} projectId={project.id} />}
+    <View style={styles.actions}><Button title="New chat" onPress={() => navigation.navigate('NewChat', { hostId, projectId: project.id })} />{projectAction && <Button title={projectAction === 'pause' ? 'Pause project' : 'Resume project'} secondary={projectAction === 'pause'} onPress={() => { const request = pauseRequest(projectAction, project.id); run(() => state.request(request.name, request.args)); }} />}<Button title="Worktrees" secondary onPress={() => navigation.navigate('Worktrees', { hostId, projectId: project.id })} /><Button title="Files" secondary onPress={() => navigation.navigate('Files', { hostId, root: project.rootPath })} /><Button title="Terminal" secondary onPress={() => navigation.navigate('Terminal', { hostId, root: project.rootPath })} /></View>
     <Section title="Chats">{chats.map(chat => <Row key={chat.id} title={chat.name} subtitle={`${chat.providerId} · ${chat.branch || chat.status}`} subtitleIcon={chat.branch ? <BranchIcon size={11} color={tertiary} /> : undefined} iconNode={<ProviderLogo provider={chat.providerId} size={16} />} onPress={() => navigation.navigate('Chat', { hostId, sessionId: chat.id })} trailing={chat.status} />)}{!chats.length && <Empty text="No chats in this project." />}</Section>
   </HeaderScrollView>;
 }
@@ -676,7 +707,7 @@ const styles = StyleSheet.create({
   launcherRecentMeta: { color: tertiary, fontFamily: 'Inter', fontSize: 11, maxWidth: 110 },
   headerAction: { width: 42, height: 44, alignItems: 'center', justifyContent: 'center' },
   page: { flex: 1, backgroundColor: bg }, content: { padding: 18, gap: 16, paddingBottom: 32 }, title: { color: ink, fontFamily: 'Inter', fontSize: 25, fontWeight: '600' }, lead: { color: muted, fontFamily: 'Inter', fontSize: 14, lineHeight: 21 }, section: { backgroundColor: panel, borderRadius: 8, padding: 14, gap: 9, borderWidth: StyleSheet.hairlineWidth, borderColor: border }, sectionTitle: { color: muted, fontFamily: 'Inter', fontSize: 13.5, fontWeight: '600' }, label: { color: muted, fontFamily: 'Inter', fontSize: 12, fontWeight: '600', marginTop: 8 }, value: { color: ink, fontFamily: 'Inter', fontSize: 15 }, row: { minHeight: 56, paddingVertical: 11, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border, flexDirection: 'row', alignItems: 'center', gap: 10 }, rowTitle: { color: ink, fontFamily: 'Inter', fontSize: 15.5, fontWeight: '500' }, subtitle: { color: muted, fontFamily: 'Inter', fontSize: 12.5, marginTop: 4 }, subtitleRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4 }, subtitleText: { marginTop: 0, flexShrink: 1 }, trailing: { color: tertiary, fontFamily: 'Inter', fontSize: 11 }, button: { backgroundColor: accent, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 11, alignSelf: 'flex-start', marginRight: 5, marginBottom: 5 }, buttonText: { color: bg, fontFamily: 'Inter', fontSize: 14, fontWeight: '600' }, secondary: { backgroundColor: inset }, danger: { backgroundColor: '#9B3F43' }, input: { backgroundColor: inset, color: ink, borderRadius: 7, borderWidth: StyleSheet.hairlineWidth, borderColor: border, paddingHorizontal: 12, paddingVertical: 10, fontFamily: 'Inter', fontSize: 15, minHeight: 48 }, multiline: { minHeight: 120, textAlignVertical: 'top' }, actions: { flexDirection: 'row', flexWrap: 'wrap', marginVertical: 5 }, choices: { flexDirection: 'row', flexWrap: 'wrap' }, empty: { color: muted, fontFamily: 'Inter', fontSize: 14, lineHeight: 21 }, error: { color: '#EF6461' }, callout: { backgroundColor: raised, borderRadius: 8, borderColor: border, borderWidth: StyleSheet.hairlineWidth, padding: 15 }, code: { color: ink, fontFamily: 'JetBrainsMonoMedium', fontSize: 32, letterSpacing: 3 }, bubble: { backgroundColor: raised, padding: 13, borderRadius: 8, marginBottom: 8 }, bubbleLabel: { color: muted, fontFamily: 'Inter', fontSize: 11, marginBottom: 5 }, body: { color: ink, fontFamily: 'Inter', fontSize: 14.5, lineHeight: 22 }, mono: { color: ink, fontSize: 11, fontFamily: 'JetBrainsMono', lineHeight: 17 }, hint: { color: tertiary, fontFamily: 'Inter', fontSize: 11 }, composer: { backgroundColor: panel, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: border, padding: 10, flexDirection: 'row', alignItems: 'flex-end' }, codeScroll: { padding: 16 }, codeText: { color: ink, fontFamily: 'JetBrainsMono', fontSize: 11, textAlignVertical: 'top', minHeight: 500 },
-  rail: { flex: 1, backgroundColor: sidebar }, railContent: { paddingTop: 10, paddingBottom: 24 }, railAction: { height: 50, paddingHorizontal: 18, flexDirection: 'row', alignItems: 'center', gap: 12 }, railActionTitle: { color: ink, fontFamily: 'Inter', fontSize: 15.5, flex: 1 }, railDetail: { color: tertiary, fontFamily: 'Inter', fontSize: 12 }, railHost: { marginTop: 18, marginHorizontal: 14, height: 48, paddingHorizontal: 5, flexDirection: 'row', alignItems: 'center', gap: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: border }, railHostTitle: { color: muted, fontFamily: 'Inter', fontSize: 12, fontWeight: '600', flex: 1 }, railGroup: { paddingTop: 12 }, railGroupHeader: { paddingHorizontal: 18, height: 38, flexDirection: 'row', alignItems: 'center', gap: 6 }, railGroupTitle: { color: muted, fontFamily: 'Inter', fontSize: 14, fontWeight: '600', flex: 1 }, railMacStatus: { color: tertiary, fontFamily: 'Inter', fontSize: 12, marginHorizontal: 19, marginTop: -6, marginBottom: 4 }, unreachable: { opacity: 0.45 }, railEmpty: { color: muted, fontFamily: 'Inter', fontSize: 12, lineHeight: 18, margin: 18 }, railFooter: { minHeight: 60, paddingHorizontal: 18, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: border, flexDirection: 'row', alignItems: 'center', gap: 10 }, railFooterTitle: { color: ink, fontFamily: 'Inter', fontSize: 15, flex: 1 }, connectionDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#4CC38A' },
+  rail: { flex: 1, backgroundColor: sidebar }, railContent: { paddingTop: 10, paddingBottom: 24 }, railAction: { height: 50, paddingHorizontal: 18, flexDirection: 'row', alignItems: 'center', gap: 12 }, railActionTitle: { color: ink, fontFamily: 'Inter', fontSize: 15.5, flex: 1 }, railDetail: { color: tertiary, fontFamily: 'Inter', fontSize: 12 }, railHost: { marginTop: 18, marginHorizontal: 14, height: 48, paddingHorizontal: 5, flexDirection: 'row', alignItems: 'center', gap: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: border }, railHostTitle: { color: muted, fontFamily: 'Inter', fontSize: 12, fontWeight: '600', flex: 1 }, railGroup: { paddingTop: 12 }, railGroupHeader: { paddingHorizontal: 18, height: 38, flexDirection: 'row', alignItems: 'center', gap: 6 }, railGroupTitle: { color: muted, fontFamily: 'Inter', fontSize: 14, fontWeight: '600', flex: 1 }, railMacStatus: { color: tertiary, fontFamily: 'Inter', fontSize: 12, marginHorizontal: 19, marginTop: -6, marginBottom: 4 }, unreachable: { opacity: 0.45 }, pauseBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(232,179,74,0.12)', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border, paddingHorizontal: 14, paddingVertical: 8 }, pauseBannerText: { color: ink, fontFamily: 'Inter', fontSize: 13, lineHeight: 18, flex: 1 }, pauseBannerButton: { paddingHorizontal: 8, paddingVertical: 4 }, pauseBannerButtonDisabled: { opacity: 0.45 }, pauseBannerButtonText: { color: ink, fontFamily: 'Inter', fontSize: 13, fontWeight: '600' }, pausedLabel: { color: '#E8B34A', fontFamily: 'Inter', fontSize: 11, fontWeight: '600' }, railPause: { marginHorizontal: 14 }, railEmpty: { color: muted, fontFamily: 'Inter', fontSize: 12, lineHeight: 18, margin: 18 }, railFooter: { minHeight: 60, paddingHorizontal: 18, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: border, flexDirection: 'row', alignItems: 'center', gap: 10 }, railFooterTitle: { color: ink, fontFamily: 'Inter', fontSize: 15, flex: 1 }, connectionDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#4CC38A' },
   paneToolbar: { height: 45, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border, backgroundColor: bg },
   paneIconButton: { width: 42, height: 42, alignItems: 'center', justifyContent: 'center' },
   paneContent: { paddingBottom: 30 },
