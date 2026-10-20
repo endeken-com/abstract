@@ -16,13 +16,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
+  core-tests:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v7
 
       - name: Install tools
-        run: brew install xcodegen actionlint
+        run: brew install actionlint
 
       - name: Lint workflows
         run: actionlint -shellcheck=
@@ -38,6 +38,13 @@ jobs:
       - name: App icons
         run: scripts/make-icons.sh --check
 
+      - uses: ./.github/actions/apple-build-cache
+        with:
+          name: core-tests
+          path: Packages/AbstractCore/.build
+          dependencies: ${{ hashFiles('Packages/AbstractCore/Package.swift', 'Packages/AbstractCore/Package.resolved') }}
+          sources: ${{ hashFiles('Packages/AbstractCore/Sources/**', 'Packages/AbstractCore/Tests/**') }}
+
       # Tests that wait on processes against a deadline run on their own first:
       # alongside the git-heavy suites, the 3-core runner starves them past it.
       - name: AbstractCore tests
@@ -48,6 +55,10 @@ jobs:
           swift test --filter "$TIMED"
           swift test --skip "$TIMED"
 
+  apple-transport:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
       - uses: actions/cache/restore@v4
         id: iroh-cache
         with:
@@ -61,18 +72,48 @@ jobs:
           path: Packages/Iroh/Iroh.xcframework
           key: ${{ steps.iroh-cache.outputs.cache-primary-key }}
 
-      - name: Build the app
-        run: |
-          xcodegen generate
-          scripts/build-app.sh
+      # Both app builds consume this run's artifact, including on a cold cache.
       - uses: actions/upload-artifact@v4
-        if: github.event_name == 'pull_request'
         with:
           name: iroh-apple-xcframework
           path: Packages/Iroh/Iroh.xcframework
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 1
+
+  macos-build:
+    needs: apple-transport
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install tools
+        run: brew install xcodegen
+      - uses: actions/download-artifact@v4
+        with:
+          name: iroh-apple-xcframework
+          path: Packages/Iroh/Iroh.xcframework
+      - run: test -f Packages/Iroh/Iroh.xcframework/.abstract-native-v1
+      - uses: ./.github/actions/apple-build-cache
+        with:
+          name: macos-release
+          path: |
+            build/dd-release/Build
+            build/dd-release/SourcePackages
+            build/dd-release/ModuleCache.noindex
+            build/dd-release/SDKStatCaches.noindex
+            build/dd-release/CompilationCache.noindex
+          dependencies: ${{ hashFiles('project.yml', 'Packages/*/Package.swift', 'Packages/*/Package.resolved', 'scripts/build-app.sh', 'scripts/prepare-iroh.sh') }}
+          sources: ${{ hashFiles('Abstract/**', 'Packages/*/Sources/**') }}
+      - name: Build the app
+        run: |
+          xcodegen generate
+          scripts/build-app.sh COMPILATION_CACHE_ENABLE_CACHING=YES
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: xcodebuild-test-log
+          path: build/xcodebuild-release.log
+          if-no-files-found: ignore
 
   mobile-changes:
     if: github.event_name == 'pull_request'
@@ -89,6 +130,7 @@ jobs:
           if git diff --quiet "$BASE_SHA" HEAD -- \
             mobile/ Packages/AbstractInternet/ Packages/Iroh/ scripts/prepare-iroh.sh \
             .github/workflows/mobile.yml .github/workflows/test.yml \
+            .github/actions/apple-build-cache/ \
             Packages/AbstractCore/Sources/AbstractCore/Remote/ Abstract/Features/Remote/; then
             echo 'changed=false' >> "$GITHUB_OUTPUT"
           else
@@ -96,7 +138,7 @@ jobs:
           fi
 
   ios-check:
-    needs: [test, mobile-changes]
+    needs: [apple-transport, mobile-changes]
     if: needs.mobile-changes.outputs.changed == 'true'
     runs-on: macos-26
     steps:
@@ -111,9 +153,35 @@ jobs:
           name: iroh-apple-xcframework
           path: Packages/Iroh/Iroh.xcframework
       - run: test -f Packages/Iroh/Iroh.xcframework/.abstract-native-v1
+      - uses: ./.github/actions/apple-build-cache
+        with:
+          name: ios-simulator
+          path: |
+            mobile/ios/Pods
+            build/dd-ios/Build
+            build/dd-ios/SourcePackages
+            build/dd-ios/ModuleCache.noindex
+            build/dd-ios/SDKStatCaches.noindex
+            build/dd-ios/CompilationCache.noindex
+          dependencies: ${{ hashFiles('mobile/package-lock.json', 'mobile/ios/Podfile', 'mobile/ios/Podfile.lock', 'mobile/ios/Podfile.properties.json', 'mobile/ios/Abstract.xcodeproj/**', 'Packages/*/Package.swift', 'Packages/*/Package.resolved', 'scripts/prepare-iroh.sh') }}
+          sources: ${{ hashFiles('mobile/ios/Abstract/**', 'mobile/modules/**', 'Packages/AbstractInternet/Sources/**', 'Packages/Iroh/Sources/**') }}
       - run: npm ci
         working-directory: mobile
       - run: pod install
         working-directory: mobile/ios
-      - run: xcodebuild -workspace Abstract.xcworkspace -scheme Abstract -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
+      - run: xcodebuild -workspace Abstract.xcworkspace -scheme Abstract -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath "$GITHUB_WORKSPACE/build/dd-ios" CODE_SIGNING_ALLOWED=NO COMPILATION_CACHE_ENABLE_CACHING=YES build
         working-directory: mobile/ios
+
+  # Keep the required check's name: release workflows query `test` on the commit.
+  # always() ensures a failed/skipped dependency cannot make this gate skip too.
+  test:
+    needs: [core-tests, apple-transport, macos-build, mobile-changes, ios-check]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Require every applicable check
+        env:
+          JOB_RESULTS: ${{ toJSON(needs) }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: python3 scripts/check-test-results.py
