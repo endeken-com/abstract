@@ -1,0 +1,31 @@
+name: Cache Apple builds
+description: Reuse compatible build intermediates; callers still run every build and test.
+inputs:
+  name:
+    description: Separate namespace for the target platform and build configuration.
+    required: true
+  path:
+    description: Build and dependency directories to cache (omit logs and indexes).
+    required: true
+  dependencies:
+    description: Hash of dependency manifests, lockfiles and build settings.
+    required: true
+  sources:
+    description: Hash of source files; compatible earlier builds are fallback caches.
+    required: true
+runs:
+  using: composite
+  steps:
+    - id: toolchain
+      shell: bash
+      run: |
+        fingerprint=$({ xcodebuild -version; xcrun swift --version; sw_vers -buildVersion; xcode-select -p; } | shasum -a 256 | cut -d ' ' -f 1)
+        echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
+    # Include sources so successful changes can refresh an immutable cache.
+    # A hit only restores files: the compiler checks inputs and tests always run.
+    - uses: actions/cache@v4
+      with:
+        path: ${{ inputs.path }}
+        key: apple-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.fingerprint }}-${{ inputs.name }}-${{ inputs.dependencies }}-${{ inputs.sources }}
+        restore-keys: |
+          apple-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.fingerprint }}-${{ inputs.name }}-${{ inputs.dependencies }}-

@@ -447,7 +447,9 @@ final class RemoteService {
                               backgroundTasks: model.alive.filter { model.runningBackgroundTasks($0) > 0 }.sorted(),
                               unmergedWork: model.branchStates.mapValues(\.hasUnmergedWork),
                               projectIcons: projectIcons(model.projects.filter { $0.archivedAt == nil }),
-                              automationDevice: true)
+                              automationDevice: true,
+                              plans: model.plans.filter { $0.value.current != nil }.mapValues(RemotePlan.init),
+                              planApproval: true)
     }
 
     /// Each project's uploaded icon as bytes, so a viewing Mac can show it
@@ -919,6 +921,18 @@ final class HostedPeer {
             return .ok
         case let .setPolicy(session, policy):
             model.setPolicy(session, policy)
+            return .ok
+        case .approvePlan(let session):
+            guard model.plans[session]?.current != nil else { return .failed("That chat has no plan waiting.") }
+            model.approvePlan(session)
+            return .ok
+        case .requestPlanChanges(let session):
+            guard model.plans[session]?.current != nil else { return .failed("That chat has no plan waiting.") }
+            model.requestPlanChanges(session)
+            return .ok
+        case .discardPlan(let session):
+            guard model.plans[session]?.current != nil else { return .failed("That chat has no plan waiting.") }
+            model.discardPlan(session)
             return .ok
         case let .stopTask(session, taskId):
             model.stopTask(session, taskId: taskId)
