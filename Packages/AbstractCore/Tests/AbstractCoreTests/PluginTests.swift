@@ -215,6 +215,27 @@ import Testing
         #expect(sameCaps.grantedCapabilities == [.chatsRead, .projectsRead])
     }
 
+    @Test func transcriptProjectsArePickedAtReviewAndSurviveRelaunch() throws {
+        let root = try tempRoot()
+        let host = try manager(root: root)
+        let record = try host.install(
+            from: package(in: root, capabilities: ["chats.read", "transcripts.read"]), sourceKind: .user)
+        host.setEnabled(record.id, true, transcriptProjectKeys: ["mac-1:p1"])
+
+        let second = PluginManager(store: host.store, pluginsRoot: host.pluginsRoot, dataRoot: host.dataRoot)
+        #expect(second.records().first?.transcriptProjectKeys == ["mac-1:p1"])
+        #expect(second.records().first?.grantedCapabilities.contains(.transcriptsRead) == true)
+
+        second.setTranscriptProjectKeys(record.id, ["mac-1:p2"])
+        #expect(second.records().first?.transcriptProjectKeys == ["mac-1:p2"])
+
+        // An update asking for more loses the pick along with the grant.
+        let updated = try second.install(
+            from: package(in: root, version: "1.1.0", capabilities: ["chats.read", "transcripts.read", "usage.read"]),
+            sourceKind: .user)
+        #expect(updated.transcriptProjectKeys.isEmpty)
+    }
+
     @Test func aZipOfAPackageInstalls() throws {
         let root = try tempRoot()
         let folder = try package(in: root)
