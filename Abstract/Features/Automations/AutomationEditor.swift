@@ -116,7 +116,9 @@ struct AutomationDraft: Equatable {
     var workspaceMode: WorkspaceMode = .newWorktree
     /// The chat every run continues; nil with `.pinned` is a chat of its own, made on the first run.
     var pinnedSessionId: String?
-    var catchUp = false
+    var concurrency: AutomationConcurrency = .startAnother
+    var missedRuns: AutomationMissedRuns = .skip
+    var onlyWhenChanged = false
     /// Only read for a new automation: an existing one's switch saves at once.
     var enabled = true
 
@@ -146,7 +148,9 @@ struct AutomationDraft: Equatable {
         policy = a.permissionPolicy
         workspaceMode = a.workspaceMode
         pinnedSessionId = a.pinnedSessionId
-        catchUp = a.catchUp
+        concurrency = a.concurrency
+        missedRuns = a.missedRuns
+        onlyWhenChanged = a.onlyWhenChanged
         enabled = a.enabled
     }
 
@@ -157,6 +161,13 @@ struct AutomationDraft: Equatable {
 
     /// Every run continues one chat, rather than starting a new one.
     var isPinned: Bool { workspaceMode == .pinned }
+
+    /// Switch where runs happen. A still-going choice nobody changed
+    /// follows to the new place's default; one they picked stays.
+    mutating func setWorkspaceMode(_ mode: WorkspaceMode) {
+        if concurrency == .defaults(for: workspaceMode) { concurrency = .defaults(for: mode) }
+        workspaceMode = mode
+    }
 
     func automation(base: Automation?, now: Date = Date()) -> Automation {
         var a = base ?? Automation(name: "", prompt: "", providerId: providerId, projectId: nil, triggers: [], enabled: enabled)
@@ -173,7 +184,9 @@ struct AutomationDraft: Equatable {
         a.workspaceMode = workspaceMode
         a.pinnedSessionId = isPinned ? pinnedSessionId : nil
         a.continueAgentSession = isPinned
-        a.catchUp = catchUp
+        a.concurrency = concurrency
+        a.missedRuns = missedRuns
+        a.onlyWhenChanged = onlyWhenChanged
         return a
     }
 
@@ -184,7 +197,7 @@ struct AutomationDraft: Equatable {
         prompt = proposal.instructions
         triggers = proposal.schedules.map { TriggerDraft(AutomationTrigger(rrule: $0, timezone: timezone)) }
         if let drafted { projectId = drafted }
-        workspaceMode = proposal.continuesOwnChat ? .pinned : .newWorktree
+        setWorkspaceMode(proposal.continuesOwnChat ? .pinned : .newWorktree)
         pinnedSessionId = nil
         policy = proposal.policy
     }
@@ -197,7 +210,8 @@ struct AutomationDraft: Equatable {
             || saved.profileId != a.profileId
             || saved.providerId != a.providerId || saved.model != a.model || saved.effort != a.effort
             || saved.permissionPolicy != a.permissionPolicy || saved.workspaceMode != a.workspaceMode
-            || saved.pinnedSessionId != a.pinnedSessionId || saved.catchUp != a.catchUp
+            || saved.pinnedSessionId != a.pinnedSessionId || saved.concurrency != a.concurrency
+            || saved.missedRuns != a.missedRuns || saved.onlyWhenChanged != a.onlyWhenChanged
             || triggers.count != a.triggers.count || zip(triggers, a.triggers).contains { !$0.matches($1) }
     }
 
@@ -221,8 +235,10 @@ struct AutomationSettings: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            AutoSectionLabel(title: "Triggers")
-            TriggerList(triggers: $draft.triggers, catchUp: $draft.catchUp, active: active,
+            AutoSectionLabel(title: "When it runs")
+            TriggerList(triggers: $draft.triggers, concurrency: $draft.concurrency, missedRuns: $draft.missedRuns,
+                        onlyWhenChanged: $draft.onlyWhenChanged,
+                        showsChanged: draft.projectId != nil && draft.deviceId == nil, active: active,
                         defaultTimezone: model.defaultTimezone)
                 .padding(.top, Space.xxs)
 
@@ -248,7 +264,11 @@ struct AutomationSettings: View {
 
 private struct TriggerList: View {
     @Binding var triggers: [TriggerDraft]
-    @Binding var catchUp: Bool
+    @Binding var concurrency: AutomationConcurrency
+    @Binding var missedRuns: AutomationMissedRuns
+    @Binding var onlyWhenChanged: Bool
+    /// A project on this Mac is what "changed since the last run" reads.
+    let showsChanged: Bool
     let active: Bool
     let defaultTimezone: String
 
@@ -273,22 +293,52 @@ private struct TriggerList: View {
                         .foregroundStyle(Color.btTextTertiary)
                         .padding(.top, Space.xxs)
                 } else {
-                    HStack(spacing: 1) {
-                        Text("If Abstract is closed when a run is due,")
-                            .font(.btBody)
-                            .foregroundStyle(Color.btTextTertiary)
-                        SentenceMenu(title: catchUp ? "run it once when it opens" : "skip that run", quiet: true) {
-                            Picker("Missed runs", selection: $catchUp) {
-                                Text("Skip That Run").tag(false)
-                                Text("Run It Once When Abstract Opens").tag(true)
+                    VStack(alignment: .leading, spacing: 2) {
+                        sentence("If the last run is still going,") {
+                            SentenceMenu(title: concurrency.phrase, quiet: true) {
+                                Picker("If the last run is still going", selection: $concurrency) {
+                                    ForEach(AutomationConcurrency.allCases, id: \.self) { Text($0.option).tag($0) }
+                                }
+                                .pickerStyle(.inline)
+                                .labelsHidden()
                             }
-                            .pickerStyle(.inline)
-                            .labelsHidden()
+                        }
+                        sentence("If runs were missed while Abstract was closed,") {
+                            SentenceMenu(title: missedRuns.phrase, quiet: true) {
+                                Picker("Missed runs", selection: $missedRuns) {
+                                    ForEach(AutomationMissedRuns.allCases, id: \.self) { Text($0.option).tag($0) }
+                                }
+                                .pickerStyle(.inline)
+                                .labelsHidden()
+                            }
+                        }
+                        if showsChanged {
+                            sentence("It runs") {
+                                SentenceMenu(title: onlyWhenChanged ? "only when the project changed since the last run"
+                                                                    : "whether or not the project changed", quiet: true) {
+                                    Picker("Only when the project changed", selection: $onlyWhenChanged) {
+                                        Text("Whether or Not the Project Changed").tag(false)
+                                        Text("Only When the Project Changed Since the Last Run").tag(true)
+                                    }
+                                    .pickerStyle(.inline)
+                                    .labelsHidden()
+                                }
+                            }
                         }
                     }
                     .padding(.top, Space.xs)
                 }
             }
+        }
+    }
+
+    /// One of the sentences under the triggers: its words, then its menu.
+    private func sentence<Menu: View>(_ words: String, @ViewBuilder menu: () -> Menu) -> some View {
+        HStack(spacing: 1) {
+            Text(words)
+                .font(.btBody)
+                .foregroundStyle(Color.btTextTertiary)
+            menu()
         }
     }
 }
@@ -485,12 +535,12 @@ private struct ScopeSentence: View {
             item("Starts a New Chat",
                  detail: draft.projectId == nil ? "A standalone chat each run" : "Each in its own worktree, fetched and set up fresh",
                  selected: !draft.isPinned) {
-                draft.workspaceMode = .newWorktree
+                draft.setWorkspaceMode(.newWorktree)
                 draft.pinnedSessionId = nil
             }
             item("Continues a Chat of Its Own", detail: "Made by the first run; every run after is its next message",
                  selected: draft.isPinned && chat == nil) {
-                draft.workspaceMode = .pinned
+                draft.setWorkspaceMode(.pinned)
                 draft.pinnedSessionId = nil
             }
             Section("Continues a Chat") {
@@ -498,7 +548,7 @@ private struct ScopeSentence: View {
                 ForEach(chats) { s in
                     item(s.name, detail: [model.project(s.projectId)?.name ?? "Standalone", s.branch].compactMap { $0 }.joined(separator: " · "),
                          selected: chat?.id == s.id) {
-                        draft.workspaceMode = .pinned
+                        draft.setWorkspaceMode(.pinned)
                         draft.pinnedSessionId = s.id
                         draft.projectId = s.projectId
                         draft.deviceId = RemoteService.split(s.id)?.device

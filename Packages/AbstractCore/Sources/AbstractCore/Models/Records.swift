@@ -269,6 +269,29 @@ public struct AutomationTrigger: Sendable, Hashable, Identifiable, Codable {
     }
 }
 
+/// What a scheduled run does when the last one is still going.
+public enum AutomationConcurrency: String, Sendable, Codable, CaseIterable {
+    case skipIfActive = "skip_if_active"
+    case runAfterActiveFinishes = "run_after"
+    case startAnother = "start_another"
+
+    /// A run that continues one chat skips rather than piling onto it; a
+    /// run in a worktree of its own starts beside the last one.
+    public static func defaults(for mode: WorkspaceMode) -> AutomationConcurrency {
+        mode == .pinned ? .skipIfActive : .startAnother
+    }
+}
+
+/// What happens to scheduled runs whose time passed while Abstract was closed.
+public enum AutomationMissedRuns: String, Sendable, Codable, CaseIterable {
+    case skip
+    case runOnce = "run_once"
+    case runEach = "run_each"
+
+    /// How many missed runs "run each" starts at most.
+    public static let runEachLimit = 5
+}
+
 /// A scheduled agent run, modelled on superset.sh automations.
 public struct Automation: Sendable, Hashable, Identifiable, Codable {
     public var id: String
@@ -286,8 +309,13 @@ public struct Automation: Sendable, Hashable, Identifiable, Codable {
     /// the chat"; a pinned automation always does now.
     public var continueAgentSession: Bool
     public var permissionPolicy: PermissionPolicy
-    /// Fire once on launch if a scheduled time was missed while closed.
-    public var catchUp: Bool
+    /// What a scheduled run does when the last one is still going.
+    public var concurrency: AutomationConcurrency
+    /// What happens to runs missed while Abstract was closed.
+    public var missedRuns: AutomationMissedRuns
+    /// Skip a scheduled run when the project's base hasn't moved since
+    /// the last run.
+    public var onlyWhenChanged: Bool
     public var enabled: Bool
     public var nextRunAt: Date?
     public var createdAt: Date
@@ -302,19 +330,32 @@ public struct Automation: Sendable, Hashable, Identifiable, Codable {
     /// starts; nil = the automation's own agent, model, effort and policy.
     public var profileId: String? = nil
 
+    /// The switch this replaced: fire once on launch if a scheduled time
+    /// was missed while closed. Kept so older Macs and older rows, which
+    /// know nothing finer, still read and write the same thing.
+    public var catchUp: Bool {
+        get { missedRuns != .skip }
+        set { missedRuns = newValue ? .runOnce : .skip }
+    }
+
     public init(
         id: String = UUID().uuidString, name: String, prompt: String, providerId: String, projectId: String?,
         triggers: [AutomationTrigger], workspaceMode: WorkspaceMode = .newWorktree,
         pinnedSessionId: String? = nil, continueAgentSession: Bool = false,
         permissionPolicy: PermissionPolicy = .autoEdits, catchUp: Bool = false, enabled: Bool = true,
         nextRunAt: Date? = nil, createdAt: Date = Date(), updatedAt: Date = Date(), model: String? = nil,
-        effort: String? = nil, deviceId: String? = nil
+        effort: String? = nil, deviceId: String? = nil,
+        concurrency: AutomationConcurrency? = nil, missedRuns: AutomationMissedRuns? = nil,
+        onlyWhenChanged: Bool = false
     ) {
         self.model = model; self.effort = effort; self.deviceId = deviceId
         self.id = id; self.name = name; self.prompt = prompt; self.providerId = providerId; self.projectId = projectId
         self.triggers = triggers; self.workspaceMode = workspaceMode
         self.pinnedSessionId = pinnedSessionId; self.continueAgentSession = continueAgentSession
-        self.permissionPolicy = permissionPolicy; self.catchUp = catchUp; self.enabled = enabled
+        self.permissionPolicy = permissionPolicy; self.enabled = enabled
+        self.concurrency = concurrency ?? .defaults(for: workspaceMode)
+        self.missedRuns = missedRuns ?? (catchUp ? .runOnce : .skip)
+        self.onlyWhenChanged = onlyWhenChanged
         self.nextRunAt = nextRunAt; self.createdAt = createdAt; self.updatedAt = updatedAt
     }
 
@@ -326,14 +367,17 @@ public struct Automation: Sendable, Hashable, Identifiable, Codable {
         pinnedSessionId: String? = nil, continueAgentSession: Bool = false,
         permissionPolicy: PermissionPolicy = .autoEdits, catchUp: Bool = false, enabled: Bool = true,
         nextRunAt: Date? = nil, createdAt: Date = Date(), updatedAt: Date = Date(), model: String? = nil,
-        effort: String? = nil, deviceId: String? = nil
+        effort: String? = nil, deviceId: String? = nil,
+        concurrency: AutomationConcurrency? = nil, missedRuns: AutomationMissedRuns? = nil,
+        onlyWhenChanged: Bool = false
     ) {
         self.init(
             id: id, name: name, prompt: prompt, providerId: providerId, projectId: projectId,
             triggers: [AutomationTrigger(rrule: rrule, timezone: timezone, dtstart: dtstart)],
             workspaceMode: workspaceMode, pinnedSessionId: pinnedSessionId, continueAgentSession: continueAgentSession,
             permissionPolicy: permissionPolicy, catchUp: catchUp, enabled: enabled, nextRunAt: nextRunAt,
-            createdAt: createdAt, updatedAt: updatedAt, model: model, effort: effort, deviceId: deviceId)
+            createdAt: createdAt, updatedAt: updatedAt, model: model, effort: effort, deviceId: deviceId,
+            concurrency: concurrency, missedRuns: missedRuns, onlyWhenChanged: onlyWhenChanged)
     }
 
     /// The earliest next occurrence across every trigger, strictly after
@@ -347,6 +391,51 @@ public struct Automation: Sendable, Hashable, Identifiable, Codable {
     public func validateTriggers() throws {
         for t in triggers { try Schedule.validate(rrule: t.rrule, timezone: t.timezone) }
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, prompt, providerId, projectId, triggers, workspaceMode, pinnedSessionId
+        case continueAgentSession, permissionPolicy, catchUp, concurrency, missedRuns, onlyWhenChanged
+        case enabled, nextRunAt, createdAt, updatedAt, model, effort, deviceId, profileId
+    }
+
+    /// An older Mac's automations carry the catch-up switch instead of
+    /// the missed-runs choice, and nothing about still-going runs.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(id: try c.decode(String.self, forKey: .id), name: try c.decode(String.self, forKey: .name),
+                  prompt: try c.decode(String.self, forKey: .prompt), providerId: try c.decode(String.self, forKey: .providerId),
+                  projectId: try c.decodeIfPresent(String.self, forKey: .projectId),
+                  triggers: try c.decode([AutomationTrigger].self, forKey: .triggers),
+                  workspaceMode: try c.decode(WorkspaceMode.self, forKey: .workspaceMode),
+                  pinnedSessionId: try c.decodeIfPresent(String.self, forKey: .pinnedSessionId),
+                  continueAgentSession: try c.decode(Bool.self, forKey: .continueAgentSession),
+                  permissionPolicy: try c.decode(PermissionPolicy.self, forKey: .permissionPolicy),
+                  catchUp: try c.decodeIfPresent(Bool.self, forKey: .catchUp) ?? false,
+                  enabled: try c.decode(Bool.self, forKey: .enabled),
+                  nextRunAt: try c.decodeIfPresent(Date.self, forKey: .nextRunAt),
+                  createdAt: try c.decode(Date.self, forKey: .createdAt), updatedAt: try c.decode(Date.self, forKey: .updatedAt),
+                  model: try c.decodeIfPresent(String.self, forKey: .model), effort: try c.decodeIfPresent(String.self, forKey: .effort),
+                  deviceId: try c.decodeIfPresent(String.self, forKey: .deviceId),
+                  concurrency: try c.decodeIfPresent(AutomationConcurrency.self, forKey: .concurrency),
+                  missedRuns: try c.decodeIfPresent(AutomationMissedRuns.self, forKey: .missedRuns),
+                  onlyWhenChanged: try c.decodeIfPresent(Bool.self, forKey: .onlyWhenChanged) ?? false)
+        profileId = try c.decodeIfPresent(String.self, forKey: .profileId)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id); try c.encode(name, forKey: .name); try c.encode(prompt, forKey: .prompt)
+        try c.encode(providerId, forKey: .providerId); try c.encodeIfPresent(projectId, forKey: .projectId)
+        try c.encode(triggers, forKey: .triggers); try c.encode(workspaceMode, forKey: .workspaceMode)
+        try c.encodeIfPresent(pinnedSessionId, forKey: .pinnedSessionId)
+        try c.encode(continueAgentSession, forKey: .continueAgentSession); try c.encode(permissionPolicy, forKey: .permissionPolicy)
+        try c.encode(catchUp, forKey: .catchUp); try c.encode(concurrency, forKey: .concurrency)
+        try c.encode(missedRuns, forKey: .missedRuns); try c.encode(onlyWhenChanged, forKey: .onlyWhenChanged)
+        try c.encode(enabled, forKey: .enabled); try c.encodeIfPresent(nextRunAt, forKey: .nextRunAt)
+        try c.encode(createdAt, forKey: .createdAt); try c.encode(updatedAt, forKey: .updatedAt)
+        try c.encodeIfPresent(model, forKey: .model); try c.encodeIfPresent(effort, forKey: .effort)
+        try c.encodeIfPresent(deviceId, forKey: .deviceId); try c.encodeIfPresent(profileId, forKey: .profileId)
+    }
 }
 
 public enum RunTrigger: String, Sendable, Codable { case schedule, manual }
@@ -356,6 +445,8 @@ public enum RunStatus: String, Sendable, Codable {
     /// The run's workspace exists. Says nothing about whether the agent succeeded.
     case created
     case failed
+    /// The run was due but the automation's rules said not to start it.
+    case skipped
 }
 
 public struct AutomationRun: Sendable, Hashable, Identifiable, Codable {
@@ -366,11 +457,22 @@ public struct AutomationRun: Sendable, Hashable, Identifiable, Codable {
     public var status: RunStatus
     public var sessionId: String?
     public var error: String?
+    /// Why a skipped run didn't start, as it reads in the run history.
+    public var reason: String?
+    /// The project's base commit when the run started; the mark a later
+    /// "only when changed" run is compared with.
+    public var baseCommit: String?
 
     public init(id: String = UUID().uuidString, automationId: String, firedAt: Date = Date(), trigger: RunTrigger,
-                status: RunStatus = .creating, sessionId: String? = nil, error: String? = nil) {
+                status: RunStatus = .creating, sessionId: String? = nil, error: String? = nil,
+                reason: String? = nil, baseCommit: String? = nil) {
         self.id = id; self.automationId = automationId; self.firedAt = firedAt; self.trigger = trigger
         self.status = status; self.sessionId = sessionId; self.error = error
+        self.reason = reason; self.baseCommit = baseCommit
+    }
+
+    public static func skipped(automationId: String, reason: AutomationSkipReason, at firedAt: Date = Date()) -> AutomationRun {
+        AutomationRun(automationId: automationId, firedAt: firedAt, trigger: .schedule, status: .skipped, reason: reason.text)
     }
 }
 
