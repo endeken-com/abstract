@@ -61,7 +61,9 @@ final class RemoteExecutor: Executor, @unchecked Sendable {
     func removeItem(_ path: String) throws { throw AbstractError.message("Files on another Mac are removed there.") }
     /// The commands that run on the other Mac, when they're there.
     func which(_ binary: String) async -> String? {
-        guard ["git", "gh", "revund"].contains(binary), let out = try? await run(binary, ["--version"], cwd: nil), out.ok else { return nil }
+        // The other Mac refuses any it doesn't run for us: git, gh, revund
+        // and its plugins' tools (ABS-139).
+        guard PluginCLI.isProgramName(binary), let out = try? await run(binary, ["--version"], cwd: nil), out.ok else { return nil }
         return binary
     }
 
@@ -201,7 +203,7 @@ extension HostedPeer {
     }
 
     func refusal(_ command: String, _ args: [String], cwd: String?, input: Bool = false) -> String? {
-        RemoteAccess.refusal(command, args, cwd: cwd, input: input, allowed: allowed)
+        RemoteAccess.refusal(command, args, cwd: cwd, input: input, plugins: service?.model?.pluginCLIs ?? [], allowed: allowed)
     }
 
     func exec(_ command: String, _ args: [String], cwd: String?, stdin: Data?) async -> RemoteResponse {

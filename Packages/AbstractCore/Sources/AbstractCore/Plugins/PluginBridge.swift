@@ -43,6 +43,11 @@ public struct PluginBridge: Sendable {
     /// Set for a background script (ABS-93): only it may subscribe to
     /// events and schedule jobs.
     public var isBackground = false
+    /// The command-line tool granted with `cli` (ABS-139), from the record.
+    public var cli: PluginCLI?
+    /// Whether its manifest declares a code host (ABS-139): only then may
+    /// its background script answer core's calls.
+    public var isCodeHost = false
     public private(set) var refusalCount = 0
     public private(set) var lastRefusal: String?
     private var recent: [Date] = []
@@ -96,6 +101,14 @@ public struct PluginBridge: Sendable {
         /// The script's answer to a link lookup (ABS-126): a status to
         /// show after the link, nothing, or why it couldn't say.
         case linkResult(callId: String, PluginLinkLookup)
+        /// Run this declared command (ABS-139); the host picks the folder
+        /// and executor, and asks first for a write it may not run unasked.
+        case runCLI(id: String?, PluginCLIRequest)
+        /// The script's answer to one of core's code host calls (ABS-139).
+        case codeHostResult(callId: String, PluginCodeHostAnswer)
+        /// Hosts the script's tool is signed in to besides its manifest's
+        /// (GitHub Enterprise, say), for as long as it runs.
+        case codeHostHosts(id: String?, Set<String>)
         case refused(id: String?, reason: String)
         /// The plugin flooded the bridge; the host tears its view down.
         case flooded
@@ -108,8 +121,10 @@ public struct PluginBridge: Sendable {
               case .object(let message) = JSONValue(any: object) else {
             return refuse(nil, "That message couldn't be read.")
         }
-        // Only fetch, and a tool's result (ABS-97), may use the larger limit.
-        if data.count > Self.messageByteLimit, !["fetch", "tools.result"].contains(message["type"]?.string ?? "") {
+        // Only fetch, a tool's result (ABS-97) and a code host's answer
+        // (ABS-139) may use the larger limit.
+        if data.count > Self.messageByteLimit,
+           !["fetch", "tools.result", "codeHost.result"].contains(message["type"]?.string ?? "") {
             return refuse(message["id"]?.string, "That message couldn't be read.")
         }
         return handle(message, storage: storage, now: now)
@@ -281,12 +296,83 @@ public struct PluginBridge: Sendable {
                 return .linkResult(callId: callId, .failed)
             }
             return .linkResult(callId: callId, .status(parsed))
+        case "cli.run":
+            return cliOutcome(api: api, id: id, payload: payload, now: now)
+        case "codeHost.result":
+            guard isBackground, isCodeHost else {
+                return refuse(id, "Only the background script of a code host plugin can answer for it.")
+            }
+            guard let callId = nonEmpty(payload?["callId"]?.string) else {
+                return refuse(id, "A code host answer needs the call it answers.")
+            }
+            if let error = payload?["error"], error != .null {
+                let text = error.string ?? error["message"]?.string ?? error.compact()
+                return .codeHostResult(callId: callId, .failed(String(text.prefix(2_000))))
+            }
+            return .codeHostResult(callId: callId, .result(payload?["result"] ?? .null))
+        case "codeHost.hosts":
+            guard isBackground, isCodeHost else {
+                return refuse(id, "Only the background script of a code host plugin can say which hosts it handles.")
+            }
+            let hosts = (payload?["hosts"]?.array ?? []).compactMap { $0.string?.lowercased() }
+            guard hosts.count <= CodeHosts.extraHostLimit, hosts.allSatisfy(PluginManifest.isExactHost) else {
+                return refuse(id, "Hosts are up to \(CodeHosts.extraHostLimit) exact hosts like github.example.com.")
+            }
+            return .codeHostHosts(id: id, Set(hosts))
         case "__error":
             return refuse(id, "The plugin reported an error.")
         default:
             return refuse(id, "Abstract doesn't know that message.")
         }
     }
+
+    // MARK: Command-line tools (ABS-139)
+
+    /// Checks one `cli.run`: granted, a declared command, sensible
+    /// arguments, a folder the plugin can read. A write counts toward the
+    /// action rate limit, as an action would.
+    private mutating func cliOutcome(api: Int, id: String?, payload: JSONValue?, now: Date) -> Outcome {
+        guard api >= 2, capabilities.contains(.cli), let cli else {
+            return refuse(id, "This plugin hasn't been granted running a command-line tool.")
+        }
+        guard let items = payload?["args"]?.array, !items.isEmpty, items.count <= PluginCLI.argumentLimit else {
+            return refuse(id, "A command needs its arguments, up to \(PluginCLI.argumentLimit) of them.")
+        }
+        let args = items.compactMap(\.string)
+        guard args.count == items.count, args.reduce(0, { $0 + $1.count }) <= PluginCLI.argumentTextLimit,
+              !args.contains(where: { $0.contains("\u{0}") }) else {
+            return refuse(id, "That command's arguments couldn't be read.")
+        }
+        guard let command = cli.command(for: args) else {
+            return refuse(id, "This plugin hasn't been granted running \(cli.binary) \(args.prefix(2).joined(separator: " ")).")
+        }
+        var chatId: String?
+        if payload?["chatId"] != nil, payload?["chatId"] != .null {
+            guard let known = knownChat(payload) else { return refuse(id, "That chat isn't in the plugin's list.") }
+            chatId = known
+        }
+        var projectKey: String?
+        if let key = payload?["projectKey"], key != .null {
+            guard let key = key.string, knownProjectKeys.contains(key) else {
+                return refuse(id, "That project isn't in the plugin's list.")
+            }
+            projectKey = key
+        }
+        // A folder is named by its chat or project, never by a path.
+        if payload?["cwd"] != nil { return refuse(id, "Name the chat or project to run in, not a folder.") }
+        let callId = payload?["callId"]?.string.flatMap { $0.count <= 100 ? nonEmpty($0) : nil }
+        let request = PluginCLIRequest(args: args, command: command, chatId: chatId, projectKey: projectKey, callId: callId)
+        if request.isWrite {
+            recentActions.append(now)
+            recentActions.removeAll { now.timeIntervalSince($0) > Self.actionWindow }
+            guard recentActions.count <= Self.actionLimit else { return .actionRateLimited(id: id) }
+        }
+        return .runCLI(id: id, request)
+    }
+
+    /// Code host calls the host handed the plugin, so `cli.run` may name a
+    /// project or chat it hasn't seen in a snapshot.
+    public mutating func know(projectKey: String) { knownProjectKeys.insert(projectKey) }
 
     // MARK: Background (ABS-93)
 
@@ -499,6 +585,12 @@ public struct PluginBridge: Sendable {
         if let id { object["id"] = .string(id) }
         return JSONValue.object(object).compact()
     }
+}
+
+/// How a code host plugin answered one of core's calls (ABS-139).
+public enum PluginCodeHostAnswer: Sendable, Equatable {
+    case result(JSONValue)
+    case failed(String)
 }
 
 /// One finding a plugin adds to a chat's Review (ABS-112): a line of a

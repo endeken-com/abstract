@@ -84,6 +84,24 @@ final class PluginBackgroundHost {
         return await runner.lookUpLink(match)
     }
 
+    // MARK: Code hosts (ABS-139)
+
+    /// Whether a plugin's script is running now.
+    func isRunning(_ pluginId: String) -> Bool { runners[pluginId] != nil }
+
+    /// Hosts a code host's script said its tool is signed in to.
+    func codeHostExtraHosts(_ pluginId: String) -> Set<String> { runners[pluginId]?.codeHostHosts ?? [] }
+
+    /// Asks a code host plugin's script one operation, within its time limit.
+    func callCodeHost(_ pluginId: String, op: CodeHostOperation, input: JSONValue,
+                      context: CodeHostContext) async -> PluginCodeHostAnswer {
+        guard let runner = runners[pluginId] else {
+            let name = model.plugins.plugin(pluginId)?.record.name ?? "That plugin"
+            return .failed("\(name) isn't running, so it can't answer.")
+        }
+        return await runner.callCodeHost(op, input: input, context: context)
+    }
+
     // MARK: Status and pull-request changes
 
     /// Follows the same facts a plugin's screen redraws on, and turns the
@@ -136,6 +154,10 @@ final class PluginBackgroundRunner: NSObject, WKScriptMessageHandler, WKNavigati
     private let toolCalls: PluginToolCalls
     /// Link lookups the script hasn't answered yet (ABS-126).
     private let linkLookups = PluginLinkLookups()
+    /// Core's code host calls the script hasn't answered yet (ABS-139).
+    private let codeHostCalls: PluginCodeHostCalls
+    /// Hosts the script said its tool is signed in to, while it runs.
+    private(set) var codeHostHosts: Set<String> = []
 
     init(model: AppModel, plugin: InstalledPlugin, manifest: PluginManifest, onStopped: @escaping (String) -> Void) {
         self.model = model
@@ -143,6 +165,7 @@ final class PluginBackgroundRunner: NSObject, WKScriptMessageHandler, WKNavigati
         self.manifest = manifest
         self.onStopped = onStopped
         toolCalls = PluginToolCalls(pluginName: manifest.name)
+        codeHostCalls = PluginCodeHostCalls(pluginName: manifest.name)
         super.init()
         connection = PluginConnection(
             model: model, plugin: plugin, manifest: manifest, placement: nil, isBackground: true,
@@ -153,6 +176,7 @@ final class PluginBackgroundRunner: NSObject, WKScriptMessageHandler, WKNavigati
             if case .stopped(let note) = watchdog.scriptThrew() { fail(note) }
         }
         connection.onBackground = { [weak self] outcome in self?.handle(outcome) }
+        connection.authorizesWrite = { [codeHostCalls] callId in await codeHostCalls.authorizesWrite(callId) }
     }
 
     func start() {
@@ -189,6 +213,7 @@ final class PluginBackgroundRunner: NSObject, WKScriptMessageHandler, WKNavigati
         connection.tearDown()
         Task { [toolCalls, name = manifest.name] in await toolCalls.failAll("\(name) stopped before its tool answered.") }
         Task { [linkLookups] in await linkLookups.failAll() }
+        Task { [codeHostCalls, name = manifest.name] in await codeHostCalls.failAll("\(name) stopped before it answered.") }
         ticker?.cancel()
         ticker = nil
         guard let webView else { return }
@@ -255,8 +280,30 @@ final class PluginBackgroundRunner: NSObject, WKScriptMessageHandler, WKNavigati
         }
     }
 
+    /// The call goes to the script as a `codeHost` message; its
+    /// `codeHost.result` answers it. The project and chat it is about are
+    /// core's own pick, so the script may run its commands there.
+    func callCodeHost(_ op: CodeHostOperation, input: JSONValue, context: CodeHostContext) async -> PluginCodeHostAnswer {
+        await codeHostCalls.call(op) { [weak self] callId in
+            await MainActor.run {
+                guard let self, self.connection.ready, !self.stopped else { return false }
+                if let chatId = context.chatId { self.connection.know(chatId: chatId) }
+                if let key = context.projectKey { self.connection.know(projectKey: key) }
+                var payload: [String: JSONValue] = ["callId": .string(callId), "op": .string(op.rawValue), "input": input]
+                if case .object(let fields) = context.jsonValue() { payload.merge(fields) { a, _ in a } }
+                self.connection.send(type: "codeHost", payload: .object(payload))
+                return true
+            }
+        }
+    }
+
     private func handle(_ outcome: PluginBridge.Outcome) {
         switch outcome {
+        case .codeHostResult(let callId, let answer):
+            Task { [codeHostCalls] in await codeHostCalls.finish(callId, answer) }
+        case .codeHostHosts(let id, let hosts):
+            codeHostHosts = hosts
+            connection.send(type: "reply", id: id, payload: .object(["hosts": .array(hosts.sorted().map(JSONValue.string))]))
         case .linkResult(let callId, let lookup):
             Task { [linkLookups] in await linkLookups.finish(callId, lookup) }
         case .toolResult(let callId, let result):

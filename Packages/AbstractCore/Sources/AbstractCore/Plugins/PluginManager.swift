@@ -36,6 +36,9 @@ public struct PluginRecord: Sendable, Hashable, Codable, Identifiable {
     /// Whether running its background script was reviewed (ABS-93); an
     /// update that adds one must be reviewed again.
     public var grantedBackground: Bool
+    /// The command-line tool and commands granted with `cli` (ABS-139);
+    /// an update adding a command, or making one a write, is reviewed again.
+    public var grantedCLI: PluginCLI?
     public var packageHash: String
     public var installedAt: Date
     public var lastError: String?
@@ -44,7 +47,7 @@ public struct PluginRecord: Sendable, Hashable, Codable, Identifiable {
                 grantedCapabilities: Set<PluginCapability> = [], alwaysAllowedActions: Set<PluginCapability> = [],
                 grantedNetworkHosts: [String] = [],
                 grantedSecretNames: [String] = [], transcriptProjectKeys: [String] = [],
-                grantedBackground: Bool = false, packageHash: String,
+                grantedBackground: Bool = false, grantedCLI: PluginCLI? = nil, packageHash: String,
                 installedAt: Date = Date(), lastError: String? = nil) {
         self.id = id; self.name = name; self.version = version; self.source = source
         self.enabled = enabled; self.grantedCapabilities = grantedCapabilities
@@ -52,6 +55,7 @@ public struct PluginRecord: Sendable, Hashable, Codable, Identifiable {
         self.grantedNetworkHosts = grantedNetworkHosts; self.grantedSecretNames = grantedSecretNames
         self.transcriptProjectKeys = transcriptProjectKeys
         self.grantedBackground = grantedBackground
+        self.grantedCLI = grantedCLI
         self.packageHash = packageHash; self.installedAt = installedAt; self.lastError = lastError
     }
 
@@ -71,6 +75,7 @@ public struct PluginRecord: Sendable, Hashable, Codable, Identifiable {
         grantedSecretNames = try box.decodeIfPresent([String].self, forKey: .grantedSecretNames) ?? []
         transcriptProjectKeys = try box.decodeIfPresent([String].self, forKey: .transcriptProjectKeys) ?? []
         grantedBackground = try box.decodeIfPresent(Bool.self, forKey: .grantedBackground) ?? false
+        grantedCLI = try box.decodeIfPresent(PluginCLI.self, forKey: .grantedCLI)
         packageHash = try box.decode(String.self, forKey: .packageHash)
         installedAt = try box.decode(Date.self, forKey: .installedAt)
         lastError = try box.decodeIfPresent(String.self, forKey: .lastError)
@@ -213,11 +218,12 @@ public final class PluginManager: Sendable {
         var records = records()
         let existing = records.first { $0.id == manifest.id }
         let wants = manifest.grantedCapabilities
-        let grows = existing.map {
-            !wants.isSubset(of: $0.grantedCapabilities)
-                || !Set(manifest.networkHosts).isSubset(of: Set($0.grantedNetworkHosts))
-                || !Set(manifest.secretDeclarations.map(\.name)).isSubset(of: Set($0.grantedSecretNames))
-                || (manifest.background != nil && !$0.grantedBackground)
+        let grows = existing.map { existing in
+            !wants.isSubset(of: existing.grantedCapabilities)
+                || !Set(manifest.networkHosts).isSubset(of: Set(existing.grantedNetworkHosts))
+                || !Set(manifest.secretDeclarations.map(\.name)).isSubset(of: Set(existing.grantedSecretNames))
+                || (manifest.background != nil && !existing.grantedBackground)
+                || manifest.cli.map { wanted in existing.grantedCLI.map { !$0.covers(wanted) } ?? true } == true
         } ?? false
 
         let idFolder = pluginsRoot.appendingPathComponent(manifest.id)
@@ -252,6 +258,7 @@ public final class PluginManager: Sendable {
             grantedSecretNames: existing != nil && !grows ? manifest.secretDeclarations.map(\.name) : [],
             transcriptProjectKeys: existing != nil && !grows ? (existing?.transcriptProjectKeys ?? []) : [],
             grantedBackground: existing != nil && !grows && manifest.background != nil,
+            grantedCLI: existing != nil && !grows ? manifest.cli : nil,
             packageHash: inspection.hash, installedAt: existing?.installedAt ?? Date())
         records.removeAll { $0.id == manifest.id }
         records.append(record)
@@ -271,6 +278,7 @@ public final class PluginManager: Sendable {
             records[index].grantedNetworkHosts = manifest.networkHosts
             records[index].grantedSecretNames = manifest.secretDeclarations.map(\.name)
             records[index].grantedBackground = manifest.background != nil
+            records[index].grantedCLI = manifest.cli
             if let transcriptProjectKeys {
                 records[index].transcriptProjectKeys = transcriptProjectKeys
             }
@@ -286,7 +294,7 @@ public final class PluginManager: Sendable {
     public func setAlwaysAllowed(_ pluginId: String, _ capability: PluginCapability, _ allowed: Bool) {
         var records = records()
         guard let index = records.firstIndex(where: { $0.id == pluginId }),
-              capability.isAction else { return }
+              capability.asksFirst else { return }
         if allowed, records[index].grantedCapabilities.contains(capability) {
             records[index].alwaysAllowedActions.insert(capability)
         } else {
@@ -305,6 +313,7 @@ public final class PluginManager: Sendable {
         if capability == .network { records[index].grantedNetworkHosts = [] }
         if capability == .secrets { records[index].grantedSecretNames = [] }
         if capability == .transcriptsRead { records[index].transcriptProjectKeys = [] }
+        if capability == .cli { records[index].grantedCLI = nil }
         save(records)
     }
 
@@ -332,6 +341,7 @@ public final class PluginManager: Sendable {
         records[index].grantedSecretNames = []
         records[index].transcriptProjectKeys = []
         records[index].grantedBackground = false
+        records[index].grantedCLI = nil
         save(records)
     }
 
