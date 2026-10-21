@@ -21,23 +21,23 @@ public extension ChatConfigFiles {
         switch delivery {
         case .addedDirectory:
             let root = directory + "/claude"
-            try place(named, into: root + "/.claude/skills", fileManager: fm)
+            try place(named, into: root + "/.claude/skills", under: directory, fileManager: fm)
             return SkillsLaunch(folder: root)
         case .codexHome:
             let overlay = directory + "/codex-home"
             let real = home + "/.codex"
-            try mirror(real, into: overlay, except: "skills", fileManager: fm)
+            try mirror(real, into: overlay, under: directory, except: "skills", fileManager: fm)
             // The user's own skills stay; Codex writes its built-in ones
             // (`.system`) into the stand-in itself.
             let ours = Set(named.map(\.name))
             let own = ((try? fm.contentsOfDirectory(atPath: real + "/skills")) ?? []).sorted()
                 .filter { !$0.hasPrefix(".") && !ours.contains($0) }
                 .map { Entry(name: $0, source: real + "/skills/" + $0, copied: false) }
-            try place(own + named, into: overlay + "/skills", fileManager: fm)
+            try place(own + named, into: overlay + "/skills", under: directory, fileManager: fm)
             return SkillsLaunch(folder: overlay)
         case .skillsPath:
             let root = directory + "/skills"
-            try place(named, into: root, fileManager: fm)
+            try place(named, into: root, under: directory, fileManager: fm)
             return SkillsLaunch(folder: root)
         }
     }
@@ -59,8 +59,8 @@ public extension ChatConfigFiles {
 
     /// `dir` holds exactly these skills: what an earlier launch put there
     /// goes; hidden folders (Codex's built-in `.system`) stay.
-    internal static func place(_ entries: [Entry], into dir: String, fileManager fm: FileManager) throws {
-        try fm.createDirectory(atPath: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    internal static func place(_ entries: [Entry], into dir: String, under chat: String, fileManager fm: FileManager) throws {
+        try realFolder(dir, under: chat, fileManager: fm)
         for entry in (try? fm.contentsOfDirectory(atPath: dir)) ?? [] where !entry.hasPrefix(".") {
             try fm.removeItem(atPath: dir + "/" + entry)
         }
@@ -76,8 +76,9 @@ public extension ChatConfigFiles {
     /// given it as its home reads and writes its real sign-in, settings,
     /// sessions and history. What it creates there that `real` doesn't
     /// have stays in the overlay.
-    internal static func mirror(_ real: String, into overlay: String, except: String, fileManager fm: FileManager) throws {
-        try fm.createDirectory(atPath: overlay, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    internal static func mirror(_ real: String, into overlay: String, under chat: String, except: String,
+                                fileManager fm: FileManager) throws {
+        try realFolder(overlay, under: chat, fileManager: fm)
         let entries = Set(((try? fm.contentsOfDirectory(atPath: real)) ?? []).filter { $0 != except })
         for entry in (try? fm.contentsOfDirectory(atPath: overlay)) ?? [] where entry != except {
             let path = overlay + "/" + entry
@@ -88,6 +89,28 @@ public extension ChatConfigFiles {
         for entry in entries.sorted() where !isLink(overlay + "/" + entry, fm) && !fm.fileExists(atPath: overlay + "/" + entry) {
             try fm.createSymbolicLink(atPath: overlay + "/" + entry, withDestinationPath: real + "/" + entry)
         }
+    }
+
+    /// Makes `dir` and every folder between `chat` and it a real folder.
+    /// The chat's agent may write in its folder: a link it left there
+    /// in place of one is removed (the link alone), never followed, so
+    /// clearing the folder can't reach anything outside it.
+    internal static func realFolder(_ dir: String, under chat: String, fileManager fm: FileManager) throws {
+        try fm.createDirectory(atPath: chat, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        guard isRealFolder(chat, fm), dir.hasPrefix(chat + "/") else {
+            throw AbstractError.message("The chat's folder at \(chat) isn't a folder.")
+        }
+        var path = chat
+        for part in dir.dropFirst(chat.count + 1).split(separator: "/") {
+            path += "/" + part
+            if (try? fm.attributesOfItem(atPath: path)) != nil, !isRealFolder(path, fm) { try fm.removeItem(atPath: path) }
+            if !isRealFolder(path, fm) { try fm.createDirectory(atPath: path, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700]) }
+        }
+    }
+
+    /// A folder itself, not a link to one.
+    private static func isRealFolder(_ path: String, _ fm: FileManager) -> Bool {
+        (try? fm.attributesOfItem(atPath: path))?[.type] as? FileAttributeType == .typeDirectory
     }
 
     private static func isLink(_ path: String, _ fm: FileManager) -> Bool {

@@ -239,6 +239,25 @@ private struct SkillFixture {
         #expect(try String(contentsOfFile: copy, encoding: .utf8).contains("Version two."))
     }
 
+    @Test func aLinkLeftInTheChatsFolderIsNeverFollowed() throws {
+        let f = try SkillFixture.make()
+        defer { f.remove() }
+        try f.write("elsewhere/keep.txt", "Not the chat's.")
+        let chat = f.data + "/agent-config/chat-1"
+        // An agent swaps each folder Abstract clears for a link elsewhere.
+        for (provider, folder) in [(ClaudeProvider() as any ProviderDefinition, "/claude/.claude/skills"),
+                                   (ClaudeProvider(), "/claude"), (CodexProvider(), "/codex-home/skills"),
+                                   (CodexProvider(), "/codex-home"), (OpenCodeProvider(), "/skills")] {
+            _ = launch(provider, f)
+            try FileManager.default.removeItem(atPath: chat + folder)
+            try FileManager.default.createSymbolicLink(atPath: chat + folder, withDestinationPath: f.root + "/elsewhere")
+            _ = launch(provider, f)
+            #expect(FileManager.default.fileExists(atPath: f.root + "/elsewhere/keep.txt"), "\(folder)")
+            #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: chat + folder)) == nil, "\(folder) is a folder again")
+        }
+        #expect(linked(chat + "/skills") == ["review": "copy", "plain": "copy"])
+    }
+
     @Test func theStandInHomeKeepsWhatTheAgentWroteThereAndFollowsTheRealOne() throws {
         let f = try SkillFixture.make()
         defer { f.remove() }
