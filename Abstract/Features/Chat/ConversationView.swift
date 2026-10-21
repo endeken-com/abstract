@@ -563,6 +563,8 @@ private struct ThinkingView: View {
 /// tooltip. The newest one adds the chat's total once it's idle.
 private struct TurnSummary: View {
     @Environment(AppModel.self) private var model
+    @State private var hovering = false
+    @State private var showingLaunch = false
     let id: Int
     let info: TurnInfo
     let sessionId: String
@@ -577,6 +579,12 @@ private struct TurnSummary: View {
                     .monospacedDigit()
                     .lineLimit(1)
                     .fixedSize()
+                if hovering, info.launch != nil {
+                    Button("How this turn started") { showingLaunch = true }
+                        .buttonStyle(.plain)
+                        .font(.btChatCaption)
+                        .foregroundStyle(Color.btTextSecondary)
+                }
                 Hairline()
             }
             if let shas = model.turnCommits[sessionId]?[id], !shas.isEmpty {
@@ -595,7 +603,14 @@ private struct TurnSummary: View {
             }
         }
         .padding(.vertical, Space.xs)
-        .help(details)
+        .onHover { hovering = $0 }
+        .help(details + (info.launch == nil ? "" : " · How this turn started"))
+        .contextMenu {
+            if info.launch != nil { Button("How this turn started") { showingLaunch = true } }
+        }
+        .sheet(isPresented: $showingLaunch) {
+            if let launch = info.launch { LaunchDetailsView(record: launch) }
+        }
     }
 
     /// "2m 14s", "Did the thing · Done in 2m 14s", "Stopped after 1m 12s",

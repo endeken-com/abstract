@@ -234,7 +234,7 @@ extension Timeline {
                 assistantOpen = false
             // Tasks and what subagents did are listed apart from the conversation;
             // a turn's end and usage make its line, above.
-            case .status, .sessionId, .toolResult, .toolFileChanges, .toolImages, .permissionRequest, .promptSuggestion, .commands, .task, .subagent,
+            case .status, .sessionId, .launch, .toolResult, .toolFileChanges, .toolImages, .permissionRequest, .promptSuggestion, .commands, .task, .subagent,
                  .turnEnd, .usage:
                 break
             }

@@ -225,6 +225,8 @@ public struct LaunchSpec: Sendable, Hashable, Codable {
 
 public enum OutputStreamKind: String, Sendable, Codable {
     case stdout, stderr
+    /// Abstract's hidden, redacted process invocation for a turn.
+    case launch
     /// What you sent the agent, kept in the log beside its output: agents
     /// don't echo it, and a transcript rebuilt from the log (after a relaunch,
     /// or on another device) needs it.
@@ -306,6 +308,7 @@ public enum TextRole: String, Sendable, Codable { case assistant, user }
 public enum AgentEvent: Sendable, Hashable {
     case status(SessionStatus, detail: String?)
     case sessionId(String)
+    case launch(LaunchRecord)
     case system(model: String?, cwd: String?, permissionMode: String?, sessionId: String?)
     /// `partial` chunks share `blockId` and are appended; the final block
     /// (partial == false) with the same id replaces them.
