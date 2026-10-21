@@ -30,6 +30,13 @@ public enum ThemeChoice: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
+    /// The palette the window draws in: a named theme is itself whatever
+    /// the Mac is set to (Graphite stays dark on a Mac set to Light); only
+    /// Match System follows the Mac's appearance.
+    public func resolved(systemDark: Bool, increasedContrast: Bool) -> Theme {
+        theme(dark: isDark ?? systemDark, increasedContrast: increasedContrast)
+    }
+
     /// Paper's borders strengthen under Match System when "Increase contrast"
     /// is on; picking a theme by name keeps it as it is.
     public func strongerBorders(dark: Bool, increasedContrast: Bool) -> Bool {

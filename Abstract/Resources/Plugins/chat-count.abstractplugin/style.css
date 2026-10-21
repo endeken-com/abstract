@@ -1,72 +1,36 @@
-:root {
-  color-scheme: light dark;
+/* Chat count on Abstract's plugin kit (/_abstract/abstract-ui.css). */
+
+.content {
+  max-width: 720px;
+  padding: var(--ab-space-lg);
 }
-body {
-  margin: 0;
-  background: var(--abstract-canvas, Canvas);
-  color: var(--abstract-text, CanvasText);
-  font-family: var(--abstract-font, -apple-system, sans-serif);
-  font-size: 13px;
-}
-main {
-  max-width: 560px;
-  margin: 0 auto;
-  padding: 32px 24px;
-}
-h1 {
-  font-size: 20px;
-  font-weight: 600;
-  margin: 0 0 6px;
-}
-.note {
-  color: var(--abstract-textSecondary, GrayText);
-  line-height: 1.45;
-}
-#counts {
+.counts {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 10px;
-  margin: 20px 0;
+  gap: var(--ab-space-sm);
+  margin: var(--ab-space-md) 0 var(--ab-space-lg);
 }
 .count {
-  background: var(--abstract-surface, ButtonFace);
-  border: 1px solid var(--abstract-border, GrayText);
-  border-radius: 10px;
-  padding: 12px;
+  display: grid;
+  gap: 4px;
 }
 .count strong {
-  display: block;
-  font-size: 22px;
+  font-size: var(--ab-text-xl);
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
-.count span {
-  color: var(--abstract-textSecondary, GrayText);
-}
-.toggle {
+.count > span {
   display: flex;
-  gap: 6px;
   align-items: center;
-  margin: 8px 0 14px;
+  gap: 6px;
+  color: var(--ab-text-2);
+  font-size: var(--ab-text-sm);
 }
-#chats {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-#chats li button {
-  all: unset;
-  box-sizing: border-box;
-  display: block;
+.chat {
+  appearance: none;
   width: 100%;
-  padding: 7px 9px;
-  border-radius: 7px;
-  cursor: pointer;
-}
-#chats li button:hover, #chats li button:focus-visible {
-  background: var(--abstract-hover, ButtonFace);
-}
-#chats .agent {
-  color: var(--abstract-textTertiary, GrayText);
-  margin-left: 8px;
-  font-size: 12px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  text-align: left;
 }

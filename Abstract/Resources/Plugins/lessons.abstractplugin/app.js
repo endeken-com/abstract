@@ -1,8 +1,10 @@
 "use strict";
 
 // Lessons' screen (ABS-102). The chat menu item opens it with the chat it
-// was chosen on; you pick where the lessons go, and the chat's own agent
-// is sent the request. The edit it makes shows in that chat's Review.
+// was chosen on, and as a tab in a chat's side panel (ABS-134) it works on
+// the chat it sits beside; you pick where the lessons go, and the chat's
+// own agent is sent the request. The edit it makes shows in that chat's
+// Review.
 
 const lessons = window.Lessons;
 const host = window.AbstractPlugin;
@@ -22,24 +24,15 @@ const requestEl = document.getElementById("request");
 const sayEl = document.getElementById("said");
 const sendEl = document.getElementById("send");
 
+const ui = window.AbstractUI;
+let placedBeside = false;
+idleEl.append(ui.empty("Pick a chat", "Choose Save What We Learned… from a chat's More menu, or open Lessons as a tab beside a chat."));
+
 for (const option of lessons.targets) {
-  const label = document.createElement("label");
-  label.className = "target";
-  const input = document.createElement("input");
-  input.type = "radio";
-  input.name = "target";
-  input.value = option.id;
-  input.checked = option.id === target;
+  const input = ui.h("input", { type: "radio", name: "target", value: option.id, checked: option.id === target });
   input.addEventListener("change", () => { target = option.id; render(); });
-  const words = document.createElement("span");
-  const title = document.createElement("strong");
-  title.textContent = option.title;
-  const detail = document.createElement("span");
-  detail.className = "note";
-  detail.textContent = option.detail;
-  words.append(title, detail);
-  label.append(input, words);
-  targetsEl.append(label);
+  targetsEl.append(ui.h("label", { class: "ab-choice" }, input,
+    ui.h("span", { class: "ab-choice-text" }, ui.h("strong", null, option.title), ui.h("span", null, option.detail))));
 }
 
 function say(message) {
@@ -52,7 +45,7 @@ function render() {
   idleEl.hidden = !!chatId;
   formEl.hidden = !chatId;
   aboutEl.textContent = chatId
-    ? `From “${chat ? chat.title : "this chat"}”. Its agent writes the lessons, and the change waits in the chat's Review for you to keep or discard.`
+    ? `${placedBeside ? "From this chat" : `From “${chat ? chat.title : "this chat"}”`}. Its agent writes the lessons, and the change waits in the chat's Review for you to keep or discard.`
     : "";
   const named = lessons.takesSkillName(target);
   skillRowEl.hidden = !named;
@@ -77,10 +70,14 @@ formEl.addEventListener("submit", async (event) => {
   const reply = await host.send("sendMessage", { chatId: sentTo, text });
   sending = false;
   if (reply && reply.sent === true) {
-    // Back to the chat, to watch the agent write it.
-    const opened = await host.send("openChat", { chatId: sentTo });
-    if (!opened || opened.message) {
-      say("Sent. Open the chat to watch its agent write the lessons; the change will be in its Review.");
+    // Back to the chat, to watch the agent write it; beside it, it's already there.
+    if (placedBeside) {
+      say("Sent. Its agent is writing the lessons; the change will be in this chat's Review.");
+    } else {
+      const opened = await host.send("openChat", { chatId: sentTo });
+      if (!opened || opened.message) {
+        say("Sent. Open the chat to watch its agent write the lessons; the change will be in its Review.");
+      }
     }
   } else {
     say((reply && reply.message) || "The request couldn't be sent.");
@@ -90,6 +87,17 @@ formEl.addEventListener("submit", async (event) => {
 
 host.on("snapshot", (next) => {
   snapshot = next || { chats: [] };
+  render();
+});
+
+// As a side-panel tab, the chat is the one it sits beside.
+host.on("context", (context) => {
+  if (!context || context.place !== "chatPanel" || !context.chatId) return;
+  placedBeside = true;
+  if (chatId !== context.chatId) {
+    chatId = context.chatId;
+    say(null);
+  }
   render();
 });
 

@@ -262,6 +262,54 @@ import Testing
         #expect(text.count <= PluginBridge.actionTextLimit)
         #expect(text.contains("more on GitHub."))
     }
+
+    // MARK: The side-panel tab (ABS-134)
+
+    /// Runs `expression` with the tab's `FollowPanel` loaded.
+    func panel(_ expression: String, args: [String] = []) throws -> JSONValue {
+        let source = try String(contentsOf: pluginFolder.appendingPathComponent("panel.js"), encoding: .utf8)
+        let context = try #require(JSContext())
+        context.evaluateScript(source)
+        context.setObject(args, forKeyedSubscript: "__argTexts" as NSString)
+        context.evaluateScript("const __args = __argTexts.map((text) => JSON.parse(text));")
+        let result = context.evaluateScript("JSON.stringify(\(expression))")
+        if let exception = context.exception { Issue.record("\(expression) threw: \(exception)"); return .null }
+        let text = try #require(result?.toString())
+        return text == "undefined" ? .null : JSONValue(any: try JSONSerialization.jsonObject(with: Data(text.utf8), options: .fragmentsAllowed))
+    }
+
+    @Test func whatWasSentIsKeptAsCountsOnlyNewestFirst() throws {
+        let batch = #"{"number": 43, "pending": [{"key": "a", "kind": "code", "body": "secret words"}, {"key": "b", "kind": "check"}]}"#
+        let once = try evaluate("FollowPR.logSent({}, 'c1', __args[0], T0)", args: [batch])
+        #expect(once["c1"]?.array?.count == 1)
+        #expect(once["c1"]?.array?[0]["number"] == .number(43))
+        #expect(once["c1"]?.array?[0]["count"] == .number(2))
+        #expect(once["c1"]?.array?[0]["kinds"] == .array([.string("code"), .string("check")]))
+        // What reviewers wrote never lands in the history.
+        #expect(!once.compact().contains("secret words"))
+        var history = once
+        for _ in 0..<25 {
+            history = try evaluate("FollowPR.logSent(__args[0], 'c1', __args[1], T0)", args: [history.compact(), batch])
+        }
+        #expect(history["c1"]?.array?.count == 20)
+    }
+
+    @Test func theTabSaysWhatIsFollowedAndWhatWaits() throws {
+        #expect(try panel("FollowPanel.following(null, 0, '2026-10-20')") == .null)
+        let follow = #"{"number": 43, "pending": [{"kind": "code"}, {"kind": "code"}, {"kind": "check"}], "dueAt": 90000, "waiting": false, "day": "2026-10-20", "sent": 2}"#
+        let state = try panel("FollowPanel.following(__args[0], 0, '2026-10-20')", args: [follow])
+        #expect(state["number"] == .number(43))
+        #expect(state["next"] == .string("2 code comments and 1 failed check go to the agent in 2 min."))
+        #expect(state["sentLine"] == .string("Sent 2 times today."))
+        // Yesterday's count doesn't carry over; a held batch says why it waits.
+        let held = follow.replacingOccurrences(of: "\"waiting\": false", with: "\"waiting\": true")
+        let tomorrow = try panel("FollowPanel.following(__args[0], 0, '2026-10-21')", args: [held])
+        #expect(tomorrow["sentLine"] == .string("Nothing sent today."))
+        #expect(tomorrow["next"] == .string("2 code comments and 1 failed check wait for the agent's turn to end."))
+        let history = try panel("FollowPanel.history(__args[0])",
+                                args: [#"[{"at": "2026-10-20T10:00:00Z", "number": 43, "kinds": ["changesRequested"]}]"#])
+        #expect(history.array?[0]["line"] == .string("1 change request from PR #43"))
+    }
 }
 
 /// What the host gives a plugin that follows pull requests (ABS-109).

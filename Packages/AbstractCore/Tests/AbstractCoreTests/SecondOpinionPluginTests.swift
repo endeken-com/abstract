@@ -176,6 +176,29 @@ import Testing
         #expect(try step(review, #"{"kind":"authorFinished","outcome":"done"}"#)["effect"] == nil)
         #expect(try step("null", #"{"kind":"send"}"#)["effect"] == nil)
     }
+
+    // MARK: The side-panel tab (ABS-134)
+
+    func panel(_ review: String) throws -> JSONValue {
+        let source = try String(contentsOf: pluginFolder.appendingPathComponent("panel.js"), encoding: .utf8)
+        let context = try #require(JSContext())
+        context.evaluateScript(source)
+        let result = context.evaluateScript("JSON.stringify(OpinionPanel.describe(\(review)))")
+        if let exception = context.exception { Issue.record("threw: \(exception)"); return .null }
+        let text = try #require(result?.toString())
+        return JSONValue(any: try JSONSerialization.jsonObject(with: Data(text.utf8), options: .fragmentsAllowed))
+    }
+
+    @Test func theTabSaysWhereTheReviewStands() throws {
+        #expect(try panel("null") == .null)
+        let waiting = try panel(#"{"agentName": "Codex", "round": 2, "phase": "waiting"}"#)
+        #expect(waiting["title"] == .string("Codex's findings are in Review"))
+        #expect(waiting["roundLine"] == .string("Round 2 of 3"))
+        #expect(try panel(#"{"agentName": "Codex", "round": 1, "phase": "reviewing"}"#)["title"] == .string("Codex is reviewing"))
+        #expect(try panel(#"{"agentName": "Codex", "round": 1, "phase": "fixing"}"#)["title"] == .string("Sent to this chat's agent"))
+        let last = try panel(#"{"agentName": "Codex", "round": 3, "phase": "done"}"#)
+        #expect(last["detail"] == .string("3 rounds are done. Send what's left in Review yourself."))
+    }
 }
 
 /// What the host lets a reviewing plugin do (ABS-112).

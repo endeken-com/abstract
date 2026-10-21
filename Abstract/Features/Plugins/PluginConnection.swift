@@ -234,10 +234,14 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
 
     let packageURL: URL
     let background: String?
+    /// The shared design kit (ABS-134), served under `/_abstract/`.
+    let kitURL: URL?
 
-    init(packageURL: URL, background: String? = nil) {
+    init(packageURL: URL, background: String? = nil,
+         kitURL: URL? = Bundle.main.url(forResource: "PluginKit", withExtension: nil)) {
         self.packageURL = packageURL
         self.background = background
+        self.kitURL = kitURL
     }
 
     func webView(_ webView: WKWebView, start urlSchemeTask: any WKURLSchemeTask) {
@@ -249,6 +253,10 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
         if path == Self.backgroundPage, let background {
             let src = background.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? background
             data = Data("<!doctype html><meta charset=\"utf-8\"><script src=\"/\(src)\"></script>".utf8)
+        } else if PluginKit.isKitPath(path) {
+            data = PluginKit.file(forRequestPath: path).flatMap { name in
+                kitURL.flatMap { try? Data(contentsOf: $0.appendingPathComponent(name)) }
+            }
         } else {
             data = PluginPackage.fileData(in: packageURL, relativePath: path)
         }
@@ -316,15 +324,11 @@ enum PluginShim {
         }
       };
       window.AbstractPlugin = api;
+      const applyTheme = \(PluginTheming.applySource);
       window.__abstractHostMessage = (text) => {
         let message;
         try { message = JSON.parse(text); } catch { return; }
-        if (message.type === "context") {
-          const root = document.documentElement.style;
-          const tokens = (message.payload && message.payload.tokens) || {};
-          for (const [name, value] of Object.entries(tokens)) root.setProperty("--abstract-" + name, value);
-          if (message.payload && message.payload.fontFamily) root.setProperty("--abstract-font", message.payload.fontFamily);
-        }
+        if (message.type === "context") applyTheme(message.payload);
         if (message.id && pending.has(message.id)) {
           pending.get(message.id)(message.payload);
           pending.delete(message.id);

@@ -14,6 +14,8 @@ struct PluginHostView: View {
     @State private var failed = false
     @State private var reloadToken = 0
     @AppStorage("theme") private var themeChoice: ThemeChoice = .graphite
+    /// Under Match System, the Mac switching appearance redraws this too.
+    @Environment(\.colorScheme) private var colorScheme
 
     /// Reading this in `body` is what makes a fresh snapshot get pushed
     /// when a chat moves, without the host polling.
@@ -26,7 +28,7 @@ struct PluginHostView: View {
                 if failed {
                     stoppedWorking(name: manifest.name)
                 } else {
-                    PluginWebView(plugin: plugin, manifest: manifest, theme: model.pluginTheme(),
+                    PluginWebView(plugin: plugin, manifest: manifest, appearance: model.pluginAppearance(),
                                   placement: placement ?? PluginPlacement(place: .main, contributionId: viewId),
                                   fingerprint: fingerprint) {
                         failed = true
@@ -41,9 +43,11 @@ struct PluginHostView: View {
                                message: "Turn it on in Settings → Plugins to see its screen.")
             }
         }
-        // Reading the choice here redraws this view when it changes; the
-        // coordinator then sends the plugin a fresh context (no reload).
+        // Reading the choice and the scheme here redraws this view when
+        // either changes; the coordinator then recolours the page and sends
+        // the plugin a fresh context (no reload).
         .onChange(of: themeChoice) { }
+        .onChange(of: colorScheme) { }
     }
 
     private func stoppedWorking(name: String) -> some View {
@@ -73,13 +77,13 @@ private struct PluginWebView: NSViewRepresentable {
     @Environment(AppModel.self) private var model
     let plugin: InstalledPlugin
     let manifest: PluginManifest
-    let theme: Theme
+    let appearance: PluginAppearance
     let placement: PluginPlacement
     let fingerprint: Int
     let onFailure: () -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(model: model, plugin: plugin, manifest: manifest, theme: theme,
+        Coordinator(model: model, plugin: plugin, manifest: manifest, appearance: appearance,
                     placement: placement, onFailure: onFailure)
     }
 
@@ -91,13 +95,13 @@ private struct PluginWebView: NSViewRepresentable {
         configuration.preferences.isElementFullscreenEnabled = false
         let content = WKUserContentController()
         content.add(coordinator, name: "abstractPlugin")
-        content.addUserScript(WKUserScript(source: PluginShim.source(api: manifest.api), injectionTime: .atDocumentStart, forMainFrameOnly: true))
         configuration.userContentController = content
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = coordinator
         webView.setValue(false, forKey: "drawsBackground")
         coordinator.webView = webView
+        coordinator.applyAppearance()
         let entry = manifest.entry.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? manifest.entry
         if let url = URL(string: "abstract-plugin://plugin/\(entry)") {
             webView.load(URLRequest(url: url))
@@ -108,8 +112,9 @@ private struct PluginWebView: NSViewRepresentable {
     func updateNSView(_ webView: WKWebView, context: Context) {
         // Live chats move: push a fresh snapshot whenever the model redraws
         // this screen, coalesced by the connection.
-        if context.coordinator.theme != theme {
-            context.coordinator.theme = theme
+        if context.coordinator.appearance != appearance {
+            context.coordinator.appearance = appearance
+            context.coordinator.applyAppearance()
             context.coordinator.sendContext(changed: true)
         }
         context.coordinator.deliverInvocation()
@@ -134,15 +139,15 @@ private struct PluginWebView: NSViewRepresentable {
         private(set) var connection: PluginConnection!
         private var loaded = false
         private var dead = false
-        var theme: Theme
+        var appearance: PluginAppearance
         weak var webView: WKWebView?
 
-        init(model: AppModel, plugin: InstalledPlugin, manifest: PluginManifest, theme: Theme,
+        init(model: AppModel, plugin: InstalledPlugin, manifest: PluginManifest, appearance: PluginAppearance,
              placement: PluginPlacement, onFailure: @escaping () -> Void) {
             self.model = model
             self.plugin = plugin
             self.manifest = manifest
-            self.theme = theme
+            self.appearance = appearance
             self.placement = placement
             self.onFailure = onFailure
             schemeHandler = PluginSchemeHandler(packageURL: plugin.packageURL)
@@ -162,6 +167,21 @@ private struct PluginWebView: NSViewRepresentable {
         func tearDown() {
             dead = true
             connection.tearDown()
+        }
+
+        /// The theme picked in Abstract, on the web view and in the page
+        /// from its first frame (ABS-134): the colours are a user script
+        /// that runs before the page's own CSS, ahead of the bridge. Kept
+        /// current, so a reload starts in the theme showing now.
+        func applyAppearance() {
+            guard let webView else { return }
+            webView.appearance = NSAppearance(named: appearance.isDark ? .darkAqua : .aqua)
+            webView.underPageBackgroundColor = NSColor(appearance.canvas)
+            let content = webView.configuration.userContentController
+            content.removeAllUserScripts()
+            for source in [PluginTheming.documentStartScript(appearance), PluginShim.source(api: manifest.api)] {
+                content.addUserScript(WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+            }
         }
 
         // MARK: Navigation stays inside the package
@@ -209,7 +229,7 @@ private struct PluginWebView: NSViewRepresentable {
                 model.pluginChatRow(chatId: $0, capabilities: capabilities)
             }
             let context = PluginContext.jsonValue(
-                theme: theme, locale: Locale.current.identifier,
+                appearance: appearance, locale: Locale.current.identifier,
                 pluginId: manifest.id, pluginVersion: manifest.version,
                 capabilities: capabilities,
                 placement: placement, chat: chat)

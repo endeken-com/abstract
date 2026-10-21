@@ -1,58 +1,72 @@
 "use strict";
 
+const ui = window.AbstractUI;
+const h = ui.h;
+
 const groups = [
   ["needsYou", "Needs you"],
   ["working", "Working"],
   ["readyToReview", "Ready to review"],
   ["done", "Done"],
 ];
+const AGENTS = { claude: "Claude Code", codex: "Codex", opencode: "OpenCode" };
 
 let showDone = false;
-let lastChats = [];
+let lastChats = null;
 
 const countsEl = document.getElementById("counts");
 const chatsEl = document.getElementById("chats");
-const emptyEl = document.getElementById("empty");
-const toggleEl = document.getElementById("show-done");
+
+// Its one remembered setting, as a segmented control.
+const tabs = ui.tabs({
+  label: "Which chats",
+  style: "segmented",
+  selected: "open",
+  tabs: [{ id: "open", label: "Open" }, { id: "all", label: "All" }],
+  onSelect: (id) => {
+    showDone = id === "all";
+    window.AbstractPlugin.send("storage.set", { key: "showDone", value: showDone });
+    render();
+  },
+});
+document.getElementById("tabs").append(tabs.element);
 
 function render() {
   countsEl.textContent = "";
-  for (const [key, label] of groups) {
-    const box = document.createElement("div");
-    box.className = "count";
-    const number = document.createElement("strong");
-    number.textContent = String(lastChats.filter((chat) => chat.progress === key && !chat.archived).length);
-    const caption = document.createElement("span");
-    caption.textContent = label;
-    box.append(number, caption);
-    countsEl.append(box);
-  }
-
   chatsEl.textContent = "";
-  const shown = lastChats.filter((chat) => !chat.archived && (showDone || chat.progress !== "done"));
-  for (const chat of shown) {
-    const item = document.createElement("li");
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = chat.title;
-    const agent = document.createElement("span");
-    agent.className = "agent";
-    agent.textContent = chat.agentId;
-    button.append(agent);
-    button.addEventListener("click", () => {
-      window.AbstractPlugin.send("openChat", { chatId: chat.id });
-    });
-    item.append(button);
-    chatsEl.append(item);
+  if (lastChats === null) {
+    chatsEl.append(ui.skeleton(5));
+    return;
   }
-  emptyEl.hidden = lastChats.length !== 0;
-}
+  for (const [key, label] of groups) {
+    const count = lastChats.filter((chat) => chat.progress === key && !chat.archived).length;
+    countsEl.append(h("div", { class: "count ab-card" },
+      h("strong", null, String(count)),
+      h("span", null, h("span", { class: "ab-status ab-" + key, "aria-hidden": "true" }), label)));
+  }
 
-toggleEl.addEventListener("change", () => {
-  showDone = toggleEl.checked;
-  window.AbstractPlugin.send("storage.set", { key: "showDone", value: showDone });
-  render();
-});
+  const shown = lastChats.filter((chat) => !chat.archived && (showDone || chat.progress !== "done"));
+  if (lastChats.length === 0) {
+    chatsEl.append(ui.empty("No chats yet", "Start a chat and it's counted here."));
+    return;
+  }
+  if (shown.length === 0) {
+    chatsEl.append(ui.empty("Every chat is done", "Choose All to see them."));
+    return;
+  }
+  const list = h("ul", { class: "ab-list" });
+  for (const chat of shown) {
+    list.append(h("li", null, h("button", {
+      type: "button",
+      class: "ab-row ab-interactive chat",
+      onclick: () => window.AbstractPlugin.send("openChat", { chatId: chat.id }),
+    },
+      h("span", { class: "ab-status ab-" + chat.progress, "aria-hidden": "true" }),
+      h("span", { class: "ab-row-title" }, chat.title),
+      h("span", { class: "ab-row-meta" }, AGENTS[chat.agentId] || chat.agentId))));
+  }
+  chatsEl.append(list);
+}
 
 window.AbstractPlugin.on("snapshot", (snapshot) => {
   lastChats = snapshot.chats || [];
@@ -61,7 +75,8 @@ window.AbstractPlugin.on("snapshot", (snapshot) => {
 
 window.AbstractPlugin.send("storage.get", { key: "showDone" }).then((reply) => {
   showDone = reply && reply.value === true;
-  toggleEl.checked = showDone;
+  tabs.select(showDone ? "all" : "open");
   render();
 });
 window.AbstractPlugin.send("getSnapshot", {});
+render();

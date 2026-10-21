@@ -2,7 +2,7 @@
   "api": 1,
   "id": "sh.abstract.kanban",
   "name": "Kanban",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Shows your chats as a board, by what they need from you.",
   "entry": "index.html",
   "capabilities": ["projects.read", "chats.read", "chats.open", "storage.own"],

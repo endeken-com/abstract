@@ -40,7 +40,7 @@ import Testing
             return .null
         }
         let text = try #require(result?.toString())
-        let object = try JSONSerialization.jsonObject(with: Data(text.utf8))
+        let object = try JSONSerialization.jsonObject(with: Data(text.utf8), options: .fragmentsAllowed)
         return JSONValue(any: object)
     }
 
@@ -227,10 +227,13 @@ import Testing
         }
         #expect(!boardSource.contains("document."))
         #expect(!boardSource.contains("AbstractPlugin"))
-        // The plugin themes from the host's tokens, never its own palette.
+        // The plugin themes from the host's tokens through the shared kit,
+        // never its own palette (ABS-134).
+        let html = try String(contentsOf: pluginFolder.appendingPathComponent("index.html"), encoding: .utf8)
+        #expect(html.contains("/_abstract/abstract-ui.css") && html.contains("/_abstract/abstract-ui.js"))
         let css = try String(contentsOf: pluginFolder.appendingPathComponent("style.css"), encoding: .utf8)
-        for token in ["--abstract-canvas", "--abstract-text", "--abstract-surface"] {
-            #expect(css.contains(token), "style.css never uses \(token)")
+        for name in ["--ab-canvas", "--ab-text", "--ab-border"] {
+            #expect(css.contains(name), "style.css never uses \(name)")
         }
         for theme in Theme.allCases {
             let context = PluginContext.jsonValue(theme: theme, locale: "en_US", pluginId: "sh.abstract.kanban",
@@ -239,5 +242,92 @@ import Testing
             #expect(context["theme"] == .string(theme.rawValue))
             #expect(context["tokens"]?["canvas"]?.string?.hasPrefix("#") == true)
         }
+    }
+
+    // MARK: Tabs and the keyboard (ABS-134)
+
+    @Test func theViewsAreBoardListAndMineAndASavedOneIsKept() throws {
+        #expect(try evaluate("VIEWS.map((v) => v.id)", args: []) == .array([.string("board"), .string("list"), .string("mine")]))
+        #expect(try evaluate("VIEWS.map((v) => v.title)", args: []) == .array([.string("Board"), .string("List"), .string("Mine")]))
+        for saved in ["board", "list", "mine"] {
+            #expect(try evaluate("normalizeView(__args[0])", args: ["\"\(saved)\""]) == .string(saved))
+        }
+        // Whatever else was stored opens the Board.
+        for junk in ["null", "\"kanban\"", "3", "{\"view\":\"list\"}"] {
+            #expect(try evaluate("normalizeView(__args[0])", args: [junk]) == .string("board"))
+        }
+    }
+
+    func groups(_ view: String, filter: String = "{}") throws -> JSONValue {
+        try evaluate("groups(KanbanBoard.build(__args[0], __args[1], \(Self.nowMs)), \"\(view)\")", args: [fixture, filter])
+    }
+
+    func ids(_ groups: JSONValue) -> [[String]] {
+        groups.array?.map { $0["cards"]?.array?.compactMap { $0["id"]?.string } ?? [] } ?? []
+    }
+
+    @Test func eachTabShowsItsOwnGroups() throws {
+        let board = try groups("board")
+        #expect(board.array?.compactMap { $0["key"]?.string } == ["needsYou", "working", "readyToReview", "done"])
+        // Mine is what waits on you: an answer, or a review.
+        let mine = try groups("mine")
+        #expect(mine.array?.compactMap { $0["key"]?.string } == ["needsYou", "readyToReview"])
+        #expect(ids(mine).joined().contains("c-needs") && !ids(mine).joined().contains("c-work"))
+        #expect(try evaluate("mineCount(KanbanBoard.build(__args[0], {}, \(Self.nowMs)))", args: [fixture]) == .number(Double(ids(mine).joined().count)))
+        // List drops a group the filter emptied; the Board keeps its column.
+        let codexOnly = #"{"agents": ["codex"]}"#
+        #expect(try groups("list", filter: codexOnly).array?.compactMap { $0["key"]?.string } == ["working"])
+        #expect(try groups("board", filter: codexOnly).array?.count == 4)
+        #expect(try groups("mine", filter: codexOnly).array?.isEmpty == true)
+    }
+
+    @Test func keysMapToBoardActionsAndModifiedKeysAreLeftToAbstract() throws {
+        let expected: [(String, String?)] = [
+            ("j", "down"), ("ArrowDown", "down"), ("k", "up"), ("ArrowUp", "up"),
+            ("h", "left"), ("ArrowLeft", "left"), ("l", "right"), ("ArrowRight", "right"),
+            ("Enter", "open"), ("/", "search"), ("Escape", "escape"),
+            ("1", "view:board"), ("2", "view:list"), ("3", "view:mine"), ("x", nil),
+        ]
+        for (key, action) in expected {
+            #expect(try evaluate("keyAction(__args[0], {})", args: ["\"\(key)\""]) == (action.map(JSONValue.string) ?? .null), "\(key)")
+        }
+        for modifier in ["meta", "ctrl", "alt"] {
+            #expect(try evaluate("keyAction('k', { \(modifier): true })", args: []) == .null)
+        }
+    }
+
+    /// Navigation over a hand-made layout: three columns, the middle empty.
+    let layout = #"[{"key":"a","cards":[{"id":"a1"},{"id":"a2"},{"id":"a3"}]},{"key":"b","cards":[]},{"key":"c","cards":[{"id":"c1"}]}]"#
+
+    func move(_ from: String?, _ direction: String, _ view: String) throws -> String? {
+        let selected = from.map { "\"\($0)\"" } ?? "null"
+        return try evaluate("navigate(__args[0], __args[1], \"\(direction)\", \"\(view)\")", args: [layout, selected]).string
+    }
+
+    @Test func onTheBoardArrowsMoveWithinAndAcrossColumns() throws {
+        // Nothing selected: any move starts at the first card.
+        #expect(try move(nil, "down", "board") == "a1")
+        #expect(try move(nil, "last", "board") == "c1")
+        #expect(try move("a1", "down", "board") == "a2")
+        #expect(try move("a3", "down", "board") == "a3")
+        #expect(try move("a1", "up", "board") == "a1")
+        // Across skips the empty column and keeps the height it can.
+        #expect(try move("a3", "right", "board") == "c1")
+        #expect(try move("c1", "left", "board") == "a1")
+        #expect(try move("c1", "right", "board") == "c1")
+        // A card that left the board starts over.
+        #expect(try move("gone", "down", "board") == "a1")
+    }
+
+    @Test func inListAndMineArrowsRunThroughEveryRow() throws {
+        for view in ["list", "mine"] {
+            #expect(try move("a3", "down", view) == "c1")
+            #expect(try move("c1", "up", view) == "a3")
+            #expect(try move("a2", "right", view) == "c1")
+            #expect(try move("c1", "left", view) == "a1")
+            #expect(try move("a2", "first", view) == "a1")
+            #expect(try move("a1", "last", view) == "c1")
+        }
+        #expect(try evaluate("navigate([], null, 'down', 'list')", args: []) == .null)
     }
 }

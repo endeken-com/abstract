@@ -1,36 +1,12 @@
-:root {
-  color-scheme: light dark;
+/* Chat panel on Abstract's plugin kit (/_abstract/abstract-ui.css). */
+
+.content {
+  max-width: 620px;
+  padding: var(--ab-space-lg);
 }
-body {
-  margin: 0;
-  background: var(--abstract-canvas, Canvas);
-  color: var(--abstract-text, CanvasText);
-  font-family: var(--abstract-font, -apple-system, sans-serif);
-  font-size: 13px;
+.ab-section-title {
+  margin-top: var(--ab-space-lg);
 }
-main {
-  max-width: 560px;
-  margin: 0 auto;
-  padding: 32px 24px;
-}
-h1 {
-  font-size: 20px;
-  font-weight: 600;
-  margin: 0 0 6px;
-}
-.note {
-  color: var(--abstract-textSecondary, GrayText);
-  line-height: 1.45;
-}
-#log {
-  list-style: none;
-  margin: 16px 0 0;
-  padding: 0;
-}
-#log li {
-  padding: 7px 9px;
-  border: 1px solid var(--abstract-border, GrayText);
-  border-radius: 7px;
-  margin-bottom: 6px;
-  background: var(--abstract-surface, ButtonFace);
+#empty .ab-empty {
+  padding: 28px 16px;
 }

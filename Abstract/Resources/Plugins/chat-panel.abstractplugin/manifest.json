@@ -2,7 +2,7 @@
   "api": 1,
   "id": "sh.abstract.chat-panel",
   "name": "Chat panel",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "A sample that sits beside a chat: a side-panel tab naming the chat, a chat menu item, a ⌘K command, a Settings page and a Home card.",
   "entry": "index.html",
   "capabilities": ["chats.read", "storage.own"],
