@@ -415,7 +415,7 @@ public final class PluginManager: Sendable {
                 if (try? install(from: folder, sourceKind: .bundled, fileManager: fm)) != nil { changed = true }
             }
         }
-        try? store.setSetting(Self.defaultsKey, offered.sorted())
+        if changed { try? store.setSetting(Self.defaultsKey, offered.sorted()) }
         return changed
     }
 

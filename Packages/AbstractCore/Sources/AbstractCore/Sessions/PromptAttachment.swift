@@ -1,7 +1,7 @@
 import Foundation
 
 /// Something sent along with a message besides its text: a file or image
-/// from this Mac, a GitHub issue or pull request, an issue from a tracker
+/// from this Mac, a GitHub issue or code host pull request, an issue from a tracker
 /// plugin such as Linear (ABS-141). The agent
 /// gets each one as text after the message, in Paseo's attachment formats
 /// (Apache-2.0, Copyright (c) 2025-present Mohamed Boudra). Images also go
@@ -91,7 +91,7 @@ public struct PromptAttachment: Codable, Sendable, Hashable, Identifiable {
         case .file: lines = ["Attached file: \(title)"] + (path.map { ["Path: \($0)"] } ?? [])
         case .image: lines = ["Attached image: \(title)"] + (path.map { ["Path: \($0)"] } ?? [])
         case .githubIssue: lines = ["GitHub Issue \(reference ?? ""): \(title)"]
-        case .pullRequest: lines = ["GitHub PR \(reference ?? ""): \(title)"]
+        case .pullRequest: lines = ["\(trackerName ?? "GitHub") PR \(reference ?? ""): \(title)"]
         case .trackerIssue: lines = ["\(trackerName ?? "Tracker") Issue \(reference ?? ""): \(title)"]
         case .revundReview: lines = ["Revund review: \(title)"]
         }

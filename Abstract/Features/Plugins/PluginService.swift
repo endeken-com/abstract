@@ -40,6 +40,14 @@ final class PluginService {
         PluginManager.bundledFolders(in: Bundle.main.resourceURL)
     }
 
+    /// Offer Bitbucket's bundled code host once a Bitbucket remote appears.
+    /// installDefaults remembers the offer, so turning it off or removing it sticks.
+    func enableBitbucketForRemote(_ remote: String) {
+        guard let host = GitRemote.host(remote),
+              host == "bitbucket.org" || host.contains("bitbucket") || remote.lowercased().contains("/scm/") else { return }
+        if manager.installDefaults(from: bundledFolders, ids: ["sh.abstract.bitbucket"]) { refresh() }
+    }
+
     /// Enabled plugins that can run: a sidebar row each.
     var usable: [InstalledPlugin] { installed.filter(\.isUsable) }
 

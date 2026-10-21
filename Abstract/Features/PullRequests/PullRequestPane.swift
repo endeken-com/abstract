@@ -2,6 +2,15 @@ import SwiftUI
 import AppKit
 import AbstractCore
 
+private func methodTitle(_ method: MergeMethod) -> String {
+    switch method {
+    case .squash: "Squash and Merge"
+    case .merge: "Create a Merge Commit"
+    case .rebase: "Rebase and Merge"
+    case .fastForward: "Fast Forward"
+    }
+}
+
 // MARK: - State marks
 
 extension PullRequest {
@@ -72,7 +81,7 @@ struct PullRequestPill: View {
         Menu {
             Button("Show Pull Request") { model.showPane(.review, in: sessionId) }
             if let url = pr.url {
-                Button("Open on GitHub") { NSWorkspace.shared.open(url) }
+                Button("Open on \(pr.hostTitle)") { NSWorkspace.shared.open(url) }
                 Button("Copy Link") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(url.absoluteString, forType: .string)
@@ -84,9 +93,9 @@ struct PullRequestPill: View {
                     Button("Ready for Review") { act { try await model.markPullRequestReady(sessionId) } }
                 } else {
                     Menu("Merge") {
-                        Button("Squash and Merge") { act { try await model.mergePullRequest(sessionId, method: .squash) } }
-                        Button("Create a Merge Commit") { act { try await model.mergePullRequest(sessionId, method: .merge) } }
-                        Button("Rebase and Merge") { act { try await model.mergePullRequest(sessionId, method: .rebase) } }
+                        ForEach(pr.mergeMethods, id: \.self) { method in
+                            Button(methodTitle(method)) { act { try await model.mergePullRequest(sessionId, method: method) } }
+                        }
                     }
                     .disabled(pr.hasConflicts)
                 }
@@ -381,7 +390,7 @@ private struct PullRequestDetail: View {
                 if let url = pr.url {
                     Button { NSWorkspace.shared.open(url) } label: { Image(systemName: "arrow.up.forward.square") }
                         .buttonStyle(.icon(size: 24))
-                        .help("Open on GitHub")
+                        .help("Open on \(pr.hostTitle)")
                 }
             }
             Text(pr.title)
@@ -391,7 +400,7 @@ private struct PullRequestDetail: View {
                 .textSelection(.enabled)
             HStack(spacing: 6) {
                 if let author = pr.author {
-                    GitHubAvatar(login: author, size: 16)
+                    GitHubAvatar(login: author, size: 16, hostTitle: pr.hostTitle)
                     Text(author).font(.btCallout).foregroundStyle(Color.btTextSecondary).fixedSize()
                 }
                 Text("\(pr.head) → \(pr.base)").font(.btMonoSmall).foregroundStyle(Color.btTextTertiary)
@@ -463,7 +472,7 @@ private struct PullRequestDetail: View {
             }
             ForEach(Array(verdicts.enumerated()), id: \.offset) { _, review in
                 HStack(spacing: Space.sm) {
-                    GitHubAvatar(login: review.author, size: 18)
+                    GitHubAvatar(login: review.author, size: 18, hostTitle: pr.hostTitle)
                     Text(review.author).font(.btCallout.weight(.semibold)).foregroundStyle(Color.btText)
                     Text(verdict(review.verdict) ?? "").font(.btCallout).foregroundStyle(Color.btTextSecondary)
                     Spacer(minLength: Space.sm)
@@ -473,10 +482,10 @@ private struct PullRequestDetail: View {
                 .frame(height: 30)
             }
             ForEach(threads) { thread in
-                ThreadBlock(thread: thread, canSend: pr.state == .open) { model.askToAddressThread(session.id, thread) }
+                ThreadBlock(thread: thread, hostTitle: pr.hostTitle, canSend: pr.state == .open) { model.askToAddressThread(session.id, thread) }
             }
             ForEach(Array(people.enumerated()), id: \.offset) { _, entry in
-                Block { CommentBlock(author: entry.author, verdict: entry.verdict, text: entry.text, date: entry.date) }
+                Block { CommentBlock(author: entry.author, verdict: entry.verdict, text: entry.text, date: entry.date, hostTitle: pr.hostTitle) }
             }
             if !bots.isEmpty {
                 Button(showsBots ? "Hide automated comments" : "\(bots.count) automated comment\(bots.count == 1 ? "" : "s")") {
@@ -489,7 +498,7 @@ private struct PullRequestDetail: View {
                 .padding(.vertical, Space.xs)
                 if showsBots {
                     ForEach(Array(bots.enumerated()), id: \.offset) { _, entry in
-                        Block { CommentBlock(author: entry.author, verdict: nil, text: entry.text, date: entry.date) }
+                        Block { CommentBlock(author: entry.author, verdict: nil, text: entry.text, date: entry.date, hostTitle: pr.hostTitle) }
                     }
                 }
             }
@@ -551,7 +560,7 @@ private struct PullRequestDetail: View {
                             .buttonStyle(.bt(.primary, size: .small))
                     } else {
                         Menu {
-                            ForEach(MergeMethod.allCases, id: \.self) { method in
+                            ForEach(pr.mergeMethods, id: \.self) { method in
                                 Button(title(method)) { run("Merging…") { try await model.mergePullRequest(session.id, method: method) } }
                             }
                         } label: {
@@ -561,7 +570,7 @@ private struct PullRequestDetail: View {
                         .buttonStyle(.bt(.primary, size: .small))
                         .fixedSize()
                         .disabled(pr.hasConflicts)
-                        .help(pr.hasConflicts ? "Resolve the conflicts with \(pr.base) first" : "Merge on GitHub")
+                        .help(pr.hasConflicts ? "Resolve the conflicts with \(pr.base) first" : "Merge on \(pr.hostTitle)")
                     }
                 }
                 .disabled(busy)
@@ -573,13 +582,7 @@ private struct PullRequestDetail: View {
         publish.uncommitted > 0 ? "Commit and Push" : "Push \(publish.unpushed) Commit\(publish.unpushed == 1 ? "" : "s")"
     }
 
-    private func title(_ method: MergeMethod) -> String {
-        switch method {
-        case .squash: "Squash and Merge"
-        case .merge: "Create a Merge Commit"
-        case .rebase: "Rebase and Merge"
-        }
-    }
+    private func title(_ method: MergeMethod) -> String { methodTitle(method) }
 }
 
 struct SectionHeading<Accessory: View>: View {
@@ -654,11 +657,12 @@ private struct CommentBlock: View {
     let verdict: String?
     let text: String
     let date: Date?
+    var hostTitle: String = "GitHub"
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: Space.sm) {
-                GitHubAvatar(login: author, url: avatar, size: 18)
+                GitHubAvatar(login: author, url: avatar, size: 18, hostTitle: hostTitle)
                 Text(author).font(.btCallout.weight(.semibold)).foregroundStyle(Color.btText).lineLimit(1)
                 if let verdict { Text(verdict).font(.btCallout).foregroundStyle(Color.btTextSecondary).lineLimit(1) }
                 Spacer(minLength: Space.sm)
@@ -675,6 +679,7 @@ private struct CommentBlock: View {
 /// about, then each comment in order. Resolved threads fold to their header.
 private struct ThreadBlock: View {
     let thread: PullRequest.ReviewThread
+    let hostTitle: String
     let canSend: Bool
     let send: () -> Void
     @State private var open: Bool?
@@ -712,7 +717,7 @@ private struct ThreadBlock: View {
             if expanded {
                 if let hunk = thread.diffHunk { HunkExcerpt(hunk: hunk, endLine: thread.line ?? thread.originalLine).padding(.top, Space.sm) }
                 ForEach(Array(thread.comments.enumerated()), id: \.element.id) { index, comment in
-                    CommentBlock(author: comment.author, avatar: comment.avatar, verdict: nil, text: comment.body, date: comment.createdAt)
+                    CommentBlock(author: comment.author, avatar: comment.avatar, verdict: nil, text: comment.body, date: comment.createdAt, hostTitle: hostTitle)
                         .padding(.top, Space.md)
                         .overlay(alignment: .top) { if index > 0 { Hairline().padding(.top, Space.md / 2) } }
                 }
@@ -844,7 +849,7 @@ private struct CreatePullRequestForm: View {
     private var state: String {
         let branch = session.branch ?? "This branch"
         switch (publish.uncommitted, publish.unpushed) {
-        case (0, 0): return "\(branch) is up to date with GitHub."
+        case (0, 0): return "\(branch) is up to date with its remote."
         case (let files, 0): return "\(files) changed file\(files == 1 ? "" : "s") in \(branch) will be committed as the title, then pushed."
         case (0, let commits): return "\(commits) commit\(commits == 1 ? "" : "s") in \(branch) will be pushed."
         case (let files, let commits): return "\(files) changed file\(files == 1 ? "" : "s") will be committed and \(commits + 1) commits pushed from \(branch)."

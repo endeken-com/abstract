@@ -92,6 +92,10 @@ public struct PullRequest: Sendable, Hashable, Identifiable {
     public var body: String?
     /// The commit a merged pull request became on its base branch.
     public var mergeCommit: String?
+    /// The code host's name for links and actions in the PR screens.
+    public var hostTitle: String = "GitHub"
+    /// Merge choices this host offers for this pull request.
+    public var mergeMethods: [MergeMethod] = [.squash, .merge, .rebase]
     public var checks: [Check]
     public var reviews: [Review]
     public var comments: [Comment]
@@ -134,12 +138,13 @@ public struct PullRequest: Sendable, Hashable, Identifiable {
         updated.comments = comments
         updated.threads = threads
         updated.mergeCommit = summary.mergeCommit ?? mergeCommit
+        updated.mergeMethods = mergeMethods
         return updated
     }
 }
 
-public enum MergeMethod: String, Sendable, CaseIterable {
-    case squash, merge, rebase
+public enum MergeMethod: String, Sendable, Hashable, CaseIterable {
+    case squash, merge, rebase, fastForward
 }
 
 /// What the signed-in user may do with a repository on its code host.
