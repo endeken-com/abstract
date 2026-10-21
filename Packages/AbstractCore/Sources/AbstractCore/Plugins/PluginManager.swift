@@ -345,6 +345,27 @@ public final class PluginManager: Sendable {
         save(records)
         storage(for: pluginId).removeAll()
         networkLog(for: pluginId).removeAll()
+        var switches = switches()
+        switches.forget(pluginId: pluginId)
+        saveSwitches(switches)
+    }
+
+    // MARK: Pull Request switches (ABS-109)
+
+    public static let switchesKey = "plugins.switches.v1"
+
+    public func switches() -> PluginSwitches {
+        store.setting(Self.switchesKey, as: PluginSwitches.self) ?? PluginSwitches()
+    }
+
+    public func setSwitch(pluginId: String, contributionId: String, chatId: String, on: Bool) {
+        var switches = switches()
+        switches.set(pluginId: pluginId, contributionId: contributionId, chatId: chatId, on: on)
+        saveSwitches(switches)
+    }
+
+    private func saveSwitches(_ switches: PluginSwitches) {
+        try? store.setSetting(Self.switchesKey, switches)
     }
 
     public func noteError(_ pluginId: String, _ message: String?) {
@@ -361,5 +382,41 @@ public final class PluginManager: Sendable {
               let children = try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: [.isDirectoryKey]) else { return [] }
         return children.filter { fm.fileExists(atPath: $0.appendingPathComponent("manifest.json").path) }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
+    }
+}
+
+/// Which chats each plugin's Pull Request switches are on for (ABS-109).
+/// The host keeps them, so the tab shows them whether or not the plugin's
+/// script is running; the script is told each time one flips.
+public struct PluginSwitches: Sendable, Hashable, Codable {
+    /// `pluginId:contributionId` to the chats it's on for.
+    public private(set) var on: [String: Set<String>] = [:]
+
+    public init() {}
+
+    static func key(_ pluginId: String, _ contributionId: String) -> String { "\(pluginId):\(contributionId)" }
+
+    public func isOn(pluginId: String, contributionId: String, chatId: String) -> Bool {
+        on[Self.key(pluginId, contributionId)]?.contains(chatId) ?? false
+    }
+
+    public mutating func set(pluginId: String, contributionId: String, chatId: String, on isOn: Bool) {
+        let key = Self.key(pluginId, contributionId)
+        var chats = on[key] ?? []
+        if isOn { chats.insert(chatId) } else { chats.remove(chatId) }
+        on[key] = chats.isEmpty ? nil : chats
+    }
+
+    public mutating func forget(pluginId: String) {
+        on = on.filter { !$0.key.hasPrefix(pluginId + ":") }
+    }
+
+    /// Every switch that's on, for the plugins given.
+    public func switchesOn(pluginIds: Set<String>) -> [(pluginId: String, contributionId: String, chatId: String)] {
+        on.keys.sorted().flatMap { key -> [(pluginId: String, contributionId: String, chatId: String)] in
+            guard let pluginId = pluginIds.first(where: { key.hasPrefix($0 + ":") }) else { return [] }
+            let contributionId = String(key.dropFirst(pluginId.count + 1))
+            return (on[key] ?? []).sorted().map { (pluginId, contributionId, $0) }
+        }
     }
 }

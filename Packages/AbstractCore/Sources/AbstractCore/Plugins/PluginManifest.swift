@@ -24,6 +24,9 @@ public enum PluginCapability: String, Sendable, Hashable, Codable, CaseIterable 
     /// Add line comments to a chat's Review (ABS-112). Nothing reaches the
     /// agent until you send them, so it doesn't ask first.
     case reviewComment = "review.comment"
+    /// Read a chat's pull request in full: its checks, reviews and
+    /// comments, the way its Pull Request tab shows them (ABS-109).
+    case pullRequestsRead = "pullRequests.read"
 
     /// The capabilities that do something to a chat or an automation, as
     /// opposed to reading. Each asks first until always allowed.
@@ -52,6 +55,7 @@ public enum PluginCapability: String, Sendable, Hashable, Codable, CaseIterable 
         case .permissionsAnswer: "See and answer your agents' questions and permission requests, with what each one asks"
         case .automationsRun: "Run your automations"
         case .reviewComment: "Add comments to your chats' Review, for you to send or delete"
+        case .pullRequestsRead: "Read your chats' pull requests: their checks, reviews and comments"
         }
     }
 
@@ -124,6 +128,9 @@ public enum PluginPlace: String, Sendable, Hashable, Codable, CaseIterable {
     /// A command in a chat's Review (ABS-112). Its background script is
     /// handed the run; nothing opens.
     case review
+    /// A switch in a chat's Pull Request tab (ABS-109), on or off per
+    /// chat. Its background script is told each time you flip it.
+    case pullRequest
 
     /// The place in plain words, for the review screen.
     public var plainWords: String {
@@ -135,6 +142,7 @@ public enum PluginPlace: String, Sendable, Hashable, Codable, CaseIterable {
         case .settings: "A page under Settings → Plugins"
         case .home: "A card on the Home screen"
         case .review: "A command in a chat's Review"
+        case .pullRequest: "A switch in a chat's Pull Request tab"
         }
     }
 }
@@ -162,10 +170,12 @@ public struct PluginInvocation: Sendable, Hashable, Codable {
     /// What the Review compared when you ran it: "uncommitted",
     /// "committed" or "commit <sha>".
     public var scope: String?
+    /// A Pull Request switch you just flipped: on or off (ABS-109).
+    public var on: Bool?
     public init(place: PluginPlace, contributionId: String, chatId: String? = nil,
-                agentId: String? = nil, scope: String? = nil) {
+                agentId: String? = nil, scope: String? = nil, on: Bool? = nil) {
         self.place = place; self.contributionId = contributionId; self.chatId = chatId
-        self.agentId = agentId; self.scope = scope
+        self.agentId = agentId; self.scope = scope; self.on = on
     }
     public func jsonValue() -> JSONValue {
         var object: [String: JSONValue] = ["place": .string(place.rawValue),
@@ -176,6 +186,7 @@ public struct PluginInvocation: Sendable, Hashable, Codable {
             object["agentName"] = .string(ProviderRegistry.name(agentId))
         }
         if let scope { object["scope"] = .string(scope) }
+        if let on { object["on"] = .bool(on) }
         return .object(object)
     }
 }
@@ -230,7 +241,8 @@ public struct PluginManifest: Sendable, Hashable, Codable {
     }
 
     /// One thing a plugin adds outside its sidebar screen: a tab, a menu
-    /// item, a ⌘K command, its Settings page, a Home card or a Review command.
+    /// item, a ⌘K command, its Settings page, a Home card, a Review command
+    /// or a Pull Request switch.
     public struct Contribution: Sendable, Hashable, Codable, Identifiable {
         public var id: String
         public var title: String
@@ -259,13 +271,15 @@ public struct PluginManifest: Sendable, Hashable, Codable {
         public var settingsPage: Contribution?
         public var homeWidgets: [Contribution]
         public var reviewActions: [Contribution]
+        public var pullRequestSwitches: [Contribution]
 
         public init(views: [View] = [], chatPanelTabs: [Contribution] = [], chatMenuItems: [Contribution] = [],
                     paletteCommands: [Contribution] = [], settingsPage: Contribution? = nil,
-                    homeWidgets: [Contribution] = [], reviewActions: [Contribution] = []) {
+                    homeWidgets: [Contribution] = [], reviewActions: [Contribution] = [],
+                    pullRequestSwitches: [Contribution] = []) {
             self.views = views; self.chatPanelTabs = chatPanelTabs; self.chatMenuItems = chatMenuItems
             self.paletteCommands = paletteCommands; self.settingsPage = settingsPage; self.homeWidgets = homeWidgets
-            self.reviewActions = reviewActions
+            self.reviewActions = reviewActions; self.pullRequestSwitches = pullRequestSwitches
         }
 
         // Manifests written before the extra places carry only `views`.
@@ -278,6 +292,7 @@ public struct PluginManifest: Sendable, Hashable, Codable {
             settingsPage = try box.decodeIfPresent(Contribution.self, forKey: .settingsPage)
             homeWidgets = try box.decodeIfPresent([Contribution].self, forKey: .homeWidgets) ?? []
             reviewActions = try box.decodeIfPresent([Contribution].self, forKey: .reviewActions) ?? []
+            pullRequestSwitches = try box.decodeIfPresent([Contribution].self, forKey: .pullRequestSwitches) ?? []
         }
     }
 
@@ -300,7 +315,8 @@ public struct PluginManifest: Sendable, Hashable, Codable {
                 views: [View] = [],
                 chatPanelTabs: [Contribution] = [], chatMenuItems: [Contribution] = [],
                 paletteCommands: [Contribution] = [], settingsPage: Contribution? = nil,
-                homeWidgets: [Contribution] = [], reviewActions: [Contribution] = [], background: String? = nil) {
+                homeWidgets: [Contribution] = [], reviewActions: [Contribution] = [],
+                pullRequestSwitches: [Contribution] = [], background: String? = nil) {
         self.api = api; self.id = id; self.name = name; self.version = version
         self.background = background
         self.description = description; self.entry = entry
@@ -309,7 +325,7 @@ public struct PluginManifest: Sendable, Hashable, Codable {
         self.secrets = secrets.isEmpty ? nil : secrets
         self.contributes = Contributes(views: views, chatPanelTabs: chatPanelTabs, chatMenuItems: chatMenuItems,
                                        paletteCommands: paletteCommands, settingsPage: settingsPage, homeWidgets: homeWidgets,
-                                       reviewActions: reviewActions)
+                                       reviewActions: reviewActions, pullRequestSwitches: pullRequestSwitches)
     }
 
     // A plugin that only runs in the background (ABS-93) may leave out
@@ -341,7 +357,7 @@ public struct PluginManifest: Sendable, Hashable, Codable {
             (.chatPanel, contributes.chatPanelTabs), (.chatMenu, contributes.chatMenuItems),
             (.palette, contributes.paletteCommands),
             (.settings, contributes.settingsPage.map { [$0] } ?? []), (.home, contributes.homeWidgets),
-            (.review, contributes.reviewActions),
+            (.review, contributes.reviewActions), (.pullRequest, contributes.pullRequestSwitches),
         ]
         for (place, items) in places {
             sentences += items.map { sentence($0.title(agentName: "another agent"), place) }
@@ -434,6 +450,7 @@ public struct PluginManifest: Sendable, Hashable, Codable {
             ("paletteCommands", contributes.paletteCommands), ("homeWidgets", contributes.homeWidgets),
             ("settingsPage", contributes.settingsPage.map { [$0] } ?? []),
             ("reviewActions", contributes.reviewActions),
+            ("pullRequestSwitches", contributes.pullRequestSwitches),
         ]
         for (place, items) in places {
             guard items.count <= 8 else {
@@ -446,10 +463,13 @@ public struct PluginManifest: Sendable, Hashable, Codable {
                 throw PluginValidationError.invalidManifest("\(place) entries need an id and a title of at most 40 characters")
             }
         }
-        // A Review command is run by the background script: there is no
-        // screen to hand it to.
+        // A Review command or a Pull Request switch is handled by the
+        // background script: there is no screen to hand it to.
         guard contributes.reviewActions.isEmpty || background != nil else {
             throw PluginValidationError.invalidManifest("reviewActions need a background script")
+        }
+        guard contributes.pullRequestSwitches.isEmpty || background != nil else {
+            throw PluginValidationError.invalidManifest("pullRequestSwitches need a background script")
         }
         let total = contributes.views.count + places.map(\.1.count).reduce(0, +)
         guard total > 0 || background != nil else {

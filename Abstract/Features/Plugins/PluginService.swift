@@ -54,6 +54,7 @@ final class PluginService {
     func refresh() {
         installed = manager.installed()
         orphans = manager.orphanedProblems()
+        switches = manager.switches()
         onChange()
     }
 
@@ -173,6 +174,25 @@ final class PluginService {
     func noteError(_ id: String, _ message: String?) {
         manager.noteError(id, message)
         refresh()
+    }
+
+    // MARK: Pull Request switches (ABS-109)
+
+    /// Which chats each plugin's Pull Request switches are on for.
+    private(set) var switches = PluginSwitches()
+
+    func isSwitchOn(_ contribution: ResolvedPluginContribution, chatId: String) -> Bool {
+        switches.isOn(pluginId: contribution.pluginId, contributionId: contribution.contribution.id, chatId: chatId)
+    }
+
+    func setSwitch(pluginId: String, contributionId: String, chatId: String, on: Bool) {
+        manager.setSwitch(pluginId: pluginId, contributionId: contributionId, chatId: chatId, on: on)
+        switches = manager.switches()
+    }
+
+    /// The switches that are on, for plugins that can run now.
+    var switchesOn: [(pluginId: String, contributionId: String, chatId: String)] {
+        switches.switchesOn(pluginIds: Set(usable.map(\.id)))
     }
 }
 

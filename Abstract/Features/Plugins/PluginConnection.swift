@@ -111,6 +111,8 @@ final class PluginConnection {
                  payload: model.pluginTranscript(page: page, chatId: chatId, allowedProjectKeys: keys))
         case .getAutomations(let id, let page):
             send(type: "reply", id: id, payload: model.pluginAutomations(page: page))
+        case .getPullRequest(let id, let chatId):
+            send(type: "reply", id: id, payload: model.pluginPullRequest(chatId: chatId))
         case .getPermissions(let id):
             // Only chats its snapshot shows it, the ones it may already act on.
             let visible = Set(model.pluginSnapshot(capabilities: capabilities, revision: 0).chats?.map(\.id) ?? [])

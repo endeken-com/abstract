@@ -67,6 +67,8 @@ public struct PluginBridge: Sendable {
         case getTurns(id: String?, page: PluginPage, chatId: String?)
         case getTranscript(id: String?, page: PluginPage, chatId: String?)
         case getAutomations(id: String?, page: PluginPage)
+        /// One chat's pull request in full, as the host knows it now (ABS-109).
+        case getPullRequest(id: String?, chatId: String)
         /// The permission requests and questions waiting across chats (ABS-111).
         case getPermissions(id: String?)
         /// Show this count on the plugin's sidebar row; 0 hides it.
@@ -191,6 +193,12 @@ public struct PluginBridge: Sendable {
                 return refuse(id, "This plugin hasn't been granted seeing your automations.")
             }
             return .getAutomations(id: id, page: PluginPage(payload: payload))
+        case "getPullRequest":
+            guard capabilities.contains(.pullRequestsRead) else {
+                return refuse(id, "This plugin hasn't been granted reading your chats' pull requests.")
+            }
+            guard let chatId = knownChat(payload) else { return refuse(id, "That chat isn't in the plugin's list.") }
+            return .getPullRequest(id: id, chatId: chatId)
         case "addReviewComments":
             guard api >= 2, capabilities.contains(.reviewComment) else {
                 return refuse(id, "This plugin hasn't been granted adding comments to your chats' Review.")
@@ -413,6 +421,9 @@ public struct PluginBridge: Sendable {
         recentActions.append(now)
         recentActions.removeAll { now.timeIntervalSince($0) > Self.actionWindow }
         guard recentActions.count <= Self.actionLimit else { return .actionRateLimited(id: id) }
+        // A plugin may ask first even for a kind you always allow, when it
+        // has reached a limit of its own (ABS-109). It can never skip asking.
+        if payload?["ask"]?.bool == true { return .askAction(id: id, built) }
         return alwaysAllowedActions.contains(built.capability)
             ? .action(id: id, built)
             : .askAction(id: id, built)

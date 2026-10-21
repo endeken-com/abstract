@@ -15,6 +15,9 @@ extension AppModel {
         githubViewer = await GitHub.viewer(executor)
         while !Task.isCancelled {
             await refreshPullRequests()
+            // Followed pull requests are read in full, so their new
+            // comments reach the plugin following them (ABS-109).
+            await refreshSwitchedPullRequests()
             try? await Task.sleep(for: Self.refreshInterval)
         }
     }
