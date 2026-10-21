@@ -34,8 +34,11 @@ public enum PluginContributions {
                 (.settings, contributes.settingsPage.map { [$0] } ?? []), (.home, contributes.homeWidgets),
                 (.review, contributes.reviewActions), (.pullRequest, contributes.pullRequestSwitches),
             ]
+            // An entry that needs a grant the plugin no longer holds stays
+            // hidden until it's granted again (ABS-102).
+            let granted = plugin.record.grantedCapabilities
             for (place, items) in places {
-                out += items.map {
+                out += items.filter { $0.isOffered(granted: granted) }.map {
                     ResolvedPluginContribution(pluginId: manifest.id, pluginName: manifest.name,
                                                place: place, contribution: $0)
                 }

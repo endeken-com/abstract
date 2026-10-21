@@ -1,0 +1,14 @@
+{
+  "api": 2,
+  "id": "sh.abstract.lessons",
+  "name": "Lessons",
+  "version": "1.0.0",
+  "description": "Save what a chat learned. Its own agent writes the lessons into the project's instructions or a skill, and the edit waits in Review for you to keep or discard.",
+  "entry": "index.html",
+  "capabilities": ["chats.read", "chats.open", "chats.message"],
+  "contributes": {
+    "chatMenuItems": [
+      { "id": "save", "title": "Save What We Learned…", "symbol": "lightbulb", "needs": ["chats.read", "chats.message"] }
+    ]
+  }
+}

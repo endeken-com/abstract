@@ -247,11 +247,20 @@ public struct PluginManifest: Sendable, Hashable, Codable {
         public var id: String
         public var title: String
         public var symbol: String?
-        public init(id: String, title: String, symbol: String? = nil) {
-            self.id = id; self.title = title; self.symbol = symbol
+        /// The grants it can't work without (ABS-102). It shows only while
+        /// the plugin holds every one, so revoking one hides it instead of
+        /// leaving an item that fails when chosen.
+        public var needs: [PluginCapability]?
+        public init(id: String, title: String, symbol: String? = nil, needs: [PluginCapability]? = nil) {
+            self.id = id; self.title = title; self.symbol = symbol; self.needs = needs
         }
         public var symbolOrFallback: String {
             symbol.flatMap { $0.isEmpty ? nil : $0 } ?? PluginManifest.fallbackSymbol
+        }
+
+        /// Whether a plugin holding `granted` can offer it.
+        public func isOffered(granted: Set<PluginCapability>) -> Bool {
+            Set(needs ?? []).isSubset(of: granted)
         }
 
         /// A Review command whose title holds `{agent}` is offered once per
@@ -461,6 +470,10 @@ public struct PluginManifest: Sendable, Hashable, Codable {
             }
             for item in items where !Self.isSound(id: item.id, title: item.title) {
                 throw PluginValidationError.invalidManifest("\(place) entries need an id and a title of at most 40 characters")
+            }
+            // An entry can only need what the plugin asks for.
+            for item in items where !Set(item.needs ?? []).isSubset(of: grantedCapabilities) {
+                throw PluginValidationError.invalidManifest("\(place) entries can only need capabilities the plugin lists")
             }
         }
         // A Review command or a Pull Request switch is handled by the
