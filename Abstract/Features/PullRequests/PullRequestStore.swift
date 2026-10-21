@@ -25,7 +25,7 @@ extension AppModel {
     /// Re-reads every project's recent pull requests from its code host and matches them to chats by branch.
     func refreshPullRequests(projectId: String? = nil) async {
         for project in projects where project.archivedAt == nil && (projectId == nil || project.id == projectId) {
-            guard let host = await codeHost(for: project), await codeHostAccess(host).isReady,
+            guard let host = await codeHost(for: project), await !codeHostAccess(host).blocks,
                   let list = try? await host.pullRequests() else { continue }
             projectPullRequests[project.id] = list
             pullRequestsListedAt[project.id] = .now
@@ -190,12 +190,15 @@ extension AppModel {
         return CodeHosts.needsPlugin(GitRemote.host(origin))
     }
 
-    /// Whether the code host's tool is there and signed in, asked once a
-    /// minute at most per plugin; `fresh` asks again now.
+    /// Whether the code host's tool is there and signed in on this Mac,
+    /// asked once a minute at most per plugin; `fresh` asks again now. It is
+    /// asked in no folder, as it's about the tool and not any one chat. A
+    /// call that couldn't be made isn't kept.
     func codeHostAccess(_ host: CodeHost, fresh: Bool = false) async -> CodeHostAccess {
         if !fresh, let known = codeHostAccess[host.pluginId],
            known.access.isReady || ContinuousClock.now - known.at < .seconds(60) { return known.access }
-        let access = await host.access()
+        let access = await codeHost(pluginId: host.pluginId, declaration: host.declaration, context: CodeHostContext()).access()
+        if case .unavailable = access { return access }
         codeHostAccess[host.pluginId] = (access, .now)
         return access
     }

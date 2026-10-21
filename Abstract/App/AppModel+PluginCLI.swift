@@ -23,11 +23,18 @@ extension AppModel {
         return nil
     }
 
-    /// The folder a chat's commands run in: its worktree, else its project's.
+    /// The folder a chat's commands run in: its worktree, else its
+    /// project's. A chat here whose worktree is gone (archived, merged and
+    /// cleaned up) runs in its project's folder, as nothing starts in a
+    /// folder that isn't there.
     func pluginFolder(chatId: String) -> String? {
         guard let session = session(chatId) else { return nil }
-        if let worktree = session.worktreePath, !worktree.isEmpty { return worktree }
-        return project(session.projectId)?.rootPath
+        let projectRoot = project(session.projectId)?.rootPath
+        if let worktree = session.worktreePath, !worktree.isEmpty {
+            let local = RemoteService.split(chatId) == nil
+            if !local || FileManager.default.fileExists(atPath: worktree) || projectRoot == nil { return worktree }
+        }
+        return projectRoot
     }
 
     /// Runs one checked `cli.run` for a plugin: in the chat's or project's
@@ -82,11 +89,15 @@ extension AppModel {
         guard let match = CodeHosts.match(remote: remote, among: candidates) else { return nil }
         var placed = context
         placed.remote = remote
-        let context = placed
-        let pluginId = match.pluginId
-        return CodeHost(pluginId: pluginId, declaration: match.declaration) { [weak background] op, input in
-            guard let background else { throw CodeHostError.unavailable("Abstract is closing.") }
-            return try await background.callCodeHost(pluginId, op: op, input: input, context: context).value()
+        return codeHost(pluginId: match.pluginId, declaration: match.declaration, context: placed)
+    }
+
+    /// One code host plugin, asked about `context`; an empty context asks
+    /// on this Mac, in no folder.
+    func codeHost(pluginId: String, declaration: CodeHostDeclaration, context: CodeHostContext) -> CodeHost {
+        CodeHost(pluginId: pluginId, declaration: declaration) { [weak pluginBackground] op, input in
+            guard let pluginBackground else { throw CodeHostError.unavailable("Abstract is closing.") }
+            return try await pluginBackground.callCodeHost(pluginId, op: op, input: input, context: context).value()
         }
     }
 

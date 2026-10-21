@@ -79,8 +79,21 @@ public enum CodeHostAccess: Sendable, Hashable {
     case missing(install: String?)
     /// Installed, not signed in; `hint` says how, like `gh auth login`.
     case signedOut(hint: String?)
+    /// The plugin couldn't be asked just now (still starting, a folder
+    /// gone, too slow): nothing is known about the tool, so nothing is
+    /// blocked on it either.
+    case unavailable(String)
 
     public var isReady: Bool { if case .ready = self { true } else { false } }
+
+    /// Known not to work: the tool is missing or signed out. A screen says
+    /// so instead of asking for pull requests.
+    public var blocks: Bool {
+        switch self {
+        case .missing, .signedOut: true
+        case .ready, .unavailable: false
+        }
+    }
 }
 
 /// Why a code host couldn't answer, in a plain sentence.
@@ -182,7 +195,11 @@ public struct CodeHost: Sendable {
     // MARK: Operations
 
     public func access() async -> CodeHostAccess {
-        guard let out = try? await ask(.access) else { return .missing(install: nil) }
+        let out: JSONValue
+        do { out = try await ask(.access) } catch {
+            // A failed call says nothing about the tool: never "missing".
+            return .unavailable(error.localizedDescription)
+        }
         return switch out["access"]?.string {
         case "ready": .ready(viewer: out["viewer"]?.string)
         case "signedOut": .signedOut(hint: out["hint"]?.string)
