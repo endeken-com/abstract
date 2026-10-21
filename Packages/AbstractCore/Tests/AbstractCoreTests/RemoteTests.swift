@@ -144,13 +144,19 @@ struct RemoteTests {
 struct RemoteAccessTests {
     private let allowed: (String?) -> Bool = { $0?.hasPrefix("/work/repo") == true }
 
+    /// The GitHub plugin's grant, as this Mac would hold it (ABS-139).
+    private let gh = PluginCLI(binary: "gh", commands: [.init(["auth", "status"], .read), .init(["pr", "view"], .read),
+                                                        .init(["api", "graphql"], .read)])
+
     @Test func gitGhAndRevundRunInProjectsOnly() {
         #expect(RemoteAccess.refusal("git", ["status"], cwd: "/work/repo/wt", allowed: allowed) == nil)
         #expect(RemoteAccess.refusal("git", ["-c", "core.quotePath=false", "diff"], cwd: "/work/repo", allowed: allowed) == nil)
-        #expect(RemoteAccess.refusal("gh", ["pr", "view", "1"], cwd: "/work/repo", allowed: allowed) == nil)
+        #expect(RemoteAccess.refusal("gh", ["pr", "view", "1"], cwd: "/work/repo", plugins: [gh], allowed: allowed) == nil)
+        // gh runs only for an enabled plugin that was granted it.
+        #expect(RemoteAccess.refusal("gh", ["pr", "view", "1"], cwd: "/work/repo", allowed: allowed) != nil)
         #expect(RemoteAccess.refusal("revund", ["review", "--json", "--repo", "/work/repo"], cwd: "/work/repo", allowed: allowed) == nil)
         #expect(RemoteAccess.refusal("git", ["--version"], cwd: nil, allowed: allowed) == nil)
-        #expect(RemoteAccess.refusal("gh", ["auth", "status"], cwd: nil, allowed: allowed) == nil)
+        #expect(RemoteAccess.refusal("gh", ["auth", "status"], cwd: nil, plugins: [gh], allowed: allowed) == nil)
         // git's own options Abstract passes before the command.
         #expect(RemoteAccess.refusal("git", ["--no-optional-locks", "status"], cwd: "/work/repo", allowed: allowed) == nil)
         #expect(RemoteAccess.refusal("git", ["-c", "core.quotePath=false", "--no-pager", "diff", "HEAD"], cwd: "/work/repo", allowed: allowed) == nil)
@@ -180,8 +186,8 @@ struct RemoteAccessTests {
         #expect(RemoteAccess.refusal("git", ["-c", "core.fsmonitor=touch /tmp/x", "status"], cwd: "/work/repo", allowed: allowed) != nil)
         #expect(RemoteAccess.refusal("git", ["diff", "--output=/tmp/x"], cwd: "/work/repo", allowed: allowed) != nil)
         #expect(RemoteAccess.refusal("git", ["fetch", "--upload-pack=evil"], cwd: "/work/repo", allowed: allowed) != nil)
-        #expect(RemoteAccess.refusal("gh", ["alias", "set", "x", "!id"], cwd: "/work/repo", allowed: allowed) != nil)
-        #expect(RemoteAccess.refusal("gh", ["extension", "exec", "x"], cwd: "/work/repo", allowed: allowed) != nil)
+        #expect(RemoteAccess.refusal("gh", ["alias", "set", "x", "!id"], cwd: "/work/repo", plugins: [gh], allowed: allowed) != nil)
+        #expect(RemoteAccess.refusal("gh", ["extension", "exec", "x"], cwd: "/work/repo", plugins: [gh], allowed: allowed) != nil)
         #expect(RemoteAccess.refusal("revund", ["review", "--repo", "/etc"], cwd: "/work/repo", allowed: allowed) != nil)
         #expect(RemoteAccess.refusal("git", ["status"], cwd: nil, allowed: allowed) != nil)
         // git grep opens matches in a program with -O, bundled or abbreviated too.
@@ -201,8 +207,8 @@ struct RemoteAccessTests {
             #expect(RemoteAccess.refusal("git", args, cwd: "/work/repo", input: true, allowed: allowed) != nil, "\(args)")
         }
         #expect(RemoteAccess.refusal("git", ["apply", "--unsafe-paths", "p.diff"], cwd: "/work/repo", allowed: allowed) != nil)
-        for (command, args) in [("git", ["hash-object", "-w", "--stdin"]), ("git", ["apply", "x.diff"]), ("gh", ["api", "--input", "-"])] {
-            #expect(RemoteAccess.refusal(command, args, cwd: "/work/repo", input: true, allowed: allowed) != nil, "\(args)")
+        for (command, args) in [("git", ["hash-object", "-w", "--stdin"]), ("git", ["apply", "x.diff"]), ("gh", ["api", "graphql", "--input", "-"])] {
+            #expect(RemoteAccess.refusal(command, args, cwd: "/work/repo", input: true, plugins: [gh], allowed: allowed) != nil, "\(args)")
         }
     }
 

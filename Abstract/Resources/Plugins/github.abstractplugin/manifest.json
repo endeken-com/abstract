@@ -1,0 +1,38 @@
+{
+  "api": 2,
+  "id": "sh.abstract.github",
+  "name": "GitHub",
+  "version": "1.0.0",
+  "description": "Pull requests, checks, reviews and merging for projects on GitHub, and GitHub issues and pull requests to attach in the composer. It uses the GitHub CLI and your gh sign-in; it keeps no GitHub token of its own. Turn it off and Abstract makes no gh calls.",
+  "entry": "index.html",
+  "capabilities": ["cli"],
+  "cli": {
+    "binary": "gh",
+    "install": "brew install gh",
+    "commands": [
+      { "args": ["auth", "status"], "access": "read" },
+      { "args": ["pr", "list"], "access": "read" },
+      { "args": ["pr", "view"], "access": "read" },
+      { "args": ["api", "graphql"], "access": "read" },
+      { "args": ["issue", "list"], "access": "read" },
+      { "args": ["issue", "view"], "access": "read" },
+      { "args": ["repo", "view"], "access": "read" },
+      { "args": ["pr", "create"], "access": "write" },
+      { "args": ["pr", "merge"], "access": "write" },
+      { "args": ["pr", "ready"], "access": "write" },
+      { "args": ["pr", "close"], "access": "write" },
+      { "args": ["pr", "update-branch"], "access": "write" },
+      { "args": ["run", "rerun"], "access": "write" }
+    ]
+  },
+  "background": "background.js",
+  "contributes": {
+    "settingsPage": { "id": "settings", "title": "GitHub", "symbol": "arrow.triangle.pull" },
+    "codeHost": {
+      "title": "GitHub",
+      "hosts": ["github.com"],
+      "operations": ["access", "listPullRequests", "pullRequest", "create", "merge", "markReady", "close",
+                     "reviewThreads", "rerunFailed", "updateBranch", "pushAccess", "searchIssuesAndPullRequests"]
+    }
+  }
+}

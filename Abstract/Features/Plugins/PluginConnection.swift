@@ -56,10 +56,20 @@ final class PluginConnection {
     func tearDown() { dead = true }
 
     /// A chat the person handed this plugin outside a snapshot (ABS-112).
-    func know(chatId: String) { bridge.know(chatId: chatId) }
+    func know(chatId: String) {
+        handedChats.insert(chatId)
+        bridge.know(chatId: chatId)
+    }
 
     /// A project core handed the plugin with a code host call (ABS-139).
-    func know(projectKey: String) { bridge.know(projectKey: projectKey) }
+    func know(projectKey: String) {
+        handedProjects.insert(projectKey)
+        bridge.know(projectKey: projectKey)
+    }
+
+    /// What the person or core handed it, kept across snapshots.
+    private var handedChats: Set<String> = []
+    private var handedProjects: Set<String> = []
 
     /// The grants as they stand now, not as they were when this copy
     /// started: revoking one in Settings stops the next call.
@@ -272,9 +282,9 @@ final class PluginConnection {
         guard ready, !dead, let current = model.plugins.plugin(plugin.id), current.isUsable else { return }
         let snapshot = model.pluginSnapshot(capabilities: current.record.grantedCapabilities,
                                             revision: model.plugins.nextRevision())
-        bridge.knownChatIds = Set(snapshot.chats?.map(\.id) ?? [])
+        bridge.knownChatIds = Set(snapshot.chats?.map(\.id) ?? []).union(handedChats)
         if let chatId = placement?.chatId { bridge.knownChatIds.insert(chatId) }
-        bridge.knownProjectKeys = Set(snapshot.projects?.map(\.key) ?? [])
+        bridge.knownProjectKeys = Set(snapshot.projects?.map(\.key) ?? []).union(handedProjects)
         send(type: "snapshot", payload: snapshot.jsonValue())
         onSnapshot()
     }

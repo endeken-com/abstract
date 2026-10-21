@@ -90,14 +90,6 @@ extension AppModel {
         }
     }
 
-    /// The code host for a project's `origin`.
-    func codeHost(projectId: String?, chatId: String? = nil) async -> CodeHost? {
-        guard let project = project(projectId) else { return nil }
-        let origin = await Git.originURL(executor(forProject: project.id), root: project.rootPath)
-        let key = pluginProjectKey(project.id)
-        return codeHost(remote: origin, context: CodeHostContext(projectKey: key, chatId: chatId))
-    }
-
     /// A project's plugin key: on this Mac, or the paired Mac it lives on.
     func pluginProjectKey(_ projectId: String) -> String {
         let mac = projects.contains { $0.id == projectId } ? remote.identity.id : remote.device(ofProject: projectId) ?? remote.identity.id

@@ -102,7 +102,7 @@ import AbstractCore
     @Test func checksReadFailingThenRunningThenPassed() throws {
         func pr(_ rollup: String, decision: String = "null") throws -> SidebarChats.PullRequestFacts {
             let json = #"{"number": 3981, "title": "t", "state": "OPEN", "isDraft": false, "headRefName": "b", "baseRefName": "main", "reviewDecision": \#(decision), "statusCheckRollup": [\#(rollup)]}"#
-            return SidebarChats.PullRequestFacts(try GitHub.decode(Data(json.utf8)))
+            return SidebarChats.PullRequestFacts(try GitHubPluginHarness.decode(Data(json.utf8)))
         }
         let pass = #"{"name": "a", "status": "COMPLETED", "conclusion": "SUCCESS"}"#
         let fail = #"{"name": "b", "status": "COMPLETED", "conclusion": "FAILURE"}"#
