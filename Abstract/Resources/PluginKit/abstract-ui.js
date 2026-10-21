@@ -153,7 +153,7 @@ var AbstractUI = (function () {
 
   // Redraws `container` with `render()`, then slides each child whose
   // data-key was already there from where it was: cards moving between
-  // columns glide instead of jumping. New ones fade in.
+  // columns glide instead of jumping. New ones rise into place.
   function flip(container, render) {
     var before = {};
     container.querySelectorAll("[data-key]").forEach(function (el) {
@@ -166,7 +166,7 @@ var AbstractUI = (function () {
       var old = before[el.dataset.key];
       if (!el.animate) return;
       if (!old) {
-        el.animate([{ opacity: 0, transform: "translateY(3px)" }, { opacity: 1, transform: "none" }],
+        el.animate([{ transform: "translateY(4px)" }, { transform: "none" }],
           { duration: 180, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" });
         return;
       }

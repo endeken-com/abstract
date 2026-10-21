@@ -44,7 +44,7 @@
 
 .board {
   display: grid;
-  grid-template-columns: repeat(4, minmax(240px, 1fr));
+  grid-template-columns: repeat(4, minmax(200px, 1fr));
   gap: var(--ab-space-md);
   align-items: start;
   min-width: min-content;

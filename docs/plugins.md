@@ -144,6 +144,35 @@ and a line below.
 
 ![Skeleton](images/plugin-kit/skeleton.png)
 
+## The bundled plugins
+
+Each in Graphite, Paper and Ink, from the demo (`--demo --snapshot`), with the Mac set to
+Light.
+
+**Kanban** — Board, List and Mine (what needs your answer or your review), remembered.
+J/K or the arrows move, H/L cross columns or groups, Enter opens, / searches, 1–3 switch tabs.
+
+![Kanban: Board](images/plugins/kanban-board.png)
+![Kanban: List](images/plugins/kanban-list.png)
+![Kanban: Mine](images/plugins/kanban-mine.png)
+
+**Approvals** — Waiting and Answered.
+
+![Approvals](images/plugins/approvals.png)
+
+**Chat count** and **Chat panel**, the samples.
+
+![Chat count](images/plugins/chat-count.png)
+![Chat panel](images/plugins/chat-panel.png)
+
+Tabs beside a chat, from the side panel's + menu: **Follow PR** (Following and History),
+**Second opinion**, **Lessons** and **Chat panel**.
+
+![Follow PR](images/plugins/panel-follow-pr.png)
+![Second opinion](images/plugins/panel-second-opinion.png)
+![Lessons](images/plugins/panel-lessons.png)
+![Chat panel](images/plugins/panel-chat-panel.png)
+
 ## Previewing a plugin
 
 `python3 docs/plugin-kit/preview.py` serves the bundled plugins, the kit and a stand-in
