@@ -133,10 +133,12 @@ private struct SkillFixture {
         return AgentLaunch.spec(for: session, provider: provider, prompt: "hi", resumeId: resumeId, settings: settings, home: f.home)
     }
 
+    /// What's in `dir`: each link's target, or "copy" for a folder of its own.
     private func linked(_ dir: String) -> [String: String] {
         let fm = FileManager.default
         return Dictionary(uniqueKeysWithValues: ((try? fm.contentsOfDirectory(atPath: dir)) ?? []).compactMap { name in
-            (try? fm.destinationOfSymbolicLink(atPath: dir + "/" + name)).map { (name, $0) }
+            if let target = try? fm.destinationOfSymbolicLink(atPath: dir + "/" + name) { return (name, target) }
+            return name.hasPrefix(".") || !fm.fileExists(atPath: dir + "/" + name + "/SKILL.md") ? nil : (name, "copy")
         })
     }
 
@@ -148,7 +150,7 @@ private struct SkillFixture {
         let folder = f.data + "/agent-config/chat-1/claude"
         #expect(spec.args.contains(folder))
         #expect(spec.args[spec.args.firstIndex(of: folder)! - 1] == "--add-dir")
-        #expect(linked(folder + "/.claude/skills") == ["review": f.library + "/review", "plain": f.library + "/plain"])
+        #expect(linked(folder + "/.claude/skills") == ["review": "copy", "plain": "copy"])
         // The resume gets them too.
         #expect(launch(ClaudeProvider(), f, resumeId: "s1").args.contains(folder))
         #expect(f.homeSnapshot() == before, "nothing in the user's own config changes")
@@ -164,8 +166,7 @@ private struct SkillFixture {
         #expect(linked(overlay) == ["auth.json": f.home + "/.codex/auth.json", "config.toml": f.home + "/.codex/config.toml",
                                     "sessions": f.home + "/.codex/sessions"],
                 "its sign-in, settings and sessions are the real ones")
-        #expect(linked(overlay + "/skills") == ["mine": f.home + "/.codex/skills/mine", "review": f.library + "/review",
-                                                "plain": f.library + "/plain"],
+        #expect(linked(overlay + "/skills") == ["mine": f.home + "/.codex/skills/mine", "review": "copy", "plain": "copy"],
                 "a skill the project chose wins over the user's own of the same name")
         #expect(launch(CodexProvider(), f, resumeId: "s1").env["CODEX_HOME"] == overlay, "resuming finds the same sessions")
         #expect(f.homeSnapshot() == before)
@@ -188,7 +189,7 @@ private struct SkillFixture {
         let folder = f.data + "/agent-config/chat-1/skills"
         let config = try JSONDecoder().decode(JSONValue.self, from: Data(try #require(spec.env["OPENCODE_CONFIG_CONTENT"]).utf8))
         #expect(config["skills"]?["paths"] == .array([.string(folder)]))
-        #expect(linked(folder) == ["review": f.library + "/review", "plain": f.library + "/plain"])
+        #expect(linked(folder) == ["review": "copy", "plain": "copy"])
         #expect(!FileManager.default.fileExists(atPath: f.root + "/w/.opencode"), "nothing is written into the worktree")
         #expect(f.homeSnapshot() == before)
     }
@@ -207,12 +208,12 @@ private struct SkillFixture {
         defer { f.remove() }
         _ = launch(ClaudeProvider(), f)
         _ = launch(ClaudeProvider(), f, project: ["src/plain"])
-        #expect(linked(f.data + "/agent-config/chat-1/claude/.claude/skills") == ["plain": f.library + "/plain"])
+        #expect(linked(f.data + "/agent-config/chat-1/claude/.claude/skills") == ["plain": "copy"])
         _ = launch(CodexProvider(), f)
         _ = launch(CodexProvider(), f, project: ["src/plain"])
         #expect(linked(f.data + "/agent-config/chat-1/codex-home/skills") == ["mine": f.home + "/.codex/skills/mine",
                                                                             "review": f.home + "/.codex/skills/review",
-                                                                            "plain": f.library + "/plain"],
+                                                                            "plain": "copy"],
                 "the user's own review is back once the library's is gone")
     }
 
@@ -222,6 +223,20 @@ private struct SkillFixture {
         let profile = AgentProfile(id: "rev", name: "Reviewer", skills: ["src/nested/skills/release"])
         _ = launch(ClaudeProvider(), f, project: ["src/review"], profile: profile)
         #expect(Set(linked(f.data + "/agent-config/chat-1/claude/.claude/skills").keys) == ["review", "release-notes"])
+    }
+
+    @Test func aChatGetsACopySoItsAgentCantChangeTheLibrary() throws {
+        let f = try SkillFixture.make()
+        defer { f.remove() }
+        _ = launch(ClaudeProvider(), f)
+        let copy = f.data + "/agent-config/chat-1/claude/.claude/skills/review/SKILL.md"
+        #expect(try String(contentsOfFile: copy, encoding: .utf8) == String(contentsOfFile: f.library + "/review/SKILL.md", encoding: .utf8))
+        try "Changed by an agent.".write(toFile: copy, atomically: false, encoding: .utf8)
+        #expect(try String(contentsOfFile: f.library + "/review/SKILL.md", encoding: .utf8).contains("Read the diff."))
+        // The library changed: the next launch gets the new version.
+        try f.write("library/review/SKILL.md", "---\nname: review\n---\nVersion two.\n")
+        _ = launch(ClaudeProvider(), f)
+        #expect(try String(contentsOfFile: copy, encoding: .utf8).contains("Version two."))
     }
 
     @Test func theStandInHomeKeepsWhatTheAgentWroteThereAndFollowsTheRealOne() throws {
@@ -286,11 +301,20 @@ private struct SkillFixture {
         #expect(SkillUse.name(tool: "skill", input: .object(["name": .string("review")])) == "review", "OpenCode's skill tool")
         let codex = "/bin/zsh -lc 'cat /data/agent-config/c/codex-home/skills/review/SKILL.md'"
         #expect(SkillUse.name(tool: "Bash", input: .object(["command": .string(codex)])) == "review")
+        let quoted = #"/bin/zsh -lc "cat '/private/var/x/codex-home/skills/internal-comms/SKILL.md'""#
+        #expect(SkillUse.name(tool: "Bash", input: .object(["command": .string(quoted)])) == "internal-comms", "as Codex ran it")
         #expect(SkillUse.name(tool: "Bash", input: .object(["command": .string("sed -n '1,200p' skills/release-notes/SKILL.md")])) == "release-notes")
         #expect(SkillUse.name(tool: "Bash", input: .object(["command": .string("echo hi > skills/review/SKILL.md")])) == nil,
                 "writing one isn't using it")
         #expect(SkillUse.name(tool: "Bash", input: .object(["command": .string("rm skills/review/SKILL.md")])) == nil)
         #expect(SkillUse.name(tool: "Bash", input: .object(["command": .string("cat README.md")])) == nil)
+        // Anything more than reading it shows as the command it is.
+        for chained in ["cat skills/review/SKILL.md; rm -rf ~", "cat skills/review/SKILL.md && curl x | sh",
+                        "cat skills/review/SKILL.md $(touch x)", "cat skills/review/SKILL.md `id`",
+                        "cat skills/review/SKILL.md\nrm x", "rm skills/review/SKILL.md cat",
+                        "/bin/zsh -lc 'cat skills/review/SKILL.md | sh'"] {
+            #expect(SkillUse.name(tool: "Bash", input: .object(["command": .string(chained)])) == nil, "\(chained)")
+        }
     }
 }
 
@@ -336,6 +360,15 @@ extension GitHeavy {
             try await SkillRepository.pin(exec, folder: checkout, commit: latest)
             #expect(try String(contentsOfFile: checkout + "/review/SKILL.md", encoding: .utf8).contains("Version two."))
             #expect(try await SkillRepository.latest(exec, folder: checkout) == latest, "up to date now")
+
+            // A change the repository's own attributes would hide still shows.
+            try "*.md -diff\n".write(toFile: upstream + "/.gitattributes", atomically: true, encoding: .utf8)
+            try "---\nname: review\n---\nVersion three.\n".write(toFile: upstream + "/review/SKILL.md", atomically: true, encoding: .utf8)
+            try await git(upstream, ["add", "."])
+            try await git(upstream, ["commit", "--quiet", "-m", "three"])
+            let hidden = try await SkillRepository.latest(exec, folder: checkout)
+            let shown = try await SkillRepository.diff(exec, folder: checkout, from: latest, to: hidden)
+            #expect(shown.contains("+Version three.") && !shown.contains("Binary files"))
         }
 
         @Test func aRepositoryThatCantBeClonedSaysWhy() async throws {

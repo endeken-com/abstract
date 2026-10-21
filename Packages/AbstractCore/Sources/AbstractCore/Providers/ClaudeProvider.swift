@@ -136,7 +136,7 @@ public struct ClaudeProvider: ProviderDefinition {
                 + Self.skillArgs(ctx.skills)
                 + (ctx.model.map { ["--model", $0] } ?? [])
                 + (ctx.effort.map { ["--effort", $0] } ?? []) + Self.styleArgs(ctx.outputStyle)
-                + Self.historyArgs(ctx.historyTool) + Self.instructionArgs(ctx) + resumeArgs + ctx.extraArgs,
+                + Self.mcpArgs(ctx.historyTool, ctx.pluginTools) + Self.instructionArgs(ctx) + resumeArgs + ctx.extraArgs,
             cwd: ctx.cwd,
             env: ["CLAUDE_CODE_BASH_EDIT_DIFF": "1"],
             stdinInitial: Self.userMessageLine(ctx.prompt, images: ctx.images),
@@ -159,16 +159,33 @@ public struct ClaudeProvider: ProviderDefinition {
     /// call becomes an approval request, and the instruction. Passed on
     /// every resume too, or the tool disappears.
     static func historyArgs(_ tool: HistoryToolLaunch?) -> [String] {
-        guard let tool else { return [] }
-        let config = JSONValue.object(["mcpServers": .object([
-            CodeHistory.serverName: .object([
-                "command": .string(tool.command),
-                "args": .array(tool.serverArgs.map(JSONValue.string)),
-            ]),
-        ])]).compact()
-        let allowed = [CodeHistory.historyTool, CodeHistory.excerptTool]
-            .map(CodeHistory.streamName).joined(separator: ",")
-        return ["--mcp-config", config, "--allowedTools", allowed]
+        mcpArgs(tool, nil)
+    }
+
+    /// The code-history server and the plugin-tools server (ABS-97) in
+    /// one config. Every plugin tool is allowed by its server's name:
+    /// Abstract asks itself for a tool set to Ask first, so Claude
+    /// mustn't ask again, and the list can change mid-chat.
+    static func mcpArgs(_ history: HistoryToolLaunch?, _ plugins: PluginToolsLaunch?) -> [String] {
+        var servers: [String: JSONValue] = [:]
+        var allowed: [String] = []
+        if let history {
+            servers[CodeHistory.serverName] = .object([
+                "command": .string(history.command),
+                "args": .array(history.serverArgs.map(JSONValue.string)),
+            ])
+            allowed += [CodeHistory.historyTool, CodeHistory.excerptTool].map(CodeHistory.streamName)
+        }
+        if let plugins {
+            servers[PluginTools.serverName] = .object([
+                "command": .string(plugins.command),
+                "args": .array(plugins.serverArgs.map(JSONValue.string)),
+            ])
+            allowed.append("mcp__\(PluginTools.serverName)")
+        }
+        guard !servers.isEmpty else { return [] }
+        let config = JSONValue.object(["mcpServers": .object(servers)]).compact()
+        return ["--mcp-config", config, "--allowedTools", allowed.joined(separator: ",")]
     }
 
     /// Everything appended to Claude's system prompt, as one argument:

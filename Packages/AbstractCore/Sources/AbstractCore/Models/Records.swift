@@ -41,6 +41,9 @@ public struct Project: Sendable, Hashable, Identifiable, Codable {
     /// The profiles the New Chat window offers in this project (ABS-101);
     /// nil = every profile shows.
     public var profileIds: [String]? = nil
+    /// Plugin tools (ABS-97) set to Allowed or Off here, by
+    /// `<plugin id>/<tool>`; any tool not listed asks first.
+    public var pluginTools: [String: PluginToolMode]? = nil
     /// The library skills this project's chats get (ABS-122), by id;
     /// nil (projects saved before, or from an older Mac) = none.
     public var skillIds: [String]? = nil

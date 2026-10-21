@@ -62,6 +62,9 @@ public struct LaunchSettings: Sendable {
     /// The code-history tool for this launch's chat, when its project
     /// gives agents that history; nil leaves the agent without it.
     public var codeHistory: CodeHistorySettings?
+    /// The `abstract` command that serves this launch's plugin tools
+    /// (ABS-97), when a plugin offers any; nil leaves the agent without.
+    public var pluginToolsCommand: String?
     /// The library skills this launch's chat gets (ABS-122).
     public var skills: [LibrarySkill]
     /// Where each chat's own launch files go (`ChatConfigFiles`); nil
@@ -127,6 +130,9 @@ public enum AgentLaunch {
                                     HistoryToolLaunch(command: $0.command, chatId: session.id, instructionFile: $0.instructionFile)
                                 },
                                 instructions: session.profileInstructions,
+                                pluginTools: settings.pluginToolsCommand.map {
+                                    PluginToolsLaunch(command: $0, chatId: session.id)
+                                },
                                 skills: skills(for: session, provider: provider, settings: settings, home: home))
         var spec = resumeId.map { provider.buildResume(ctx, resumeId: $0) } ?? provider.buildLaunch(ctx)
         if provider.id == "claude", let profile = settings.claudeProfile, profile != settings.standardClaudeProfile {

@@ -29,9 +29,11 @@ public enum SkillRepository {
         return commit
     }
 
-    /// What changes between two commits, as `git diff` prints it.
+    /// What changes between two commits, as `git diff` prints it: every
+    /// file as text, so the repository's own attributes can't hide a change.
     public static func diff(_ exec: any Executor, folder: String, from: String, to: String) async throws -> String {
-        try await git(exec, cwd: folder, ["diff", "--no-color", "--no-ext-diff", from, to])
+        try await git(exec, cwd: folder, ["-c", "core.attributesFile=/dev/null", "diff", "--no-color", "--no-ext-diff",
+                                          "--no-textconv", "--text", from, to])
     }
 
     /// Checks out `commit`, detached; anything changed by hand in the checkout is dropped.

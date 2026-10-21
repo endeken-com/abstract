@@ -232,8 +232,9 @@ struct ToolCallView: View {
                         if !openSwitch.set(next) { withAnimation(.snappy(duration: 0.2)) { open = next } }
                     } label: {
                 HStack(spacing: 6) {
-                    // A command reading a skill reads as using it (ABS-122).
-                    let skill = SkillUse.name(tool: call.name, input: call.input)
+                    // A command reading a skill reads as using it (ABS-122),
+                    // never while it waits for an answer: that shows what runs.
+                    let skill = asking ? nil : SkillUse.name(tool: call.name, input: call.input)
                     let name = skill == nil ? call.name : "skill"
                     ToolIcon(symbol: ToolPresentation.symbol(name), open: isOpen, hovering: hovering && !asking, failed: outcome.isFailure,
                              file: kind == .edit ? ToolPresentation.path(call) : nil)
@@ -802,7 +803,8 @@ extension EnvironmentValues {
 
 enum ToolPresentation {
     static func symbol(_ name: String) -> String {
-        switch name.lowercased() {
+        if PluginTools.toolName(inStreamName: name) != nil { return "puzzlepiece.extension" }
+        return switch name.lowercased() {
         case "read", "read_file", "notebookread": "doc.text"
         case "write", "write_file": "doc.badge.plus"
         case "edit", "edit_file", "multiedit", "notebookedit", "applypatch", "apply_patch", "file_change": "pencil"
@@ -829,6 +831,8 @@ enum ToolPresentation {
             case (_, false): "Read more of an earlier chat"
             }
         }
+        // A plugin's tool (ABS-97): the row names the plugin after the verb.
+        if PluginTools.toolName(inStreamName: name) != nil { return pending ? "Using" : "Used" }
         if pending {
             switch name.lowercased() {
             case "read", "read_file", "notebookread": return "Reading"
@@ -868,7 +872,8 @@ enum ToolPresentation {
 
     /// A plain request for an approval row: "Edit", "Run", "Create".
     static func ask(_ name: String) -> String {
-        switch name.lowercased() {
+        if PluginTools.toolName(inStreamName: name) != nil { return "Use" }
+        return switch name.lowercased() {
         case "edit", "edit_file", "multiedit", "notebookedit": "Edit"
         case "write", "write_file": "Create"
         case "bash", "shell": "Run"
@@ -931,6 +936,7 @@ enum ToolPresentation {
 
     static func target(_ call: ToolCall, root: String? = nil) -> ToolTarget? {
         let o = call.input.object ?? [:]
+        if let plugin = PluginToolLabels.shared.label(call.name) { return .text(plugin) }
         switch ToolKind(call.name) {
         case .command:
             return command(call).map { .command($0.split(separator: "\n").first.map(String.init) ?? $0) }

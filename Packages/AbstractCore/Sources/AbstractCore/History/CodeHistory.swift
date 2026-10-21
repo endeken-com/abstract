@@ -27,6 +27,8 @@ public enum CodeHistory {
     /// agent's spelling (`mcp__abstract-code-history__code_history`,
     /// OpenCode's `abstract-code-history_code_history`, the bare name).
     public static func tool(inStreamName name: String) -> String? {
+        // A plugin's tool (ABS-97) may end the same way; it isn't ours.
+        if PluginTools.toolName(inStreamName: name) != nil { return nil }
         for tool in [historyTool, excerptTool] where name == tool || name.hasSuffix("__\(tool)") || name.hasSuffix("_\(tool)") {
             return tool
         }
