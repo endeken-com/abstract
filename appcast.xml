@@ -5,10 +5,10 @@
     <link>https://endeken-com.github.io/abstract/appcast.xml</link>
     <language>en</language>
     <item>
-      <title>Abstract 0.12.0-nightly.42</title>
-      <pubDate>Wed, 21 Oct 2026 04:18:05 GMT</pubDate>
-      <sparkle:version>0.12.0.42</sparkle:version>
-      <sparkle:shortVersionString>0.12.0-nightly.42</sparkle:shortVersionString>
+      <title>Abstract 0.12.0-nightly.43</title>
+      <pubDate>Wed, 21 Oct 2026 11:03:09 GMT</pubDate>
+      <sparkle:version>0.12.0.43</sparkle:version>
+      <sparkle:shortVersionString>0.12.0-nightly.43</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
       <sparkle:channel>nightly</sparkle:channel>
       <sparkle:fullReleaseNotesLink>https://github.com/endeken-com/abstract/releases/tag/nightly</sparkle:fullReleaseNotesLink>
@@ -46,6 +46,7 @@
 &lt;li&gt;Plugins follow Abstract's theme from the first frame, share a polished design kit, and the bundled plugins use tabs by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/wesguirra/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/wesguirra"&gt;@wesguirra&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5953873107" data-permission-text="Title is private" data-url="https://github.com/endeken-com/abstract/issues/114" data-hovercard-type="pull_request" data-hovercard-url="/endeken-com/abstract/pull/114/hovercard" href="https://github.com/endeken-com/abstract/pull/114"&gt;#114&lt;/a&gt;&lt;/li&gt;
 &lt;li&gt;Messages sent while the agent works are queued, or steer or interrupt the turn, for every agent by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/wesguirra/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/wesguirra"&gt;@wesguirra&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5953729785" data-permission-text="Title is private" data-url="https://github.com/endeken-com/abstract/issues/112" data-hovercard-type="pull_request" data-hovercard-url="/endeken-com/abstract/pull/112/hovercard" href="https://github.com/endeken-com/abstract/pull/112"&gt;#112&lt;/a&gt;&lt;/li&gt;
 &lt;li&gt;Manage skills once in Abstract and give them to every agent in a project by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/wesguirra/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/wesguirra"&gt;@wesguirra&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5953937814" data-permission-text="Title is private" data-url="https://github.com/endeken-com/abstract/issues/115" data-hovercard-type="pull_request" data-hovercard-url="/endeken-com/abstract/pull/115/hovercard" href="https://github.com/endeken-com/abstract/pull/115"&gt;#115&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;Workflows hand a chat from profile to profile, automations start on chat events, and settings get a cleaner layout by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/wesguirra/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/wesguirra"&gt;@wesguirra&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5955102464" data-permission-text="Title is private" data-url="https://github.com/endeken-com/abstract/issues/116" data-hovercard-type="pull_request" data-hovercard-url="/endeken-com/abstract/pull/116/hovercard" href="https://github.com/endeken-com/abstract/pull/116"&gt;#116&lt;/a&gt;&lt;/li&gt;
 &lt;/ul&gt;
 &lt;h3 dir="auto"&gt;Fixed&lt;/h3&gt;
 &lt;ul dir="auto"&gt;
@@ -58,8 +59,8 @@
 &lt;li&gt;Speed up required checks with parallel builds and caching by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/wesguirra/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/wesguirra"&gt;@wesguirra&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5941606072" data-permission-text="Title is private" data-url="https://github.com/endeken-com/abstract/issues/102" data-hovercard-type="pull_request" data-hovercard-url="/endeken-com/abstract/pull/102/hovercard" href="https://github.com/endeken-com/abstract/pull/102"&gt;#102&lt;/a&gt;&lt;/li&gt;
 &lt;li&gt;Attach demo-mode screenshots of every screen to each pull request by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/wesguirra/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/wesguirra"&gt;@wesguirra&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5952964656" data-permission-text="Title is private" data-url="https://github.com/endeken-com/abstract/issues/111" data-hovercard-type="pull_request" data-hovercard-url="/endeken-com/abstract/pull/111/hovercard" href="https://github.com/endeken-com/abstract/pull/111"&gt;#111&lt;/a&gt;&lt;/li&gt;
 &lt;/ul&gt;
-&lt;p dir="auto"&gt;&lt;strong&gt;Full Changelog&lt;/strong&gt;: &lt;a class="commit-link" href="https://github.com/endeken-com/abstract/compare/v0.11.0...12f5eefb92ab30e91c15b5fbbd2696e23a3508e8"&gt;&lt;tt&gt;v0.11.0...12f5eef&lt;/tt&gt;&lt;/a&gt;&lt;/p&gt;</description>
-      <enclosure url="https://github.com/endeken-com/abstract/releases/download/nightly/Abstract-0.12.0-nightly.42.dmg" length="59700494" type="application/octet-stream" sparkle:edSignature="GyVpqXt7m3YmB5XTiZ72UnlSXIrTsRxcgCnaR0ZJeXXXe58x+0kYKUuRB/uM1vV4kChp654qfO2Oxno1LTYYAA==" />
+&lt;p dir="auto"&gt;&lt;strong&gt;Full Changelog&lt;/strong&gt;: &lt;a class="commit-link" href="https://github.com/endeken-com/abstract/compare/v0.11.0...8549f43044ac593f2737d930bb984b3a4f6ba4fd"&gt;&lt;tt&gt;v0.11.0...8549f43&lt;/tt&gt;&lt;/a&gt;&lt;/p&gt;</description>
+      <enclosure url="https://github.com/endeken-com/abstract/releases/download/nightly/Abstract-0.12.0-nightly.43.dmg" length="60477989" type="application/octet-stream" sparkle:edSignature="jdK4p/VrPt49sXCFkjY7vn9rlVsPq9msLnR8oi2rSqz7mlDNFGf+2zUk5+V4bFQK6Xg9d6nQapQLrNtx17HwDA==" />
     </item>
     <item>
       <title>Abstract 0.11.0</title>
