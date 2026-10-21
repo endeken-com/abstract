@@ -11,7 +11,7 @@ public enum AutomationDeviceRun {
     ///     its record on the other Mac can be found.
     public static func plan(_ a: Automation, deviceName: String, snapshot: RemoteSnapshot?, localProject: Project?,
                             name: String, nameSource: ChatNameSource, slug: String?,
-                            profile: AgentProfile? = nil) throws -> RemoteRunStart {
+                            profile: AgentProfile? = nil, workflow: WorkflowProgress? = nil) throws -> RemoteRunStart {
         // A run from a profile starts with the profile's setup as it is
         // now (ABS-101), on the other Mac as here.
         let a = a.resolved(with: profile)
@@ -20,6 +20,9 @@ public enum AutomationDeviceRun {
         }
         guard snapshot.automationDevice == true else {
             throw AbstractError.message("\(deviceName) needs a newer version of Abstract to run an automation started from here.")
+        }
+        if workflow != nil, snapshot.workflows != true {
+            throw AbstractError.message("\(deviceName) needs a newer version of Abstract to run a workflow started from here.")
         }
         let agent = RetiredAgents.current(a.providerId)
         guard snapshot.providers.contains(agent) else {
@@ -39,7 +42,8 @@ public enum AutomationDeviceRun {
                               policy: a.permissionPolicy, model: a.model, effort: a.effort,
                               name: name, nameSource: nameSource,
                               slug: projectId == nil ? nil : slug, automationId: a.id,
-                              profile: profile.flatMap { $0.id == a.profileId ? $0.snapshot : nil })
+                              profile: profile.flatMap { $0.id == a.profileId ? $0.snapshot : nil },
+                              workflow: workflow)
     }
 
     /// Whether that Mac has its own record of `project`, for the edit page

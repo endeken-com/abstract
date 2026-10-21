@@ -109,6 +109,11 @@ struct AutomationDraft: Equatable {
     /// The profile each run starts from; choosing one fills the agent,
     /// model, effort and permissions below, which can still change.
     var profileId: String?
+    /// The workflow each run's chat follows; takes over from the profile.
+    var workflowId: String?
+    /// What happens in Abstract that starts a run, beside the schedules.
+    var events: [AutomationEvent] = []
+    var eventTarget: AutomationEventTarget = .triggeringChat
     var providerId: String
     var modelId: String?
     var effort: String?
@@ -142,6 +147,9 @@ struct AutomationDraft: Equatable {
         deviceId = a.deviceId
         triggers = a.triggers.map(TriggerDraft.init)
         profileId = a.profileId
+        workflowId = a.workflowId
+        events = a.events
+        eventTarget = a.eventTarget
         providerId = a.providerId
         modelId = a.model
         effort = a.effort
@@ -176,7 +184,10 @@ struct AutomationDraft: Equatable {
         a.projectId = projectId
         a.deviceId = deviceId
         a.triggers = triggers.map { $0.trigger(now: now) }
-        a.profileId = profileId
+        a.profileId = workflowId == nil ? profileId : nil
+        a.workflowId = workflowId
+        a.events = events
+        a.eventTarget = eventTarget
         a.providerId = providerId
         a.model = modelId
         a.effort = effort
@@ -207,7 +218,8 @@ struct AutomationDraft: Equatable {
     func differs(from a: Automation) -> Bool {
         let saved = automation(base: a)
         return saved.name != a.name || saved.prompt != a.prompt || saved.projectId != a.projectId || saved.deviceId != a.deviceId
-            || saved.profileId != a.profileId
+            || saved.profileId != a.profileId || saved.workflowId != a.workflowId
+            || saved.events != a.events || saved.eventTarget != a.eventTarget
             || saved.providerId != a.providerId || saved.model != a.model || saved.effort != a.effort
             || saved.permissionPolicy != a.permissionPolicy || saved.workspaceMode != a.workspaceMode
             || saved.pinnedSessionId != a.pinnedSessionId || saved.concurrency != a.concurrency
@@ -218,6 +230,7 @@ struct AutomationDraft: Equatable {
     /// Why Save is off, in a few words.
     var blocker: String? {
         if prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "Instructions are empty" }
+        if workflowId != nil, deviceId != nil, isPinned { return "A workflow runs on this Mac in a chat it continues" }
         if triggers.contains(where: { !TriggerCheck($0).isValid }) { return "A trigger needs fixing" }
         return nil
     }
@@ -239,8 +252,11 @@ struct AutomationSettings: View {
             TriggerList(triggers: $draft.triggers, concurrency: $draft.concurrency, missedRuns: $draft.missedRuns,
                         onlyWhenChanged: $draft.onlyWhenChanged,
                         showsChanged: draft.projectId != nil && draft.deviceId == nil, active: active,
+                        hasEvents: !draft.events.isEmpty,
                         defaultTimezone: model.defaultTimezone)
                 .padding(.top, Space.xxs)
+            EventList(draft: $draft)
+                .padding(.top, Space.xs)
 
             ScopeSentence(draft: $draft)
                 .padding(.top, Space.xl)
@@ -270,6 +286,8 @@ private struct TriggerList: View {
     /// A project on this Mac is what "changed since the last run" reads.
     let showsChanged: Bool
     let active: Bool
+    /// Events start it too, so no schedule doesn't mean by hand only.
+    let hasEvents: Bool
     let defaultTimezone: String
 
     var body: some View {
@@ -287,12 +305,12 @@ private struct TriggerList: View {
                         triggers.append(TriggerDraft(timezone: triggers.last?.timezone ?? defaultTimezone))
                     }
                 }
-                if triggers.isEmpty {
+                if triggers.isEmpty, !hasEvents {
                     Text("With no triggers it runs only when you start it with Run now.")
                         .font(.btCallout)
                         .foregroundStyle(Color.btTextTertiary)
                         .padding(.top, Space.xxs)
-                } else {
+                } else if !triggers.isEmpty {
                     VStack(alignment: .leading, spacing: 2) {
                         sentence("If the last run is still going,") {
                             SentenceMenu(title: concurrency.phrase, quiet: true) {
@@ -491,6 +509,134 @@ private struct AddTriggerRow: View {
     }
 }
 
+// MARK: Events
+
+/// Things that happen to chats that start a run, as sentences like the
+/// schedules above: "When a chat [is archived]", and where its run goes.
+private struct EventList: View {
+    @Environment(AppModel.self) private var model
+    @Binding var draft: AutomationDraft
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(draft.events) { event in
+                EventRow(event: event, others: draft.events, replace: { new in
+                    if let i = draft.events.firstIndex(of: event) { draft.events[i] = new }
+                }, remove: {
+                    withAnimation(.snappy(duration: 0.18)) { draft.events.removeAll { $0 == event } }
+                })
+            }
+            if draft.events.count < AutomationEvent.allCases.count {
+                AddEventRow(available: AutomationEvent.allCases.filter { !draft.events.contains($0) }) { event in
+                    withAnimation(.snappy(duration: 0.18)) { draft.events.append(event) }
+                }
+            }
+            if !draft.events.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 1) {
+                        Text("A run an event starts")
+                            .font(.btBody)
+                            .foregroundStyle(Color.btTextTertiary)
+                        SentenceMenu(title: draft.eventTarget.phrase, quiet: true) {
+                            Picker("Where", selection: $draft.eventTarget) {
+                                ForEach(AutomationEventTarget.allCases, id: \.self) { Text($0.option).tag($0) }
+                            }
+                            .pickerStyle(.inline)
+                            .labelsHidden()
+                        }
+                    }
+                    Text(scopeNote)
+                        .font(.btCallout)
+                        .foregroundStyle(Color.btTextTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 2)
+                }
+                .padding(.top, Space.xs)
+            }
+        }
+    }
+
+    private var scopeNote: String {
+        let project = model.project(draft.projectId)?.name
+        let whose = project.map { "Chats in \($0)" } ?? "Chats in any project"
+        return "\(whose) count, here on this Mac. What a run leads to never starts the same automation again, so automations can't keep starting each other."
+    }
+}
+
+private struct EventRow: View {
+    let event: AutomationEvent
+    let others: [AutomationEvent]
+    let replace: (AutomationEvent) -> Void
+    let remove: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Image(systemName: event.symbol)
+                .font(.system(size: 12, weight: .regular))
+                .foregroundStyle(Color.btTextTertiary)
+                .frame(width: AutoPage.gutter, alignment: .leading)
+            HStack(spacing: 1) {
+                SentenceWord("When a chat")
+                SentenceMenu(title: event.phrase) {
+                    ForEach(AutomationEvent.allCases.filter { $0 == event || !others.contains($0) }) { option in
+                        Toggle(isOn: Binding(get: { option == event }, set: { _ in replace(option) })) {
+                            Text(option.title)
+                            Text(option.detail)
+                        }
+                    }
+                }
+            }
+            Spacer(minLength: Space.md)
+            Button(action: remove) {
+                Image(systemName: "xmark").font(.system(size: 9.5, weight: .semibold))
+            }
+            .buttonStyle(.icon(size: 22))
+            .help("Remove event")
+            .opacity(hovering ? 1 : 0)
+            .allowsHitTesting(hovering)
+        }
+        .frame(minHeight: 32)
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .accessibilityElement(children: .contain)
+        .accessibilityAction(named: "Remove event", remove)
+    }
+}
+
+private struct AddEventRow: View {
+    let available: [AutomationEvent]
+    let add: (AutomationEvent) -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Menu {
+            ForEach(available) { event in
+                Button { add(event) } label: {
+                    Text(event.title)
+                    Text(event.detail)
+                }
+            }
+        } label: {
+            HStack(spacing: 0) {
+                Image(systemName: "bolt")
+                    .font(.system(size: 11, weight: .medium))
+                    .frame(width: AutoPage.gutter, alignment: .leading)
+                Text("Add event").font(.btBody)
+            }
+            .foregroundStyle(hovering ? Color.btText : Color.btTextSecondary)
+            .frame(height: 32)
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .onHover { hovering = $0 }
+        .help("Start a run when something happens to a chat")
+    }
+}
+
 // MARK: Scope
 
 /// Which chat each run happens in, and how, as one sentence of choices:
@@ -515,11 +661,13 @@ private struct ScopeSentence: View {
                 }
                 SentenceWord("on")
                 deviceMenu
-                if chat == nil {
-                    if !model.profiles.isEmpty {
-                        SentenceWord("as")
+                if chat == nil || draft.workflowId != nil {
+                    if !model.profiles.isEmpty || !model.workflows.isEmpty {
+                        SentenceWord(draft.workflowId == nil ? "as" : "following")
                         profileMenu
                     }
+                }
+                if chat == nil {
                     SentenceWord("using")
                     AgentChip(providerId: $draft.providerId, modelId: $draft.modelId, effort: $draft.effort, device: draft.deviceId)
                     SentenceWord("with")
@@ -637,8 +785,10 @@ private struct ScopeSentence: View {
     /// choosing one sets the agent, model, effort and permissions, and
     /// its instructions go to the agent at every run.
     private var profileMenu: some View {
-        SentenceMenu(title: model.profile(draft.profileId)?.name ?? "no profile") {
-            Picker("Profile", selection: Binding(get: { draft.profileId }, set: { chooseProfile($0) })) {
+        SentenceMenu(title: model.workflow(draft.workflowId).map { "the “\($0.name)” workflow" }
+                     ?? model.profile(draft.profileId)?.name ?? "no profile") {
+            Picker("Profile", selection: Binding(get: { draft.workflowId == nil ? draft.profileId : nil },
+                                                 set: { chooseProfile($0) })) {
                 Text("No Profile").tag(String?.none)
                 ForEach(model.profiles) { profile in
                     Label(profile.name, systemImage: profile.iconSymbol ?? "person.crop.circle")
@@ -647,12 +797,35 @@ private struct ScopeSentence: View {
             }
             .pickerStyle(.inline)
             .labelsHidden()
+            if !model.workflows.isEmpty {
+                Section("Follows a Workflow") {
+                    Picker("Workflow", selection: Binding(get: { draft.workflowId }, set: { chooseWorkflow($0) })) {
+                        ForEach(model.workflows) { workflow in
+                            Label(workflow.name, systemImage: workflow.iconSymbol ?? Workflow.defaultSymbol)
+                                .tag(Optional(workflow.id))
+                        }
+                    }
+                    .pickerStyle(.inline)
+                    .labelsHidden()
+                }
+            }
             Divider()
-            Text("Each run starts from the profile as it is then, instructions included. Manage profiles in Settings › Profiles.")
+            Text("Each run starts from the profile as it is then, instructions included; a workflow hands its chat from step to step. Manage them in Settings.")
         }
     }
 
+    private func chooseWorkflow(_ id: String?) {
+        draft.workflowId = id
+        draft.profileId = nil
+        guard let first = model.workflow(id)?.steps.first, let profile = model.profile(first.profileId) else { return }
+        draft.providerId = profile.providerId
+        draft.modelId = profile.model
+        draft.effort = profile.effort
+        draft.policy = profile.permissionPolicy
+    }
+
     private func chooseProfile(_ id: String?) {
+        draft.workflowId = nil
         draft.profileId = id
         guard let profile = model.profile(id) else { return }
         draft.providerId = profile.providerId
@@ -703,6 +876,14 @@ private struct ScopeSentence: View {
         if draft.isPinned {
             note("Its agent can start chats of their own, each in its own worktree, with the abstract command line "
                  + "(Settings › General › Command line).")
+        }
+        if let workflow = model.workflow(draft.workflowId) {
+            if let problem = workflow.problem(profiles: model.profiles) {
+                note("“\(workflow.name)”: \(problem) Runs fail until it's fixed in Settings › Workflows.", warning: true)
+            } else {
+                note("Each run's chat goes through \(workflow.steps.compactMap { model.profile($0.profileId)?.name }.joined(separator: ", then ")), "
+                     + "with the instructions as its task. The agent, model and permissions are each step's own.")
+            }
         }
         if chat == nil, draft.policy == .ask {
             note("Nobody is there to answer while it runs: a run stops at its first tool call until you answer in its chat.")

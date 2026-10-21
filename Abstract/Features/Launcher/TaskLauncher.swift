@@ -26,6 +26,8 @@ struct TaskLauncher: View {
     @State private var standalone = false
     /// The profile the fields below were filled from; they can still change.
     @State private var profileId: String?
+    /// The workflow the chat runs; its first step's profile fills the fields.
+    @State private var workflowId: String?
     @State private var providerId = "claude"
     @State private var modelId: String?
     @State private var effort: String?
@@ -78,20 +80,29 @@ struct TaskLauncher: View {
                             Button("Add Project…") { model.isAddingProject = true }
                         }
                     }
-                    if !offeredProfiles.isEmpty {
-                        CompactMenu(title: offeredProfiles.first { $0.id == profileId }?.name ?? "No profile") {
-                            Picker("Profile", selection: profileBinding) {
+                    if !offeredProfiles.isEmpty || !model.workflows.isEmpty {
+                        CompactMenu(title: setupTitle) {
+                            Picker("Profile", selection: setupBinding) {
                                 Text("No Profile").tag(String?.none)
                                 ForEach(offeredProfiles) { profile in
                                     Label(profile.name, systemImage: profile.iconSymbol ?? "person.crop.circle")
-                                        .tag(Optional(profile.id))
+                                        .tag(Optional("profile:\(profile.id)"))
                                 }
                             }
                             .pickerStyle(.inline)
+                            if !model.workflows.isEmpty {
+                                Picker("Workflow", selection: setupBinding) {
+                                    ForEach(model.workflows) { workflow in
+                                        Label(workflow.name, systemImage: workflow.iconSymbol ?? Workflow.defaultSymbol)
+                                            .tag(Optional("workflow:\(workflow.id)"))
+                                    }
+                                }
+                                .pickerStyle(.inline)
+                            }
                             Divider()
-                            Text("A profile fills in the agent, model, effort and permissions, and gives the agent its instructions. Manage them in Settings › Profiles.")
+                            Text("A profile fills in the agent, model, effort and permissions, and gives the agent its instructions. A workflow hands the chat from one profile to the next. Manage them in Settings.")
                         }
-                        .help("Start from a saved setup")
+                        .help("Start from a saved setup or a workflow")
                     }
                     CompactMenu(title: ProviderRegistry.name(providerId), logo: providerId) {
                         Picker("Agent", selection: providerBinding) {
@@ -253,10 +264,24 @@ struct TaskLauncher: View {
         return offered
     }
 
-    private var profileBinding: Binding<String?> {
-        Binding(get: { profileId }, set: { new in
-            profileId = new
-            guard let profile = model.profile(new) else { return }
+    private var setupTitle: String {
+        if let workflow = model.workflow(workflowId) { return workflow.name }
+        return offeredProfiles.first { $0.id == profileId }?.name ?? "No profile"
+    }
+
+    /// A profile ("profile:<id>") or a workflow ("workflow:<id>"); a
+    /// workflow's first step fills the fields in.
+    private var setupBinding: Binding<String?> {
+        Binding(get: {
+            workflowId.map { "workflow:\($0)" } ?? profileId.map { "profile:\($0)" }
+        }, set: { new in
+            let parts = new?.split(separator: ":", maxSplits: 1).map(String.init) ?? []
+            let kind = parts.first, id = parts.count > 1 ? parts[1] : nil
+            workflowId = kind == "workflow" ? id : nil
+            profileId = kind == "profile" ? id : nil
+            let profile = model.profile(profileId)
+                ?? model.workflow(workflowId)?.steps.first.flatMap { model.profile($0.profileId) }
+            guard let profile else { return }
             providerId = profile.providerId
             modelId = profile.model
             effort = profile.effort
@@ -330,17 +355,26 @@ struct TaskLauncher: View {
         error = nil
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let profile = model.profile(profileId)?.snapshot
+        let workflow = model.workflow(workflowId)
         Task {
             do {
+                if let workflow, let problem = workflow.problem(profiles: model.profiles) {
+                    throw AbstractError.message("“\(workflow.name)” can't start: \(problem)")
+                }
+                let progress = workflow.map { model.workflowProgress($0) }
                 if let device, let projectId {
+                    if progress != nil, model.remote.links[device]?.snapshot?.workflows != true {
+                        throw AbstractError.message("That Mac needs a newer version of Abstract to run a workflow.")
+                    }
                     let id = try await model.remote.startChat(on: device, RemoteStart(
                         projectId: projectId, providerId: providerId, prompt: text, attachments: attachments, baseRef: baseRef,
-                        policy: policy, model: modelId, effort: effort, worktree: worktree?.path, profile: profile))
+                        policy: policy, model: modelId, effort: effort, worktree: worktree?.path, profile: profile,
+                        workflow: progress))
                     model.open(id, newTab: true)
                 } else {
                     try await model.startChat(projectId: projectId, providerId: providerId, prompt: text, attachments: attachments,
                                               baseRef: baseRef, policy: policy, model: modelId, effort: effort, existing: worktree,
-                                              profile: profile)
+                                              profile: profile, workflow: progress)
                 }
                 prompt = ""
                 attachments = []

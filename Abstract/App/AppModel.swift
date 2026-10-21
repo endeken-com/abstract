@@ -84,6 +84,11 @@ final class AppModel {
     var automations: [Automation] = []
     /// The named setups chats and automations can start from (ABS-101).
     var profiles: [AgentProfile] = []
+    /// Profiles taking turns on a chat; see AppModel+Workflows.
+    var workflows: [Workflow] = []
+    /// The automations that led to each chat's latest turn, so an event in
+    /// it never starts them again; a message you send clears it.
+    @ObservationIgnored var eventChains: [String: Set<String>] = [:]
     /// What "Pause everything" turned off, kept across launches so Resume
     /// restores it; see AppModel+Pause.
     var pauseState: PauseState { didSet { save("pauseState", pauseState) } }
@@ -185,7 +190,7 @@ final class AppModel {
     var lineComments: [String: [LineComment]] = [:]
     /// Each chat's pull request, by chat id: the list's summary, or the full
     /// detail once its tab has loaded it. A chat takes its title as its name.
-    var pullRequests: [String: PullRequest] = [:] { didSet { nameChatsForPullRequests() } }
+    var pullRequests: [String: PullRequest] = [:] { didSet { nameChatsForPullRequests(); notePullRequestEvents() } }
     /// Recent pull requests of each GitHub project, by project id.
     var projectPullRequests: [String: [PullRequest]] = [:]
     var githubAccess: GitHubAccess?
@@ -421,6 +426,7 @@ final class AppModel {
         sessions = (try? store.sessions()) ?? []
         automations = (try? store.automations()) ?? []
         profiles = (try? store.profiles()) ?? []
+        workflows = (try? store.workflows()) ?? []
         reloadSkills()
         permissionRules = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, (try? store.permissionRules(projectId: $0.id)) ?? []) })
         toolServers = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, (try? store.toolServers(projectId: $0.id)) ?? []) })
@@ -736,13 +742,22 @@ final class AppModel {
     func startChat(projectId: String?, providerId: String, prompt text: String, attachments: [PromptAttachment] = [], baseRef: String?,
                    policy: PermissionPolicy, model: String? = nil, effort: String? = nil, existing: WorktreeInfo? = nil,
                    name: String? = nil, nameSource: ChatNameSource = .manual, slug: String? = nil, automationId: String? = nil,
-                   profile: ProfileSnapshot? = nil, reviewing: String? = nil, select: Bool = true) async throws -> String {
+                   profile: ProfileSnapshot? = nil, workflow: WorkflowProgress? = nil, reviewing: String? = nil,
+                   select: Bool = true) async throws -> String {
         let project = project(projectId)
         if projectId != nil, project == nil { throw AbstractError.notFound("project") }
+        // A workflow's first step has the chat from the start, with its
+        // prompt ahead of the task.
+        let firstStep = workflow?.current?.resolve(in: profiles)
+        if workflow != nil, firstStep == nil { throw AbstractError.message("The workflow's first step has no profile.") }
+        let asked = text
+        let text = workflow.map { WorkflowEngine.firstMessage($0.workflow, task: text) } ?? text
+        let providerId = firstStep?.providerId ?? providerId
+        let model = firstStep != nil ? firstStep?.model : model
         let prompt = PromptAttachments.message(text, attachments)
         let images = PromptAttachments.images(attachments)
         // Named for what was asked, or for what was attached when nothing was typed.
-        let gist = text.isEmpty ? attachments.map(\.label).joined(separator: ", ") : text
+        let gist = asked.isEmpty ? attachments.map(\.label).joined(separator: ", ") : asked
         let provisional = name ?? Workspace.title(fromPrompt: gist)
         let naming: Task<Result<ChatNaming.Suggestion, ChatNaming.Failure>, Never>? = name != nil ? nil : Task {
             await suggestedNaming(instructions: project?.namingInstructions, providerId: providerId,
@@ -754,6 +769,7 @@ final class AppModel {
         // The profile it starts from, as it is now; editing the profile
         // later changes later chats, never this one (ABS-101).
         if let profile { session.apply(profile) }
+        if let firstStep, let workflow { session.takeStep(firstStep, in: workflow) }
         session.reviewsSessionId = reviewing
         session.nameSource = name == nil ? .fallback : nameSource
         if naming != nil { namingRequests.insert(session.id) }
@@ -1059,7 +1075,9 @@ final class AppModel {
         setStatus(session.id, .running)
     }
 
-    func sendFollowUp(_ sessionId: String, text: String, attachments: [PromptAttachment] = []) throws {
+    /// `chain`: the automations that led to this message (see `eventChains`);
+    /// none for one you send.
+    func sendFollowUp(_ sessionId: String, text: String, attachments: [PromptAttachment] = [], chain: Set<String> = []) throws {
         if sessionId.hasPrefix(RemoteService.mirrorPrefix) {
             throw AbstractError.message("Send this message from the remote chat's composer.")
         }
@@ -1067,6 +1085,7 @@ final class AppModel {
         guard let session = session(sessionId), let provider = ProviderRegistry.provider(session.providerId) else { return }
         // Its agent starts once it's set up, with the chat's first message.
         if setups[sessionId] != nil { throw AbstractError.message("“\(session.name)” is still being set up; its agent starts after.") }
+        eventChains[sessionId] = chain.isEmpty ? nil : chain
         // Mid-turn it waits, and goes as the next turn.
         if turnInProgress(sessionId) {
             if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty {
@@ -1628,6 +1647,7 @@ final class AppModel {
             return
         }
         guard var s = session(sessionId) else { return }
+        let wasArchived = s.archivedAt != nil
         s.archivedAt = archived ? Date() : nil
         try? store.save(s)
         if archived {
@@ -1635,6 +1655,7 @@ final class AppModel {
             syncDestinationWithTabs(leaving: sessionId)
         }
         reload()
+        if archived, !wasArchived { automationEvent(.chatArchived, in: sessionId) }
     }
 
     func delete(_ sessionId: String, removeWorktree: Bool) async {

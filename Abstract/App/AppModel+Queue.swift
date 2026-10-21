@@ -142,7 +142,11 @@ extension AppModel {
         guard !handingOff.contains(sessionId), !relaunching.contains(sessionId), !turnInProgress(sessionId) else { return }
         let interrupted = interrupting.remove(sessionId) != nil
         guard FollowUp.sendsQueue(after: status, stopped: stopped, interrupting: interrupted) else { return }
-        sendQueue(sessionId)
+        guard engine.queued(sessionId: sessionId).isEmpty else { sendQueue(sessionId); return }
+        // Done, unless its workflow hands it on: the chat waits for you.
+        if !stopped, !workflowTurnEnded(sessionId, status, stopped: stopped), runningBackgroundTasks(sessionId) == 0 {
+            automationEvent(.turnFinished, in: sessionId)
+        }
     }
 
     /// The queue goes now, as the chat's next turn.

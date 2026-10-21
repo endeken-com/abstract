@@ -80,13 +80,14 @@ extension AppModel {
 
     /// A run in a chat that already exists: its instructions arrive as your
     /// next message would, so its agent picks up where it left off.
-    func deliverAutomationRun(_ prompt: String, to chatId: String) async throws {
+    /// `chain`: the automations that led to it, for an event's run.
+    func deliverAutomationRun(_ prompt: String, to chatId: String, chain: Set<String> = []) async throws {
         guard let chat = session(chatId) else { throw AbstractError.notFound("chat") }
         if chat.archivedAt != nil { setArchived(chatId, false) }
         if chatId.hasPrefix(RemoteService.mirrorPrefix) {
             try await sendRemoteFollowUp(chatId, text: prompt)
         } else {
-            try sendFollowUp(chatId, text: prompt)
+            try sendFollowUp(chatId, text: prompt, chain: chain)
         }
     }
 
@@ -174,6 +175,24 @@ extension RunTrigger {
         switch self {
         case .schedule: "Scheduled"
         case .manual: "Manual"
+        case .event: "Event"
+        }
+    }
+}
+
+extension AutomationEventTarget {
+    /// How it ends "A run an event starts …".
+    var phrase: String {
+        switch self {
+        case .triggeringChat: "continues the chat it happened in"
+        case .ownChat: "goes where the sentence below says"
+        }
+    }
+
+    var option: String {
+        switch self {
+        case .triggeringChat: "Continues the Chat It Happened In"
+        case .ownChat: "Goes Where Scheduled Runs Go"
         }
     }
 }
@@ -235,7 +254,7 @@ enum AutomationText {
     /// "in 3h", "Paused", "Manual only" or "No upcoming runs".
     static func next(_ a: Automation, now: Date = Date()) -> String {
         guard a.enabled else { return "Paused" }
-        guard !a.triggers.isEmpty else { return "Manual only" }
+        guard !a.triggers.isEmpty else { return a.events.isEmpty ? "Manual only" : "On events" }
         guard let next = a.nextRunAt else { return "No upcoming runs" }
         return next <= now ? "Due now" : RelativeTime.short(next, now: now)
     }
@@ -243,10 +262,12 @@ enum AutomationText {
     /// The first trigger in words, with its city when it isn't this Mac's
     /// zone, and how many more there are.
     static func schedule(_ a: Automation) -> String {
-        guard let first = a.triggers.first else { return "Runs only when started by hand" }
+        let events = AutomationEvents.summary(a.events)
+        guard let first = a.triggers.first else { return events ?? "Runs only when started by hand" }
         var text = Schedule.describe(rrule: first.rrule)
         if first.timezone != TimeZone.current.identifier { text += " · \(TimeZoneField.city(first.timezone))" }
         if a.triggers.count > 1 { text += " · +\(a.triggers.count - 1) more" }
+        if !a.events.isEmpty { text += " · and on \(a.events.count == 1 ? "an event" : "events")" }
         return text
     }
 }

@@ -69,6 +69,10 @@ public enum RemoteRequest: Codable, Sendable {
     case resume(sessionId: String)
     case rename(sessionId: String, name: String)
     case setArchived(sessionId: String, archived: Bool)
+    /// A chat's workflow: on to its next step, or stopped where it is.
+    /// Only send these to a Mac whose snapshot says `workflows`.
+    case continueWorkflow(sessionId: String)
+    case stopWorkflow(sessionId: String)
     case deleteChat(sessionId: String, removeWorktree: Bool)
     case removeWorktree(projectId: String, path: String, deleteBranch: Bool)
     /// A project's default Mac, kept on its record here; nil is this Mac.
@@ -161,13 +165,16 @@ public struct RemoteStart: Codable, Sendable {
     /// The profile the chat starts from, as chosen here (ABS-101); a Mac
     /// from before profiles starts the chat without it.
     public var profile: ProfileSnapshot?
+    /// The workflow the chat runs, as chosen here; a Mac from before
+    /// workflows starts the chat without it.
+    public var workflow: WorkflowProgress?
 
     public init(projectId: String, providerId: String, prompt: String, attachments: [PromptAttachment] = [], files: [String: Data] = [:],
                 baseRef: String?, policy: PermissionPolicy, model: String?, effort: String?, worktree: String?,
-                profile: ProfileSnapshot? = nil) {
+                profile: ProfileSnapshot? = nil, workflow: WorkflowProgress? = nil) {
         self.projectId = projectId; self.providerId = providerId; self.prompt = prompt; self.attachments = attachments
         self.files = files; self.baseRef = baseRef; self.policy = policy; self.model = model; self.effort = effort
-        self.worktree = worktree; self.profile = profile
+        self.worktree = worktree; self.profile = profile; self.workflow = workflow
     }
 }
 
@@ -189,13 +196,15 @@ public struct RemoteRunStart: Codable, Sendable, Hashable {
     public var automationId: String
     /// The profile the run starts from, resolved here (ABS-101).
     public var profile: ProfileSnapshot?
+    /// The workflow the run's chat follows, resolved here.
+    public var workflow: WorkflowProgress?
 
     public init(projectId: String?, providerId: String, prompt: String, policy: PermissionPolicy,
                 model: String?, effort: String?, name: String, nameSource: ChatNameSource,
-                slug: String?, automationId: String, profile: ProfileSnapshot? = nil) {
+                slug: String?, automationId: String, profile: ProfileSnapshot? = nil, workflow: WorkflowProgress? = nil) {
         self.projectId = projectId; self.providerId = providerId; self.prompt = prompt; self.policy = policy
         self.model = model; self.effort = effort; self.name = name; self.nameSource = nameSource
-        self.slug = slug; self.automationId = automationId; self.profile = profile
+        self.slug = slug; self.automationId = automationId; self.profile = profile; self.workflow = workflow
     }
 }
 
@@ -332,6 +341,9 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
     /// The agents Steer reaches mid-turn (those that read stdin), by id.
     /// Optional for older peers.
     public var steerAgents: [String]?
+    /// A host that runs chats' workflows and takes `continueWorkflow` and
+    /// `stopWorkflow`. Optional for older peers.
+    public var workflows: Bool?
 
     /// The largest uploaded icon a snapshot carries; larger ones are left out.
     public static let maxProjectIconBytes = 512 << 10
@@ -350,7 +362,8 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
                 stalls: [String: RemoteStall]? = nil,
                 codeHistory: Bool? = nil, plans: [String: RemotePlan]? = nil, planApproval: Bool? = nil,
                 permissionRules: [String: [PermissionRule]]? = nil,
-                queuedMessages: [String: [QueuedMessage]]? = nil, messageQueue: Bool? = nil, steerAgents: [String]? = nil) {
+                queuedMessages: [String: [QueuedMessage]]? = nil, messageQueue: Bool? = nil, steerAgents: [String]? = nil,
+                workflows: Bool? = nil) {
         self.projects = projects; self.sessions = sessions; self.providers = providers; self.alive = alive
         self.home = home; self.modelCatalogs = modelCatalogs; self.defaultModelNames = defaultModelNames
         self.pullRequests = pullRequests
@@ -377,6 +390,7 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
         self.queuedMessages = queuedMessages
         self.messageQueue = messageQueue
         self.steerAgents = steerAgents
+        self.workflows = workflows
     }
 }
 

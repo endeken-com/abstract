@@ -460,7 +460,8 @@ final class RemoteService {
                               }),
                               queuedMessages: model.queues.filter { !$0.key.hasPrefix(Self.mirrorPrefix) },
                               messageQueue: true,
-                              steerAgents: ProviderRegistry.all.filter { $0.followUpMode == .stdin }.map(\.id))
+                              steerAgents: ProviderRegistry.all.filter { $0.followUpMode == .stdin }.map(\.id),
+                              workflows: true)
     }
 
     /// Each project's uploaded icon as bytes, so a viewing Mac can show it
@@ -904,7 +905,8 @@ final class HostedPeer {
                 let id = try await model.startChat(projectId: start.projectId, providerId: agent, prompt: start.prompt,
                                                    attachments: kept, baseRef: start.baseRef, policy: start.policy,
                                                    model: retired ? nil : start.model, effort: retired ? nil : start.effort,
-                                                   existing: existing, profile: start.profile, select: false)
+                                                   existing: existing, profile: start.profile, workflow: start.workflow,
+                                                   select: false)
                 return .started(sessionId: id)
             } catch {
                 return .failed(error.localizedDescription)
@@ -985,6 +987,12 @@ final class HostedPeer {
         case let .setArchived(session, archived):
             model.setArchived(session, archived)
             return .ok
+        case .continueWorkflow(let session):
+            model.continueWorkflow(session)
+            return .ok
+        case .stopWorkflow(let session):
+            model.stopWorkflow(session)
+            return .ok
         case let .deleteChat(session, removeWorktree):
             guard model.session(session) != nil else { return .failed("Chat not found.") }
             await model.delete(session, removeWorktree: removeWorktree)
@@ -1054,7 +1062,8 @@ final class HostedPeer {
                                                    baseRef: nil, policy: start.policy,
                                                    model: retired ? nil : start.model, effort: retired ? nil : start.effort,
                                                    name: start.name, nameSource: start.nameSource, slug: start.slug,
-                                                   automationId: start.automationId, profile: start.profile, select: false)
+                                                   automationId: start.automationId, profile: start.profile,
+                                                   workflow: start.workflow, select: false)
                 return .started(sessionId: id)
             } catch {
                 return .failed(error.localizedDescription)

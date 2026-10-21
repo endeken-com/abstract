@@ -107,6 +107,23 @@ final class DemoBootstrap {
                                             status: .created, sessionId: done?.id))
         try? model.store.save(AutomationRun(automationId: nightly.id, firedAt: Date().addingTimeInterval(-3_600), trigger: .manual,
                                             status: .created, sessionId: done?.id))
+        // Workflows: both ready-made ones, a chat waiting between steps of
+        // one, and an automation that follows it when a pull request merges.
+        model.reload()
+        let design = model.addWorkflow(from: WorkflowTemplate.all[0])
+        model.addWorkflow(from: WorkflowTemplate.all[1])
+        if var chat = model.session(done?.id) {
+            chat.workflow = WorkflowProgress(workflow: design.snapshot(profiles: model.profiles), step: 0, state: .waiting)
+            try? model.store.save(chat)
+        }
+        var qa = Automation(name: "Check merged work", prompt: "Test what this chat's pull request changed, end to end.",
+                            providerId: "claude", projectId: abstract?.id, triggers: [], workspaceMode: .newWorktree)
+        qa.events = [.pullRequestMerged, .workflowFinished]
+        qa.eventTarget = .triggeringChat
+        qa.workflowId = model.workflows.last?.id
+        try? model.store.save(qa)
+        try? model.store.save(AutomationRun(automationId: qa.id, firedAt: Date().addingTimeInterval(-7_200), trigger: .event,
+                                            status: .created, sessionId: done?.id, event: .pullRequestMerged, sourceSessionId: done?.id))
         model.reload()
         // Project settings for payments-api, set after its chats started so
         // none of them ran the setup script.
@@ -356,6 +373,11 @@ struct Snapshotter {
                 await tallShot("\(t)-27-appearance-full")
                 UserDefaults.standard.set("integrations", forKey: "settingsTab")
                 await shot("\(t)-28-integrations", settle: 1.5)
+                // Every other pane, whole.
+                for tab in SettingsTab.allCases where ![.usage, .appearance, .integrations].contains(tab) {
+                    UserDefaults.standard.set(tab.rawValue, forKey: "settingsTab")
+                    await tallShot("\(t)-29-settings-\(tab.rawValue)")
+                }
                 UserDefaults.standard.set("general", forKey: "settingsTab")
             }
             model.isSettingsOpen = false
@@ -373,6 +395,11 @@ struct Snapshotter {
             if let first = model.automations.first {
                 UserDefaults.standard.set(first.id, forKey: "automations.open")
                 await shot("\(t)-16-automation-page", settle: 1.0)
+                UserDefaults.standard.set("", forKey: "automations.open")
+            }
+            if t == "graphite", let onEvents = model.automations.first(where: { !$0.events.isEmpty }) {
+                UserDefaults.standard.set(onEvents.id, forKey: "automations.open")
+                await shot("\(t)-16b-automation-events", settle: 1.0)
                 UserDefaults.standard.set("", forKey: "automations.open")
             }
             // A new automation's page, opening on its describe box. Leaving

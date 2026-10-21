@@ -138,16 +138,18 @@ final class AutomationScheduler {
 
     /// Start a run: its instructions go to its chat, a new one or the one
     /// it runs in. A run counts as created once they have; how the agent's
-    /// work went is the chat's own status.
+    /// work went is the chat's own status. `occurrence`: the event that
+    /// started it, for a run an event started.
     @discardableResult
-    func fire(_ a: Automation, trigger: RunTrigger) async -> AutomationRun {
+    func fire(_ a: Automation, trigger: RunTrigger, occurrence: AutomationEventOccurrence? = nil) async -> AutomationRun {
         firing.insert(a.id)
         defer { firing.remove(a.id) }
-        var run = AutomationRun(automationId: a.id, trigger: trigger)
+        var run = AutomationRun(automationId: a.id, trigger: trigger, event: occurrence?.event,
+                                sourceSessionId: occurrence?.sessionId)
         run.baseCommit = await currentBaseCommit(a)
         try? model.store.save(run)
         do {
-            let sessionId = try await startRun(a)
+            let sessionId = try await startRun(a, occurrence: occurrence)
             run.status = .created
             run.sessionId = sessionId
         } catch {
@@ -163,11 +165,34 @@ final class AutomationScheduler {
         return run
     }
 
-    private func startRun(_ a: Automation) async throws -> String {
+    private func startRun(_ a: Automation, occurrence: AutomationEventOccurrence? = nil) async throws -> String {
+        // What the run leads to never starts this automation again.
+        let chain = (occurrence?.chain ?? []).union([a.id])
+        if let occurrence, a.eventTarget == .triggeringChat {
+            try await deliver(a, to: occurrence.sessionId, chain: chain)
+            return occurrence.sessionId
+        }
+        let id = try await startOwnRun(a)
+        if occurrence != nil { model.eventChains[id] = chain }
+        return id
+    }
+
+    /// The run's instructions in a chat that exists: its workflow starts
+    /// there with them, or they arrive as your next message would.
+    private func deliver(_ a: Automation, to chatId: String, chain: Set<String> = []) async throws {
+        if let workflow = model.workflow(a.workflowId) {
+            if model.session(chatId)?.archivedAt != nil { model.setArchived(chatId, false) }
+            try model.startWorkflow(workflow, in: chatId, task: a.prompt, chain: chain)
+        } else {
+            try await model.deliverAutomationRun(a.prompt, to: chatId, chain: chain)
+        }
+    }
+
+    private func startOwnRun(_ a: Automation) async throws -> String {
         switch a.workspaceMode {
         case .pinned:
             if let chat = model.session(a.pinnedSessionId) {
-                try await model.deliverAutomationRun(a.prompt, to: chat.id)
+                try await deliver(a, to: chat.id)
                 return chat.id
             }
             // A chat of its own: made on the first run (and again if it was
@@ -193,7 +218,18 @@ final class AutomationScheduler {
     /// that can't start it fails the run with that reason.
     private func newChat(_ a: Automation, name: String, nameSource: ChatNameSource = .manual, slug: String? = nil) async throws -> String {
         // A run starts from its profile as it is now (ABS-101); a profile
-        // that was deleted leaves the automation on its own settings.
+        // that was deleted leaves the automation on its own settings. One
+        // that follows a workflow starts from its first step's profile.
+        var a = a
+        var workflow: WorkflowProgress?
+        if a.workflowId != nil {
+            guard let saved = model.workflow(a.workflowId) else {
+                throw AbstractError.message("Its workflow was deleted, so this run didn't start.")
+            }
+            if let problem = saved.problem(profiles: model.profiles) { throw AbstractError.message("\(saved.name): \(problem)") }
+            workflow = model.workflowProgress(saved)
+            a.profileId = workflow?.current?.resolve(in: model.profiles)?.id
+        }
         let profile = model.profile(a.profileId)
         let run = a.resolved(with: profile)
         if let deviceId = a.deviceId {
@@ -203,12 +239,12 @@ final class AutomationScheduler {
             let start = try AutomationDeviceRun.plan(
                 a, deviceName: deviceName, snapshot: link?.state == .online ? link?.snapshot : nil,
                 localProject: a.projectId.flatMap { id in model.projects.first { $0.id == id } },
-                name: name, nameSource: nameSource, slug: slug, profile: profile)
+                name: name, nameSource: nameSource, slug: slug, profile: profile, workflow: workflow)
             return try await model.remote.startAutomationRun(on: deviceId, start)
         }
         return try await model.startChat(projectId: run.projectId, providerId: run.providerId, prompt: run.prompt, baseRef: nil,
                                          policy: run.permissionPolicy, model: run.model, effort: run.effort,
                                          name: name, nameSource: nameSource, slug: run.projectId == nil ? nil : slug,
-                                         automationId: run.id, profile: profile?.snapshot, select: false)
+                                         automationId: run.id, profile: profile?.snapshot, workflow: workflow, select: false)
     }
 }
