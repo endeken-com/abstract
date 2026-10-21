@@ -154,13 +154,13 @@ enum AttachmentActions {
     }
 }
 
-/// Issue tracker (while a tracker plugin is on), GitHub issue and pull
-/// request buttons, beside Send. `repoRoot` is where `gh` looks for the
-/// repository; nil hides GitHub.
+/// Issue tracker (while a tracker plugin is on, ABS-141), GitHub issue and
+/// pull request buttons, beside Send. GitHub's ask the project's code host
+/// (ABS-139); a nil `repoRoot` hides them.
 struct AttachmentButtons: View {
     @Environment(AppModel.self) private var model
     let repoRoot: String?
-    /// The chat, or else the project, whose Mac runs `gh`; neither is this Mac.
+    /// The chat, or else the project, whose code host is asked, on its Mac.
     var sessionId: String? = nil
     var projectId: String? = nil
     @Binding var attachments: [PromptAttachment]
@@ -425,16 +425,22 @@ private struct AttachPicker: View {
                 }
                 trackerProblems = groups.compactMap(\.problem)
             case .githubIssue, .pullRequest:
-                guard let repoRoot else { return }
-                let executor = sessionId != nil ? model.executor(for: sessionId) : model.executor(forProject: projectId)
-                switch await GitHub.access(executor) {
-                case .missing: problem = "Linking GitHub needs the GitHub CLI. Install it with `brew install gh`."; return
-                case .signedOut: problem = "The GitHub CLI isn't signed in. Run `gh auth login` in a terminal, then try again."; return
+                // The project's code host answers (ABS-139).
+                guard repoRoot != nil, let project = model.project(projectId ?? model.session(sessionId)?.projectId) else { return }
+                guard let host = await model.codeHost(for: project, chatId: sessionId), host.answers(.searchIssuesAndPullRequests) else {
+                    problem = await model.codeHostMissing(project)
+                    return
+                }
+                switch await host.access() {
+                case .missing(let install):
+                    problem = "Linking \(host.title) needs its command-line tool." + (install.map { " Install it with `\($0)`." } ?? "")
+                    return
+                case .signedOut(let hint):
+                    problem = "\(host.title) isn't signed in." + (hint.map { " Run `\($0)` in a terminal, then try again." } ?? "")
+                    return
                 case .ready: break
                 }
-                let found = source == .pullRequest
-                    ? try await GitHub.searchPullRequests(executor, repo: repoRoot, query: query)
-                    : try await GitHub.searchIssues(executor, repo: repoRoot, query: query)
+                let found = try await host.search(query, pullRequests: source == .pullRequest)
                 items = found.map {
                     Item(id: $0.id, reference: "#\($0.number)", title: $0.title,
                          state: $0.isDraft ? "Draft" : $0.state.capitalized,

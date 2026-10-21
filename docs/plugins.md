@@ -305,6 +305,14 @@ Core only asks for `create`, `merge`, `markReady`, `close`, `rerunFailed` and
 that call's `callId` don't ask again. Reads have 45 seconds to answer, writes 150.
 Core commits and pushes before `create`: plain git stays in Abstract.
 
+**GitHub**, bundled, installed and on by default, is the code host for `github.com` and
+the GitHub Enterprise hosts `gh` is signed in to. It answers every operation through the
+GitHub CLI (`brew install gh`, then `gh auth login`) and keeps no token of its own. Its
+page under Settings › Plugins says whether `gh` is installed and signed in. Turned off,
+Abstract makes no `gh` calls, and the pull request screens say a code host plugin is
+needed; turning it off or removing it sticks. Its logic is plain JavaScript in
+`background.js` (`GitHubHost`), tested in `GitHubPluginTests` against recorded `gh` output.
+
 ## Issue trackers
 
 A plugin can answer the composer's issue search for a tracker (ABS-141). It declares

@@ -1,10 +1,11 @@
 import Foundation
 
-/// What a paired device may run on this Mac for a chat's worktree: git, gh
-/// and revund, inside this Mac's projects, without the options that would
-/// let them run some other program or write somewhere else.
+/// What a paired device may run on this Mac for a chat's worktree: git and
+/// revund, and the commands this Mac's enabled plugins were granted (the
+/// GitHub plugin's gh, ABS-139), inside this Mac's projects, without the
+/// options that would let them run some other program or write somewhere else.
 public enum RemoteAccess {
-    static let commands: Set<String> = ["git", "gh", "revund"]
+    static let commands: Set<String> = ["git", "revund"]
     /// Git settings Abstract itself passes; any other `-c` could run a program.
     static let gitSettings: Set<String> = ["core.quotepath", "user.email", "user.name", "color.ui"]
     static let gitOptions = ["-C", "--git-dir", "--work-tree", "--exec-path", "--upload-pack", "--receive-pack", "--config-env",
@@ -25,7 +26,7 @@ public enum RemoteAccess {
         let plugin = command == name ? pluginRefusal(name, args, cwd: cwd, input: input, plugins: plugins, allowed: allowed) : nil
         if plugin == .some(nil) { return nil }
         guard commands.contains(name), command == name else {
-            return plugin ?? "Only git, gh, revund and your plugins' tools run for another Mac."
+            return plugin ?? "Only git, revund and your plugins' tools run for another Mac."
         }
         return builtInRefusal(name, args, cwd: cwd, input: input, allowed: allowed)
     }
@@ -51,8 +52,8 @@ public enum RemoteAccess {
         if input, !(name == "git" && args.first == "apply" && args.last == "-" && args.dropFirst().dropLast().allSatisfy(applyFlags.contains)) {
             return "Only accepting a patch sends input from another Mac."
         }
-        // Outside a folder, only asking what's installed and signed in.
-        if cwd == nil, args == ["--version"] || (name == "gh" && args == ["auth", "status"]) { return nil }
+        // Outside a folder, only asking what's installed.
+        if cwd == nil, args == ["--version"] { return nil }
         guard allowed(cwd) else { return "That folder isn't one of this Mac's projects." }
         switch name {
         case "git":
@@ -73,9 +74,6 @@ public enum RemoteAccess {
                     if !gitSettings.contains(setting) { return "git -c \(setting) isn't allowed from another Mac." }
                 }
             }
-        case "gh":
-            // gh aliases and extensions run programs; only what Abstract asks gh for.
-            guard ["pr", "issue", "api", "repo"].contains(args.first ?? "") else { return "gh \(args.first ?? "") isn't allowed from another Mac." }
         default:
             guard ["review", "feedback"].contains(args.first ?? "") else { return "revund \(args.first ?? "") isn't allowed from another Mac." }
             if let i = args.firstIndex(of: "--repo"), !allowed(i + 1 < args.count ? args[i + 1] : nil) {

@@ -385,6 +385,40 @@ public final class PluginManager: Sendable {
         save(records)
     }
 
+    // MARK: Plugins on by default (ABS-139)
+
+    public static let defaultsKey = "plugins.defaults.v1"
+    /// Bundled plugins installed and turned on the first time Abstract
+    /// finds them: the official GitHub plugin, which Abstract's pull
+    /// request screens ask by default.
+    public static let defaultPluginIds: Set<String> = ["sh.abstract.github"]
+
+    /// Installs and turns on each default plugin found among `bundled` once:
+    /// removing or turning it off afterwards sticks. A bundled install
+    /// follows the bundled version, keeping its grants and its on/off state
+    /// unless the new one asks for more. Returns whether anything changed.
+    @discardableResult
+    public func installDefaults(from bundled: [URL], ids: Set<String> = PluginManager.defaultPluginIds,
+                                fileManager fm: FileManager = .default) -> Bool {
+        var offered = Set(store.setting(Self.defaultsKey, as: [String].self) ?? [])
+        var changed = false
+        for folder in bundled {
+            guard let manifest = try? PluginPackage.inspect(folder: folder, fileManager: fm).manifest,
+                  ids.contains(manifest.id) else { continue }
+            let existing = records().first { $0.id == manifest.id }
+            if !offered.contains(manifest.id) {
+                offered.insert(manifest.id)
+                changed = true
+                guard existing == nil, (try? install(from: folder, sourceKind: .bundled, fileManager: fm)) != nil else { continue }
+                setEnabled(manifest.id, true)
+            } else if let existing, existing.source == .bundled, existing.version != manifest.version {
+                if (try? install(from: folder, sourceKind: .bundled, fileManager: fm)) != nil { changed = true }
+            }
+        }
+        try? store.setSetting(Self.defaultsKey, offered.sorted())
+        return changed
+    }
+
     /// Plugin folders bundled with the app, offered through the same
     /// install button as any other.
     public static func bundledFolders(in resources: URL?, fileManager fm: FileManager = .default) -> [URL] {

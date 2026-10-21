@@ -136,6 +136,7 @@ final class DemoBootstrap {
                 p.runScript = "echo \"payments-api running on :8080\""
                 p.teardownScript = "docker compose down"
             }
+            await checkCodeHost(model, payments)
         }
 
         guard let snapshotDir else { return }
@@ -245,6 +246,24 @@ final class DemoBootstrap {
     func waitUntil(_ model: AppModel, timeout: TimeInterval = 30, _ condition: (AppModel) -> Bool) async {
         let deadline = Date().addingTimeInterval(timeout)
         while !condition(model), Date() < deadline { try? await Task.sleep(for: .milliseconds(200)) }
+    }
+
+    /// payments-api's origin is on github.com: its code host is the bundled
+    /// GitHub plugin, on by default (ABS-139), asked through its script and
+    /// `gh` as a real project would be. marketing-site has no origin, so none.
+    private func checkCodeHost(_ model: AppModel, _ payments: Project) async {
+        for _ in 0..<40 where model.codeHostsStarting { try? await Task.sleep(for: .milliseconds(250)) }
+        // Its origin was only just added.
+        model.projectOrigins[payments.id] = nil
+        guard let host = await model.codeHost(for: payments) else {
+            log("demo: code host for payments-api: none (\(model.plugins.usable.map(\.id).sorted()))")
+            return
+        }
+        let access = await host.access()
+        log("demo: code host for payments-api: \(host.title) via \(host.pluginId), gh \(access.isReady ? "signed in" : "\(access)")")
+        if let marketing = model.projects.first(where: { $0.name == "marketing-site" }) {
+            log("demo: code host for marketing-site: \(await model.codeHost(for: marketing)?.title ?? "none")")
+        }
     }
 }
 
@@ -641,42 +660,43 @@ struct Snapshotter {
     }
 
     /// A pull request for the finished chat (one check failing, a review
-    /// asking for changes) and a merged one for another, as `gh` reports them.
+    /// asking for changes) and a merged one for another, as a code host
+    /// answers them (ABS-139).
     private func seedPullRequests(_ model: AppModel, for chat: Session) {
         guard let branch = chat.branch, let projectId = chat.projectId else { return }
+        func ago(_ seconds: TimeInterval) -> String { ISO8601DateFormatter().string(from: Date().addingTimeInterval(-seconds)) }
         let open = #"""
-        {"number": 128, "title": "\#(chat.name)", "state": "OPEN", "isDraft": false,
-         "url": "https://github.com/acme/abstract/pull/128", "headRefName": "\#(branch)", "baseRefName": "main",
-         "author": {"login": "wes"}, "reviewDecision": "CHANGES_REQUESTED", "mergeable": "MERGEABLE", "mergeStateStatus": "BLOCKED",
-         "additions": 10, "deletions": 2, "changedFiles": 2, "updatedAt": "\#(ISO8601DateFormatter().string(from: Date().addingTimeInterval(-600)))",
-         "statusCheckRollup": [
-           {"name": "unit tests", "workflowName": "CI", "status": "COMPLETED", "conclusion": "SUCCESS", "detailsUrl": "https://github.com/acme/abstract/actions/runs/1"},
-           {"name": "lint", "workflowName": "CI", "status": "COMPLETED", "conclusion": "FAILURE", "detailsUrl": "https://github.com/acme/abstract/actions/runs/2"},
-           {"name": "ui snapshots", "workflowName": "CI", "status": "IN_PROGRESS", "conclusion": ""}
+        {"number": 128, "title": "\#(chat.name)", "state": "open", "isDraft": false,
+         "url": "https://github.com/acme/abstract/pull/128", "head": "\#(branch)", "base": "main",
+         "author": "wes", "reviewDecision": "changesRequested", "mergeable": "MERGEABLE", "mergeState": "BLOCKED",
+         "additions": 10, "deletions": 2, "changedFiles": 2, "updatedAt": "\#(ago(600))",
+         "checks": [
+           {"name": "unit tests", "workflow": "CI", "outcome": "passed", "url": "https://github.com/acme/abstract/actions/runs/1"},
+           {"name": "lint", "workflow": "CI", "outcome": "failed", "url": "https://github.com/acme/abstract/actions/runs/2"},
+           {"name": "ui snapshots", "workflow": "CI", "outcome": "pending"}
          ],
-         "reviews": [{"author": {"login": "ana"}, "state": "CHANGES_REQUESTED", "body": "Archived chats have no process, so `derivedStatus` would call them errored. Keep the stored status for those."}],
-         "comments": [{"author": {"login": "vercel"}, "authorAssociation": "NONE", "body": "Preview deployed."}]}
+         "reviews": [{"author": "ana", "verdict": "changesRequested", "body": "Archived chats have no process, so `derivedStatus` would call them errored. Keep the stored status for those."}],
+         "comments": [{"author": "vercel", "association": "NONE", "isBot": true, "body": "Preview deployed."}],
+         "threads": [
+          {"id": "T1", "isResolved": false, "isOutdated": false, "path": "src/sessions/SessionRow.swift", "line": 11,
+           "diffHunk": "@@ -9,6 +9,6 @@ struct SessionRow: View {\n     var body: some View {\n-    let status = session.status\n+    let status = session.derivedStatus",
+           "comments": [
+             {"id": "C1", "author": "ana", "body": "This reads liveness on every redraw. Can the registry publish changes instead?", "createdAt": "\#(ago(3_000))"},
+             {"id": "C2", "author": "wes", "body": "It's a set lookup, so it's cheap, but a published value would avoid the redraws. I'll change it.", "createdAt": "\#(ago(2_400))"},
+             {"id": "C3", "author": "ana", "body": "Thanks.", "createdAt": "\#(ago(2_000))"}
+           ]},
+          {"id": "T2", "isResolved": true, "isOutdated": false, "path": "src/sessions/SessionStatus+Derived.swift", "line": 4,
+           "comments": [{"id": "C4", "author": "ana", "body": "Nit: document the archived case.", "createdAt": "\#(ago(2_900))"}]}
+         ]}
         """#
         let merged = #"""
-        {"number": 121, "title": "Retry idempotent webhook deliveries", "state": "MERGED", "isDraft": false,
-         "headRefName": "abstract/retry-webhooks", "baseRefName": "main", "author": {"login": "wes"},
-         "updatedAt": "\#(ISO8601DateFormatter().string(from: Date().addingTimeInterval(-86_400)))"}
+        {"number": 121, "title": "Retry idempotent webhook deliveries", "state": "merged", "isDraft": false,
+         "head": "abstract/retry-webhooks", "base": "main", "author": "wes", "updatedAt": "\#(ago(86_400))"}
         """#
-        let threads = #"""
-        {"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": [
-          {"id": "T1", "isResolved": false, "isOutdated": false, "path": "src/sessions/SessionRow.swift", "line": 11,
-           "comments": {"nodes": [
-             {"id": "C1", "author": {"login": "ana"}, "body": "This reads liveness on every redraw. Can the registry publish changes instead?", "createdAt": "\#(ISO8601DateFormatter().string(from: Date().addingTimeInterval(-3_000)))",
-              "diffHunk": "@@ -9,6 +9,6 @@ struct SessionRow: View {\n     var body: some View {\n-    let status = session.status\n+    let status = session.derivedStatus"},
-             {"id": "C2", "author": {"login": "wes"}, "body": "It's a set lookup, so it's cheap, but a published value would avoid the redraws. I'll change it.", "createdAt": "\#(ISO8601DateFormatter().string(from: Date().addingTimeInterval(-2_400)))"},
-             {"id": "C3", "author": {"login": "ana"}, "body": "Thanks.", "createdAt": "\#(ISO8601DateFormatter().string(from: Date().addingTimeInterval(-2_000)))"}
-           ]}},
-          {"id": "T2", "isResolved": true, "isOutdated": false, "path": "src/sessions/SessionStatus+Derived.swift", "line": 4,
-           "comments": {"nodes": [{"id": "C4", "author": {"login": "ana"}, "body": "Nit: document the archived case.", "createdAt": "\#(ISO8601DateFormatter().string(from: Date().addingTimeInterval(-2_900)))"}]}}
-        ]}}}}}
-        """#
-        guard var pr = try? GitHub.decode(Data(open.utf8)), let old = try? GitHub.decode(Data(merged.utf8)) else { return }
-        pr.threads = (try? GitHub.decodeThreads(Data(threads.utf8))) ?? []
+        func decode(_ text: String) -> PullRequest? {
+            (try? JSONDecoder().decode(JSONValue.self, from: Data(text.utf8))).flatMap(PullRequest.init(contract:))
+        }
+        guard let pr = decode(open), let old = decode(merged) else { return }
         model.pullRequests[chat.id] = pr
         model.projectPullRequests[projectId] = [pr, old]
         if let other = model.sessions.first(where: { $0.id != chat.id && $0.status != .running && $0.projectId != nil }) {

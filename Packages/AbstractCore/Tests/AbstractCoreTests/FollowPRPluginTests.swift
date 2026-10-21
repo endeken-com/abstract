@@ -52,8 +52,8 @@ import Testing
                 "detailsUrl":"https://github.com/example/shop/actions/runs/1/job/2"}],
              "reviews":\(reviews),"comments":\(comments)}
             """
-        var pr = try GitHub.decode(Data(view.utf8))
-        pr.threads = try GitHub.decodeThreads(Data("""
+        var pr = try GitHubPluginHarness.decode(Data(view.utf8))
+        pr.threads = try GitHubPluginHarness.decodeThreads(Data("""
             {"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":\(threads)}}}}}
             """.utf8))
         return pr

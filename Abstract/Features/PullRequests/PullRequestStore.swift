@@ -1,31 +1,32 @@
 import Foundation
 import AbstractCore
 
-/// Pull requests for chats, through the GitHub CLI. One `gh pr list` per
-/// GitHub project, every few minutes, tells each chat whether its branch has
-/// a pull request and how it stands; a chat's Pull Request tab loads the
-/// full detail (checks, reviews, comments) when it opens.
+/// Pull requests for chats, from each project's code host (ABS-139): the
+/// plugin that handles its `origin`, like the bundled GitHub one. One list
+/// per project, every minute, tells each chat whether its branch has a pull
+/// request and how it stands; a chat's Pull Request tab loads the full
+/// detail (checks, reviews, comments) when it opens. With no code host for
+/// a project, nothing is asked.
 extension AppModel {
     private static let refreshInterval: Duration = .seconds(60)
 
     func watchPullRequests() async {
         guard !isDemo else { return }
-        githubAccess = await GitHub.access(executor)
-        guard githubAccess == .ready else { return }
-        githubViewer = await GitHub.viewer(executor)
         while !Task.isCancelled {
             await refreshPullRequests()
             // Followed pull requests are read in full, so their new
             // comments reach the plugin following them (ABS-109).
             await refreshSwitchedPullRequests()
-            try? await Task.sleep(for: Self.refreshInterval)
+            // A code host plugin whose script is still starting is asked again soon.
+            try? await Task.sleep(for: codeHostsStarting ? .seconds(3) : Self.refreshInterval)
         }
     }
 
-    /// Re-reads every GitHub project's recent pull requests and matches them to chats by branch.
+    /// Re-reads every project's recent pull requests from its code host and matches them to chats by branch.
     func refreshPullRequests(projectId: String? = nil) async {
         for project in projects where project.archivedAt == nil && (projectId == nil || project.id == projectId) {
-            guard await isOnGitHub(project), let list = try? await GitHub.pullRequests(executor, repo: project.rootPath) else { continue }
+            guard let host = await codeHost(for: project), await codeHostAccess(host).isReady,
+                  let list = try? await host.pullRequests() else { continue }
             projectPullRequests[project.id] = list
             pullRequestsListedAt[project.id] = .now
             for session in sessions where session.projectId == project.id {
@@ -62,7 +63,7 @@ extension AppModel {
 
     /// Lists the project's pull requests again unless that happened in the last `interval`.
     func refreshPullRequestsIfStale(projectId: String?, interval: Duration = .seconds(20)) async {
-        guard !isDemo, githubAccess == .ready, let projectId else { return }
+        guard !isDemo, let projectId else { return }
         if let listed = pullRequestsListedAt[projectId], ContinuousClock.now - listed < interval { return }
         await refreshPullRequests(projectId: projectId)
     }
@@ -85,17 +86,16 @@ extension AppModel {
     func refreshPullRequest(_ sessionId: String) async throws -> PullRequest? {
         guard !isDemo else { return pullRequests[sessionId] }
         guard let session = session(sessionId), let branch = session.branch, let project = project(session.projectId),
-              await isOnGitHub(project) else { return nil }
-        let executor = executor(for: sessionId)
+              let host = await codeHost(for: project, chatId: sessionId) else { return nil }
         let selected = pullRequests[sessionId]?.number
         var pr: PullRequest?
         if let selected {
-            pr = try await GitHub.pullRequest(executor, repo: project.rootPath, number: selected)
+            pr = try await host.pullRequest(number: selected)
         } else {
-            pr = try await GitHub.pullRequest(executor, repo: project.rootPath, branch: branch)
+            pr = try await host.pullRequest(branch: branch)
         }
-        if let number = pr?.number {
-            pr?.threads = (try? await GitHub.reviewThreads(executor, repo: project.rootPath, number: number)) ?? []
+        if let number = pr?.number, host.answers(.reviewThreads) {
+            pr?.threads = (try? await host.reviewThreads(number: number)) ?? []
         }
         if pullRequests[sessionId]?.number == selected { pullRequests[sessionId] = pr }
         return pr
@@ -165,20 +165,58 @@ extension AppModel {
         followBranch(sessionId, to: current)
     }
 
-    func isOnGitHub(_ project: Project) async -> Bool {
-        if let known = githubProjects[project.id] { return known }
-        let out = try? await executor(forProject: project.id).run("git", ["remote", "get-url", "origin"], cwd: project.rootPath)
-        let onGitHub = out.map { $0.ok && GitRemote.githubOwner($0.stdout) != nil } ?? false
-        githubProjects[project.id] = onGitHub
-        return onGitHub
+    // MARK: The code host
+
+    /// The project's `origin`, read once per run; nil when it has none.
+    func origin(of project: Project) async -> String? {
+        if let known = projectOrigins[project.id] { return known.isEmpty ? nil : known }
+        let origin = await Git.originURL(executor(forProject: project.id), root: project.rootPath)
+        projectOrigins[project.id] = origin ?? ""
+        return origin
     }
 
-    /// Whether you can push to `owner/name`, asked of GitHub once per run.
-    /// Unknown (and asked again later) while `gh` isn't ready.
+    /// The project's code host: the enabled plugin that handles its
+    /// `origin`, with its script running. `chatId` names the chat a call is
+    /// about, so its commands run in that chat's worktree, on its Mac.
+    func codeHost(for project: Project, chatId: String? = nil) async -> CodeHost? {
+        let origin = await origin(of: project)
+        return codeHost(remote: origin, context: CodeHostContext(projectKey: pluginProjectKey(project.id), chatId: chatId))
+    }
+
+    /// What PR screens say about a project without a code host: the host
+    /// its origin is on, or that it has none.
+    func codeHostMissing(_ project: Project) async -> String {
+        guard let origin = await origin(of: project) else { return "\(project.name) has no origin to open pull requests on." }
+        return CodeHosts.needsPlugin(GitRemote.host(origin))
+    }
+
+    /// Whether the code host's tool is there and signed in, asked once a
+    /// minute at most per plugin; `fresh` asks again now.
+    func codeHostAccess(_ host: CodeHost, fresh: Bool = false) async -> CodeHostAccess {
+        if !fresh, let known = codeHostAccess[host.pluginId],
+           known.access.isReady || ContinuousClock.now - known.at < .seconds(60) { return known.access }
+        let access = await host.access()
+        codeHostAccess[host.pluginId] = (access, .now)
+        return access
+    }
+
+    /// Who is signed in to each code host, for "Yours" on the Pull Requests screen.
+    var codeHostViewers: Set<String> {
+        Set(codeHostAccess.values.compactMap { if case .ready(let viewer) = $0.access { viewer } else { nil } })
+    }
+
+    /// A code host plugin is on but its script isn't running yet.
+    var codeHostsStarting: Bool {
+        plugins.usable.contains { $0.manifest?.contributes.codeHost != nil && pluginBackground?.isRunning($0.id) != true }
+    }
+
+    /// Whether you can push to `owner/name`, asked of its code host once
+    /// per run. Unknown (and asked again later) while it can't say.
     func access(to slug: String) async -> RepoAccess {
         if let known = repoAccess[slug] { return known }
-        guard !isDemo, githubAccess == .ready else { return .unknown }
-        let found = await GitHub.permission(executor, repo: slug)
+        guard !isDemo, let host = codeHost(remote: "https://github.com/\(slug)", context: CodeHostContext()),
+              host.answers(.pushAccess) else { return .unknown }
+        let found = await host.pushAccess(slug: slug)
         if found != .unknown { repoAccess[slug] = found }
         return found
     }
@@ -193,8 +231,10 @@ extension AppModel {
         // The Pull Request tab shows the worktree's own pull request for now.
         if commitFirst { try await commitEverything(sessionId, in: "", message: title) }
         try await prepareParentPush(sessionId, in: "")
-        pullRequests[sessionId] = try await GitHub.create(executor(for: sessionId), repo: project.rootPath, worktree: worktree, branch: branch,
-                                                          base: base, title: title, body: body, draft: draft, commitMessage: nil)
+        guard let host = await codeHost(for: project, chatId: sessionId) else { throw CodeHostError.noHost(nil) }
+        // Plain git stays here: the branch is pushed, then the code host opens the pull request.
+        try await Git.push(executor(for: sessionId), worktree: worktree, branch: branch)
+        pullRequests[sessionId] = try await host.create(branch: branch, base: base, title: title, body: body, draft: draft)
         pinnedPullRequests[sessionId] = nil
         await refreshPullRequests(projectId: project.id)
         await refreshBranch(sessionId)
@@ -210,28 +250,30 @@ extension AppModel {
     }
 
     func mergePullRequest(_ sessionId: String, method: MergeMethod) async throws {
-        guard let (root, number) = pullRequestTarget(sessionId) else { return }
-        try await GitHub.merge(executor(for: sessionId), repo: root, number: number, method: method)
+        guard let (host, number) = try await pullRequestTarget(sessionId) else { return }
+        try await host.merge(number: number, method: method)
         try await refreshPullRequest(sessionId)
-        // The base moved on GitHub.
+        // The base moved on the code host.
         await refreshBranch(sessionId, fetch: .now)
     }
 
     func markPullRequestReady(_ sessionId: String) async throws {
-        guard let (root, number) = pullRequestTarget(sessionId) else { return }
-        try await GitHub.markReady(executor(for: sessionId), repo: root, number: number)
+        guard let (host, number) = try await pullRequestTarget(sessionId) else { return }
+        try await host.markReady(number: number)
         try await refreshPullRequest(sessionId)
     }
 
     func closePullRequest(_ sessionId: String) async throws {
-        guard let (root, number) = pullRequestTarget(sessionId) else { return }
-        try await GitHub.close(executor(for: sessionId), repo: root, number: number)
+        guard let (host, number) = try await pullRequestTarget(sessionId) else { return }
+        try await host.close(number: number)
         try await refreshPullRequest(sessionId)
     }
 
-    private func pullRequestTarget(_ sessionId: String) -> (String, Int)? {
-        guard let pr = pullRequests[sessionId], let root = project(session(sessionId)?.projectId)?.rootPath else { return nil }
-        return (root, pr.number)
+    /// The chat's pull request and the code host to act on it through.
+    private func pullRequestTarget(_ sessionId: String) async throws -> (CodeHost, Int)? {
+        guard let pr = pullRequests[sessionId], let project = project(session(sessionId)?.projectId) else { return nil }
+        guard let host = await codeHost(for: project, chatId: sessionId) else { throw CodeHostError.noHost(nil) }
+        return (host, pr.number)
     }
 
     /// The chat whose branch a pull request comes from.
@@ -250,7 +292,7 @@ extension AppModel {
 
         \(list.joined(separator: "\n"))
 
-        Find out why (`gh run view --log-failed` shows the failing steps), fix it, and tell me when it's ready to push.
+        Find out why (each check's link shows its failing steps), fix it, and tell me when it's ready to push.
         """)
     }
 

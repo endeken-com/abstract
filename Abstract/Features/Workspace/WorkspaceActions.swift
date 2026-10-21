@@ -121,7 +121,10 @@ struct GitActionsButton: View {
     /// The repository `running` started against, frozen for its duration:
     /// the current repository can change while it's still running.
     @State private var runningPath = ""
+    /// Whether the project has a code host to open a pull request on (ABS-139),
+    /// and what to say when it hasn't.
     @State private var onGitHub = false
+    @State private var noCodeHost = "This project has no code host"
     @State private var watcher: AnyObject?
     @State private var pendingRead: Task<Void, Never>?
 
@@ -287,7 +290,7 @@ struct GitActionsButton: View {
             return s.aheadOfBase > 0 ? nil : "No commits to merge into \(base)"
         case .createPR:
             if isSubmodule { return "Pull requests for \(repoPath) aren't in Abstract yet" }
-            if !onGitHub { return "This project isn't on GitHub" }
+            if !onGitHub { return noCodeHost }
             return s.aheadOfBase > 0 || s.dirty ? nil : "This branch has no new commits yet"
         case .viewPR:
             return isSubmodule ? "Pull requests for \(repoPath) aren't in Abstract yet" : nil
@@ -348,7 +351,10 @@ struct GitActionsButton: View {
     /// The base comparison needs fresh remote refs when main moves elsewhere,
     /// so this fetches too; `.ifStale` keeps it to once a minute.
     private func refresh(fetch: AppModel.OriginFetch = .never) async {
-        if let project = model.project(session.projectId) { onGitHub = await model.isOnGitHub(project) }
+        if let project = model.project(session.projectId) {
+            onGitHub = await model.codeHost(for: project) != nil
+            if !onGitHub { noCodeHost = await model.codeHostMissing(project) }
+        }
         await model.refreshBranch(session.id, fetch: fetch)
     }
 

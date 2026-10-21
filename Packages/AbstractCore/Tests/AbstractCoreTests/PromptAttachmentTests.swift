@@ -37,19 +37,6 @@ struct PromptAttachmentTests {
         #expect(chips.count == 1)
     }
 
-    @Test func pullRequestsCarryTheirBranches() {
-        let json = #"[{"number":7,"title":"Add login","url":"u","state":"OPEN","body":"b","isDraft":false,"baseRefName":"main","headRefName":"feat/login"}]"#
-        let items = GitHub.decodeItems(Data(json.utf8), isPullRequest: true)
-        #expect(items.first?.attachment.promptText == "GitHub PR #7: Add login\nu\nBase: main\nHead: feat/login\n\nb")
-    }
-
-    @Test func numbersAndLinksAreLookedUpDirectly() {
-        #expect(GitHub.directReference("#12") == "12")
-        #expect(GitHub.directReference("12") == "12")
-        #expect(GitHub.directReference("https://github.com/o/r/pull/3") == "https://github.com/o/r/pull/3")
-        #expect(GitHub.directReference("login bug") == nil)
-    }
-
     @Test func claudeGetsImagesAsImageBlocks() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
