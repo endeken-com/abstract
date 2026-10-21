@@ -63,23 +63,17 @@ extension AppModel {
     /// Stop and retry: end the stuck turn, then send your last message again
     /// once the turn is over.
     func stopAndRetry(_ sessionId: String) {
+        if let (_, host) = RemoteService.split(sessionId) {
+            remoteAction(sessionId, .stopAndRetry(sessionId: host))
+            stallStates[sessionId] = nil
+            return
+        }
         let message = feed(sessionId).lastUserMessage ?? session(sessionId)?.prompt
-        stop(sessionId)
         stallStates[sessionId] = nil
-        guard let message, !message.isEmpty else { return }
+        guard let message, !message.isEmpty else { stop(sessionId); return }
+        // As Interrupt does: the message goes again once the turn has stopped.
         Task {
-            // The stopped turn ends (or its process does) shortly; only then
-            // can the message go again.
-            for _ in 0..<40 {
-                try? await Task.sleep(for: .milliseconds(250))
-                guard let status = session(sessionId)?.status else { return }
-                if status != .running && status != .provisioning { break }
-            }
-            guard session(sessionId)?.status != .running else {
-                flash("Couldn't retry: the turn didn't stop.", isError: true)
-                return
-            }
-            do { try sendFollowUp(sessionId, text: message) }
+            do { try await interrupt(sessionId, text: message) }
             catch { flash(error.localizedDescription, isError: true) }
         }
     }

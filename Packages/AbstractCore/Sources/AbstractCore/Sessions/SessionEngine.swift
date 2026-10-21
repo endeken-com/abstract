@@ -20,6 +20,8 @@ public final class SessionEngine: Sendable {
     /// Where each session's raw output is kept, one `<id>.jsonl` per session.
     public var logsURL: URL { logDirectory }
     private let state = Mutex<[String: Running]>([:])
+    /// Each chat's queued messages, read from beside its log when first asked for.
+    private let queues = Mutex<[String: [QueuedMessage]]>([:])
 
     private struct Running: @unchecked Sendable {
         let process: RunningProcess
@@ -83,9 +85,105 @@ public final class SessionEngine: Sendable {
     }
 
     /// Logs what you sent the agent, numbered with its output, and reports
-    /// it like any other line.
-    public func recordInput(sessionId: String, text: String) {
-        record(sessionId: sessionId, OutputLine(stream: .user, line: text))
+    /// it like any other line. `queued`: the queued messages it delivers,
+    /// taken off the queue once logged. They're marked as sending first, so a
+    /// relaunch in between finds them in the log rather than send them again.
+    public func recordInput(sessionId: String, text: String, queued ids: [String] = []) {
+        guard !ids.isEmpty else {
+            record(sessionId: sessionId, OutputLine(stream: .user, line: text))
+            return
+        }
+        markSending(sessionId: sessionId, ids)
+        record(sessionId: sessionId, OutputLine(stream: .user, line: text, queued: ids))
+        withQueue(sessionId) { $0.removeAll { ids.contains($0.id) } }
+    }
+
+    // MARK: Messages waiting for the turn to end
+
+    /// The chat's queued messages, oldest first. Kept beside its log, so they
+    /// survive a relaunch.
+    public func queued(sessionId: String) -> [QueuedMessage] {
+        withQueue(sessionId) { $0 }
+    }
+
+    public func enqueue(sessionId: String, _ message: QueuedMessage) {
+        withQueue(sessionId) { $0.append(message) }
+    }
+
+    /// Marks queued messages as on their way: they can't be edited or
+    /// removed any more. For a send that logs them later (a handover).
+    public func markSending(sessionId: String, _ ids: [String]) {
+        withQueue(sessionId) { queue in
+            for i in queue.indices where ids.contains(queue[i].id) { queue[i].sending = true }
+        }
+    }
+
+    /// Puts back messages the agent didn't get after all. One still queued
+    /// waits again where it was; one already logged goes back to the front
+    /// under a new id, as the log names its old one as sent.
+    public func requeue(sessionId: String, _ messages: [QueuedMessage]) {
+        withQueue(sessionId) { queue in
+            var fresh: [QueuedMessage] = []
+            for message in messages {
+                if let i = queue.firstIndex(where: { $0.id == message.id }) { queue[i].sending = nil; continue }
+                fresh.append(QueuedMessage(text: message.text, attachments: message.attachments, queuedAt: message.queuedAt))
+            }
+            queue.insert(contentsOf: fresh, at: 0)
+        }
+    }
+
+    /// Returns false when the message has already gone.
+    @discardableResult
+    public func editQueued(sessionId: String, id: String, text: String) -> Bool {
+        withQueue(sessionId) { queue in
+            guard let i = queue.firstIndex(where: { $0.id == id && $0.sending != true }) else { return false }
+            queue[i].text = text
+            return true
+        }
+    }
+
+    /// The message taken off the queue; nil when it has already gone.
+    @discardableResult
+    public func removeQueued(sessionId: String, id: String) -> QueuedMessage? {
+        withQueue(sessionId) { queue in
+            guard let i = queue.firstIndex(where: { $0.id == id && $0.sending != true }) else { return nil }
+            return queue.remove(at: i)
+        }
+    }
+
+    private func withQueue<T>(_ sessionId: String, _ body: (inout [QueuedMessage]) -> T) -> T {
+        queues.withLock { all in
+            var queue = all[sessionId] ?? loadQueue(sessionId)
+            let before = queue
+            let result = body(&queue)
+            all[sessionId] = queue
+            if queue != before { saveQueue(sessionId, queue) }
+            return result
+        }
+    }
+
+    /// Reads the queue kept beside the log. Messages a relaunch caught being
+    /// sent are dropped when the log has them, and wait again when it doesn't.
+    private func loadQueue(_ sessionId: String) -> [QueuedMessage] {
+        guard let data = try? Data(contentsOf: queueFile(sessionId)),
+              var queue = try? JSONDecoder().decode([QueuedMessage].self, from: data) else { return [] }
+        guard queue.contains(where: { $0.sending == true }) else { return queue }
+        let sent = Set(replay(sessionId: sessionId).flatMap { $0.line.stream == .user ? $0.line.queued ?? [] : [] })
+        queue.removeAll { $0.sending == true && sent.contains($0.id) }
+        for i in queue.indices { queue[i].sending = nil }
+        saveQueue(sessionId, queue)
+        return queue
+    }
+
+    private func saveQueue(_ sessionId: String, _ queue: [QueuedMessage]) {
+        let url = queueFile(sessionId)
+        guard !queue.isEmpty else { try? FileManager.default.removeItem(at: url); return }
+        guard let data = try? JSONEncoder().encode(queue) else { return }
+        try? data.write(to: url, options: .atomic)
+    }
+
+    private func queueFile(_ sessionId: String) -> URL {
+        logDirectory.appendingPathComponent("\(sessionId).queue.json")
     }
 
     /// Logs a line of Abstract's own (what you sent, a handoff) and reports it
@@ -209,6 +307,8 @@ public final class SessionEngine: Sendable {
 
     public func deleteLog(sessionId: String) {
         try? FileManager.default.removeItem(at: logFile(sessionId))
+        queues.withLock { _ = $0.removeValue(forKey: sessionId) }
+        try? FileManager.default.removeItem(at: queueFile(sessionId))
     }
 
     private func logFile(_ sessionId: String) -> URL {

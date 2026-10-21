@@ -29,8 +29,9 @@ import type { EditPreview } from './editPreview';
 import { buildRule, ruleKindTitle, saveRuleArgs, suggestedRule } from './permissionRules';
 import { stallText } from './stalls';
 import { MODE_CHOICES, currentPlan, effectivePlan, isReadOnlyMode, nonPlanPermissions, pendingPlanRequest, planHistory, planTitle, policyShort, policyTitle, quotedPlan } from './plan';
-import { swiftDate, type PendingPermission, type PermissionDecision, type PermissionRuleKind, type PlanState, type Session, type Stall } from './types';
+import { swiftDate, type PendingPermission, type PermissionDecision, type PermissionRuleKind, type PlanState, type QueuedMessage, type Session, type Stall } from './types';
 import { chatPauseRow } from './pause';
+import { composerActions, queuedMessages, settledByQueue } from './messageQueue';
 
 const ink = '#ECECEF', muted = '#A4A4AD', tertiary = '#75757E', canvas = '#1E1E21', panel = '#252529', raised = '#2B2B30', border = 'rgba(255,255,255,0.075)', warning = '#D2D2D8';
 const editStyles = StyleSheet.create({
@@ -302,6 +303,8 @@ export function ChatWorkspace({ route, navigation }: any) {
   const [message, setMessage] = useState(route.params.draft || '');
   const [notice, setNotice] = useState<string | null>(route.params.notice || null);
   const [pendingSends, setPendingSends] = useState<PendingPhoneMessage[]>([]);
+  // The queued message the composer is editing; Send saves it in place.
+  const [editingQueued, setEditingQueued] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const sendLock = useRef(false);
@@ -337,6 +340,22 @@ export function ChatWorkspace({ route, navigation }: any) {
   useEffect(() => {
     if (pendingSends.length && !visibleSends.length) setPendingSends([]);
   }, [pendingSends, visibleSends]);
+  // Sent mid-turn, a message waits in the Mac's queue, which shows it from then on.
+  const queue = queuedMessages(mac.snapshot, id);
+  useEffect(() => {
+    const settled = settledByQueue(pendingSends, queue);
+    if (settled.length) setPendingSends(current => current.filter(item => !settled.includes(item.id)));
+  }, [pendingSends, queue]);
+  useEffect(() => {
+    if (editingQueued && !queue.some(item => item.id === editingQueued)) {
+      setEditingQueued(null);
+      setSendError('That message was sent before your edit was saved. Tap Send to send this as a new message.');
+    }
+  }, [editingQueued, queue]);
+  const actions = chat ? composerActions(mac.snapshot, chat, !!message.trim() || attachments.length > 0) : null;
+  const removeQueued = (item: QueuedMessage) => mac.request('removeQueued', { sessionId: id, id: item.id })
+    .catch(error => Alert.alert('Abstract', String(error?.message || error)));
+  const editQueued = (item: QueuedMessage) => { setEditingQueued(item.id); setMessage(item.text); setSendError(null); setPreviewingMarkdown(false); };
   const transcriptRows = useMemo(() => chat?.prompt && !lines.length
     ? [{ id: 'prompt', kind: 'user' as const, text: chat.prompt }, ...displayRows] : displayRows, [chat?.prompt, lines.length, displayRows]);
   const lastRow = rows.at(-1);
@@ -352,7 +371,7 @@ export function ChatWorkspace({ route, navigation }: any) {
   const turnStartedAt = mac.snapshot?.turnStartedAt?.[id] ?? chat?.lastEventAt ?? undefined;
   const macView = remote.mac(hostId);
   const pauseRow = macView && chat ? chatPauseRow(macView, chat.projectId) : null;
-  const transcriptFooter = useMemo(() => <View style={s.transcriptFooter}>{visibleSends.map(item => <View key={item.id} style={s.userRow}><View style={s.userBubble}>{!!item.text && <Text style={s.prose}>{item.text}</Text>}{item.attachments.map(attachment => <Text key={attachment.id} style={s.pendingAttachment}>{attachment.reference ? `${attachment.reference} ` : ''}{attachment.title}</Text>)}</View><Text style={s.pendingStatus}>{item.status === 'sending' ? 'Sending…' : 'Sent'}</Text></View>)}{plan && <PlanCard mac={mac} sessionId={id} plan={plan} permissions={pendingPermissions} onRequestChanges={quoted => setMessage(quoted)} />}{nonPlanPermissions(pendingPermissions).map(request => <PermissionCard key={request.requestId} mac={mac} sessionId={id} request={request} projectId={chat?.projectId} root={permissionRoot} canRemember={canRemember} />)}{syncing && <Text style={s.thinkingLabel}>Syncing chat from Mac…</Text>}{showWorkingRow && (stall ? <StallStatus mac={mac} sessionId={id} stall={stall} /> : <WorkingStatus label={workingLabel} startedAt={turnStartedAt} />)}</View>, [visibleSends, mac, pendingPermissions, plan, id, syncing, showWorkingRow, stall, workingLabel, turnStartedAt, chat?.projectId, permissionRoot, canRemember]);
+  const transcriptFooter = useMemo(() => <View style={s.transcriptFooter}>{visibleSends.map(item => <View key={item.id} style={s.userRow}><View style={s.userBubble}>{!!item.text && <Text style={s.prose}>{item.text}</Text>}{item.attachments.map(attachment => <Text key={attachment.id} style={s.pendingAttachment}>{attachment.reference ? `${attachment.reference} ` : ''}{attachment.title}</Text>)}</View><Text style={s.pendingStatus}>{item.status === 'sending' ? 'Sending…' : 'Sent'}</Text></View>)}{queue.map(item => <View key={item.id} style={s.userRow}><View style={[s.userBubble, queueStyles.bubble, editingQueued === item.id && queueStyles.editing]}>{!!item.text && <Text style={[s.prose, { color: muted }]}>{item.text}</Text>}{item.attachments.map(attachment => <Text key={attachment.id} style={s.pendingAttachment}>{attachment.reference ? `${attachment.reference} ` : ''}{attachment.title}</Text>)}</View><View style={queueStyles.actions}><Chip label="Edit" onPress={() => editQueued(item)} /><Chip label="Remove" onPress={() => removeQueued(item)} /></View></View>)}{!!actions?.queueCaption && <Text style={queueStyles.caption}>{actions.queueCaption}</Text>}{plan && <PlanCard mac={mac} sessionId={id} plan={plan} permissions={pendingPermissions} onRequestChanges={quoted => setMessage(quoted)} />}{nonPlanPermissions(pendingPermissions).map(request => <PermissionCard key={request.requestId} mac={mac} sessionId={id} request={request} projectId={chat?.projectId} root={permissionRoot} canRemember={canRemember} />)}{syncing && <Text style={s.thinkingLabel}>Syncing chat from Mac…</Text>}{showWorkingRow && (stall ? <StallStatus mac={mac} sessionId={id} stall={stall} /> : <WorkingStatus label={workingLabel} startedAt={turnStartedAt} />)}</View>, [visibleSends, queue, editingQueued, actions?.queueCaption, mac, pendingPermissions, plan, id, syncing, showWorkingRow, stall, workingLabel, turnStartedAt, chat?.projectId, permissionRoot, canRemember]);
   const loadEarlier = React.useCallback(() => {
     mayLoadOlder.current = false;
     follow.current.stopFollowing();
@@ -457,7 +476,13 @@ export function ChatWorkspace({ route, navigation }: any) {
   const policyLabel = policyTitle(chat.permissionPolicy);
   const act = (name: string, args: Record<string, unknown> = {}) => mac.request(name, { sessionId: id, ...args }).catch(e => Alert.alert('Abstract', String(e)));
   const send = () => {
-    if (mac.status !== 'online' || sendLock.current || (!message.trim() && !attachments.length)) return;
+    if (mac.status !== 'online' || sendLock.current) return;
+    if (editingQueued) { saveQueuedEdit(editingQueued); return; }
+    if (!message.trim() && !attachments.length) {
+      // Messages left waiting (after Stop or a relaunch) go on their own.
+      if (queue.length && actions?.primary === 'send') act('send', { text: '' });
+      return;
+    }
     if (/^\/[a-z]+$/i.test(message.trim()) && runSlash(message.trim().slice(1))) return;
     const draft = { text: message, attachments: [...attachments] };
     const pending: PendingPhoneMessage = { ...draft, id: uuid(), afterSeq: lines.at(-1)?.seq || 0, status: 'sending' };
@@ -486,6 +511,39 @@ export function ChatWorkspace({ route, navigation }: any) {
         setSending(false);
       });
   };
+  const saveQueuedEdit = (queuedId: string) => {
+    if (!message.trim()) { removeQueued({ id: queuedId } as QueuedMessage); setEditingQueued(null); return; }
+    sendLock.current = true;
+    setSending(true);
+    mac.request('editQueued', { sessionId: id, id: queuedId, text: message.trim() })
+      .then(() => { setMessage(''); setSendError(null); },
+        error => setSendError(`${error?.message || error} Tap Send to send this as a new message.`))
+      .finally(() => { setEditingQueued(null); sendLock.current = false; setSending(false); });
+  };
+  // Steer sends what's typed and the queue into the running turn; Interrupt
+  // stops the turn and sends them. Attachments wait in the queue first.
+  const turnAction = (name: 'steer' | 'interrupt') => {
+    if (mac.status !== 'online' || sendLock.current) return;
+    const draft = { text: message, attachments: [...attachments] };
+    sendLock.current = true;
+    setSending(true);
+    let queued = false;
+    const clear = () => { setMessage(''); setAttachments([]); setNotice(null); };
+    (async () => {
+      if (draft.attachments.length) {
+        await mac.request('sendAttachments', { sessionId: id, text: draft.text, ...attachmentPayload(draft.attachments) });
+        // In the Mac's queue now: never sent again from here.
+        queued = true;
+        clear();
+      }
+      await mac.request(name, { sessionId: id, text: queued ? '' : draft.text });
+    })().then(() => { clear(); setSendError(null); },
+      error => setSendError(queued
+        ? `Queued instead; it goes when this turn ends. ${error?.message || error}`
+        : `Could not ${name === 'steer' ? 'steer' : 'interrupt'}. ${error?.message || error}`))
+      .finally(() => { sendLock.current = false; setSending(false); });
+  };
+  const primary = actions?.primary ?? 'send';
   const searchLinks = async (source: LinkKind, query: string) => {
     if (!root) return;
     setLinkLoading(true);
@@ -571,18 +629,24 @@ export function ChatWorkspace({ route, navigation }: any) {
       {mac.status !== 'online' && <Text accessibilityRole="alert" style={s.sendError}>{macName || 'That Mac'} isn't reachable.{mac.lastSeenAt ? ` Last seen ${new Date(mac.lastSeenAt).toLocaleString()}.` : ''}{mac.error ? ` ${mac.error}` : ''}</Text>}
       {!!notice && <Text accessibilityRole="alert" style={s.sendError} onPress={() => setNotice(null)}>{notice}</Text>}
       {!!sendError && <Text accessibilityRole="alert" style={s.sendError}>{sendError}</Text>}
+      {!!editingQueued && <View style={queueStyles.controls}><Text style={queueStyles.reason}>Editing a queued message.</Text><Chip label="Cancel" onPress={() => { setEditingQueued(null); setMessage(''); }} /></View>}
+      {!!actions?.steer && !editingQueued && <View style={queueStyles.controls}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Steer" accessibilityHint="Sends this into the turn now" accessibilityState={{ disabled: !actions.steer.enabled || sending }} disabled={!actions.steer.enabled || sending} onPress={() => turnAction('steer')} style={[queueStyles.control, (!actions.steer.enabled || sending) && { opacity: 0.45 }]}><Text style={queueStyles.controlLabel}>Steer</Text></Pressable>
+        <Pressable accessibilityRole="button" accessibilityLabel="Interrupt" accessibilityHint="Stops this turn and sends now" accessibilityState={{ disabled: sending }} disabled={sending} onPress={() => turnAction('interrupt')} style={[queueStyles.control, sending && { opacity: 0.45 }]}><Text style={queueStyles.controlLabel}>Interrupt</Text></Pressable>
+        {!!actions.steer.reason && <Text style={queueStyles.reason}>{actions.steer.reason}</Text>}
+      </View>}
       {attachments.length > 0 && <ScrollView horizontal style={s.attachments} contentContainerStyle={{ gap: 5 }}>{attachments.map(item => <Chip key={item.id} label={`${item.reference ? `${item.reference} ` : ''}${item.title} ×`} onPress={() => setAttachments(attachments.filter(x => x.id !== item.id))} />)}</ScrollView>}
       <View style={[s.composerBox, composerFocused && s.composerBoxFocused]}>
         <View style={s.composerTextRow}>
           {previewingMarkdown ? <ScrollView style={[s.composerInput, { minHeight: composerMinHeight, maxHeight: composerMaxHeight }]}><Markdown style={markdownStyles} rules={codeRules}>{message}</Markdown></ScrollView> : <TextInput value={message} editable={!sending} onChangeText={value => { setMessage(value); setSendError(null); setSlashChoosing(null); }} multiline scrollEnabled style={[s.composerInput, { minHeight: composerMinHeight, maxHeight: composerMaxHeight }]} onFocus={() => setComposerFocused(true)} onBlur={() => setComposerFocused(false)} placeholder="Type / for commands" placeholderTextColor={tertiary} textAlignVertical="top" />}
         </View>
         <View style={s.composerActionRow}>
-          <Pressable accessibilityLabel="Attach files" disabled={sending} style={s.attachControl} onPress={() => pickAttachments(attachments).then(setAttachments).catch(e => Alert.alert('Attachment', String(e)))}><Glyph name="attach" size={18} color={muted} /></Pressable>
+          <Pressable accessibilityLabel="Attach files" disabled={sending || !!editingQueued} style={s.attachControl} onPress={() => pickAttachments(attachments).then(setAttachments).catch(e => Alert.alert('Attachment', String(e)))}><Glyph name="attach" size={18} color={muted} /></Pressable>
           <View style={s.composerTrailingActions}>
             {!!message && <Pressable accessibilityLabel={previewingMarkdown ? 'Edit Markdown' : 'Preview Markdown'} style={[s.composerAction, { width: previewingMarkdown ? 42 : 52 }]} onPress={() => setPreviewingMarkdown(!previewingMarkdown)}><Text style={s.previewLabel}>{previewingMarkdown ? 'Edit' : 'Preview'}</Text></Pressable>}
             {!!root && <Pressable accessibilityLabel="Link a GitHub issue" disabled={sending} style={s.composerAction} onPress={() => openLinks('issue')}><IssueIcon size={18} /></Pressable>}
             {!!root && <Pressable accessibilityLabel="Link a pull request" disabled={sending} style={s.composerAction} onPress={() => openLinks('linkPr')}><PullRequestIcon size={18} color={muted} /></Pressable>}
-            <Pressable accessibilityLabel={mac.status !== 'online' ? `${macName || 'Mac'} isn't reachable` : sending ? 'Sending message' : chat.status === 'running' ? 'Stop agent' : 'Send message'} disabled={sending || mac.status !== 'online'} style={s.composerAction} onPress={() => chat.status === 'running' ? act('stop') : send()}>{sending ? <ActivityIndicator size="small" color={muted} /> : <Glyph name={chat.status === 'running' ? 'stop' : 'send'} size={18} color={mac.status !== 'online' ? tertiary : message.trim() || attachments.length || chat.status === 'running' ? ink : tertiary} />}</Pressable>
+            <Pressable accessibilityLabel={mac.status !== 'online' ? `${macName || 'Mac'} isn't reachable` : sending ? 'Sending message' : editingQueued ? 'Save queued message' : primary === 'stop' ? 'Stop agent' : primary === 'queue' ? 'Queue message, sent when this turn ends' : 'Send message'} disabled={sending || mac.status !== 'online'} style={s.composerAction} onPress={() => primary === 'stop' && !editingQueued ? act('stop') : send()}>{sending ? <ActivityIndicator size="small" color={muted} /> : <Glyph name={primary === 'stop' && !editingQueued ? 'stop' : 'send'} size={18} color={mac.status !== 'online' ? tertiary : message.trim() || attachments.length || primary === 'stop' || (primary === 'send' && queue.length) ? ink : tertiary} />}</Pressable>
           </View>
         </View>
       </View>
@@ -592,6 +656,16 @@ export function ChatWorkspace({ route, navigation }: any) {
     </View>
   </SafeAreaView>;
 }
+const queueStyles = StyleSheet.create({
+  bubble: { opacity: 0.7, borderStyle: 'dashed', borderWidth: 1, borderColor: border },
+  editing: { borderColor: muted },
+  actions: { flexDirection: 'row', marginTop: 2 },
+  caption: { color: tertiary, fontFamily: 'Inter', fontSize: 12, textAlign: 'right' },
+  controls: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
+  control: { paddingHorizontal: 12, minHeight: 32, justifyContent: 'center', borderRadius: 16, backgroundColor: raised },
+  controlLabel: { color: ink, fontFamily: 'Inter', fontSize: 13, fontWeight: '600' },
+  reason: { flex: 1, color: tertiary, fontFamily: 'Inter', fontSize: 12 },
+});
 const chrome = StyleSheet.create({
   toolbarButton: { width: 40, height: 44, alignItems: 'center', justifyContent: 'center' },
   nativeActions: { flexDirection: 'row', alignItems: 'center', gap: 0 },

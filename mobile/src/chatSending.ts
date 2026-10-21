@@ -33,26 +33,41 @@ function attribute(value: string) {
   return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
 }
 
-function matches(message: PendingPhoneMessage, raw: string) {
+// Queued messages go joined into one, a blank line apart (ABS-103), so a
+// message may be any part of the line the Mac logs.
+function joinedPart(raw: string, text: string) {
+  return raw.startsWith(`${text}\n\n`) || raw.endsWith(`\n\n${text}`) || raw.includes(`\n\n${text}\n\n`);
+}
+
+// 'whole': the line is this message alone, so it settles no other; 'part':
+// the line joins it with other queued messages, which it settles too.
+function matches(message: PendingPhoneMessage, raw: string): 'whole' | 'part' | null {
   const text = message.text.trim();
-  if (!message.attachments.length) return raw === text;
-  if (text && !raw.startsWith(`${text}\n\n<attachment `)) return false;
-  if (!text && !raw.startsWith('<attachment ')) return false;
-  return message.attachments.every(item => {
+  if (!message.attachments.length) return raw === text ? 'whole' : text && joinedPart(raw, text) ? 'part' : null;
+  const whole = text ? raw.startsWith(`${text}\n\n<attachment `) : raw.startsWith('<attachment ');
+  const part = !whole && !!text && raw.includes(`\n\n${text}\n\n`);
+  if (!whole && !part) return null;
+  const attached = message.attachments.every(item => {
     const label = item.reference ? `${item.reference} ${item.title}` : item.title;
     return raw.includes(`<attachment kind="${item.kind}" label="${attribute(label)}"`);
   });
+  return !attached ? null : whole ? 'whole' : 'part';
 }
 
 // Consume each Mac user line at most once, including when two accepted drafts
-// have identical text and their transcript events arrive together.
+// have identical text and their transcript events arrive together. A line
+// that joins queued messages settles each of them.
 export function visiblePhoneMessages(pending: PendingPhoneMessage[], lines: RemoteLine[]): PendingPhoneMessage[] {
   const userLines = lines.filter(line => line.line.stream === 'user');
   const used = new Set<number>();
   return pending.filter(message => {
-    const found = userLines.find(line => line.seq > message.afterSeq && !used.has(line.seq) && matches(message, line.line.line));
-    if (!found) return true;
-    used.add(found.seq);
-    return false;
+    for (const line of userLines) {
+      if (line.seq <= message.afterSeq || used.has(line.seq)) continue;
+      const match = matches(message, line.line.line);
+      if (!match) continue;
+      if (match === 'whole') used.add(line.seq);
+      return false;
+    }
+    return true;
   });
 }

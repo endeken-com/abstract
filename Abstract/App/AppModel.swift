@@ -152,6 +152,11 @@ final class AppModel {
     /// Chats you pressed Stop in, until the turn or the process ends: neither
     /// is a failure. The token tells this press's fallback from a later one's.
     private(set) var stopRequests: [String: UUID] = [:]
+    /// Each chat's messages sent while its agent worked, as the engine keeps
+    /// them; only chats with some. See AppModel+Queue.
+    var queues: [String: [QueuedMessage]] = [:]
+    /// Chats you pressed Interrupt in: their queue goes once the turn ends.
+    var interrupting: Set<String> = []
     /// Tool names to approve without asking, per chat.
     var autoContinueTools: [String: Set<String>] = [:]
     /// Remembered permission answers, by project id; see AppModel+Permissions.
@@ -362,6 +367,7 @@ final class AppModel {
         let unfinished = ((try? store.sessions()) ?? []).filter { setupUnfinished($0) && cliDriven[$0.id] == nil }.map(\.id)
         _ = try? store.reconcileInterruptedSessions(excluding: Set(cliDriven.keys))
         reload()
+        loadQueues()
         restoreInterruptedSetups(unfinished)
         Task { await listen() }
         watchCommandLine()
@@ -1050,28 +1056,53 @@ final class AppModel {
         guard let session = session(sessionId), let provider = ProviderRegistry.provider(session.providerId) else { return }
         // Its agent starts once it's set up, with the chat's first message.
         if setups[sessionId] != nil { throw AbstractError.message("“\(session.name)” is still being set up; its agent starts after.") }
-        let message = PromptAttachments.message(text, attachments)
-        let images = PromptAttachments.images(attachments)
+        // Mid-turn it waits, and goes as the next turn.
+        if turnInProgress(sessionId) {
+            if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty {
+                enqueue(sessionId, QueuedMessage(text: text, attachments: attachments))
+            }
+            return
+        }
+        // Messages still waiting (after Stop, a failure or a relaunch) go first, in one.
+        try send(engine.queued(sessionId: sessionId), plus: QueuedMessage(text: text, attachments: attachments), in: session, provider)
+    }
+
+    /// Sends a message now: as the next turn, or into the running one when
+    /// its agent reads stdin. `queued`: the queued messages it carries, taken
+    /// off the queue as it's logged.
+    func deliver(_ session: Session, _ provider: any ProviderDefinition, message: String, images: [String],
+                 queued: [QueuedMessage] = []) throws {
+        let sessionId = session.id
         // The agent was switched: the new one hears what happened first.
         if session.handoffFrom != nil {
             if handingOff.contains(sessionId) { throw AbstractError.message("Still handing this chat over; send again in a moment.") }
-            Task { await handOver(session, message: message, images: images) }
+            // On their way: no longer editable while the handover runs.
+            engine.markSending(sessionId: sessionId, queued.map(\.id))
+            refreshQueue(sessionId)
+            interrupting.remove(sessionId)
+            Task { await handOver(session, message: message, images: images, queued: queued) }
             return
         }
-        engine.recordInput(sessionId: sessionId, text: message)
+        engine.recordInput(sessionId: sessionId, text: message, queued: queued.map(\.id))
+        if !queued.isEmpty { refreshQueue(sessionId) }
+        interrupting.remove(sessionId)
         // A new agent, model or effort takes effect by restarting between
         // turns, once no background task would end with the old process.
-        if needsRelaunch.contains(sessionId), isAlive(sessionId), session.status != .running, runningBackgroundTasks(sessionId) == 0 {
+        if needsRelaunch.contains(sessionId), isAlive(sessionId), session.status != .running, session.status != .waitingInput,
+           runningBackgroundTasks(sessionId) == 0 {
             needsRelaunch.remove(sessionId)
             setStatus(sessionId, .running)
-            Task { await relaunch(session, prompt: message, images: images) }
+            Task { await relaunch(session, prompt: message, images: images, queued: queued) }
             return
         }
         if provider.followUpMode == .stdin, isAlive(sessionId),
            let line = provider.buildUserMessage(message, images: images, sessionId: session.providerSessionId) {
             try engine.write(sessionId: sessionId, isDemo ? DemoAgent.followUpLine(message) : line)
-            turnStartedAt[sessionId] = Date()
-            setStatus(sessionId, .running)
+            // Steered into a running turn, the turn and what it waits on go on.
+            if session.status != .running, session.status != .waitingInput {
+                turnStartedAt[sessionId] = Date()
+                setStatus(sessionId, .running)
+            }
         } else {
             try launch(session, prompt: message, resume: true, images: images)
         }
@@ -1144,7 +1175,7 @@ final class AppModel {
     }
 
     /// Stop the agent, wait for it to go, and start it again with `prompt`.
-    private func relaunch(_ session: Session, prompt: String, images: [String] = []) async {
+    private func relaunch(_ session: Session, prompt: String, images: [String] = [], queued: [QueuedMessage] = []) async {
         relaunching.insert(session.id)
         engine.stop(sessionId: session.id)
         for _ in 0..<60 where engine.isAlive(session.id) { try? await Task.sleep(for: .milliseconds(100)) }
@@ -1153,6 +1184,7 @@ final class AppModel {
         do {
             try launch(current, prompt: prompt, resume: current.providerSessionId != nil, images: images)
         } catch {
+            requeue(session.id, queued)
             flash(error.localizedDescription, isError: true)
             setStatus(session.id, .errored, detail: error.localizedDescription)
         }
@@ -1164,9 +1196,9 @@ final class AppModel {
     /// asked for a handover note (Backtick writes one from the transcript
     /// when it can't answer), the transcript is saved where the new agent can
     /// read it, and the new agent starts with both ahead of your message.
-    private func handOver(_ session: Session, message: String, images: [String]) async {
+    private func handOver(_ session: Session, message: String, images: [String], queued: [QueuedMessage] = []) async {
         let id = session.id
-        guard let from = session.handoffFrom, !handingOff.contains(id) else { return }
+        guard let from = session.handoffFrom, !handingOff.contains(id) else { requeue(id, queued); return }
         handingOff.insert(id)
         let wasRunning = session.status == .running
         setStatus(id, .running, detail: "Preparing handover…")
@@ -1186,7 +1218,8 @@ final class AppModel {
 
         engine.record(sessionId: id, HandoffMarker(phase: .handoff, from: from, to: session.providerId, summary: summary,
                                                    source: note == nil ? .app : .agent, transcriptPath: transcript).line)
-        engine.recordInput(sessionId: id, text: message)
+        engine.recordInput(sessionId: id, text: message, queued: queued.map(\.id))
+        if !queued.isEmpty { refreshQueue(id) }
         handingOff.remove(id)
 
         guard var current = self.session(id) else { return }
@@ -1198,6 +1231,7 @@ final class AppModel {
         do {
             try launch(current, prompt: prompt, resume: current.providerSessionId != nil, images: images)
         } catch {
+            requeue(id, queued)
             flash(error.localizedDescription, isError: true)
             setStatus(id, .errored, detail: error.localizedDescription)
         }
@@ -1660,6 +1694,10 @@ final class AppModel {
             remote.forward(sessionId: sessionId, seq: seq, line: line)
         case let .exit(sessionId, code):
             alive.remove(sessionId)
+            // A turn that ended here sends the queue last, so the next
+            // process isn't published as gone (defers run in reverse).
+            var ended: (status: SessionStatus, stopped: Bool)?
+            defer { if let ended { turnEnded(sessionId, ended.status, stopped: ended.stopped) } }
             // Only once its last status is written may `abstract` take the chat.
             defer {
                 publishAgent(sessionId, providerId: nil)
@@ -1691,6 +1729,7 @@ final class AppModel {
                 for e in stream(for: sessionId)?.onExit(code: code, stopRequested: true) ?? [] { append(e, to: sessionId) }
                 setStatus(sessionId, .idle)
                 permissions[sessionId] = nil
+                ended = (.idle, true)
                 return
             }
             if let stream = streams[sessionId] {
@@ -1706,6 +1745,7 @@ final class AppModel {
                 }
             }
             permissions[sessionId] = nil
+            if let status = session(sessionId)?.status { ended = (status, false) }
         }
     }
 
@@ -1733,12 +1773,14 @@ final class AppModel {
             if status == .idle, stopRequests.removeValue(forKey: sessionId) != nil {
                 // A turn you stopped: nothing to tell you, review or answer.
                 permissions[sessionId] = nil
+                turnEnded(sessionId, status, stopped: true)
             } else if status == .idle {
-                // Still at work in the background: not done yet. The agent
-                // takes another turn as each task ends.
-                if runningBackgroundTasks(sessionId) == 0 { notify(sessionId, .finished) }
+                // Still at work in the background, or about to take your
+                // queued messages: not done yet.
+                if runningBackgroundTasks(sessionId) == 0, queues[sessionId] == nil { notify(sessionId, .finished) }
                 RevundService.shared.turnEnded(sessionId, model: self)
                 nameAutomationRun(sessionId)
+                turnEnded(sessionId, status, stopped: false)
             }
             if status == .waitingInput || status == .errored { notify(sessionId, status, detail: detail) }
         case let .permissionRequest(requestId, toolName, input) where AgentQuestion.isQuestion(toolName):
