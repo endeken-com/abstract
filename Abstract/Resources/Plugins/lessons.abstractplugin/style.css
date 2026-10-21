@@ -1,0 +1,115 @@
+:root {
+  color-scheme: light dark;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: var(--abstract-canvas, Canvas);
+  color: var(--abstract-text, CanvasText);
+  font-family: var(--abstract-font, -apple-system, sans-serif);
+  font-size: 13px;
+}
+main {
+  max-width: 620px;
+  padding: 20px 20px 28px;
+}
+h1 {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0;
+}
+.note {
+  color: var(--abstract-textSecondary, GrayText);
+  margin: 3px 0 0;
+}
+.notice {
+  margin: 14px 0 0;
+  padding: 9px 11px;
+  border: 1px solid var(--abstract-border, GrayText);
+  border-radius: 8px;
+  background: var(--abstract-inset, ButtonFace);
+  color: var(--abstract-textSecondary, GrayText);
+}
+fieldset {
+  margin: 18px 0 0;
+  padding: 0;
+  border: 0;
+  display: grid;
+  gap: 8px;
+}
+legend {
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+#targets {
+  display: grid;
+  gap: 8px;
+}
+.target {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border: 1px solid var(--abstract-border, GrayText);
+  border-radius: 9px;
+  background: var(--abstract-surface, ButtonFace);
+  cursor: pointer;
+}
+.target span {
+  display: grid;
+}
+.field {
+  display: grid;
+  gap: 4px;
+  margin: 14px 0 0;
+}
+input[type="text"] {
+  font: inherit;
+  padding: 5px 8px;
+  border: 1px solid var(--abstract-border, GrayText);
+  border-radius: 7px;
+  background: var(--abstract-inset, Field);
+  color: var(--abstract-text, FieldText);
+}
+details {
+  margin: 14px 0 0;
+}
+summary {
+  cursor: pointer;
+  color: var(--abstract-textSecondary, GrayText);
+}
+pre {
+  white-space: pre-wrap;
+  font: inherit;
+  margin: 8px 0 0;
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: var(--abstract-inset, ButtonFace);
+}
+.actions {
+  margin: 16px 0 0;
+}
+button {
+  font: inherit;
+  padding: 4px 10px;
+  border: 1px solid var(--abstract-border, GrayText);
+  border-radius: 7px;
+  background: var(--abstract-surfaceRaised, ButtonFace);
+  color: var(--abstract-text, ButtonText);
+  cursor: pointer;
+}
+button:hover:not(:disabled),
+button:focus-visible {
+  background: var(--abstract-hover, ButtonFace);
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+button.primary {
+  border-color: var(--abstract-accent, Highlight);
+  background: var(--abstract-accent, Highlight);
+  color: var(--abstract-onAccent, HighlightText);
+}

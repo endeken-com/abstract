@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:">
+<link rel="stylesheet" href="style.css">
+<title>Lessons</title>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Save what we learned</h1>
+    <p id="about" class="note"></p>
+  </header>
+  <p id="idle" class="notice">Choose Save What We Learned… from a chat's More menu.</p>
+  <form id="form" hidden>
+    <fieldset>
+      <legend>Where should the lessons go?</legend>
+      <div id="targets"></div>
+    </fieldset>
+    <label id="skill-row" class="field" hidden>
+      <span>Skill name</span>
+      <input id="skill" type="text" maxlength="80" autocomplete="off" spellcheck="false">
+    </label>
+    <details>
+      <summary>What the agent is asked</summary>
+      <pre id="request"></pre>
+    </details>
+    <p id="said" class="notice" hidden></p>
+    <div class="actions">
+      <button type="submit" id="send" class="primary">Ask the Agent</button>
+    </div>
+  </form>
+</main>
+<script src="lessons.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
