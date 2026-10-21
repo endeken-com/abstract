@@ -10,12 +10,14 @@ public enum PluginEventType: String, Sendable, Hashable, CaseIterable {
     case chatStatusChanged = "chat.statusChanged"
     case turnFinished = "turn.finished"
     case permissionRequested = "permission.requested"
+    /// A request stopped waiting: answered anywhere, or its turn ended.
+    case permissionResolved = "permission.resolved"
     case pullRequestUpdated = "pullRequest.updated"
     case automationRunFinished = "automation.runFinished"
 
     public var capability: PluginCapability {
         switch self {
-        case .chatStatusChanged, .permissionRequested, .pullRequestUpdated: .chatsRead
+        case .chatStatusChanged, .permissionRequested, .permissionResolved, .pullRequestUpdated: .chatsRead
         case .turnFinished: .turnsRead
         case .automationRunFinished: .automationsRead
         }
@@ -31,6 +33,8 @@ public enum PluginEvent: Sendable, Equatable {
     case turnFinished(chatId: String, outcome: String, endedAt: Date)
     /// `kind` is `permission`, `question` or `plan`.
     case permissionRequested(chatId: String, requestId: String, kind: String, toolName: String, questions: [String])
+    /// The request isn't waiting any more, however it ended (ABS-111).
+    case permissionResolved(chatId: String, requestId: String)
     /// `changes` names what moved: `opened`, `state`, `checks`, `review`.
     case pullRequestUpdated(chatId: String, pullRequest: PluginSnapshot.PullRequest, changes: [String])
     /// `outcome` is `done`, `stopped` or `failed`; `chatId` is the run's chat.
@@ -41,6 +45,7 @@ public enum PluginEvent: Sendable, Equatable {
         case .chatStatusChanged: .chatStatusChanged
         case .turnFinished: .turnFinished
         case .permissionRequested: .permissionRequested
+        case .permissionResolved: .permissionResolved
         case .pullRequestUpdated: .pullRequestUpdated
         case .automationRunFinished: .automationRunFinished
         }
@@ -76,6 +81,9 @@ public enum PluginEvent: Sendable, Equatable {
                 object["toolName"] = .string(toolName)
                 object["questions"] = .array(questions.map(JSONValue.string))
             }
+        case let .permissionResolved(chatId, requestId):
+            object["chatId"] = .string(chatId)
+            if capabilities.contains(.permissionsAnswer) { object["requestId"] = .string(requestId) }
         case let .pullRequestUpdated(chatId, pullRequest, changes):
             object["chatId"] = .string(chatId)
             object["changes"] = .array(changes.map(JSONValue.string))
@@ -98,6 +106,7 @@ public enum PluginEvent: Sendable, Equatable {
 /// first snapshot only sets the baseline: starting up isn't news.
 public struct PluginEventDetector: Sendable {
     private var last: [String: PluginSnapshot.Chat]?
+    private var lastPending: Set<PluginAction.Target>?
 
     public init() {}
 
@@ -126,6 +135,17 @@ public struct PluginEventDetector: Sendable {
             }
         }
         return events
+    }
+
+    /// A `permission.resolved` for each request that was waiting last time
+    /// and isn't now, whoever answered it. New requests are announced
+    /// where they arrive, so they aren't repeated here.
+    public mutating func resolved(pending: Set<PluginAction.Target>) -> [PluginEvent] {
+        defer { lastPending = pending }
+        guard let lastPending else { return [] }
+        return lastPending.subtracting(pending)
+            .sorted { ($0.chatId, $0.requestId) < ($1.chatId, $1.requestId) }
+            .map { .permissionResolved(chatId: $0.chatId, requestId: $0.requestId) }
     }
 }
 

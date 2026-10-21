@@ -44,12 +44,18 @@ extension AppModel {
     /// by the call's id when its row is already there, and by tool and
     /// input for a row still on its way.
     func recordRuleAnswer(_ rule: PermissionRule, requestId: String, toolName: String, input: JSONValue, in sessionId: String) {
-        ruleNotes[sessionId, default: [:]][requestId] = rule.note
+        recordAnswerNote(rule.note, requestId: requestId, toolName: toolName, input: input, in: sessionId)
+    }
+
+    /// The same note for an answer given somewhere other than the chat:
+    /// "Answered from Approvals" (ABS-111).
+    func recordAnswerNote(_ note: String, requestId: String, toolName: String, input: JSONValue, in sessionId: String) {
+        ruleNotes[sessionId, default: [:]][requestId] = note
         if let call = feed(sessionId).calls.last(where: { $0.result == nil && $0.name == toolName && $0.input == input })
             ?? feed(sessionId).calls.last(where: { $0.result == nil && $0.name == toolName }) {
-            ruleNotes[sessionId, default: [:]][call.id] = rule.note
+            ruleNotes[sessionId, default: [:]][call.id] = note
         }
-        ruleAnswers[sessionId, default: []].append(RuleAnswer(toolName: toolName, input: input, note: rule.note))
+        ruleAnswers[sessionId, default: []].append(RuleAnswer(toolName: toolName, input: input, note: note))
     }
 
     /// The rule note for a tool row, if a rule answered its request.

@@ -16,6 +16,8 @@ final class PluginService {
     /// Background scripts stopped for misbehaving (ABS-93), with why.
     /// They stay stopped until restarted or the plugin is turned back on.
     private(set) var backgroundProblems: [String: String] = [:]
+    /// The count each plugin shows on its sidebar row (ABS-111); none is 0.
+    private(set) var badges: [String: Int] = [:]
     /// Called after every change to what's installed, enabled or granted,
     /// so background scripts follow.
     @ObservationIgnored var onChange: () -> Void = {}
@@ -78,11 +80,18 @@ final class PluginService {
         manager.setEnabled(id, enabled, transcriptProjectKeys: transcriptProjectKeys)
         // Turning it off and on again is a fresh start.
         backgroundProblems[id] = nil
+        badges[id] = nil
         refresh()
+    }
+
+    func setBadge(_ id: String, _ count: Int) {
+        guard badges[id, default: 0] != count else { return }
+        badges[id] = count == 0 ? nil : count
     }
 
     func noteBackgroundStopped(_ id: String, _ note: String) {
         backgroundProblems[id] = note
+        badges[id] = nil
         noteError(id, note)
     }
 
@@ -118,6 +127,7 @@ final class PluginService {
         }
         manager.remove(id)
         backgroundProblems[id] = nil
+        badges[id] = nil
         refresh()
     }
 
