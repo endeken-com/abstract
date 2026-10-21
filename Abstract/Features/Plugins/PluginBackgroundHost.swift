@@ -1,6 +1,7 @@
 import AppKit
 import Darwin
 import Observation
+import OSLog
 import WebKit
 import AbstractCore
 
@@ -12,6 +13,9 @@ import AbstractCore
 final class PluginBackgroundHost {
     private unowned let model: AppModel
     private var runners: [String: PluginBackgroundRunner] = [:]
+    /// Scripts waiting to start again after a stop a slow Mac can cause (ABS-149).
+    private var restarting: [String: Task<Void, Never>] = [:]
+    private var restarts = PluginRestarts()
     private var detector = PluginEventDetector()
     private var watching = false
     private var detectScheduled = false
@@ -31,11 +35,17 @@ final class PluginBackgroundHost {
         for (id, runner) in runners where wanted[id] == nil || wanted[id]?.record.version != runner.plugin.record.version {
             runner.stop()
             runners[id] = nil
+            if wanted[id] == nil { restarts.forget(id) }
         }
-        for (id, plugin) in wanted where runners[id] == nil {
+        for (id, task) in restarting where wanted[id] == nil {
+            task.cancel()
+            restarting[id] = nil
+            restarts.forget(id)
+        }
+        for (id, plugin) in wanted where runners[id] == nil && restarting[id] == nil {
             guard let manifest = plugin.manifest else { continue }
-            let runner = PluginBackgroundRunner(model: model, plugin: plugin, manifest: manifest) { [weak self] note in
-                self?.stopped(id, note)
+            let runner = PluginBackgroundRunner(model: model, plugin: plugin, manifest: manifest) { [weak self] note, recoverable in
+                self?.stopped(id, note, recoverable: recoverable)
             }
             runners[id] = runner
             runner.start()
@@ -49,10 +59,23 @@ final class PluginBackgroundHost {
     }
 
     /// Stopped for misbehaving: listed in Settings → Plugins with why,
-    /// until the person restarts it or turns the plugin off and on.
-    private func stopped(_ id: String, _ note: String) {
+    /// until the person restarts it or turns the plugin off and on. A stop
+    /// a slow Mac can cause is tried again a few times first (ABS-149).
+    private func stopped(_ id: String, _ note: String, recoverable: Bool) {
         runners[id]?.stop()
         runners[id] = nil
+        if recoverable, let delay = restarts.delay(for: id) {
+            PluginBackgroundRunner.log.notice("\(id, privacy: .public) background script starts again in \(delay, format: .fixed(precision: 0), privacy: .public)s: \(note, privacy: .public)")
+            restarting[id] = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(delay))
+                guard let self, !Task.isCancelled else { return }
+                restarting[id] = nil
+                reconcile()
+            }
+            return
+        }
+        PluginBackgroundRunner.log.error("\(id, privacy: .public) background script stopped: \(note, privacy: .public)")
+        restarts.forget(id)
         model.plugins.noteBackgroundStopped(id, note)
     }
 
@@ -148,16 +171,22 @@ final class PluginBackgroundHost {
 /// its jobs and its watchdog.
 @MainActor
 final class PluginBackgroundRunner: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
+    /// How each script started, stalled and stopped, without its data:
+    /// `log stream --predicate 'subsystem == "dev.abstract" && category == "plugins"'`.
+    static let log = Logger(subsystem: "dev.abstract", category: "plugins")
+
     let plugin: InstalledPlugin
     private let manifest: PluginManifest
     private let model: AppModel
-    private let onStopped: (String) -> Void
+    /// The note Settings shows, and whether a slow Mac may be the reason.
+    private let onStopped: (String, Bool) -> Void
     private var webView: WKWebView?
     private var connection: PluginConnection!
     private var subscriptions: Set<PluginEventType> = []
     private var jobs = PluginJobs()
     private var watchdog = PluginWatchdog()
     private var ticker: Task<Void, Never>?
+    private var startedAt = Date()
     private var stopped = false
     /// Agents' tool calls the script hasn't answered yet (ABS-97).
     private let toolCalls: PluginToolCalls
@@ -170,7 +199,7 @@ final class PluginBackgroundRunner: NSObject, WKScriptMessageHandler, WKNavigati
     /// Hosts the script said its tool is signed in to, while it runs.
     private(set) var codeHostHosts: Set<String> = []
 
-    init(model: AppModel, plugin: InstalledPlugin, manifest: PluginManifest, onStopped: @escaping (String) -> Void) {
+    init(model: AppModel, plugin: InstalledPlugin, manifest: PluginManifest, onStopped: @escaping (String, Bool) -> Void) {
         self.model = model
         self.plugin = plugin
         self.manifest = manifest
@@ -185,7 +214,7 @@ final class PluginBackgroundRunner: NSObject, WKScriptMessageHandler, WKNavigati
             fail: { [weak self] note in self?.fail(note) })
         connection.onScriptError = { [weak self] in
             guard let self else { return }
-            if case .stopped(let note) = watchdog.scriptThrew() { fail(note) }
+            if case .stopped(let note, _) = watchdog.scriptThrew() { fail(note) }
         }
         connection.onBackground = { [weak self] outcome in self?.handle(outcome) }
         connection.authorizesWrite = { [codeHostCalls] callId in await codeHostCalls.authorizesWrite(callId) }
@@ -206,6 +235,7 @@ final class PluginBackgroundRunner: NSObject, WKScriptMessageHandler, WKNavigati
         configuration.userContentController = content
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = self
+        startedAt = Date()
         self.webView = webView
         if let url = URL(string: "abstract-plugin://plugin/\(PluginSchemeHandler.backgroundPage)") {
             webView.load(URLRequest(url: url))
@@ -240,10 +270,10 @@ final class PluginBackgroundRunner: NSObject, WKScriptMessageHandler, WKNavigati
         if let pid = Self.webProcess(of: webView) { kill(pid, SIGKILL) }
     }
 
-    private func fail(_ note: String) {
+    private func fail(_ note: String, recoverable: Bool = false) {
         guard !stopped else { return }
         stop()
-        onStopped(note)
+        onStopped(note, recoverable)
     }
 
     func deliver(_ event: PluginEvent) {
@@ -368,15 +398,28 @@ final class PluginBackgroundRunner: NSObject, WKScriptMessageHandler, WKNavigati
     private func tick() {
         guard !stopped, let webView else { return }
         let now = Date()
-        if case .stopped(let note) = watchdog.check(now: now) { fail(note); return }
-        if let usage = Self.usage(of: webView), case .stopped(let note) = watchdog.sample(
+        if watchdog.hostWasLate(now: now) {
+            Self.log.info("\(self.plugin.id, privacy: .public) host was held up; that wait isn't counted against its script")
+        }
+        if case .stopped(let note, let recoverable) = watchdog.tick(now: now, ready: connection.ready) {
+            fail(note, recoverable: recoverable); return
+        }
+        if let usage = Self.usage(of: webView), case .stopped(let note, _) = watchdog.sample(
             cpuSeconds: usage.cpuSeconds, footprint: usage.footprint, now: now) {
             fail(note); return
         }
-        // A busy loop never runs this, so the answer never comes.
-        if watchdog.shouldSendHeartbeat(now: now) {
+        // A busy loop never runs this, so the answer never comes. None
+        // goes before the page has loaded: its start is timed instead.
+        if watchdog.shouldSendHeartbeat(ready: connection.ready) {
             webView.evaluateJavaScript("0") { [weak self] _, _ in
-                MainActor.assumeIsolated { self?.watchdog.heartbeatAnswered() }
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.watchdog.heartbeatAnswered()
+                    let took = Date().timeIntervalSince(now)
+                    if took > 2 {
+                        Self.log.info("\(self.plugin.id, privacy: .public) background script answered after \(took, format: .fixed(precision: 1), privacy: .public)s")
+                    }
+                }
             }
         }
         guard connection.ready else { return }
@@ -425,6 +468,7 @@ final class PluginBackgroundRunner: NSObject, WKScriptMessageHandler, WKNavigati
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        Self.log.info("\(self.plugin.id, privacy: .public) background script loaded after \(Date().timeIntervalSince(self.startedAt), format: .fixed(precision: 1), privacy: .public)s")
         connection.ready = true
         connection.pushSnapshot()
     }
@@ -433,9 +477,17 @@ final class PluginBackgroundRunner: NSObject, WKScriptMessageHandler, WKNavigati
         fail("Its background script couldn't be loaded.")
     }
 
+    /// Its own page failing to load, not a navigation it tried that the
+    /// policy above refused.
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error) {
+        guard !connection.ready else { return }
+        fail("Its background script couldn't be loaded.")
+    }
+
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-        // WebKit ends a page that outgrows its memory, among other things.
-        fail("Its background script stopped working.")
+        // WebKit ends a page that outgrows its memory, and under memory
+        // pressure, among other things: worth starting again.
+        fail("Its background script stopped working.", recoverable: true)
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {

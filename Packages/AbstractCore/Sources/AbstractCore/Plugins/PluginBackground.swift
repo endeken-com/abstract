@@ -226,11 +226,33 @@ public struct PluginJobs: Sendable {
 }
 
 /// Stops a background script that's stuck, busy, too big, or keeps
-/// throwing. Fed by the host: heartbeats it sends and hears back, errors
-/// the script reports, and samples of its web process's CPU and memory.
+/// throwing. Fed by the host: its once-a-second ticks, heartbeats it sends
+/// and hears back, errors the script reports, and samples of its web
+/// process's CPU and memory.
+///
+/// Waiting is counted in the host's own on-time ticks (ABS-149). A page
+/// loads, and a heartbeat comes back, through Abstract's main thread, so
+/// while that thread is held up (a launch loading every chat, the Mac
+/// asleep) the script can't be heard however well it runs. That time
+/// isn't held against it; a script stuck in a loop keeps the host on time
+/// and is stopped all the same.
+///
+/// A late answer from a quiet process isn't a stuck script either. WebKit
+/// runs a page no window shows at background priority, so while the Mac
+/// is busy (an agent's build on every core) the script barely gets to run
+/// and its answers take as long as the load lasts. A loop keeps its
+/// process busy; a starved one is all but idle, so it is given far longer.
 public struct PluginWatchdog: Sendable {
-    /// A heartbeat unanswered this long means the script is stuck in a loop.
-    public static let stuckAfter: TimeInterval = 3
+    /// Unanswered this long, or loading this long, with the host on time
+    /// and the script's process busy: it is stuck in a loop.
+    public static let stuckAfter: TimeInterval = 10
+    public static let startupLimit: TimeInterval = 30
+    /// Unanswered, or loading, this long however quiet its process: it
+    /// isn't coming back.
+    public static let quietLimit: TimeInterval = 10 * 60
+    /// A tick this much later than the last means the host itself was held
+    /// up, not the script.
+    public static let hostLateAfter: TimeInterval = 2.5
     public static let errorLimit = 5
     public static let errorWindow: TimeInterval = 60
     public static let memoryLimit: UInt64 = 512 * 1024 * 1024
@@ -238,33 +260,82 @@ public struct PluginWatchdog: Sendable {
     public static let cpuLimit = 0.5
     public static let cpuWindow: TimeInterval = 10
 
+    public static let stuckNote = "Its script was stuck: it stopped answering for \(Int(stuckAfter)) seconds while keeping your Mac busy, so Abstract stopped it."
+    public static let quietNote = "Its script stopped answering for \(Int(quietLimit / 60)) minutes, so Abstract stopped it."
+    public static let startupNote = "Its script didn't finish starting, so Abstract stopped it."
+
     public enum Verdict: Sendable, Equatable {
         case fine
-        case stopped(String)
+        /// `recoverable` when a slow Mac, not the script, may be the
+        /// reason: the host starts it again a few times before it stays
+        /// stopped.
+        case stopped(String, recoverable: Bool = false)
     }
 
-    private var heartbeatSentAt: Date?
+    private var lastTick: Date?
+    private var heartbeatPending = false
+    /// How long the page has been loading, or the heartbeat unanswered, in
+    /// on-time ticks.
+    private var waited: TimeInterval = 0
+    /// The process's CPU seconds at the last sample, and at the first one
+    /// in this wait, with how far into the wait that was.
+    private var lastCPU: Double?
+    private var waitCPU: (seconds: Double, at: TimeInterval)?
     private var errors: [Date] = []
     private var cpuSamples: [(at: Date, seconds: Double)] = []
 
     public init() {}
 
-    /// Whether to send a heartbeat now: not while one is still unanswered.
-    public mutating func shouldSendHeartbeat(now: Date = Date()) -> Bool {
-        guard heartbeatSentAt == nil else { return false }
-        heartbeatSentAt = now
+    /// How long the page took to load, in on-time ticks, once it has.
+    public private(set) var startedAfter: TimeInterval?
+
+    /// One host tick, about once a second. `ready` is whether the page has
+    /// loaded; until it has, no heartbeat goes and the start is timed.
+    public mutating func tick(now: Date = Date(), ready: Bool) -> Verdict {
+        let elapsed = lastTick.map { now.timeIntervalSince($0) } ?? 0
+        lastTick = now
+        // Late, or the clock moved back: the host was held up.
+        let counted = elapsed >= 0 && elapsed <= Self.hostLateAfter ? elapsed : 0
+        if ready, startedAfter == nil {
+            startedAfter = waited
+            waited = 0
+            waitCPU = nil
+        }
+        guard !ready || heartbeatPending else { return .fine }
+        waited += counted
+        if waitCPU == nil, let lastCPU { waitCPU = (lastCPU, waited) }
+        let note = ready ? Self.stuckNote : Self.startupNote
+        if waited > Self.quietLimit { return .stopped(ready ? Self.quietNote : note, recoverable: true) }
+        return waited > (ready ? Self.stuckAfter : Self.startupLimit) && busyWhileWaiting
+            ? .stopped(note, recoverable: true) : .fine
+    }
+
+    /// Whether the process kept a core busy through this wait, or its CPU
+    /// can't be read, which is the safe guess.
+    private var busyWhileWaiting: Bool {
+        guard let start = waitCPU, let now = lastCPU, waited > start.at else { return true }
+        return (now - start.seconds) / (waited - start.at) > Self.cpuLimit
+    }
+
+    /// Whether the host was held up before this tick: for its log.
+    public func hostWasLate(now: Date) -> Bool {
+        guard let lastTick else { return false }
+        let elapsed = now.timeIntervalSince(lastTick)
+        return elapsed < 0 || elapsed > Self.hostLateAfter
+    }
+
+    /// Whether to send a heartbeat now: only once the page is ready, and
+    /// not while one is still unanswered.
+    public mutating func shouldSendHeartbeat(ready: Bool) -> Bool {
+        guard ready, startedAfter != nil, !heartbeatPending else { return false }
+        heartbeatPending = true
+        waited = 0
+        waitCPU = nil
         return true
     }
 
     public mutating func heartbeatAnswered() {
-        heartbeatSentAt = nil
-    }
-
-    public func check(now: Date = Date()) -> Verdict {
-        if let sent = heartbeatSentAt, now.timeIntervalSince(sent) > Self.stuckAfter {
-            return .stopped("It stopped responding, so Abstract stopped it.")
-        }
-        return .fine
+        heartbeatPending = false
     }
 
     public mutating func scriptThrew(now: Date = Date()) -> Verdict {
@@ -281,10 +352,45 @@ public struct PluginWatchdog: Sendable {
         if footprint > Self.memoryLimit {
             return .stopped("It used too much memory, so Abstract stopped it.")
         }
+        lastCPU = cpuSeconds
         cpuSamples.append((now, cpuSeconds))
         cpuSamples.removeAll { now.timeIntervalSince($0.at) > Self.cpuWindow }
         guard let first = cpuSamples.first, now.timeIntervalSince(first.at) >= Self.cpuWindow * 0.8 else { return .fine }
         let share = (cpuSeconds - first.seconds) / now.timeIntervalSince(first.at)
         return share > Self.cpuLimit ? .stopped("It kept your Mac busy, so Abstract stopped it.") : .fine
+    }
+}
+
+/// Starts a background script again after a stop a slow Mac can cause
+/// (ABS-149): a page that didn't finish starting, a script that went
+/// quiet, a web process WebKit ended. A few times in a while, waiting
+/// longer each time; after that it stays stopped, with its reason in
+/// Settings, until the person restarts it.
+public struct PluginRestarts: Sendable {
+    /// The waits before each automatic restart within the window.
+    public static let delays: [TimeInterval] = [2, 15]
+    public static let window: TimeInterval = 10 * 60
+
+    private var history: [String: [Date]] = [:]
+
+    public init() {}
+
+    /// How long to wait before starting it again, or nil to leave it
+    /// stopped.
+    public mutating func delay(for id: String, now: Date = Date()) -> TimeInterval? {
+        var recent = (history[id] ?? []).filter { now.timeIntervalSince($0) < Self.window }
+        guard recent.count < Self.delays.count else {
+            history[id] = recent
+            return nil
+        }
+        let delay = Self.delays[recent.count]
+        recent.append(now)
+        history[id] = recent
+        return delay
+    }
+
+    /// A fresh start: the person restarted it, or turned it off.
+    public mutating func forget(_ id: String) {
+        history[id] = nil
     }
 }

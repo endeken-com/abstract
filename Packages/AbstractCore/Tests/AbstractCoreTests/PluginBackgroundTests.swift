@@ -274,23 +274,196 @@ import Testing
 
     // MARK: Watchdog
 
+    /// Ticks once a second from `from`, on time, until a verdict other
+    /// than fine or `seconds` have passed. With `cpu`, the script's process
+    /// is sampled each tick, using that share of a core.
+    private func ticks(_ watchdog: inout PluginWatchdog, from: Date, seconds: Int, ready: Bool,
+                       cpu: Double? = nil) -> (verdict: PluginWatchdog.Verdict, at: Date) {
+        var now = from
+        for second in 1...seconds {
+            now += 1
+            let verdict = watchdog.tick(now: now, ready: ready)
+            if verdict != .fine { return (verdict, now) }
+            if let cpu {
+                _ = watchdog.sample(cpuSeconds: Double(second) * cpu, footprint: 50_000_000, now: now)
+            }
+        }
+        return (.fine, now)
+    }
+
     @Test func aScriptStuckInALoopIsStopped() {
         var watchdog = PluginWatchdog()
         let now = Date()
-        let first = watchdog.shouldSendHeartbeat(now: now)
+        #expect(watchdog.tick(now: now, ready: true) == .fine)
+        let first = watchdog.shouldSendHeartbeat(ready: true)
         #expect(first)
         watchdog.heartbeatAnswered()
-        #expect(watchdog.check(now: now + 10) == .fine)
+        #expect(ticks(&watchdog, from: now, seconds: 10, ready: true).verdict == .fine)
 
-        let second = watchdog.shouldSendHeartbeat(now: now + 10)
+        let second = watchdog.shouldSendHeartbeat(ready: true)
         #expect(second)
         // A busy loop never answers; no second heartbeat piles up.
-        let third = watchdog.shouldSendHeartbeat(now: now + 11)
+        let third = watchdog.shouldSendHeartbeat(ready: true)
         #expect(!third)
-        #expect(watchdog.check(now: now + 12) == .fine)
-        guard case .stopped = watchdog.check(now: now + 10 + PluginWatchdog.stuckAfter + 0.5) else {
-            Issue.record("a stuck script kept running"); return
+        // The host stays on time, so the wait counts, and it is stopped.
+        let (verdict, at) = ticks(&watchdog, from: now + 10, seconds: 30, ready: true)
+        #expect(verdict == .stopped(PluginWatchdog.stuckNote, recoverable: true))
+        #expect(at.timeIntervalSince(now + 10) > PluginWatchdog.stuckAfter)
+        #expect(at.timeIntervalSince(now + 10) <= PluginWatchdog.stuckAfter + 1)
+    }
+
+    @Test func noHeartbeatGoesBeforeThePageLoadsAndASlowStartIsTimed() {
+        var watchdog = PluginWatchdog()
+        let now = Date()
+        #expect(watchdog.tick(now: now, ready: false) == .fine)
+        // A slow Mac: the page takes 20 seconds to load. Nothing is sent
+        // before it has, so nothing can go unanswered.
+        var at = now
+        for _ in 0..<20 {
+            at += 1
+            #expect(watchdog.tick(now: at, ready: false) == .fine)
+            let sent = watchdog.shouldSendHeartbeat(ready: false)
+            #expect(!sent)
         }
+        #expect(watchdog.tick(now: at + 1, ready: true) == .fine)
+        #expect(watchdog.startedAfter == 20)
+        let sent = watchdog.shouldSendHeartbeat(ready: true)
+        #expect(sent)
+
+        // Loading slowly on a busy Mac, its process starved: waited for.
+        var starved = PluginWatchdog()
+        _ = starved.tick(now: now, ready: false)
+        #expect(ticks(&starved, from: now, seconds: 120, ready: false, cpu: 0.02).verdict == .fine)
+        #expect(starved.tick(now: now + 121, ready: true) == .fine)
+        #expect(starved.startedAfter == 120)
+
+        // Stuck in a loop before it finished loading.
+        var looping = PluginWatchdog()
+        _ = looping.tick(now: now, ready: false)
+        let (loop, loopAt) = ticks(&looping, from: now, seconds: 120, ready: false, cpu: 0.99)
+        #expect(loop == .stopped(PluginWatchdog.startupNote, recoverable: true))
+        #expect(loopAt.timeIntervalSince(now) <= PluginWatchdog.startupLimit + 2)
+
+        // A page that never loads, with the host on time: it didn't start.
+        var stuck = PluginWatchdog()
+        _ = stuck.tick(now: now, ready: false)
+        let (verdict, stoppedAt) = ticks(&stuck, from: now, seconds: 60, ready: false)
+        #expect(verdict == .stopped(PluginWatchdog.startupNote, recoverable: true))
+        #expect(stoppedAt.timeIntervalSince(now) > PluginWatchdog.startupLimit)
+        #expect(stuck.startedAfter == nil)
+    }
+
+    @Test func aLoopKeepingItsProcessBusyIsStoppedButASlowedQuietOneIsWaitedFor() {
+        let now = Date()
+        // Stuck in a loop: a whole core, no answer.
+        var looping = PluginWatchdog()
+        _ = looping.tick(now: now, ready: true)
+        _ = looping.sample(cpuSeconds: 0, footprint: 50_000_000, now: now)
+        let sent = looping.shouldSendHeartbeat(ready: true)
+        #expect(sent)
+        let (verdict, at) = ticks(&looping, from: now, seconds: 30, ready: true, cpu: 0.99)
+        #expect(verdict == .stopped(PluginWatchdog.stuckNote, recoverable: true))
+        #expect(at.timeIntervalSince(now) <= PluginWatchdog.stuckAfter + 1)
+
+        // Starved while the Mac is busy (its page runs at background
+        // priority): all but idle, its answer takes as long as the load
+        // lasts. It isn't stopped for that.
+        var slowed = PluginWatchdog()
+        _ = slowed.tick(now: now, ready: true)
+        _ = slowed.sample(cpuSeconds: 0, footprint: 50_000_000, now: now)
+        let out = slowed.shouldSendHeartbeat(ready: true)
+        #expect(out)
+        #expect(ticks(&slowed, from: now, seconds: 60, ready: true, cpu: 0.01).verdict == .fine)
+        slowed.heartbeatAnswered()
+        #expect(ticks(&slowed, from: now + 60, seconds: 30, ready: true, cpu: 0.01).verdict == .fine)
+
+        // But one that never answers is stopped in the end, with its reason.
+        let again = slowed.shouldSendHeartbeat(ready: true)
+        #expect(again)
+        let (quiet, quietAt) = ticks(&slowed, from: now + 90, seconds: 700, ready: true, cpu: 0.01)
+        #expect(quiet == .stopped(PluginWatchdog.quietNote, recoverable: true))
+        #expect(quietAt.timeIntervalSince(now + 90) > PluginWatchdog.quietLimit)
+    }
+
+    @Test func aDelayedHeartbeatAnswerUnderLoadIsFine() {
+        var watchdog = PluginWatchdog()
+        let now = Date()
+        _ = watchdog.tick(now: now, ready: true)
+        let sent = watchdog.shouldSendHeartbeat(ready: true)
+        #expect(sent)
+        // The answer takes six seconds, longer than the old three-second
+        // limit, then comes: still running.
+        #expect(ticks(&watchdog, from: now, seconds: 6, ready: true).verdict == .fine)
+        watchdog.heartbeatAnswered()
+        #expect(ticks(&watchdog, from: now + 6, seconds: 30, ready: true).verdict == .fine)
+    }
+
+    @Test func aHeldUpHostIsNotHeldAgainstTheScript() {
+        var watchdog = PluginWatchdog()
+        let now = Date()
+        _ = watchdog.tick(now: now, ready: true)
+        let sent = watchdog.shouldSendHeartbeat(ready: true)
+        #expect(sent)
+        // Abstract's main thread busy for eight seconds, its tick late:
+        // the answer is waiting behind it, so that time doesn't count.
+        #expect(watchdog.hostWasLate(now: now + 8))
+        #expect(watchdog.tick(now: now + 8, ready: true) == .fine)
+        // The Mac slept overnight with a heartbeat out.
+        #expect(watchdog.tick(now: now + 8 + 8 * 3600, ready: true) == .fine)
+        // The clock was set back.
+        #expect(watchdog.tick(now: now, ready: true) == .fine)
+        #expect(!watchdog.hostWasLate(now: now + 1))
+        // Back on time, it answers within a few ticks.
+        #expect(ticks(&watchdog, from: now, seconds: 3, ready: true).verdict == .fine)
+        watchdog.heartbeatAnswered()
+
+        // The same while still loading: a held-up launch isn't a failed start.
+        var starting = PluginWatchdog()
+        _ = starting.tick(now: now, ready: false)
+        var at = now
+        for _ in 0..<12 {
+            at += 4
+            #expect(starting.tick(now: at, ready: false) == .fine)
+        }
+        #expect(starting.tick(now: at + 1, ready: true) == .fine)
+        #expect(starting.startedAfter == 0)
+    }
+
+    @Test func severalScriptsStartingAtOnceOnABusyLaunchAllStart() {
+        // Three plugins started in the same moment of a busy launch, as at
+        // a cold launch: the host's ticks come late for a while, their pages
+        // take ten seconds to load, and their first answers three more.
+        let now = Date()
+        var watchdogs = Array(repeating: PluginWatchdog(), count: 3)
+        let times: [TimeInterval] = [1, 3.5, 4.5, 5.5, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+        for index in watchdogs.indices { _ = watchdogs[index].tick(now: now, ready: false) }
+        for offset in times {
+            for index in watchdogs.indices {
+                let ready = offset >= 10
+                #expect(watchdogs[index].tick(now: now + offset, ready: ready) == .fine)
+                _ = watchdogs[index].shouldSendHeartbeat(ready: ready)
+            }
+        }
+        for index in watchdogs.indices {
+            watchdogs[index].heartbeatAnswered()
+            #expect(watchdogs[index].startedAfter != nil)
+            #expect(ticks(&watchdogs[index], from: now + 15, seconds: 30, ready: true).verdict == .fine)
+        }
+    }
+
+    @Test func aStopASlowMacCausesIsRetriedAFewTimesThenSticks() {
+        var restarts = PluginRestarts()
+        let now = Date()
+        #expect(restarts.delay(for: "a", now: now) == PluginRestarts.delays[0])
+        #expect(restarts.delay(for: "b", now: now) == PluginRestarts.delays[0])
+        #expect(restarts.delay(for: "a", now: now + 30) == PluginRestarts.delays[1])
+        // Again and again: it stays stopped, with its reason in Settings.
+        #expect(restarts.delay(for: "a", now: now + 60) == nil)
+        // A while later, a slow moment is forgiven again.
+        #expect(restarts.delay(for: "a", now: now + PluginRestarts.window + 60) == PluginRestarts.delays[0])
+        // The person restarting it is a fresh start.
+        restarts.forget("b")
+        #expect(restarts.delay(for: "b", now: now + 1) == PluginRestarts.delays[0])
     }
 
     @Test func aScriptThatKeepsThrowingIsStopped() {
