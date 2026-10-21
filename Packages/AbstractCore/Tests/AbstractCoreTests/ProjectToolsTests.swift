@@ -44,6 +44,20 @@ import Testing
         #expect(launch.withheld == ["delete_issue", "create_issue"])
     }
 
+    @Test func aToolNameThatCouldWidenARuleIsDropped() throws {
+        let listed = MCPToolList.tools(in: .object(["tools": .array([
+            .object(["name": .string("list_issues")]), .object(["name": .string("x,Bash")]),
+            .object(["name": .string("a b")]), .object(["name": .string("issues.get")]),
+        ])]))
+        #expect(listed.tools.map(\.name) == ["list_issues", "issues.get"])
+        var server = Self.linear()
+        server.tools.append(.init(name: "y,Bash", readOnly: true))
+        let launch = try Self.launch(server, ClaudeProvider())
+        #expect(launch.allowed == ["list_issues"])
+        let args = ClaudeProvider().buildLaunch(Self.context([launch])).args
+        #expect(!args.contains { $0.contains("Bash") })
+    }
+
     @Test func onlyTheChosenAgentsThatCanTakeItGetTheServer() {
         let server = Self.linear(agents: ["claude", "muse"])
         #expect(server.launch(for: ClaudeProvider()) != nil)
