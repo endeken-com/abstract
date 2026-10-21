@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 import AbstractCore
 
 /// A project's settings as one quiet document: the header, then General,
-/// Branches & naming, New chats, Permissions, Tools (MCP), Location & checkout,
+/// Branches & naming, New chats, Skills, Permissions, Tools (MCP), Location & checkout,
 /// Lifecycle scripts and the danger zone. Every change is stored at once; text is stored after a pause.
 struct ProjectSettingsView: View {
     @Environment(AppModel.self) private var model
@@ -21,6 +21,7 @@ struct ProjectSettingsView: View {
                     GeneralSection(project: project, origin: origin, owner: owner)
                     BranchSection(project: project)
                     NewChatSection(project: project)
+                    SkillsSection(project: project)
                     PermissionsSection(project: project)
                     ToolsSection(project: project)
                     LocationSection(project: project)
@@ -580,6 +581,55 @@ private struct NewChatSection: View {
             if on { picked.insert(profileId) } else { picked.remove(profileId) }
             p.profileIds = picked == Set(all) ? nil : all.filter { picked.contains($0) }
         }
+    }
+}
+
+/// The library skills this project's chats get (ABS-122), chosen from
+/// Settings › Skills, and the ones its own files hold.
+private struct SkillsSection: View {
+    @Environment(AppModel.self) private var model
+    let project: Project
+
+    var body: some View {
+        PageSection(title: "Skills", detail: detail) {
+            let sources = model.skillSources.map { ($0, model.skills(in: $0.id)) }.filter { !$0.1.isEmpty }
+            if sources.isEmpty {
+                Text("The skill library is empty. Add a folder or a GitHub repository of skills in Settings › Skills.")
+                    .font(.btCallout)
+                    .foregroundStyle(Color.btTextTertiary)
+            }
+            ForEach(sources, id: \.0.id) { source, skills in
+                SettingRow(title: source.title,
+                           detail: source.kind == .github ? "GitHub, pinned to \(source.commit.map { String($0.prefix(7)) } ?? "?")" : "A folder on this Mac") {
+                    VStack(alignment: .leading, spacing: Space.xs) {
+                        ForEach(skills) { skill in
+                            Toggle(skill.name, isOn: Binding(
+                                get: { project.assignedSkills.contains(skill.id) },
+                                set: { on in model.setSkill(skill.id, assigned: on, projectId: project.id) }))
+                                .help(skill.description ?? skill.name)
+                        }
+                    }
+                    .frame(minHeight: ProjectPage.controlHeight)
+                }
+            }
+            let own = model.projectSkills(project.id)
+            if !own.isEmpty {
+                SettingRow(title: "In this project", detail: "Kept in the project's own files. Agents that read their folder already use them.") {
+                    Text(own.map(\.name).joined(separator: ", "))
+                        .font(.btBody)
+                        .foregroundStyle(Color.btTextSecondary)
+                        .frame(minHeight: ProjectPage.controlHeight, alignment: .leading)
+                }
+            }
+        }
+        .onAppear { model.reloadSkills() }
+    }
+
+    /// Who gets them, and who can't.
+    private var detail: String {
+        let unable = ProviderRegistry.all.filter { $0.skillDelivery == nil }.map(\.name)
+        let base = "Every chat in this project gets the skills chosen here when its agent starts; a profile can add more. Removing one leaves it out of chats that start after."
+        return unable.isEmpty ? base : base + " \(unable.joined(separator: ", ")) can't take skills, so its chats run without them."
     }
 }
 

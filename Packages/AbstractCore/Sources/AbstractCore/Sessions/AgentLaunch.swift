@@ -68,18 +68,21 @@ public struct LaunchSettings: Sendable {
     /// The MCP servers of the launch's project (ABS-123); each agent gets
     /// the ones chosen for it.
     public var toolServers: [ProjectToolServer]
+    /// The library skills this launch's chat gets (ABS-122).
+    public var skills: [LibrarySkill]
     /// Where each chat's own launch files go (`ChatConfigFiles`); nil
-    /// passes everything inline.
+    /// passes everything inline, and gives the agent no library skills.
     public var agentConfigRoot: String?
 
     public init(providerOverrides: [String: ProviderOverride], outputStyle: OutputStyle, claudeProfile: String?,
                 standardClaudeProfile: String = NSHomeDirectory() + "/.claude", attachmentsDirectory: String,
                 agentDefaults: [String: AgentDefaults] = [:], modelCatalogs: [String: ModelCatalog] = [:],
-                codeHistory: CodeHistorySettings? = nil, toolServers: [ProjectToolServer] = [], agentConfigRoot: String? = nil) {
+                codeHistory: CodeHistorySettings? = nil, toolServers: [ProjectToolServer] = [], skills: [LibrarySkill] = [],
+                agentConfigRoot: String? = nil) {
         self.providerOverrides = providerOverrides; self.outputStyle = outputStyle; self.claudeProfile = claudeProfile
         self.standardClaudeProfile = standardClaudeProfile; self.attachmentsDirectory = attachmentsDirectory
         self.agentDefaults = agentDefaults; self.modelCatalogs = modelCatalogs; self.codeHistory = codeHistory
-        self.toolServers = toolServers; self.agentConfigRoot = agentConfigRoot
+        self.toolServers = toolServers; self.skills = skills; self.agentConfigRoot = agentConfigRoot
     }
 
     /// As the app last saved them, for a launch that doesn't go through the app.
@@ -104,6 +107,15 @@ public struct LaunchSettings: Sendable {
                   taken.insert(server.name).inserted else { return nil }
             return server.launch(for: provider)
         }
+    }
+
+    /// Gives this launch `session`'s library skills (ABS-122): the ones
+    /// its project gets, then the ones the profile it started from adds.
+    public mutating func addSkills(for session: Session, project: Project?, profile: AgentProfile?,
+                                   sources: [SkillSource], dataDirectory: String) {
+        let profileSkills = profile?.id == session.profileId ? profile?.skills ?? [] : []
+        let available = SkillLibrary.skills(sources: sources, library: SkillLibrary.folder(dataDirectory: dataDirectory))
+        skills = SkillLibrary.chatSkills(project: project?.assignedSkills ?? [], profile: profileSkills, available: available)
     }
 
     /// The default effort, when the model that will run takes it; else nil,
@@ -141,11 +153,21 @@ public enum AgentLaunch {
                                 toolServers: settings.toolServers(for: session, provider: provider),
                                 configDirectory: settings.agentConfigRoot.map {
                                     ChatConfigFiles.directory(root: $0, chatId: session.id)
-                                })
+                                },
+                                skills: skills(for: session, provider: provider, settings: settings, home: home))
         var spec = resumeId.map { provider.buildResume(ctx, resumeId: $0) } ?? provider.buildLaunch(ctx)
         if provider.id == "claude", let profile = settings.claudeProfile, profile != settings.standardClaudeProfile {
             spec.env["CLAUDE_CONFIG_DIR"] = profile
         }
         return spec
+    }
+
+    /// The chat's skills laid out for its agent, in the chat's own folder.
+    /// nil when it gets none, or its agent can't take them (the app says so).
+    static func skills(for session: Session, provider: any ProviderDefinition, settings: LaunchSettings,
+                       home: String) -> SkillsLaunch? {
+        guard let delivery = provider.skillDelivery, let root = settings.agentConfigRoot else { return nil }
+        return try? ChatConfigFiles.prepareSkills(settings.skills, delivery: delivery,
+                                                  in: ChatConfigFiles.directory(root: root, chatId: session.id), home: home)
     }
 }

@@ -757,6 +757,10 @@ public final class Store: Sendable {
                 CREATE INDEX project_tool_servers_project ON project_tool_servers(project_id);
                 """)
         }
+        // The library skills a project's chats get (ABS-122).
+        migrator.registerMigration("v20-project-skills") { db in
+            try db.execute(sql: "ALTER TABLE projects ADD COLUMN skill_ids TEXT")
+        }
         return migrator
     }
 }
@@ -825,6 +829,9 @@ private struct ProjectRow: FetchableRecord, PersistableRecord {
         if let tools: String = try row.decode(forColumn: "plugin_tools") {
             project.pluginTools = try? JSONDecoder().decode([String: PluginToolMode].self, from: Data(tools.utf8))
         }
+        if let skills: String = try row.decode(forColumn: "skill_ids") {
+            project.skillIds = (try? JSONDecoder().decode([String].self, from: Data(skills.utf8))) ?? []
+        }
         value = project
     }
 
@@ -853,6 +860,7 @@ private struct ProjectRow: FetchableRecord, PersistableRecord {
         container["agent_history"] = value.agentHistory
         container["profile_ids"] = try value.profileIds.map { try jsonText($0) }
         container["plugin_tools"] = try value.pluginTools.map { try jsonText($0) }
+        container["skill_ids"] = try value.skillIds.map { try jsonText($0) }
     }
 }
 

@@ -200,6 +200,15 @@ final class AgentHost: @unchecked Sendable {
         }
         // The project's MCP servers (ABS-123), as the app gives them.
         settings.toolServers = (try? session.projectId.map { try store.toolServers(projectId: $0) }) ?? []
+        // Its library skills (ABS-122), as the app gives them.
+        let dataDirectory = URL(fileURLWithPath: storePath).deletingLastPathComponent().path
+        settings.addSkills(for: session, project: try? session.projectId.flatMap { try store.project($0) },
+                           profile: try? store.profiles().first { $0.id == session.profileId },
+                           sources: store.setting(SkillLibrary.sourcesKey, as: [SkillSource].self) ?? [],
+                           dataDirectory: dataDirectory)
+        if let note = SkillLibrary.unsupportedNote(provider: provider, skills: settings.skills) {
+            engine.record(sessionId: sessionId, OutputLine(stream: .note, line: note))
+        }
         let spec = AgentLaunch.spec(for: session, provider: provider, prompt: request.prompt, resumeId: nil,
                                     settings: settings, home: executor.homeDirectory)
         do {

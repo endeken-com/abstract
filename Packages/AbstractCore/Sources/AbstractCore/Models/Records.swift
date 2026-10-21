@@ -44,6 +44,12 @@ public struct Project: Sendable, Hashable, Identifiable, Codable {
     /// Plugin tools (ABS-97) set to Allowed or Off here, by
     /// `<plugin id>/<tool>`; any tool not listed asks first.
     public var pluginTools: [String: PluginToolMode]? = nil
+    /// The library skills this project's chats get (ABS-122), by id;
+    /// nil (projects saved before, or from an older Mac) = none.
+    public var skillIds: [String]? = nil
+
+    /// The library skills this project's chats get.
+    public var assignedSkills: [String] { skillIds ?? [] }
 
     /// Whether this project's agents get the code-history tool.
     public var agentHistoryEnabled: Bool { agentHistory ?? true }

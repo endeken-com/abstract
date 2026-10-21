@@ -232,15 +232,20 @@ struct ToolCallView: View {
                         if !openSwitch.set(next) { withAnimation(.snappy(duration: 0.2)) { open = next } }
                     } label: {
                 HStack(spacing: 6) {
-                    ToolIcon(symbol: ToolPresentation.symbol(call.name), open: isOpen, hovering: hovering && !asking, failed: outcome.isFailure,
+                    // A command reading a skill reads as using it (ABS-122),
+                    // never while it waits for an answer: that shows what runs.
+                    let skill = asking ? nil : SkillUse.name(tool: call.name, input: call.input)
+                    let name = skill == nil ? call.name : "skill"
+                    ToolIcon(symbol: ToolPresentation.symbol(name), open: isOpen, hovering: hovering && !asking, failed: outcome.isFailure,
                              file: kind == .edit ? ToolPresentation.path(call) : nil)
-                    let verb = asking ? ToolPresentation.ask(call.name) : ToolPresentation.verb(call.name, pending: working)
+                    let verb = asking ? ToolPresentation.ask(name) : ToolPresentation.verb(name, pending: working)
                     HStack(spacing: 6) {
                         Text(verb)
                             .font(.btChatToolMedium)
                             .foregroundStyle(asking || hovering ? Color.btText : Color.btTextSecondary)
                             .fixedSize()
-                        ToolTargetView(target: ToolPresentation.target(call, root: model.session(sessionId)?.worktreePath), strong: asking || hovering)
+                        ToolTargetView(target: skill.map { .text($0) } ?? ToolPresentation.target(call, root: model.session(sessionId)?.worktreePath),
+                                       strong: asking || hovering)
                     }
                     // A call at work shimmers instead of spinning, as in Paseo.
                     .modifier(Shimmer(active: working && !asking && approval == nil, length: verb.count + 24))
@@ -957,7 +962,7 @@ enum ToolPresentation {
             let folder = (rel as NSString).deletingLastPathComponent
             return .path(name: name, folder: folder == "/" ? nil : folder)
         }
-        if call.name.lowercased() == "skill", let skill = o["skill"]?.string { return .text(skill) }
+        if call.name.lowercased() == "skill", let skill = SkillUse.name(tool: call.name, input: call.input) { return .text(skill) }
         for key in ["pattern", "query", "url", "description", "path", "command"] {
             if let v = o[key]?.string, !v.isEmpty { return .text(key == "path" ? relative(v, root: root) : v) }
         }

@@ -68,10 +68,12 @@ public struct OpenCodeProvider: ProviderDefinition {
     /// config stays untouched.
     static let profileAgent = "abstract-profile"
 
-    /// The code-history tool (ABS-61, checked in ABS-60) and a profile's
-    /// agent in `OPENCODE_CONFIG_CONTENT`, which OpenCode merges with
-    /// the user's own config: their servers, instructions and agents
-    /// stay, ours are added. If the user's rules make the tool `ask`,
+    public var skillDelivery: SkillDelivery? { .skillsPath }
+
+    /// The code-history tool (ABS-61, checked in ABS-60), a profile's
+    /// agent and library skills (ABS-122) in `OPENCODE_CONFIG_CONTENT`,
+    /// which OpenCode merges with the user's own config: their servers,
+    /// instructions, agents and skills stay, ours are added. If the user's rules make the tool `ask`,
     /// `run` declines it and the declined call shows in the chat.
     static func configEnv(_ ctx: LaunchContext) -> [String: String] {
         var config: [String: JSONValue] = [:]
@@ -85,6 +87,11 @@ public struct OpenCodeProvider: ProviderDefinition {
                 ]),
             ])
             if let file = tool.instructionFile { instructions.append(.string(file)) }
+        }
+        // Library skills (ABS-122): OpenCode adds the folders in
+        // `skills.paths` to the ones it already reads.
+        if let skills = ctx.skills {
+            config["skills"] = .object(["paths": .array([.string(skills.folder)])])
         }
         // The plugin-tools server (ABS-97), merged the same way.
         if let tools = ctx.pluginTools {

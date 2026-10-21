@@ -115,12 +115,22 @@ public struct CodexProvider: ProviderDefinition {
                 // and `--image` takes every value up to the next flag.
                 + (ctx.prompt.hasPrefix("-") || !ctx.images.isEmpty ? ["--", ctx.prompt] : [ctx.prompt]),
             cwd: ctx.cwd,
-            env: Self.toolServerArgs(ctx.toolServers).env,
+            env: Self.toolServerArgs(ctx.toolServers).env.merging(Self.skillEnv(ctx.skills)) { $1 },
             stdinInitial: nil,
             // `codex exec` waits on an open stdin forever.
             keepStdinOpen: false
         )
     }
+
+    /// Library skills (ABS-122): Codex reads skills only from its home,
+    /// so the chat's agent gets a stand-in for `~/.codex` whose `skills`
+    /// adds them to the user's own, and whose every other entry is the
+    /// real one (sign-in, settings, sessions to resume).
+    static func skillEnv(_ skills: SkillsLaunch?) -> [String: String] {
+        skills.map { ["CODEX_HOME": $0.folder] } ?? [:]
+    }
+
+    public var skillDelivery: SkillDelivery? { .codexHome }
 
     /// The profile's instructions (ABS-101), the output style and, when
     /// the chat gets it, the code-history instruction, joined as

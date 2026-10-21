@@ -13,7 +13,7 @@ struct ProfilesSettingsPane: View {
             }
             Section {
                 HStack(spacing: Space.md) {
-                    SettingsCaption("A profile is a saved setup — agent, model, effort, permissions and instructions — that the New Chat window and the automation editor fill in for you. Editing one changes later chats, never a chat already running. A project can choose which profiles it offers in its Project Settings.")
+                    SettingsCaption("A profile is a saved setup — agent, model, effort, permissions, instructions and skills — that the New Chat window and the automation editor fill in for you. Editing one changes later chats, never a chat already running. A project can choose which profiles it offers in its Project Settings.")
                     Spacer(minLength: Space.md)
                     Button("Add Profile") { model.addProfile() }
                 }
@@ -113,6 +113,21 @@ private struct ProfileSettingsSection: View {
             } label: {
                 Text("Instructions")
                 Text("Given to the agent every time a chat or run starts from this profile, as Markdown.")
+            }
+            if !model.librarySkills.isEmpty {
+                LabeledContent {
+                    VStack(alignment: .trailing, spacing: 4) {
+                        ForEach(model.librarySkills) { skill in
+                            Toggle(skill.name, isOn: Binding(
+                                get: { model.profile(profile.id)?.skills.contains(skill.id) ?? false },
+                                set: { on in model.setSkill(skill.id, added: on, profileId: profile.id) }))
+                                .help(skill.description ?? skill.name)
+                        }
+                    }
+                } label: {
+                    Text("Skills")
+                    Text("Added to the project's skills for chats and runs started from this profile.")
+                }
             }
             LabeledContent("Delete") {
                 Button("Delete Profile", role: .destructive) { model.deleteProfile(profile.id) }

@@ -133,6 +133,7 @@ public struct ClaudeProvider: ProviderDefinition {
         return LaunchSpec(
             command: override.flatMap { $0.isEmpty ? nil : $0 } ?? binary,
             args: Self.baseArgs + Self.policyArgs(ctx.permissionPolicy) + ctx.readableDirs.flatMap { ["--add-dir", $0] }
+                + Self.skillArgs(ctx.skills)
                 + (ctx.model.map { ["--model", $0] } ?? [])
                 + (ctx.effort.map { ["--effort", $0] } ?? []) + Self.settingsArgs(ctx)
                 + Self.mcpArgs(ctx) + Self.instructionArgs(ctx) + resumeArgs + ctx.extraArgs,
@@ -142,6 +143,15 @@ public struct ClaudeProvider: ProviderDefinition {
             keepStdinOpen: true
         )
     }
+
+    /// Library skills (ABS-122): Claude loads `.claude/skills` from every
+    /// folder added with `--add-dir`, links included, as it does from the
+    /// worktree's. Passed on every resume too.
+    static func skillArgs(_ skills: SkillsLaunch?) -> [String] {
+        skills.map { ["--add-dir", $0.folder] } ?? []
+    }
+
+    public var skillDelivery: SkillDelivery? { .addedDirectory }
 
     /// Its own `toolServerSupport`: an Ask first tool gets the chat's
     /// permission card through `--permission-prompt-tool stdio`.
