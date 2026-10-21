@@ -668,7 +668,8 @@ private struct ScopeSentence: View {
                         profileMenu
                     }
                 }
-                if chat == nil {
+                // A workflow's steps bring their own agent and permissions.
+                if chat == nil, draft.workflowId == nil {
                     SentenceWord("using")
                     AgentChip(providerId: $draft.providerId, modelId: $draft.modelId, effort: $draft.effort, device: draft.deviceId)
                     SentenceWord("with")

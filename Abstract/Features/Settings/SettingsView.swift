@@ -113,24 +113,24 @@ struct SettingsView: View {
 
                 HStack(spacing: 0) {
                     sidebar
-                        .frame(width: 210)
+                        .frame(width: 190)
                         .frame(maxHeight: .infinity, alignment: .top)
                         .background(Color.btSidebar)
 
                     Rectangle().fill(Color.btBorder).frame(width: 1)
 
-                    ScrollView {
-                        VStack(spacing: 0) {
-                            header
-                            // A grouped form centres itself at its own width;
-                            // capping it as well sends layout round in circles.
+                    VStack(spacing: 0) {
+                        // Above the scroll view, not in it: a grouped form
+                        // stacked with anything else in a scroll view sends
+                        // layout round and round.
+                        header
+                        ScrollView {
                             pane
                                 .frame(maxWidth: .infinity, alignment: .top)
                         }
-                        .padding(.bottom, Space.xl)
+                        .id(tab)
+                        .btThinScrollIndicator()
                     }
-                    .id(tab)
-                    .btThinScrollIndicator()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color.btCanvas)
                     .overlay(alignment: .topTrailing) {

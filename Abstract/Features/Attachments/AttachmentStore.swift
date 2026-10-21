@@ -160,6 +160,9 @@ final class LinearAccount {
     private func load() {
         guard !loaded else { return }
         loaded = true
+        // The demo never reads your real keychain: a fresh build's first
+        // read asks for your password and holds the window until answered.
+        guard !CommandLine.arguments.contains("--demo") else { return }
         key = Keychain.read(Self.account)
     }
 

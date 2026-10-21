@@ -202,6 +202,8 @@ private struct ProfileSettingsSection: View {
             LabeledContent {
                 TextEditor(text: binding(\.instructions, default: ""))
                     .font(.btBody)
+                    // A form row sets its controls flush right; prose reads from the left.
+                    .multilineTextAlignment(.leading)
                     .focused($instructionsFocused)
                     .scrollContentBackground(.hidden)
                     .padding(6)

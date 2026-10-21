@@ -210,7 +210,7 @@ private struct WorkflowStepRow: View {
                         }
                     }
                     .labelsHidden()
-                    .frame(maxWidth: 220)
+                    .fixedSize()
                     if isLast {
                         Text("Last step")
                             .font(.btCaption)
