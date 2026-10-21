@@ -28,6 +28,10 @@ final class PluginConnection {
     var onBackground: (PluginBridge.Outcome) -> Void = { _ in }
     /// After each snapshot, for a screen placed beside a chat.
     var onSnapshot: () -> Void = {}
+    /// Whether a write command serving this code host call may run
+    /// unasked: the person started the call (ABS-139). Only a background
+    /// script answers calls.
+    var authorizesWrite: (String?) async -> Bool = { _ in false }
 
     init(model: AppModel, plugin: InstalledPlugin, manifest: PluginManifest, placement: PluginPlacement?,
          isBackground: Bool = false, evaluate: @escaping (String) -> Void, fail: @escaping (String) -> Void) {
@@ -42,6 +46,8 @@ final class PluginConnection {
                               secretNames: Set(plugin.record.grantedSecretNames),
                               alwaysAllowedActions: plugin.record.alwaysAllowedActions)
         bridge.isBackground = isBackground
+        bridge.cli = plugin.record.grantedCLI
+        bridge.isCodeHost = manifest.contributes.codeHost != nil
         // A placed showing may act on the chat it sits beside: the
         // person opened it there (ABS-96).
         if let chatId = placement?.chatId { bridge.knownChatIds = [chatId] }
@@ -51,6 +57,9 @@ final class PluginConnection {
 
     /// A chat the person handed this plugin outside a snapshot (ABS-112).
     func know(chatId: String) { bridge.know(chatId: chatId) }
+
+    /// A project core handed the plugin with a code host call (ABS-139).
+    func know(projectKey: String) { bridge.know(projectKey: projectKey) }
 
     /// The grants as they stand now, not as they were when this copy
     /// started: revoking one in Settings stops the next call.
@@ -68,6 +77,7 @@ final class PluginConnection {
             bridge.alwaysAllowedActions = record.alwaysAllowedActions
             bridge.allowedHosts = Set(record.grantedNetworkHosts.map { $0.lowercased() })
             bridge.secretNames = Set(record.grantedSecretNames)
+            bridge.cli = record.grantedCapabilities.contains(.cli) ? record.grantedCLI : nil
         }
         let storage = model.plugins.manager.storage(for: plugin.id)
         let outcome = bridge.handle(text, storage: storage)
@@ -138,7 +148,9 @@ final class PluginConnection {
                  payload: .object(["message": .string("It acted too many times in a minute, so Abstract paused it.")]))
             model.plugins.noteError(plugin.id, "It acted too many times in a minute, so it was paused. Turn it on again here when you're ready.")
             model.setPluginEnabled(plugin.id, false)
-        case .subscribe, .scheduleJob, .cancelJob, .jobDone, .toolResult, .linkResult:
+        case .runCLI(let id, let request):
+            runCLI(request, id: id)
+        case .subscribe, .scheduleJob, .cancelJob, .jobDone, .toolResult, .linkResult, .codeHostResult, .codeHostHosts:
             onBackground(outcome)
         case .refused(let id, let reason):
             model.plugins.noteError(plugin.id, reason)
@@ -178,6 +190,56 @@ final class PluginConnection {
             perform(action, id: id)
         default:
             send(type: "error", id: id, payload: .object(["message": .string("You declined that.")]))
+        }
+    }
+
+    /// Runs a declared command (ABS-139). A read goes straight to the
+    /// budget; a write asks first unless the person started the code host
+    /// call it serves, or always allows this plugin's writes.
+    private func runCLI(_ request: PluginCLIRequest, id: String?) {
+        guard let current = model.plugins.plugin(plugin.id), let cli = current.record.grantedCLI else { return }
+        let chats = bridge.knownChatIds, projectKeys = bridge.knownProjectKeys
+        Task { @MainActor [weak self] in
+            guard let self, !dead else { return }
+            let personStarted = request.isWrite ? await authorizesWrite(request.callId) : false
+            let alwaysAllowed = model.plugins.plugin(plugin.id)?.record.alwaysAllowedActions.contains(.cli) ?? false
+            if PluginCLIRoute.of(request, alwaysAllowed: alwaysAllowed, personStarted: personStarted) == .ask,
+               !askCLI(request, cli: cli) {
+                send(type: "error", id: id, payload: .object(["message": .string("You declined that.")]))
+                return
+            }
+            do {
+                let result = try await model.runPluginCLI(request, cli: cli, chats: chats, projectKeys: projectKeys)
+                send(type: "reply", id: id, payload: result.jsonValue())
+            } catch let error as PluginCLIError {
+                send(type: "error", id: id, payload: error.jsonValue())
+            } catch {
+                send(type: "error", id: id, payload: .object(["message": .string(error.localizedDescription)]))
+            }
+        }
+    }
+
+    /// Ask first (ABS-92) for a write command: the whole command line, and
+    /// where it runs.
+    private func askCLI(_ request: PluginCLIRequest, cli: PluginCLI) -> Bool {
+        guard !dead else { return false }
+        let alert = NSAlert()
+        let place = model.pluginCLIPlace(request).map { " \($0)" } ?? ""
+        alert.messageText = "\(manifest.name) wants to run \(cli.binary) \(request.command.words)\(place)."
+        let line = ([cli.binary] + request.args.map { $0.contains(" ") || $0.isEmpty ? "\"\($0)\"" : $0 }).joined(separator: " ")
+        alert.informativeText = String(line.prefix(600))
+            + "\n\nAlways allow lets \(manifest.name) run its \(cli.binary) commands that change things without asking. You can change your mind in Settings → Plugins."
+        alert.addButton(withTitle: "Allow Once")
+        alert.addButton(withTitle: "Always Allow")
+        alert.addButton(withTitle: "Decline")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            return true
+        case .alertSecondButtonReturn:
+            model.plugins.setAlwaysAllowed(plugin.id, .cli, true)
+            return true
+        default:
+            return false
         }
     }
 
@@ -289,6 +351,7 @@ enum PluginShim {
       const jobs = new Map();
       const toolHandlers = new Map();
       const linkHandlers = new Map();
+      const codeHostHandlers = new Map();
       let next = 1;
       const post = (message) => window.webkit.messageHandlers.abstractPlugin.postMessage(JSON.stringify(message));
       const api = {
@@ -318,6 +381,31 @@ enum PluginShim {
           // Answers agents' calls to a tool its manifest lists (ABS-97):
           // fn(input, { chatId }) returns text or JSON, or throws.
           handle(name, fn) { toolHandlers.set(name, fn); }
+        },
+        cli: {
+          // Runs one of the commands its manifest lists (ABS-139), in a
+          // chat's or project's folder: { chatId } or { projectKey }, and
+          // { callId } when it serves a code host call. Resolves with
+          // { code, ok, stdout, stderr, truncated }; throws when it can't
+          // run, with error.missing and error.install when the tool isn't there.
+          run(args, options) {
+            const o = options || {};
+            return api.send("cli.run", { args, chatId: o.chatId, projectKey: o.projectKey, callId: o.callId })
+              .then((reply) => {
+                if (reply && typeof reply.code === "number") return reply;
+                const error = new Error((reply && reply.message) || "That command couldn't run.");
+                if (reply && reply.missing) { error.missing = reply.missing; error.install = reply.install; }
+                throw error;
+              });
+          }
+        },
+        codeHost: {
+          // Answers core's calls for the code host its manifest declares
+          // (ABS-139): fn(input, { projectKey, chatId, remote, callId })
+          // returns the operation's result, or throws.
+          handle(op, fn) { codeHostHandlers.set(op, fn); },
+          // Hosts its tool is signed in to besides the manifest's.
+          setHosts(hosts) { return api.send("codeHost.hosts", { hosts }); }
         },
         links: {
           // Says how a link stands (ABS-126), for the link decorator its
@@ -375,6 +463,20 @@ enum PluginShim {
               }
               done({ result: value });
             }, (error) => done({ error: String((error && error.message) || error) }));
+          return;
+        }
+        if (message.type === "codeHost") {
+          const call = message.payload || {};
+          const done = (body) => {
+            try { post({ api: \(api), type: "codeHost.result", payload: Object.assign({ callId: call.callId }, body) }); } catch {}
+          };
+          const fn = codeHostHandlers.get(call.op);
+          if (!fn) { done({ error: "This plugin doesn't answer " + call.op + "." }); return; }
+          const context = { projectKey: call.projectKey, chatId: call.chatId, remote: call.remote, callId: call.callId };
+          Promise.resolve()
+            .then(() => fn(call.input || {}, context))
+            .then((result) => done({ result: result === undefined ? null : result }),
+                  (error) => done({ error: String((error && error.message) || error) }));
           return;
         }
         if (message.type === "link") {

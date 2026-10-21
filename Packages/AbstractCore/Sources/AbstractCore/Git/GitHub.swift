@@ -370,6 +370,12 @@ public struct ForgeItem: Sendable, Hashable, Identifiable {
                          details: [baseRefName.map { "Base: \($0)" }, headRefName.map { "Head: \($0)" }].compactMap { $0 })
     }
 
+    public init(number: Int, title: String, url: String, state: String, body: String?, isPullRequest: Bool,
+                isDraft: Bool, baseRefName: String?, headRefName: String?) {
+        self.number = number; self.title = title; self.url = url; self.state = state; self.body = body
+        self.isPullRequest = isPullRequest; self.isDraft = isDraft; self.baseRefName = baseRefName; self.headRefName = headRefName
+    }
+
     init?(json: JSONValue, isPullRequest: Bool) {
         guard let number = json["number"]?.int, let title = json["title"]?.string else { return nil }
         self.number = number

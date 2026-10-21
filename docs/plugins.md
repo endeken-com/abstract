@@ -208,6 +208,103 @@ Settings › Plugins.
 
 ![Link status](images/plugins/link-status.png)
 
+## Command-line tools
+
+A plugin can run one command-line tool with the `cli` capability (ABS-139). Its
+manifest names the binary, how to install it, and the exact subcommands it may run, each
+marked `read` or `write`. It needs `"api": 2` and a background script to call it from:
+
+```json
+"capabilities": ["cli", "projects.read", "chats.read"],
+"cli": {
+  "binary": "gh",
+  "install": "brew install gh",
+  "commands": [
+    { "args": ["auth", "status"], "access": "read" },
+    { "args": ["pr", "list"], "access": "read" },
+    { "args": ["pr", "merge"], "access": "write" }
+  ]
+}
+```
+
+`binary` is a plain program name found on the login shell's PATH; shells, interpreters,
+`git` and the like are refused. `commands` lists up to 32 subcommands of up to four
+lowercase words each, with no flags. A run's arguments must start with one of them;
+what follows is the plugin's own (flags, values, a pull request body). Abstract runs the
+binary directly, never through a shell.
+
+```js
+const out = await AbstractPlugin.cli.run(["pr", "list", "--json", "number,title"], { projectKey });
+// out = { code, ok, stdout, stderr, truncated }
+```
+
+Name where it runs with `{ chatId }` (the chat's worktree) or `{ projectKey }` (the
+project's folder), from the plugin's snapshot or from a code host call; with neither it
+runs outside any folder on this Mac. A path is never accepted. The command runs on the
+Mac the chat or project lives on, so paired Macs work. Reads go through the app-wide
+git budget (at most four at a time, one per folder, 30 seconds each). Writes ask first,
+showing the whole command, until the person picks Always Allow; they're stopped after
+two minutes. `run` throws when the command can't run, with `error.missing` and
+`error.install` set when the tool isn't installed. Output past 4 MB is cut, with
+`truncated` set.
+
+The review screen lists the binary and every command. An update that adds a command, or
+makes a read a write, is reviewed again.
+
+## Code hosts
+
+A plugin can be the code host for projects whose `origin` is on its hosts (ABS-139).
+Abstract keeps every pull request screen and asks the code host for what they show.
+It declares `contributes.codeHost` and answers from its background script:
+
+```json
+"codeHost": {
+  "title": "GitHub",
+  "hosts": ["github.com"],
+  "operations": ["access", "listPullRequests", "pullRequest", "create", "merge", "markReady",
+                 "close", "reviewThreads", "rerunFailed", "updateBranch", "pushAccess",
+                 "searchIssuesAndPullRequests"]
+}
+```
+
+```js
+AbstractPlugin.codeHost.handle("pullRequest", async (input, { projectKey, chatId, remote, callId }) => {
+  const out = await AbstractPlugin.cli.run(["pr", "view", input.branch, "--json", "..."], { projectKey, callId });
+  return { pullRequest: toAbstract(JSON.parse(out.stdout)) };
+});
+AbstractPlugin.codeHost.setHosts(["github.example.com"]); // Enterprise hosts it is signed in to
+```
+
+`access`, `listPullRequests` and `pullRequest` are required. Each answer is an object:
+
+| Operation | Input | Answer |
+|---|---|---|
+| `access` | | `{ access: "ready" \| "missing" \| "signedOut", viewer?, install?, hint? }` |
+| `listPullRequests` | `{ state: "all" \| "open", limit }` | `{ pullRequests: [PullRequest] }` |
+| `pullRequest` | `{ number }` or `{ branch }` | `{ pullRequest: PullRequest \| null }` |
+| `create` | `{ branch, base?, title, body, draft }` | `{ pullRequest }` |
+| `merge` | `{ number, method: "squash" \| "merge" \| "rebase", deleteBranch }` | `{}` |
+| `markReady`, `close`, `rerunFailed`, `updateBranch` | `{ number }` | `{}` |
+| `reviewThreads` | `{ number }` | `{ threads: [ReviewThread] }` |
+| `pushAccess` | `{ slug }` | `{ access: "push" \| "readOnly" \| "unknown" }` |
+| `searchIssuesAndPullRequests` | `{ query, kind: "issue" \| "pullRequest", limit }` | `{ items: [Item] }` |
+
+A `PullRequest` is `{ number, title, state: "open" | "closed" | "merged", isDraft, url,
+head, base, author, reviewDecision: "approved" | "changesRequested" | "reviewRequired",
+mergeable, mergeState, additions, deletions, changedFiles, createdAt, updatedAt, body,
+mergeCommit, checks: [{ name, workflow, outcome: "pending" | "passed" | "failed" |
+"skipped", url }], reviews: [{ author, verdict, body, submittedAt, association }],
+comments: [{ author, body, createdAt, isBot, association }], threads }`. A
+`ReviewThread` is `{ id, path, line, originalLine, isResolved, isOutdated, diffHunk,
+commit, comments: [{ id, author, avatar, body, createdAt, url, association }] }`. An
+`Item` is `{ number, title, url, state, body, isPullRequest, isDraft, base, head }`.
+Dates are ISO 8601. Throw to fail an operation; its message is shown.
+
+Core only asks for `create`, `merge`, `markReady`, `close`, `rerunFailed` and
+`updateBranch` when the person clicked for them, so up to two write commands run with
+that call's `callId` don't ask again. Reads have 45 seconds to answer, writes 150.
+Core commits and pushes before `create`: plain git stays in Abstract.
+
 ## Previewing a plugin
 
 `python3 docs/plugin-kit/preview.py` serves the bundled plugins, the kit and a stand-in

@@ -39,6 +39,11 @@ public enum GitRemote {
         return GitText.trimmed(a) == GitText.trimmed(b)
     }
 
+    /// The remote's host, lowercased: what picks its code host (ABS-139).
+    public static func host(_ remote: String) -> String? {
+        hostAndPath(remote).map { $0.host.lowercased() }
+    }
+
     /// Host and `owner/repo` path, without `.git` or trailing slashes.
     private static func hostAndPath(_ remote: String) -> (host: String, path: String)? {
         let text = GitText.trimmed(remote)

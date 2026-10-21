@@ -17,10 +17,37 @@ public enum RemoteAccess {
     /// Why the command can't run, or nil when it can. `allowed` says whether
     /// a folder is inside one of this Mac's projects or worktrees. `input`:
     /// the command comes with stdin, which only Accept's patch does.
+    /// `plugins` are the command-line tools this Mac's enabled plugins were
+    /// granted (ABS-139): their declared commands run too, the same way.
     public static func refusal(_ command: String, _ args: [String], cwd: String?, input: Bool = false,
-                               allowed: (String?) -> Bool) -> String? {
+                               plugins: [PluginCLI] = [], allowed: (String?) -> Bool) -> String? {
         let name = (command as NSString).lastPathComponent
-        guard commands.contains(name), command == name else { return "Only git, gh and revund run for another Mac." }
+        let plugin = command == name ? pluginRefusal(name, args, cwd: cwd, input: input, plugins: plugins, allowed: allowed) : nil
+        if plugin == .some(nil) { return nil }
+        guard commands.contains(name), command == name else {
+            return plugin ?? "Only git, gh, revund and your plugins' tools run for another Mac."
+        }
+        return builtInRefusal(name, args, cwd: cwd, input: input, allowed: allowed)
+    }
+
+    /// nil when no plugin names the binary; `.some(nil)` when one allows the
+    /// command: a declared command, no input, in a project folder (or, for
+    /// a read, outside any folder).
+    static func pluginRefusal(_ name: String, _ args: [String], cwd: String?, input: Bool,
+                              plugins: [PluginCLI], allowed: (String?) -> Bool) -> String?? {
+        let declared = plugins.filter { $0.binary == name && !PluginCLI.refusedBinaries.contains(name) }
+        guard !declared.isEmpty else { return nil }
+        if input { return .some("Only accepting a patch sends input from another Mac.") }
+        if cwd == nil, args == ["--version"] { return .some(nil) }
+        guard let found = declared.lazy.compactMap({ $0.command(for: args) }).first else {
+            return .some("\(name) \(args.first ?? "") isn't allowed from another Mac.")
+        }
+        if cwd == nil, found.access == .read { return .some(nil) }
+        return .some(allowed(cwd) ? nil : "That folder isn't one of this Mac's projects.")
+    }
+
+    static func builtInRefusal(_ name: String, _ args: [String], cwd: String?, input: Bool,
+                               allowed: (String?) -> Bool) -> String? {
         if input, !(name == "git" && args.first == "apply" && args.last == "-" && args.dropFirst().dropLast().allSatisfy(applyFlags.contains)) {
             return "Only accepting a patch sends input from another Mac."
         }
