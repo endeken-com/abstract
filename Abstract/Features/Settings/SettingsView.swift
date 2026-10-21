@@ -3,7 +3,7 @@ import AbstractCore
 
 enum SettingsTab: String, CaseIterable, Identifiable {
     case appearance, notifications, usage
-    case general, worktrees, agents, profiles, integrations, plugins
+    case general, worktrees, agents, profiles, skills, integrations, plugins
     case devices, advanced
     var id: String { rawValue }
     var title: String {
@@ -15,6 +15,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .worktrees: "Git & Worktrees"
         case .agents: "Agents"
         case .profiles: "Profiles"
+        case .skills: "Skills"
         case .integrations: "Integrations"
         case .plugins: "Plugins"
         case .devices: "Devices"
@@ -30,6 +31,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .worktrees: "arrow.triangle.branch"
         case .agents: "terminal"
         case .profiles: "person.crop.circle"
+        case .skills: "book.closed"
         case .integrations: "link"
         case .plugins: "puzzlepiece.extension"
         case .devices: "laptopcomputer.and.iphone"
@@ -40,7 +42,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
     /// The sidebar's groups, in order.
     static let groups: [(title: String, tabs: [SettingsTab])] = [
         ("Personal", [.appearance, .notifications, .usage]),
-        ("Workflow", [.general, .worktrees, .agents, .profiles, .integrations, .plugins]),
+        ("Workflow", [.general, .worktrees, .agents, .profiles, .skills, .integrations, .plugins]),
         ("System", [.devices, .advanced]),
     ]
 }
@@ -129,6 +131,7 @@ struct SettingsView: View {
         case .worktrees: WorktreeSettingsPane()
         case .agents: AgentSettingsPane()
         case .profiles: ProfilesSettingsPane()
+        case .skills: SkillsSettingsPane()
         case .integrations: IntegrationsSettingsPane()
         case .plugins: PluginsSettingsPane()
         case .devices: DevicesSettingsPane()

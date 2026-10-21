@@ -713,6 +713,10 @@ public final class Store: Sendable {
         migrator.registerMigration("v17-reviewer-chats") { db in
             try db.execute(sql: "ALTER TABLE sessions ADD COLUMN reviews_session_id TEXT")
         }
+        // The library skills a project's chats get (ABS-122).
+        migrator.registerMigration("v18-project-skills") { db in
+            try db.execute(sql: "ALTER TABLE projects ADD COLUMN skill_ids TEXT")
+        }
         return migrator
     }
 }
@@ -772,6 +776,9 @@ private struct ProjectRow: FetchableRecord, PersistableRecord {
         if let picked: String = try row.decode(forColumn: "profile_ids") {
             project.profileIds = (try? JSONDecoder().decode([String].self, from: Data(picked.utf8))) ?? []
         }
+        if let skills: String = try row.decode(forColumn: "skill_ids") {
+            project.skillIds = (try? JSONDecoder().decode([String].self, from: Data(skills.utf8))) ?? []
+        }
         value = project
     }
 
@@ -799,6 +806,7 @@ private struct ProjectRow: FetchableRecord, PersistableRecord {
         container["default_device_id"] = value.defaultDeviceId
         container["agent_history"] = value.agentHistory
         container["profile_ids"] = try value.profileIds.map { try jsonText($0) }
+        container["skill_ids"] = try value.skillIds.map { try jsonText($0) }
     }
 }
 

@@ -250,6 +250,10 @@ final class AppModel {
     var worktreeTemplate: String { didSet { save("worktreeTemplate", worktreeTemplate) } }
     var branchPrefix: String { didSet { save("branchPrefix", branchPrefix) } }
     var providerOverrides: [String: ProviderOverride] { didSet { save("providerOverrides", providerOverrides) } }
+    /// Where the skill library comes from (ABS-122); see AppModel+Skills.
+    var skillSources: [SkillSource] { didSet { save(SkillLibrary.sourcesKey, skillSources) } }
+    /// The library's skills as last read from its sources.
+    var librarySkills: [LibrarySkill] = []
     var agentDefaults: [String: AgentDefaults] {
         didSet {
             save("agentDefaults", agentDefaults)
@@ -328,6 +332,7 @@ final class AppModel {
         worktreeTemplate = store.setting("worktreeTemplate", as: String.self) ?? WorktreeNaming.defaultTemplate
         branchPrefix = store.setting("branchPrefix", as: String.self) ?? WorktreeNaming.defaultBranchPrefix
         providerOverrides = store.setting("providerOverrides", as: [String: ProviderOverride].self) ?? [:]
+        skillSources = store.setting(SkillLibrary.sourcesKey, as: [SkillSource].self) ?? []
         agentDefaults = store.setting("agentDefaults", as: [String: AgentDefaults].self) ?? [:]
         notifyAttention = store.setting("notifyAttention", as: Bool.self) ?? true
         notifyFinished = store.setting("notifyFinished", as: Bool.self) ?? true
@@ -400,6 +405,7 @@ final class AppModel {
         sessions = (try? store.sessions()) ?? []
         automations = (try? store.automations()) ?? []
         profiles = (try? store.profiles()) ?? []
+        reloadSkills()
         permissionRules = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, (try? store.permissionRules(projectId: $0.id)) ?? []) })
         alive = engine.aliveSessionIds
     }
@@ -1009,10 +1015,15 @@ final class AppModel {
                 flash("The earlier conversation wasn't found, so the agent starts fresh in this worktree.")
             }
         }
-        let settings = LaunchSettings(providerOverrides: providerOverrides, outputStyle: outputStyle, claudeProfile: claudeProfile,
+        var settings = LaunchSettings(providerOverrides: providerOverrides, outputStyle: outputStyle, claudeProfile: claudeProfile,
                                       standardClaudeProfile: accounts.standardProfilePath, attachmentsDirectory: AttachmentStore.root.path,
                                       agentDefaults: agentDefaults, modelCatalogs: modelCatalogs,
-                                      codeHistory: historySettings(for: session))
+                                      codeHistory: historySettings(for: session), agentConfigRoot: Self.agentConfigRoot)
+        settings.addSkills(for: session, project: project(session.projectId), profile: profile(session.profileId),
+                           sources: skillSources, dataDirectory: dataDirectory)
+        if !resume, let note = SkillLibrary.unsupportedNote(provider: provider, skills: settings.skills) {
+            engine.record(sessionId: session.id, OutputLine(stream: .note, line: note))
+        }
         var spec = AgentLaunch.spec(for: session, provider: provider, prompt: prompt, resumeId: resumeId, images: images,
                                     settings: settings, home: executor.homeDirectory)
         let cwd = spec.cwd
@@ -1564,6 +1575,7 @@ final class AppModel {
             do { try executor.removeItem(path) } catch { flash("Folder not removed: \(error.localizedDescription)", isError: true) }
         }
         engine.deleteLog(sessionId: sessionId)
+        ChatConfigFiles.remove(root: Self.agentConfigRoot, chatId: sessionId)
         discardLayout(sessionId)
         mainTabs.removeSession(sessionId)
         try? store.deleteSession(sessionId)

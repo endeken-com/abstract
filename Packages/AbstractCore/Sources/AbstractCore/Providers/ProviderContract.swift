@@ -57,6 +57,27 @@ public struct HistoryToolLaunch: Sendable, Hashable {
     public var serverCommand: [String] { [command] + serverArgs }
 }
 
+/// How an agent takes skills from Abstract (ABS-122), each checked
+/// against the CLI: a folder laid out where it already looks, so the
+/// user's own skills folder is never written to.
+public enum SkillDelivery: Sendable, Hashable {
+    /// `<folder>/.claude/skills/<name>`, the folder added with `--add-dir`.
+    case addedDirectory
+    /// `<folder>/skills/<name>` in a stand-in for `~/.codex` given as
+    /// `CODEX_HOME`, whose every other entry links to the real one.
+    case codexHome
+    /// `<folder>/<name>`, named in the agent's config for this run.
+    case skillsPath
+}
+
+/// The skills one chat's agent gets (ABS-122), already laid out the way
+/// its `SkillDelivery` says.
+public struct SkillsLaunch: Sendable, Hashable {
+    public var folder: String
+
+    public init(folder: String) { self.folder = folder }
+}
+
 public struct LaunchContext: Sendable {
     /// Working directory: the session's worktree.
     public var cwd: String
@@ -79,14 +100,16 @@ public struct LaunchContext: Sendable {
     /// The instructions of the profile this chat started from (ABS-101),
     /// as they were at the start; nil when it started from none.
     public var instructions: String?
+    /// The library skills this chat gets (ABS-122); nil when it gets none.
+    public var skills: SkillsLaunch?
 
     public init(cwd: String, prompt: String, resumeId: String? = nil, permissionPolicy: PermissionPolicy,
                 extraArgs: [String] = [], binaryOverride: String? = nil, model: String? = nil, effort: String? = nil,
                 outputStyle: OutputStyle = .default, images: [String] = [], readableDirs: [String] = [],
-                historyTool: HistoryToolLaunch? = nil, instructions: String? = nil) {
+                historyTool: HistoryToolLaunch? = nil, instructions: String? = nil, skills: SkillsLaunch? = nil) {
         self.cwd = cwd; self.prompt = prompt; self.resumeId = resumeId; self.permissionPolicy = permissionPolicy
         self.extraArgs = extraArgs; self.binaryOverride = binaryOverride; self.outputStyle = outputStyle
-        self.images = images; self.readableDirs = readableDirs; self.historyTool = historyTool
+        self.images = images; self.readableDirs = readableDirs; self.historyTool = historyTool; self.skills = skills
         self.model = Self.nonBlank(model)
         self.effort = Self.nonBlank(effort)
         self.instructions = instructions.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
@@ -382,6 +405,9 @@ public protocol ProviderDefinition: Sendable {
     func configuredDefaultEffort(home: String) -> String?
     /// What `policy` means for this agent, shown under the permissions menu.
     func permissionDetail(_ policy: PermissionPolicy) -> String
+    /// How the agent takes library skills (ABS-122). nil: it can't, and
+    /// the chat says so.
+    var skillDelivery: SkillDelivery? { get }
     /// App commands only this agent gets in the `/` menu, and its own
     /// commands they take over.
     var commands: ProviderCommands { get }
@@ -415,6 +441,7 @@ public extension ProviderDefinition {
     func buildInterrupt(requestId: String) -> String? { nil }
     func buildBackground(toolUseId: String?, requestId: String) -> String? { nil }
     func permissionDetail(_ policy: PermissionPolicy) -> String { policy.detail }
+    var skillDelivery: SkillDelivery? { nil }
     var commands: ProviderCommands { .none }
     func namingLaunch(prompt: String, home: String, binary: String?, model: String?) -> LaunchSpec? { nil }
     func namingAnswer(_ output: String) -> String? { nil }

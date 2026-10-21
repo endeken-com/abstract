@@ -41,6 +41,12 @@ public struct Project: Sendable, Hashable, Identifiable, Codable {
     /// The profiles the New Chat window offers in this project (ABS-101);
     /// nil = every profile shows.
     public var profileIds: [String]? = nil
+    /// The library skills this project's chats get (ABS-122), by id;
+    /// nil (projects saved before, or from an older Mac) = none.
+    public var skillIds: [String]? = nil
+
+    /// The library skills this project's chats get.
+    public var assignedSkills: [String] { skillIds ?? [] }
 
     /// Whether this project's agents get the code-history tool.
     public var agentHistoryEnabled: Bool { agentHistory ?? true }

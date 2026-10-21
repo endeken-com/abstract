@@ -133,6 +133,7 @@ public struct ClaudeProvider: ProviderDefinition {
         return LaunchSpec(
             command: override.flatMap { $0.isEmpty ? nil : $0 } ?? binary,
             args: Self.baseArgs + Self.policyArgs(ctx.permissionPolicy) + ctx.readableDirs.flatMap { ["--add-dir", $0] }
+                + Self.skillArgs(ctx.skills)
                 + (ctx.model.map { ["--model", $0] } ?? [])
                 + (ctx.effort.map { ["--effort", $0] } ?? []) + Self.styleArgs(ctx.outputStyle)
                 + Self.historyArgs(ctx.historyTool) + Self.instructionArgs(ctx) + resumeArgs + ctx.extraArgs,
@@ -142,6 +143,15 @@ public struct ClaudeProvider: ProviderDefinition {
             keepStdinOpen: true
         )
     }
+
+    /// Library skills (ABS-122): Claude loads `.claude/skills` from every
+    /// folder added with `--add-dir`, links included, as it does from the
+    /// worktree's. Passed on every resume too.
+    static func skillArgs(_ skills: SkillsLaunch?) -> [String] {
+        skills.map { ["--add-dir", $0.folder] } ?? []
+    }
+
+    public var skillDelivery: SkillDelivery? { .addedDirectory }
 
     /// The code-history tool (ABS-61, checked in ABS-60): inline MCP
     /// config beside the user's own servers (never `--strict-mcp-config`,

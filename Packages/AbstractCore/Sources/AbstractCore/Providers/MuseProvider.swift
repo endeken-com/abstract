@@ -65,12 +65,17 @@ public struct MuseProvider: ProviderDefinition {
             command: selectedBinary.flatMap { $0.isEmpty ? nil : $0 } ?? binary,
             args: ["serve", "--trust-workspace"] + flags + ctx.extraArgs,
             cwd: ctx.cwd,
+            // Muse reads the skills in `$CODEX_HOME/skills` as the user's own.
+            env: CodexProvider.skillEnv(ctx.skills),
             stdinInitial: MuseWire.request(id: 1, method: "initialize", params: .object([
                 "clientInfo": .object(["name": .string("abstract"), "version": .string("0.0.0")]),
             ])) + MuseWire.notification("initialized") + session,
             keepStdinOpen: true
         )
     }
+
+    /// Library skills (ABS-122), in the same stand-in home Codex gets.
+    public var skillDelivery: SkillDelivery? { .codexHome }
 
     public func permissionDetail(_ policy: PermissionPolicy) -> String {
         switch policy {
