@@ -2,11 +2,11 @@ import SwiftUI
 import AbstractCore
 
 /// Where issues and pull requests to attach come from: GitHub through its
-/// CLI, Linear with an API key.
+/// CLI. Issue trackers such as Linear are plugins (ABS-141), set up in
+/// Settings → Plugins.
 struct IntegrationsSettingsPane: View {
     @Environment(AppModel.self) private var model
     @State private var github: GitHubAccess?
-    @State private var linear = LinearAccount.shared
 
     var body: some View {
         Form {
@@ -21,26 +21,11 @@ struct IntegrationsSettingsPane: View {
             } header: {
                 Text("GitHub")
             }
-            Section {
-                if linear.isConnected {
-                    LabeledContent {
-                        Button("Disconnect") { linear.disconnect() }
-                    } label: {
-                        Text(linear.viewer.map { "Connected as \($0)" } ?? "Connected")
-                        Text("Link Linear issues in the composer. The API key is kept in your keychain.")
-                    }
-                } else {
-                    LinearConnectForm()
-                }
-            } header: {
-                Text("Linear")
-            }
             RevundSettingsSection()
         }
         .settingsPane()
         .task {
             github = await GitHub.access(model.executor)
-            await linear.checkViewer()
         }
     }
 

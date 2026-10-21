@@ -1,0 +1,23 @@
+{
+  "api": 2,
+  "id": "sh.abstract.linear",
+  "name": "Linear",
+  "version": "1.0.0",
+  "description": "Find Linear issues in the composer's issue search, by words, a key like ENG-123 or a link, and attach them to your messages. It connects with a personal Linear API key, kept in your keychain.",
+  "entry": "index.html",
+  "capabilities": ["network", "secrets", "storage.own"],
+  "network": { "hosts": ["api.linear.app"] },
+  "secrets": [
+    { "name": "api-key", "title": "Linear API key" }
+  ],
+  "background": "background.js",
+  "contributes": {
+    "settingsPage": { "id": "settings", "title": "Linear Settings", "symbol": "gearshape" },
+    "issueTracker": {
+      "title": "Linear",
+      "icon": "icon.svg",
+      "keyExample": "ENG-123",
+      "keyPattern": "[A-Za-z][A-Za-z0-9]*-[0-9]+"
+    }
+  }
+}

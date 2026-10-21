@@ -48,9 +48,6 @@ struct PromptAttachmentTests {
         #expect(GitHub.directReference("12") == "12")
         #expect(GitHub.directReference("https://github.com/o/r/pull/3") == "https://github.com/o/r/pull/3")
         #expect(GitHub.directReference("login bug") == nil)
-        #expect(Linear.identifier(in: "eng-123") == "ENG-123")
-        #expect(Linear.identifier(in: "https://linear.app/acme/issue/ENG-9/fix-login") == "ENG-9")
-        #expect(Linear.identifier(in: "fix login") == nil)
     }
 
     @Test func claudeGetsImagesAsImageBlocks() throws {

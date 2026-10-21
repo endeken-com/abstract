@@ -50,6 +50,9 @@ public enum PluginPackage {
         guard files.contains(manifest.entry) else {
             throw PluginValidationError.missingEntry(manifest.entry)
         }
+        if let icon = manifest.contributes.issueTracker?.icon, !files.contains(icon) {
+            throw PluginValidationError.missingEntry(icon)
+        }
         if let background = manifest.background, !files.contains(background) {
             throw PluginValidationError.missingEntry(background)
         }

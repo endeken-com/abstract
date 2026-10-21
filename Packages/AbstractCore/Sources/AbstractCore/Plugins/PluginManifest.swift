@@ -297,15 +297,18 @@ public struct PluginManifest: Sendable, Hashable, Codable {
         public var reviewActions: [Contribution]
         public var pullRequestSwitches: [Contribution]
         public var linkDecorators: [Contribution]
+        /// The issue tracker its background script answers for (ABS-141).
+        public var issueTracker: PluginIssueTrackerDeclaration?
 
         public init(views: [View] = [], chatPanelTabs: [Contribution] = [], chatMenuItems: [Contribution] = [],
                     paletteCommands: [Contribution] = [], settingsPage: Contribution? = nil,
                     homeWidgets: [Contribution] = [], reviewActions: [Contribution] = [],
-                    pullRequestSwitches: [Contribution] = [], linkDecorators: [Contribution] = []) {
+                    pullRequestSwitches: [Contribution] = [], linkDecorators: [Contribution] = [],
+                    issueTracker: PluginIssueTrackerDeclaration? = nil) {
             self.views = views; self.chatPanelTabs = chatPanelTabs; self.chatMenuItems = chatMenuItems
             self.paletteCommands = paletteCommands; self.settingsPage = settingsPage; self.homeWidgets = homeWidgets
             self.reviewActions = reviewActions; self.pullRequestSwitches = pullRequestSwitches
-            self.linkDecorators = linkDecorators
+            self.linkDecorators = linkDecorators; self.issueTracker = issueTracker
         }
 
         // Manifests written before the extra places carry only `views`.
@@ -320,6 +323,7 @@ public struct PluginManifest: Sendable, Hashable, Codable {
             reviewActions = try box.decodeIfPresent([Contribution].self, forKey: .reviewActions) ?? []
             pullRequestSwitches = try box.decodeIfPresent([Contribution].self, forKey: .pullRequestSwitches) ?? []
             linkDecorators = try box.decodeIfPresent([Contribution].self, forKey: .linkDecorators) ?? []
+            issueTracker = try box.decodeIfPresent(PluginIssueTrackerDeclaration.self, forKey: .issueTracker)
         }
     }
 
@@ -344,6 +348,7 @@ public struct PluginManifest: Sendable, Hashable, Codable {
                 paletteCommands: [Contribution] = [], settingsPage: Contribution? = nil,
                 homeWidgets: [Contribution] = [], reviewActions: [Contribution] = [],
                 pullRequestSwitches: [Contribution] = [], linkDecorators: [Contribution] = [],
+                issueTracker: PluginIssueTrackerDeclaration? = nil,
                 background: String? = nil, tools: [PluginAgentTool] = []) {
         self.api = api; self.id = id; self.name = name; self.version = version
         self.background = background
@@ -355,7 +360,7 @@ public struct PluginManifest: Sendable, Hashable, Codable {
         self.contributes = Contributes(views: views, chatPanelTabs: chatPanelTabs, chatMenuItems: chatMenuItems,
                                        paletteCommands: paletteCommands, settingsPage: settingsPage, homeWidgets: homeWidgets,
                                        reviewActions: reviewActions, pullRequestSwitches: pullRequestSwitches,
-                                       linkDecorators: linkDecorators)
+                                       linkDecorators: linkDecorators, issueTracker: issueTracker)
     }
 
     // A plugin that only runs in the background (ABS-93) may leave out
@@ -398,6 +403,9 @@ public struct PluginManifest: Sendable, Hashable, Codable {
         // Which links it is handed is part of what it sees, so the review names their sites.
         sentences += contributes.linkDecorators.map { decorator in
             "\(decorator.title) — a status after links to \(PluginLinks.sites(decorator.patterns ?? []).joined(separator: " and ")) in your chats."
+        }
+        if let tracker = contributes.issueTracker {
+            sentences.append("\(tracker.title) issues — found by the composer's issue search, to attach to your messages.")
         }
         if background != nil {
             sentences.append("In the background — it runs while it's on, even with its screen closed.")
@@ -535,8 +543,15 @@ public struct PluginManifest: Sendable, Hashable, Codable {
                     "linkDecorators need up to \(PluginLinks.patternLimit) patterns like https://github.com/*/*/pull/*")
             }
         }
+        if let tracker = contributes.issueTracker {
+            // The background script answers the composer's searches.
+            guard background != nil else {
+                throw PluginValidationError.invalidManifest("issueTracker needs a background script")
+            }
+            try tracker.validate()
+        }
         try validateTools()
-        let total = contributes.views.count + places.map(\.1.count).reduce(0, +)
+        let total = contributes.views.count + places.map(\.1.count).reduce(0, +) + (contributes.issueTracker == nil ? 0 : 1)
         guard total > 0 || background != nil else {
             throw PluginValidationError.invalidManifest("the plugin doesn't add anything")
         }

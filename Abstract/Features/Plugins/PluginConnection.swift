@@ -138,7 +138,7 @@ final class PluginConnection {
                  payload: .object(["message": .string("It acted too many times in a minute, so Abstract paused it.")]))
             model.plugins.noteError(plugin.id, "It acted too many times in a minute, so it was paused. Turn it on again here when you're ready.")
             model.setPluginEnabled(plugin.id, false)
-        case .subscribe, .scheduleJob, .cancelJob, .jobDone, .toolResult, .linkResult:
+        case .subscribe, .scheduleJob, .cancelJob, .jobDone, .toolResult, .linkResult, .trackerResult:
             onBackground(outcome)
         case .refused(let id, let reason):
             model.plugins.noteError(plugin.id, reason)
@@ -289,6 +289,7 @@ enum PluginShim {
       const jobs = new Map();
       const toolHandlers = new Map();
       const linkHandlers = new Map();
+      let trackerHandler = null;
       let next = 1;
       const post = (message) => window.webkit.messageHandlers.abstractPlugin.postMessage(JSON.stringify(message));
       const api = {
@@ -323,6 +324,12 @@ enum PluginShim {
           // Says how a link stands (ABS-126), for the link decorator its
           // manifest lists: fn(url) returns { label, tone }, or null.
           decorate(id, fn) { linkHandlers.set(id, fn); }
+        },
+        issueTracker: {
+          // Answers the composer's issue search (ABS-141), for the tracker
+          // its manifest declares: fn(operation, input) returns the result
+          // of access, searchIssues, issue or listProjects, or throws.
+          handle(fn) { trackerHandler = fn; }
         },
         jobs: {
           schedule(id, rrule, fn, timezone) {
@@ -387,6 +394,18 @@ enum PluginShim {
           Promise.resolve()
             .then(() => fn(lookup.url))
             .then((status) => done({ status: status || null }),
+                  (error) => done({ error: String((error && error.message) || error) }));
+          return;
+        }
+        if (message.type === "tracker") {
+          const call = message.payload || {};
+          const done = (body) => {
+            try { post({ api: \(api), type: "tracker.result", payload: Object.assign({ callId: call.callId }, body) }); } catch {}
+          };
+          if (!trackerHandler) { done({ error: "This plugin doesn't answer for an issue tracker." }); return; }
+          Promise.resolve()
+            .then(() => trackerHandler(call.operation, call.input || {}))
+            .then((result) => done({ result: result === undefined ? null : result }),
                   (error) => done({ error: String((error && error.message) || error) }));
           return;
         }

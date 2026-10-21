@@ -396,7 +396,10 @@ final class AppModel {
             self?.pluginBackground?.reconcile()
             if let self { pluginLinks.keep(pluginIds: Set(plugins.usable.map(\.id))) }
             if let self { PluginToolLabels.shared.update(PluginTools.all(pluginToolOffers(), project: nil)) }
+            self?.refreshTrackerIcons()
         }
+        adoptLinearPlugin()
+        refreshTrackerIcons()
         pluginBackground?.reconcile()
         servePluginTools()
         Task { await watchForStalls() }

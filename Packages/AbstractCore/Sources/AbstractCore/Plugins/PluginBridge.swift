@@ -96,6 +96,9 @@ public struct PluginBridge: Sendable {
         /// The script's answer to a link lookup (ABS-126): a status to
         /// show after the link, nothing, or why it couldn't say.
         case linkResult(callId: String, PluginLinkLookup)
+        /// The script's answer to an issue tracker question (ABS-141),
+        /// read against the question once it's matched to its call.
+        case trackerResult(callId: String, JSONValue?)
         case refused(id: String?, reason: String)
         /// The plugin flooded the bridge; the host tears its view down.
         case flooded
@@ -108,8 +111,8 @@ public struct PluginBridge: Sendable {
               case .object(let message) = JSONValue(any: object) else {
             return refuse(nil, "That message couldn't be read.")
         }
-        // Only fetch, and a tool's result (ABS-97), may use the larger limit.
-        if data.count > Self.messageByteLimit, !["fetch", "tools.result"].contains(message["type"]?.string ?? "") {
+        // Only fetch, a tool's result (ABS-97) and a tracker's answer (ABS-141) may use the larger limit.
+        if data.count > Self.messageByteLimit, !["fetch", "tools.result", "tracker.result"].contains(message["type"]?.string ?? "") {
             return refuse(message["id"]?.string, "That message couldn't be read.")
         }
         return handle(message, storage: storage, now: now)
@@ -281,6 +284,14 @@ public struct PluginBridge: Sendable {
                 return .linkResult(callId: callId, .failed)
             }
             return .linkResult(callId: callId, .status(parsed))
+        case "tracker.result":
+            guard isBackground else {
+                return refuse(id, "Only a plugin's background script can answer for its issue tracker.")
+            }
+            guard let callId = nonEmpty(payload?["callId"]?.string) else {
+                return refuse(id, "A tracker answer needs the question it answers.")
+            }
+            return .trackerResult(callId: callId, payload)
         case "__error":
             return refuse(id, "The plugin reported an error.")
         default:

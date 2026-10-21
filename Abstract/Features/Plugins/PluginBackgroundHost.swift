@@ -84,6 +84,15 @@ final class PluginBackgroundHost {
         return await runner.lookUpLink(match)
     }
 
+    /// Asks a plugin's script one of the issue tracker's questions (ABS-141).
+    func askTracker(_ pluginId: String, _ request: TrackerRequest) async -> TrackerAnswer {
+        guard let runner = runners[pluginId] else {
+            let name = model.plugins.plugin(pluginId)?.record.name ?? "That plugin"
+            return .failed("\(name) isn't running.")
+        }
+        return await runner.askTracker(request)
+    }
+
     // MARK: Status and pull-request changes
 
     /// Follows the same facts a plugin's screen redraws on, and turns the
@@ -136,6 +145,8 @@ final class PluginBackgroundRunner: NSObject, WKScriptMessageHandler, WKNavigati
     private let toolCalls: PluginToolCalls
     /// Link lookups the script hasn't answered yet (ABS-126).
     private let linkLookups = PluginLinkLookups()
+    /// Issue tracker questions the script hasn't answered yet (ABS-141).
+    private let trackerCalls: PluginTrackerCalls
 
     init(model: AppModel, plugin: InstalledPlugin, manifest: PluginManifest, onStopped: @escaping (String) -> Void) {
         self.model = model
@@ -143,6 +154,7 @@ final class PluginBackgroundRunner: NSObject, WKScriptMessageHandler, WKNavigati
         self.manifest = manifest
         self.onStopped = onStopped
         toolCalls = PluginToolCalls(pluginName: manifest.name)
+        trackerCalls = PluginTrackerCalls(pluginName: manifest.name)
         super.init()
         connection = PluginConnection(
             model: model, plugin: plugin, manifest: manifest, placement: nil, isBackground: true,
@@ -189,6 +201,7 @@ final class PluginBackgroundRunner: NSObject, WKScriptMessageHandler, WKNavigati
         connection.tearDown()
         Task { [toolCalls, name = manifest.name] in await toolCalls.failAll("\(name) stopped before its tool answered.") }
         Task { [linkLookups] in await linkLookups.failAll() }
+        Task { [trackerCalls] in await trackerCalls.failAll() }
         ticker?.cancel()
         ticker = nil
         guard let webView else { return }
@@ -255,8 +268,25 @@ final class PluginBackgroundRunner: NSObject, WKScriptMessageHandler, WKNavigati
         }
     }
 
+    /// Only a plugin that declares a tracker is asked; the question carries
+    /// what was typed in the composer's search, nothing about the chat.
+    func askTracker(_ request: TrackerRequest) async -> TrackerAnswer {
+        guard manifest.contributes.issueTracker != nil else { return .failed("\(manifest.name) isn't an issue tracker.") }
+        return await trackerCalls.call(request) { [weak self] callId in
+            await MainActor.run {
+                guard let self, self.connection.ready, !self.stopped else { return false }
+                self.connection.send(type: "tracker", payload: .object([
+                    "callId": .string(callId), "operation": .string(request.operation), "input": request.input,
+                ]))
+                return true
+            }
+        }
+    }
+
     private func handle(_ outcome: PluginBridge.Outcome) {
         switch outcome {
+        case .trackerResult(let callId, let payload):
+            Task { [trackerCalls] in await trackerCalls.finish(callId, payload: payload) }
         case .linkResult(let callId, let lookup):
             Task { [linkLookups] in await linkLookups.finish(callId, lookup) }
         case .toolResult(let callId, let result):

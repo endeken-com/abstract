@@ -54,7 +54,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .profiles: "Saved setups a chat or automation starts from: agent, model, permissions and instructions."
         case .workflows: "Profiles taking turns on one chat: say, research, then build, review and test."
         case .skills: "Skills Abstract manages once and gives to every agent in a project."
-        case .integrations: "GitHub, Linear and Revund."
+        case .integrations: "GitHub and Revund."
         case .plugins: "Plugins add panels, tools and background work to Abstract."
         case .devices: "Paired Macs, and phones that drive this one."
         case .advanced: "Options for debugging Abstract and its agents."

@@ -208,6 +208,44 @@ Settings › Plugins.
 
 ![Link status](images/plugins/link-status.png)
 
+## Issue trackers
+
+A plugin can answer the composer's issue search for a tracker (ABS-141). It declares
+`issueTracker` in `contributes` and answers in its background script:
+
+```json
+"issueTracker": {
+  "title": "Linear",
+  "icon": "icon.svg",
+  "keyExample": "ENG-123",
+  "keyPattern": "[A-Za-z][A-Za-z0-9]*-[0-9]+"
+}
+```
+
+The icon is an SVG or PNG in the package, drawn in the text colour. A query that is
+one key, whole, or an `https://` link is asked for as one issue; anything else is
+searched for. Abstract asks every tracker that's on and groups what they find by
+tracker.
+
+```js
+AbstractPlugin.issueTracker.handle(async (operation, input) => {
+  switch (operation) {
+    case "access": return { ready: true, account: "Ada" };    // or { ready: false, problem: "…" }
+    case "searchIssues": return { issues: [] };                // input: { query, project? }
+    case "issue": return { issue: null };                       // input: { reference }, a key or a link
+    case "listProjects": return { projects: [] };               // { id, name, kind: "team" | "project", key? }
+  }
+});
+```
+
+An issue is `{ key, title, url, state?, assignee?, excerpt? }`, with an `https` link
+and the start of its description as `excerpt`. The plugin is handed only what was typed
+in the search. Abstract draws the results and the chip, and writes the line the agent
+reads, `<Tracker> Issue KEY: title`, so every tracker reads the same.
+
+**Linear**, bundled, does this with a personal Linear API key entered under
+Settings › Plugins, sent only to api.linear.app.
+
 ## Previewing a plugin
 
 `python3 docs/plugin-kit/preview.py` serves the bundled plugins, the kit and a stand-in
