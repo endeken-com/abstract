@@ -112,9 +112,10 @@ final class PluginConnection {
         case .getAutomations(let id, let page):
             send(type: "reply", id: id, payload: model.pluginAutomations(page: page))
         case .getPermissions(let id):
-            let pending = model.pluginPendingRequests()
-            // Requests it may act on are the chats it already knows of.
-            for chatId in Set(pending.map(\.chatId)) where model.session(chatId) != nil { bridge.know(chatId: chatId) }
+            // Only chats its snapshot shows it, the ones it may already act on.
+            let visible = Set(model.pluginSnapshot(capabilities: capabilities, revision: 0).chats?.map(\.id) ?? [])
+            let pending = PluginPermissions.visible(model.pluginPendingRequests(), chatIds: visible)
+            for chatId in Set(pending.map(\.chatId)) { bridge.know(chatId: chatId) }
             send(type: "reply", id: id, payload: PluginPermissions.list(pending))
         case .badge(let id, let count):
             model.plugins.setBadge(plugin.id, count)
@@ -154,10 +155,11 @@ final class PluginConnection {
         var info = action.sendsReview
             ? model.reviewSendPreview(action.chatId ?? "", text: action.text)
             : action.detail.map { String($0.prefix(600)) } ?? ""
-        // Allowing shows what it lets through (ABS-111).
+        // Allowing shows all of what it lets through (ABS-111): a command
+        // too long to show whole can't be allowed from a plugin.
         if action.capability == .permissionsAnswer, action.answers.isEmpty,
            let preview = model.pluginAnswerPreview(action) {
-            info = String(preview.prefix(600))
+            info = action.batch.isEmpty ? preview : "Each one runs exactly this command:\n\(preview)"
         }
         if !info.isEmpty { info += "\n\n" }
         info += "Always allow lets \(manifest.name) do this kind of thing without asking. You can change your mind in Settings → Plugins."

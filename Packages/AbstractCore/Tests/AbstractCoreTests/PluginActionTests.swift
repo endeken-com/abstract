@@ -66,7 +66,7 @@ import Testing
         #expect(PluginCapability.chatsCreate.plainWords == "Start chats in your projects")
         #expect(PluginCapability.chatsMessage.plainWords == "Send messages to your chats")
         #expect(PluginCapability.chatsControl.plainWords == "Stop and resume your agents")
-        #expect(PluginCapability.permissionsAnswer.plainWords == "Answer your agents' questions and permission requests")
+        #expect(PluginCapability.permissionsAnswer.plainWords == "See and answer your agents' questions and permission requests, with what each one asks")
         #expect(PluginCapability.automationsRun.plainWords == "Run your automations")
     }
 

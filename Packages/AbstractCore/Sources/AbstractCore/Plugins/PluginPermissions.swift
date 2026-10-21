@@ -42,7 +42,20 @@ public enum PluginPermissions {
     /// Requests one batch may allow.
     public static let batchLimit = 50
     static let commandTools: Set<String> = ["bash", "shell", "command_execution"]
-    static let commandTextLimit = 2_000
+    /// The longest command a plugin may allow: the ask shows all of it.
+    /// A longer one is allowed from its chat's own card.
+    public static let commandTextLimit = 2_000
+
+    /// Whether a plugin may allow this request: everything it would run
+    /// fits in the ask.
+    public static func mayAllowFromPlugin(_ request: PluginPendingRequest) -> Bool {
+        (request.command?.count ?? 0) <= commandTextLimit
+    }
+
+    /// Only the requests in chats the plugin can see in its snapshot.
+    public static func visible(_ requests: [PluginPendingRequest], chatIds: Set<String>) -> [PluginPendingRequest] {
+        requests.filter { chatIds.contains($0.chatId) }
+    }
 
     /// Every waiting request, oldest first: the chat, the tool and a short
     /// summary of its input (command, file and diff size), or a

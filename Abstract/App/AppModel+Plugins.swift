@@ -192,6 +192,10 @@ extension AppModel {
             throw AbstractError.message("That request isn't waiting any more.")
         }
         guard !answers.isEmpty || allow != nil else { throw AbstractError.message("That answer couldn't be read.") }
+        if allow == true, !PluginPermissions.mayAllowFromPlugin(PluginPendingRequest(
+            chatId: chatId, requestId: requestId, toolName: request.toolName, input: request.input, requestedAt: request.requestedAt)) {
+            throw AbstractError.message("That command is too long to show here. Allow it in its chat.")
+        }
         recordAnswerNote("Answered from \(pluginName)", requestId: requestId, toolName: request.toolName,
                          input: request.input, in: chatId)
         if !answers.isEmpty {
@@ -304,6 +308,9 @@ extension AppModel {
         case .permissionsAnswer where !action.batch.isEmpty:
             // All still waiting and exactly the same command, or none answered.
             let requests = try PluginPermissions.batch(action.batch, pending: pluginPendingRequests())
+            guard requests.allSatisfy(PluginPermissions.mayAllowFromPlugin) else {
+                throw AbstractError.message("That command is too long to show here. Allow it in each chat.")
+            }
             for request in requests {
                 try answerFromPlugin(request.chatId, requestId: request.requestId, allow: true, answers: [:],
                                      pluginName: pluginName)

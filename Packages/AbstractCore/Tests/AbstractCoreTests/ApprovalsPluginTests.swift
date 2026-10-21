@@ -149,6 +149,11 @@ import Testing
         guard case .refused = reader.handle(message("getPermissions", .object([:])), storage: storage()) else {
             Issue.record("a plugin that can't answer saw the requests"); return
         }
+        // Nor one that can't see the chats they're in.
+        var blind = PluginBridge(capabilities: [.permissionsAnswer])
+        guard case .refused = blind.handle(message("getPermissions", .object([:])), storage: storage()) else {
+            Issue.record("a plugin that can't see chats saw the requests"); return
+        }
         var answerer = PluginBridge(capabilities: Self.grants)
         #expect(answerer.handle(message("getPermissions", .object([:])), storage: storage()) == .getPermissions(id: "1"))
 
@@ -156,6 +161,20 @@ import Testing
         let resolved = PluginEvent.permissionResolved(chatId: "a", requestId: "p1")
         #expect(resolved.payload(capabilities: [.chatsRead])?["requestId"] == nil)
         #expect(resolved.payload(capabilities: Self.grants)?["requestId"] == .string("p1"))
+    }
+
+    @Test func onlyRequestsInChatsItCanSeeAreListed() {
+        let pending = [bash("a", "p1", "npm test"), bash("hidden", "p2", "npm test")]
+        #expect(PluginPermissions.visible(pending, chatIds: ["a"]).map(\.requestId) == ["p1"])
+    }
+
+    /// The ask shows the whole command; one too long for it is allowed in
+    /// its chat instead.
+    @Test func aCommandTooLongToShowWholeIsNotAllowedFromAPlugin() {
+        #expect(PluginPermissions.mayAllowFromPlugin(bash("a", "p1", "npm test")))
+        #expect(PluginPermissions.mayAllowFromPlugin(edit("a", "p2")))
+        let long = String(repeating: "x", count: PluginPermissions.commandTextLimit + 1)
+        #expect(!PluginPermissions.mayAllowFromPlugin(bash("a", "p3", long)))
     }
 
     @Test func aRequestThatStopsWaitingIsAnnouncedOnce() {

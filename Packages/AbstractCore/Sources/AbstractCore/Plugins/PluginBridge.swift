@@ -214,8 +214,9 @@ public struct PluginBridge: Sendable {
             return .addReviewComments(id: id, chatId: chatId, author: author, comments)
         case "getPermissions":
             // What's waiting, and its request ids, are for a plugin that
-            // may answer it, as in `permission.requested`.
-            guard capabilities.contains(.permissionsAnswer) else {
+            // may answer it, as in `permission.requested`, and only in the
+            // chats it can already see.
+            guard capabilities.contains(.permissionsAnswer), capabilities.contains(.chatsRead) else {
                 return refuse(id, "This plugin hasn't been granted answering your agents' questions and permission requests.")
             }
             return .getPermissions(id: id)
