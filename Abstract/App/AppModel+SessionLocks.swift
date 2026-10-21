@@ -14,7 +14,7 @@ extension AppModel {
         "This chat is driven from the command line, so it's read-only here until its agent stops.")
 
     var locksDirectory: URL { engine.logsURL.deletingLastPathComponent().appendingPathComponent("locks", isDirectory: true) }
-    private var storePath: String { engine.logsURL.deletingLastPathComponent().appendingPathComponent("abstract.sqlite").path }
+    var storePath: String { engine.logsURL.deletingLastPathComponent().appendingPathComponent("abstract.sqlite").path }
 
     /// `abstract` drives the chat: its agent runs there, or a command is at work on it.
     func isDrivenFromCLI(_ sessionId: String) -> Bool { cliDriven[sessionId] != nil }

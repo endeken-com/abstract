@@ -81,6 +81,16 @@ public struct OpenCodeProvider: ProviderDefinition {
             ])
             if let file = tool.instructionFile { config["instructions"] = .array([.string(file)]) }
         }
+        // The plugin-tools server (ABS-97), merged the same way.
+        if let tools = ctx.pluginTools {
+            var servers = config["mcp"]?.object ?? [:]
+            servers[PluginTools.serverName] = .object([
+                "type": .string("local"),
+                "command": .array(tools.serverCommand.map(JSONValue.string)),
+                "enabled": .bool(true),
+            ])
+            config["mcp"] = .object(servers)
+        }
         if let instructions = ctx.instructions {
             config["agent"] = .object([profileAgent: .object([
                 "mode": .string("primary"),
