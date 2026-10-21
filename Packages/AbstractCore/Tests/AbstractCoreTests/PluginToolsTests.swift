@@ -416,7 +416,10 @@ import Testing
                     process.standardInput = stdin
                     process.standardError = FileHandle.nullDevice
                     try process.run()
-                    stdin.fileHandleForWriting.write(Data(input.utf8))
+                    // A child that exits before reading would otherwise end
+                    // the whole test run with SIGPIPE; this way it fails here.
+                    _ = fcntl(stdin.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
+                    try? stdin.fileHandleForWriting.write(contentsOf: Data(input.utf8))
                     try stdin.fileHandleForWriting.close()
                     let data = stdout.fileHandleForReading.readDataToEndOfFile()
                     process.waitUntilExit()
