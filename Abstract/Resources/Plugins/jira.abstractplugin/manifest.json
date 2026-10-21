@@ -1,0 +1,29 @@
+{
+  "api": 2,
+  "id": "sh.abstract.jira",
+  "name": "Jira",
+  "version": "1.0.0",
+  "description": "Find Jira Cloud issues by key, link or words and attach them to chats. Uses Atlassian's acli sign-in on this Mac.",
+  "entry": "index.html",
+  "capabilities": ["cli"],
+  "cli": {
+    "binary": "acli",
+    "install": "brew install acli",
+    "commands": [
+      { "args": ["jira", "auth", "status"], "access": "read" },
+      { "args": ["jira", "workitem", "search"], "access": "read" },
+      { "args": ["jira", "workitem", "view"], "access": "read" },
+      { "args": ["jira", "project", "list"], "access": "read" }
+    ]
+  },
+  "background": "background.js",
+  "contributes": {
+    "settingsPage": { "id": "settings", "title": "Jira Settings", "symbol": "gearshape" },
+    "issueTracker": {
+      "title": "Jira",
+      "icon": "icon.svg",
+      "keyExample": "PROJ-123",
+      "keyPattern": "[A-Za-z][A-Za-z0-9]*-[0-9]+"
+    }
+  }
+}
