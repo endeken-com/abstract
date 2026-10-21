@@ -1078,7 +1078,11 @@ final class AppModel {
         if enrichers[enricherKey] == nil { enrichers[enricherKey] = provider.makeLineEnricher(executor: executor, cwd: cwd) }
         loadTimelineIfNeeded(session.id)
         stream(for: session.id)?.restart(providerId: provider.id)
-        try engine.launch(sessionId: session.id, spec: spec, enricher: enrichers[enricherKey])
+        let launchRecord = LaunchInspection.record(spec: spec, prompt: prompt,
+                                                   model: session.model ?? settings.agentDefaults[provider.id]?.model
+                                                       ?? provider.configuredDefaultModel(home: executor.homeDirectory),
+                                                   effort: session.effort ?? settings.agentDefaults[provider.id]?.effort)
+        try engine.launch(sessionId: session.id, spec: spec, enricher: enrichers[enricherKey], launchRecord: launchRecord)
         alive.insert(session.id)
         publishAgent(session.id, providerId: provider.id)
         turnStartedAt[session.id] = Date()

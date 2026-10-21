@@ -22,6 +22,7 @@ struct ChatView: View {
 struct ChatToolbarControls: View {
     @Environment(AppModel.self) private var model
     @AppStorage("chat.transcript") private var transcript: TranscriptMode = .normal
+    @State private var showingLaunch = false
     let session: Session
     var showsTabs = true
 
@@ -65,6 +66,7 @@ struct ChatToolbarControls: View {
                     Button("Copy \(kind) Path") { copy(path) }
                 }
                 if let branch = session.branch { Button("Copy Branch Name (\(branch))") { copy(branch) } }
+                if latestLaunch != nil { Button("How this turn started") { showingLaunch = true } }
                 Button("Reset Panels") { model.resetLayout(session.id) }
                 Divider()
                 Picker("Transcript", selection: $transcript) {
@@ -99,6 +101,16 @@ struct ChatToolbarControls: View {
                 }
             }
         }
+        .sheet(isPresented: $showingLaunch) {
+            if let latestLaunch { LaunchDetailsView(record: latestLaunch) }
+        }
+    }
+
+    private var latestLaunch: LaunchRecord? {
+        for case let .turn(_, info) in model.feed(session.id).timeline.blocks.reversed() {
+            if let launch = info.launch { return launch }
+        }
+        return nil
     }
 
     /// Hand this chat to the workflow's first step, to carry on the work in it.

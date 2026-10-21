@@ -21,6 +21,7 @@ public struct TurnInfo: Sendable, Hashable {
     public var reportedMs: Int?
     public var usage: UsageTotals?
     public var costUsd: Double?
+    public var launch: LaunchRecord?
 
     public init(ending: Ending = .done, summary: String? = nil, startedAt: Date? = nil, endedAt: Date? = nil,
                 reportedMs: Int? = nil, usage: UsageTotals? = nil, costUsd: Double? = nil) {
@@ -71,20 +72,32 @@ struct TurnTracker {
     /// What its line says so far, once the agent reported its end or usage.
     private var info: TurnInfo?
     private var lineId: Int?
+    private var launch: LaunchRecord?
+    private var lastLaunch: LaunchRecord?
 
     /// Reads one entry. Returns a turn line that ended before this entry's
     /// own block, or with it.
     mutating func read(_ entry: TimelineEntry) -> TimelineBlock? {
         let at = entry.at
         switch entry.event {
+        case let .launch(record):
+            if launch == nil { launch = record }
+            lastLaunch = record
+        case let .system(model, _, _, _):
+            if let model {
+                launch?.model = model
+                lastLaunch?.model = model
+            }
+        case .handoff:
+            let ended = close(id: -entry.id, implicitly: true)
+            lastLaunch = nil
+            return ended
         case .text(.user, _, _, _):
             // Your message logged, then echoed by the agent: still one turn.
             if active, !worked, info == nil { return nil }
             let ended = close(id: -entry.id, implicitly: true)
             begin(at)
             return ended
-        case .handoff:
-            return close(id: -entry.id, implicitly: true)
         case let .text(.assistant, text, _, _), let .thinking(text, _, _):
             if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { step(at) }
         case .toolUse:
@@ -127,6 +140,7 @@ struct TurnTracker {
         worked = false
         info = nil
         lineId = nil
+        launch = nil
     }
 
     private mutating func step(_ at: Date?) {
@@ -152,7 +166,7 @@ struct TurnTracker {
     /// when its length is known.
     private mutating func close(id: Int, implicitly: Bool) -> TimelineBlock? {
         guard active else { return nil }
-        defer { active = false; info = nil; lineId = nil; worked = false }
+        defer { active = false; info = nil; lineId = nil; worked = false; launch = nil }
         if let info { return .turn(id: lineId ?? id, finished(info)) }
         guard worked else { return nil }
         let line = finished(TurnInfo())
@@ -164,6 +178,7 @@ struct TurnTracker {
         var info = info
         info.startedAt = startedAt
         info.endedAt = lastAt
+        info.launch = launch ?? lastLaunch
         return info
     }
 }

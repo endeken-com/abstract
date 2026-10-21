@@ -27,6 +27,8 @@ public final class SessionEngine: Sendable {
         let process: RunningProcess
         /// The session's log, shared with `recordInput` so numbers stay in order.
         let writer: LogWriter
+        let spec: LaunchSpec
+        let launchRecord: LaunchRecord?
     }
 
     public init(executor: any Executor, logDirectory: URL) {
@@ -50,11 +52,17 @@ public final class SessionEngine: Sendable {
 
     /// Spawn the agent for a session. Sequence numbers continue from the log,
     /// so a resumed session appends rather than overwrites.
-    public func launch(sessionId: String, spec: LaunchSpec, enricher: (any LineEnricher)? = nil) throws {
+    public func launch(sessionId: String, spec: LaunchSpec, enricher: (any LineEnricher)? = nil,
+                       launchRecord: LaunchRecord? = nil) throws {
         if isAlive(sessionId) { throw AbstractError.message("This chat's agent is already running.") }
         let logURL = logFile(sessionId)
         let startSeq = lineCount(logURL)
         let writer = LogWriter(url: logURL, startingAt: startSeq)
+        if let launchRecord {
+            let line = Self.stamped(launchRecord.line)
+            let n = writer.append(line)
+            continuation.yield(.line(sessionId: sessionId, seq: n, line))
+        }
 
         let process = try executor.spawn(
             spec,
@@ -74,7 +82,9 @@ public final class SessionEngine: Sendable {
         )
         state.withLock { running in
             // A process that failed instantly has already exited; don't track it.
-            if !writer.isClosed { running[sessionId] = Running(process: process, writer: writer) }
+            if !writer.isClosed {
+                running[sessionId] = Running(process: process, writer: writer, spec: spec, launchRecord: launchRecord)
+            }
         }
     }
 
@@ -91,11 +101,20 @@ public final class SessionEngine: Sendable {
     public func recordInput(sessionId: String, text: String, queued ids: [String] = []) {
         guard !ids.isEmpty else {
             record(sessionId: sessionId, OutputLine(stream: .user, line: text))
+            recordRunningLaunch(sessionId: sessionId, prompt: text)
             return
         }
         markSending(sessionId: sessionId, ids)
         record(sessionId: sessionId, OutputLine(stream: .user, line: text, queued: ids))
+        recordRunningLaunch(sessionId: sessionId, prompt: text)
         withQueue(sessionId) { $0.removeAll { ids.contains($0.id) } }
+    }
+
+    private func recordRunningLaunch(sessionId: String, prompt: String) {
+        guard let running = state.withLock({ $0[sessionId] }), let previous = running.launchRecord else { return }
+        let record = LaunchRecord(spec: running.spec, prompt: prompt, model: previous.model,
+                                  effort: previous.effort, binary: previous.binary, version: previous.version)
+        self.record(sessionId: sessionId, record.line)
     }
 
     // MARK: Messages waiting for the turn to end

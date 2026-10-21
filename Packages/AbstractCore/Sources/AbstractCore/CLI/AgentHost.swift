@@ -211,9 +211,13 @@ final class AgentHost: @unchecked Sendable {
         }
         let spec = AgentLaunch.spec(for: session, provider: provider, prompt: request.prompt, resumeId: nil,
                                     settings: settings, home: executor.homeDirectory)
+        let launchRecord = LaunchInspection.record(spec: spec, prompt: request.prompt,
+                                                   model: session.model ?? settings.agentDefaults[provider.id]?.model
+                                                       ?? provider.configuredDefaultModel(home: executor.homeDirectory),
+                                                   effort: session.effort ?? settings.agentDefaults[provider.id]?.effort)
         do {
             try engine.launch(sessionId: sessionId, spec: spec,
-                              enricher: provider.makeLineEnricher(executor: executor, cwd: spec.cwd))
+                              enricher: provider.makeLineEnricher(executor: executor, cwd: spec.cwd), launchRecord: launchRecord)
         } catch {
             fail(error.localizedDescription)
         }

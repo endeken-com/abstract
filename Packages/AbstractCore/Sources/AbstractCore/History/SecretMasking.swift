@@ -34,14 +34,26 @@ public enum SecretMasking {
 
     /// `text` with known secret shapes replaced by `[masked]`.
     public static func mask(_ text: String) -> String {
+        mask(text, envLines: true)
+    }
+
+    /// Known token shapes without treating an argument such as `option=value`
+    /// as a whole environment assignment.
+    public static func maskTokens(_ text: String) -> String {
+        mask(text, envLines: false)
+    }
+
+    private static func mask(_ text: String, envLines: Bool) -> String {
         var out = text
         for pattern in patterns {
             out = pattern.stringByReplacingMatches(
                 in: out, range: NSRange(out.startIndex..., in: out), withTemplate: replacement)
         }
         // An env line's value (FOO_SECRET=…), whatever it holds.
-        out = envLine.stringByReplacingMatches(
-            in: out, range: NSRange(out.startIndex..., in: out), withTemplate: "$1\(replacement)")
+        if envLines {
+            out = envLine.stringByReplacingMatches(
+                in: out, range: NSRange(out.startIndex..., in: out), withTemplate: "$1\(replacement)")
+        }
         // Long mixed tokens that read as keys, not words or hashes.
         var result = ""
         var cursor = out.startIndex

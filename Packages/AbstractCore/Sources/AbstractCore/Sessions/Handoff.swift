@@ -115,6 +115,8 @@ public final class ChatStream {
             return [.text(role: .user, text: line.line, blockId: nil, partial: false)]
         case .note:
             return [.notice(.info(line.line))]
+        case .launch:
+            return LaunchRecord(line).map { [.launch($0)] } ?? []
         case .stdout, .stderr:
             let events = parser?.feed(line.line, stream: line.stream) ?? [.raw(line: line.line, stream: line.stream)]
             let scoped = providerId == "codex" ? scopeCodex(events) : events
