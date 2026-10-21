@@ -38,6 +38,7 @@ extension Color {
         switch provider {
         case .codex: .btUsageCodex
         case .opencode: .btUsageOpenCode
+        case .muse: .btUsageMuse
         case .claude, nil: .btUsageClaude
         }
     }
@@ -437,8 +438,12 @@ private struct TokenUsageSection: View {
                             ProviderLogo(providerId: row.provider?.rawValue ?? "claude", size: 14)
                             Text(row.name).font(.btBody).foregroundStyle(Color.btText)
                             Spacer(minLength: Space.md)
-                            Text(metric == .cost ? UsageFormat.cost(row.cost) : UsageFormat.tokens(row.tokens.total))
-                                .font(.btBody).monospacedDigit().foregroundStyle(Color.btText)
+                            if metric == .cost, !row.hasCost {
+                                Text("Muse reports no cost").font(.btCallout).foregroundStyle(Color.btTextTertiary)
+                            } else {
+                                Text(metric == .cost ? UsageFormat.cost(row.cost) : UsageFormat.tokens(row.tokens.total))
+                                    .font(.btBody).monospacedDigit().foregroundStyle(Color.btText)
+                            }
                             Text(UsageFormat.percent(share(row, report))).font(.btCallout).monospacedDigit()
                                 .foregroundStyle(Color.btTextTertiary).frame(width: 40, alignment: .trailing)
                         }
@@ -505,7 +510,8 @@ private struct UsageChart: View {
                 .interpolationMethod(.catmullRom)
                 .lineStyle(StrokeStyle(lineWidth: 1.6))
         }
-        .chartForegroundStyleScale(["claude": Color.btUsageClaude, "codex": Color.btUsageCodex, "opencode": Color.btUsageOpenCode])
+        .chartForegroundStyleScale(["claude": Color.btUsageClaude, "codex": Color.btUsageCodex, "opencode": Color.btUsageOpenCode,
+                                    "muse": Color.btUsageMuse])
         .chartLegend(.hidden)
         .chartXAxis {
             // First, middle and last day, the ends anchored inward so neither clips.
@@ -538,8 +544,10 @@ private struct ModelTable: View {
                         Text(row.name).font(.btBody).foregroundStyle(Color.btText).lineLimit(1)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    Text(UsageFormat.cost(row.cost) + (row.estimated ? "*" : "")).monospacedDigit().frame(width: 84, alignment: .trailing)
-                        .help(row.estimated ? "No published price for this model is known here; estimated at GPT-5 rates." : "")
+                    Text(row.hasCost ? UsageFormat.cost(row.cost) + (row.estimated ? "*" : "") : "–").monospacedDigit()
+                        .foregroundStyle(row.hasCost ? Color.btText : Color.btTextTertiary).frame(width: 84, alignment: .trailing)
+                        .help(!row.hasCost ? "Muse reports no cost, so none is shown."
+                              : row.estimated ? "No published price for this model is known here; estimated at GPT-5 rates." : "")
                     Text(UsageFormat.percent(report.cost > 0 ? row.cost / report.cost : 0)).monospacedDigit().frame(width: 64, alignment: .trailing)
                         .foregroundStyle(Color.btTextSecondary)
                     Text(UsageFormat.tokens(row.tokens.total)).monospacedDigit().frame(width: 84, alignment: .trailing)

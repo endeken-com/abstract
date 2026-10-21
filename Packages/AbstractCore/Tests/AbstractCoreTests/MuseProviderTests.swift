@@ -266,6 +266,30 @@ struct MuseProviderTests {
         #expect(previews["write_file"]?.lines.map(\.content) == ["made"])
     }
 
+    /// Each model step's own tokens, never the running `cumulative`, so the
+    /// turn's line adds up to what Muse reported for the whole turn.
+    @Test func serveStepsReportTheirOwnTokens() throws {
+        let events = try Self.fixture("muse-serve-tools")
+        var steps: [UsageTotals] = []
+        for case let .usage(totals, cost, _, _) in events {
+            steps.append(totals)
+            #expect(cost == nil, "Muse reports no cost")
+        }
+        #expect(steps.count == 7)
+        #expect(steps[0] == UsageTotals(inputTokens: 30217, outputTokens: 132))
+        // Cached input rides inside Muse's `inputTokens`; the chat counts it apart.
+        #expect(steps[1] == UsageTotals(inputTokens: 198, outputTokens: 55, cacheRead: 30196))
+        let total = steps.reduce(.zero, +)
+        // The last step's `cumulative.totalTokens`.
+        #expect(total.inputTokens + total.cacheRead + total.cacheWrite + total.outputTokens == 215_070)
+
+        var timeline = Timeline()
+        timeline.append(contentsOf: events)
+        let lines = timeline.blocks.compactMap { if case let .turn(_, info) = $0 { info } else { nil } }
+        #expect(lines.count == 1)
+        #expect(lines.first?.usage == total)
+    }
+
     /// The same session resumed on a fresh host: web search and fetch arrive
     /// as ordinary tool calls with their query and URL.
     @Test func serveResumeShowsWebSearchAndFetch() throws {

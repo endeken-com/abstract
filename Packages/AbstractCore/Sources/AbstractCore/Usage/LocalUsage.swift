@@ -5,8 +5,9 @@ import Synchronization
 /// Token use read from the agents' own session logs: every Claude profile
 /// (`~/.claude` and any `~/.claude-*` a `CLAUDE_CONFIG_DIR` points at,
 /// subagent transcripts included), Codex (`~/.codex/sessions`) and OpenCode
-/// (`~/.local/share/opencode/opencode.db`). Nothing is sent anywhere; costs
-/// are estimates at API list prices unless the agent logged its own.
+/// (`~/.local/share/opencode/opencode.db`), and Muse Code, which keeps no log
+/// of its own, from Abstract's chat logs. Nothing is sent anywhere; costs are
+/// estimates at API list prices unless the agent logged its own.
 public enum LocalUsage {
     public struct Tokens: Codable, Sendable, Hashable {
         /// Input not served from the cache.
@@ -30,7 +31,22 @@ public enum LocalUsage {
         }
     }
 
-    public enum Provider: String, Codable, Sendable, Hashable, CaseIterable { case claude, codex, opencode }
+    public enum Provider: String, Codable, Sendable, Hashable, CaseIterable {
+        case claude, codex, opencode, muse
+
+        public var name: String {
+            switch self {
+            case .claude: "Claude Code"
+            case .codex: "Codex"
+            case .opencode: "OpenCode"
+            case .muse: "Muse Code"
+            }
+        }
+
+        /// Muse reports no cost and Abstract holds no price for its models,
+        /// so its use is counted in tokens only.
+        public var hasCost: Bool { self != .muse }
+    }
 
     /// One model response.
     public struct Record: Codable, Sendable, Hashable {
@@ -78,13 +94,15 @@ public enum LocalUsage {
     }
 
     /// Every record from every log, reusing `cache` for files that haven't
-    /// changed since, then writing it back. Slow the first time; run it off
-    /// the main thread.
-    public static func load(home: String, cache: URL?, fileManager fm: FileManager = .default) -> [Record] {
+    /// changed since, then writing it back. `chatLogs`: Abstract's own chat
+    /// logs, where Muse's steps are read. Slow the first time; run it off the
+    /// main thread.
+    public static func load(home: String, cache: URL?, chatLogs: URL? = nil, fileManager fm: FileManager = .default) -> [Record] {
         let stored = cache.flatMap { try? Data(contentsOf: $0) }.flatMap { try? JSONDecoder().decode([String: CachedFile].self, from: $0) } ?? [:]
         var fresh: [String: CachedFile] = [:]
         let sources = claudeHomes(home: home, fileManager: fm).flatMap { transcripts(under: $0 + "/projects", fileManager: fm).map { ($0, Provider.claude) } }
             + transcripts(under: home + "/.codex/sessions", fileManager: fm).map { ($0, Provider.codex) }
+            + (chatLogs.map { transcripts(under: $0.path, fileManager: fm) } ?? []).map { ($0, Provider.muse) }
         var changed: [(url: URL, provider: Provider, modified: Date, size: Int)] = []
         for (url, provider) in sources {
             guard let attributes = try? fm.attributesOfItem(atPath: url.path),
@@ -100,7 +118,12 @@ public enum LocalUsage {
         DispatchQueue.concurrentPerform(iterations: changed.count) { i in
             let file = changed[i]
             guard let data = try? Data(contentsOf: file.url, options: .alwaysMapped) else { return }
-            let records = file.provider == .claude ? claudeRecords(data) : codexRecords(data)
+            let records = switch file.provider {
+            case .claude: claudeRecords(data)
+            case .codex: codexRecords(data)
+            case .muse: museRecords(data)
+            case .opencode: [Record]()
+            }
             parsed.withLock { $0[file.url.path] = CachedFile(modified: file.modified, size: file.size, records: records) }
         }
         fresh.merge(parsed.withLock { $0 }) { _, new in new }
@@ -183,6 +206,37 @@ public enum LocalUsage {
             default:
                 continue
             }
+        }
+        return records
+    }
+
+    // MARK: Muse steps in Abstract's chat logs
+
+    /// Each `session/tokenUsage` step Muse reported in one of Abstract's chat
+    /// logs, dated by the log line, in the folder the Muse session runs in.
+    /// Keyed by session, turn and step, so a step read twice counts once.
+    public static func museRecords(_ data: Data) -> [Record] {
+        let markers = [Data("tokenUsage".utf8), Data("workspaceRoot".utf8)]
+        let decoder = JSONDecoder()
+        var records: [Record] = []
+        var cwd = ""
+        for line in lines(data, containing: nil) where markers.contains(where: { line.range(of: $0) != nil }) {
+            guard let logged = try? decoder.decode(OutputLine.self, from: line), logged.stream == .stdout,
+                  let msg = try? decoder.decode(JSONValue.self, from: Data(logged.line.utf8)) else { continue }
+            // The host names its folder when the session starts or resumes.
+            if let root = (msg["result"]?["session"] ?? msg["params"]?["session"])?["workspaceRoot"]?.string {
+                cwd = root
+            }
+            guard msg["method"]?.string == "session/tokenUsage", let params = msg["params"],
+                  let usage = params["usage"], let session = params["sessionId"]?.string,
+                  let date = logged.at ?? params["emittedAtMs"]?.double.map({ Date(timeIntervalSince1970: $0 / 1000) })
+                    ?? msg["emittedAtMs"]?.double.map({ Date(timeIntervalSince1970: $0 / 1000) }) else { continue }
+            let totals = MuseUsage.totals(usage)
+            let step = params["sourceRange"]?["first"]?["sequence"]?.int.map(String.init) ?? params["viewCursor"]?.string
+            let key = ["muse", session, params["turnId"]?.string, step].compactMap { $0 }.joined(separator: ":")
+            records.append(Record(key: key, date: date, provider: .muse, model: params["modelId"]?.string ?? "muse",
+                                  cwd: cwd, tokens: Tokens(input: totals.inputTokens, cacheWrite5m: totals.cacheWrite,
+                                                           cacheRead: totals.cacheRead, output: totals.outputTokens)))
         }
         return records
     }
@@ -312,6 +366,7 @@ public enum ModelPricing {
     /// zero, else the list price. `estimated` when that price was assumed.
     public static func price(_ record: LocalUsage.Record) -> (cost: Double, estimated: Bool) {
         if let reported = record.reportedCost, reported > 0 { return (reported, false) }
+        guard record.provider.hasCost else { return (0, false) }
         let known = rates(provider: record.provider, model: record.model)?.known ?? false
         return (cost(provider: record.provider, model: record.model, tokens: record.tokens) ?? 0, !known)
     }

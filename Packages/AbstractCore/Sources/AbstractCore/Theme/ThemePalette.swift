@@ -100,7 +100,7 @@ public enum PaletteRole: String, CaseIterable, Sendable {
     // Text.
     case text, prose, textSecondary, textTertiary
     // Usage chart series.
-    case usageClaude, usageCodex, usageOpenCode
+    case usageClaude, usageCodex, usageOpenCode, usageMuse
     // Pull request states, and text on their washes.
     case pullRequestOpen, pullRequestDraft, pullRequestMerged, pullRequestClosed
     case pullRequestOpenInk, pullRequestDraftInk, pullRequestMergedInk, pullRequestClosedInk
@@ -125,7 +125,7 @@ public enum PaletteRole: String, CaseIterable, Sendable {
     /// Text and status colours, which must read on the surfaces they sit on.
     public static let foregrounds: [PaletteRole] = [
         .text, .prose, .textSecondary, .textTertiary,
-        .usageClaude, .usageCodex, .usageOpenCode,
+        .usageClaude, .usageCodex, .usageOpenCode, .usageMuse,
         .pullRequestOpenInk, .pullRequestDraftInk, .pullRequestMergedInk, .pullRequestClosedInk,
         .syntaxKeyword, .syntaxString, .syntaxLiteral, .syntaxType, .syntaxFunction,
         .syntaxComment, .syntaxOperator, .syntaxTag, .syntaxPlain,
@@ -174,6 +174,7 @@ public enum PaletteRole: String, CaseIterable, Sendable {
         case .usageClaude: (Swatch(0xD97757), Swatch(0xC2613F), Swatch(0xE58A6A))
         case .usageCodex: (Swatch(0x8E9DB5), Swatch(0x5B6B82), Swatch(0xA3B2C9))
         case .usageOpenCode: (Swatch(0x6FC2AB), Swatch(0x3D8B78), Swatch(0x7FD6BE))
+        case .usageMuse: (Swatch(0xB49BDB), Swatch(0x7556A8), Swatch(0xC6B1EC))
 
         case .pullRequestOpen: (Swatch(0x238636), Swatch(0x1F883D), Swatch(0x2EA043))
         case .pullRequestDraft: (Swatch(0x6E7681), Swatch(0x6E7781), Swatch(0x8B949E))

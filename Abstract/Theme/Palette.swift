@@ -112,6 +112,7 @@ nonisolated extension Color {
     static var btUsageClaude: Color { themed(.usageClaude) }
     static var btUsageCodex: Color { themed(.usageCodex) }
     static var btUsageOpenCode: Color { themed(.usageOpenCode) }
+    static var btUsageMuse: Color { themed(.usageMuse) }
 
     // Pull request states, as GitHub colours them (only the title's menu uses these, as a wash).
     static var btPullRequestOpen: Color { themed(.pullRequestOpen) }
