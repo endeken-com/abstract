@@ -50,6 +50,7 @@ window.ABSTRACT_THEMES = {
       "textTertiary" : "#75757e",
       "usageClaude" : "#d97757",
       "usageCodex" : "#8e9db5",
+      "usageMuse" : "#b49bdb",
       "usageOpenCode" : "#6fc2ab",
       "warning" : "#d2d2d8"
     }
@@ -104,6 +105,7 @@ window.ABSTRACT_THEMES = {
       "textTertiary" : "#a6a6af",
       "usageClaude" : "#e58a6a",
       "usageCodex" : "#a3b2c9",
+      "usageMuse" : "#c6b1ec",
       "usageOpenCode" : "#7fd6be",
       "warning" : "#e8e8ec"
     }
@@ -158,6 +160,7 @@ window.ABSTRACT_THEMES = {
       "textTertiary" : "#8c8c96",
       "usageClaude" : "#c2613f",
       "usageCodex" : "#5b6b82",
+      "usageMuse" : "#7556a8",
       "usageOpenCode" : "#3d8b78",
       "warning" : "#3a3a40"
     }
