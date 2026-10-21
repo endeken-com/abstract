@@ -152,6 +152,11 @@ final class AppModel {
     /// Chats you pressed Stop in, until the turn or the process ends: neither
     /// is a failure. The token tells this press's fallback from a later one's.
     private(set) var stopRequests: [String: UUID] = [:]
+    /// Each chat's messages sent while its agent worked, as the engine keeps
+    /// them; only chats with some. See AppModel+Queue.
+    var queues: [String: [QueuedMessage]] = [:]
+    /// Chats you pressed Interrupt in: their queue goes once the turn ends.
+    var interrupting: Set<String> = []
     /// Tool names to approve without asking, per chat.
     var autoContinueTools: [String: Set<String>] = [:]
     /// Remembered permission answers, by project id; see AppModel+Permissions.
@@ -356,6 +361,7 @@ final class AppModel {
         let unfinished = ((try? store.sessions()) ?? []).filter { setupUnfinished($0) && cliDriven[$0.id] == nil }.map(\.id)
         _ = try? store.reconcileInterruptedSessions(excluding: Set(cliDriven.keys))
         reload()
+        loadQueues()
         restoreInterruptedSetups(unfinished)
         Task { await listen() }
         watchCommandLine()
@@ -1037,15 +1043,29 @@ final class AppModel {
         guard let session = session(sessionId), let provider = ProviderRegistry.provider(session.providerId) else { return }
         // Its agent starts once it's set up, with the chat's first message.
         if setups[sessionId] != nil { throw AbstractError.message("“\(session.name)” is still being set up; its agent starts after.") }
-        let message = PromptAttachments.message(text, attachments)
-        let images = PromptAttachments.images(attachments)
+        // Mid-turn it waits, and goes as the next turn.
+        if turnInProgress(sessionId) {
+            enqueue(sessionId, QueuedMessage(text: text, attachments: attachments))
+            return
+        }
+        // Messages still waiting (after Stop, a failure or a relaunch) go first, in one.
+        try send(engine.queued(sessionId: sessionId), plus: QueuedMessage(text: text, attachments: attachments), in: session, provider)
+    }
+
+    /// Sends a message now: as the next turn, or into the running one when
+    /// its agent reads stdin. `queued`: the queued messages it carries, taken
+    /// off the queue as it's logged.
+    func deliver(_ session: Session, _ provider: any ProviderDefinition, message: String, images: [String],
+                 queued: [String] = []) throws {
+        let sessionId = session.id
         // The agent was switched: the new one hears what happened first.
         if session.handoffFrom != nil {
             if handingOff.contains(sessionId) { throw AbstractError.message("Still handing this chat over; send again in a moment.") }
-            Task { await handOver(session, message: message, images: images) }
+            Task { await handOver(session, message: message, images: images, queued: queued) }
             return
         }
-        engine.recordInput(sessionId: sessionId, text: message)
+        engine.recordInput(sessionId: sessionId, text: message, queued: queued)
+        if !queued.isEmpty { refreshQueue(sessionId) }
         // A new agent, model or effort takes effect by restarting between
         // turns, once no background task would end with the old process.
         if needsRelaunch.contains(sessionId), isAlive(sessionId), session.status != .running, runningBackgroundTasks(sessionId) == 0 {
@@ -1057,8 +1077,11 @@ final class AppModel {
         if provider.followUpMode == .stdin, isAlive(sessionId),
            let line = provider.buildUserMessage(message, images: images, sessionId: session.providerSessionId) {
             try engine.write(sessionId: sessionId, isDemo ? DemoAgent.followUpLine(message) : line)
-            turnStartedAt[sessionId] = Date()
-            setStatus(sessionId, .running)
+            // Steered into a running turn, the turn and what it waits on go on.
+            if session.status != .running, session.status != .waitingInput {
+                turnStartedAt[sessionId] = Date()
+                setStatus(sessionId, .running)
+            }
         } else {
             try launch(session, prompt: message, resume: true, images: images)
         }
@@ -1151,7 +1174,7 @@ final class AppModel {
     /// asked for a handover note (Backtick writes one from the transcript
     /// when it can't answer), the transcript is saved where the new agent can
     /// read it, and the new agent starts with both ahead of your message.
-    private func handOver(_ session: Session, message: String, images: [String]) async {
+    private func handOver(_ session: Session, message: String, images: [String], queued: [String] = []) async {
         let id = session.id
         guard let from = session.handoffFrom, !handingOff.contains(id) else { return }
         handingOff.insert(id)
@@ -1173,7 +1196,8 @@ final class AppModel {
 
         engine.record(sessionId: id, HandoffMarker(phase: .handoff, from: from, to: session.providerId, summary: summary,
                                                    source: note == nil ? .app : .agent, transcriptPath: transcript).line)
-        engine.recordInput(sessionId: id, text: message)
+        engine.recordInput(sessionId: id, text: message, queued: queued)
+        if !queued.isEmpty { refreshQueue(id) }
         handingOff.remove(id)
 
         guard var current = self.session(id) else { return }
@@ -1643,6 +1667,7 @@ final class AppModel {
                 for e in stream(for: sessionId)?.onExit(code: code, stopRequested: true) ?? [] { append(e, to: sessionId) }
                 setStatus(sessionId, .idle)
                 permissions[sessionId] = nil
+                turnEnded(sessionId, .idle, stopped: true)
                 return
             }
             if let stream = streams[sessionId] {
@@ -1658,6 +1683,7 @@ final class AppModel {
                 }
             }
             permissions[sessionId] = nil
+            if let status = session(sessionId)?.status { turnEnded(sessionId, status, stopped: false) }
         }
     }
 
@@ -1685,12 +1711,14 @@ final class AppModel {
             if status == .idle, stopRequests.removeValue(forKey: sessionId) != nil {
                 // A turn you stopped: nothing to tell you, review or answer.
                 permissions[sessionId] = nil
+                turnEnded(sessionId, status, stopped: true)
             } else if status == .idle {
-                // Still at work in the background: not done yet. The agent
-                // takes another turn as each task ends.
-                if runningBackgroundTasks(sessionId) == 0 { notify(sessionId, .finished) }
+                // Still at work in the background, or about to take your
+                // queued messages: not done yet.
+                if runningBackgroundTasks(sessionId) == 0, queues[sessionId] == nil { notify(sessionId, .finished) }
                 RevundService.shared.turnEnded(sessionId, model: self)
                 nameAutomationRun(sessionId)
+                turnEnded(sessionId, status, stopped: false)
             }
             if status == .waitingInput || status == .errored { notify(sessionId, status, detail: detail) }
         case let .permissionRequest(requestId, toolName, input) where AgentQuestion.isQuestion(toolName):

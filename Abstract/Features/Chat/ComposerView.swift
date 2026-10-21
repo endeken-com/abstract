@@ -2,8 +2,9 @@ import SwiftUI
 import AppKit
 import AbstractCore
 
-/// The reply box. Return sends, Shift-Return breaks the line, and the send
-/// button turns into Stop while the agent works.
+/// The reply box. Return sends, Shift-Return breaks the line. While the
+/// agent works, Send becomes Queue, beside Steer and Interrupt (or Stop
+/// when there's nothing to send).
 struct ComposerView: View {
     @Environment(AppModel.self) private var model
     let session: Session
@@ -19,6 +20,13 @@ struct ComposerView: View {
     @State private var slashDismissed: String?
 
     private var working: Bool { session.status == .running || session.status == .provisioning }
+    private var queue: [QueuedMessage] { model.queuedMessages(session.id) }
+    /// Mid-turn, a message waits for the turn to end (ABS-103); a chat on a
+    /// Mac too old to queue keeps plain Stop.
+    private var queueing: Bool { (working || model.turnInProgress(session.id)) && !model.queueUnsupported(session.id) }
+    private var hasDraft: Bool {
+        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.comments(session.id).isEmpty || !attachments.isEmpty
+    }
     /// `abstract` drives the chat: nothing goes to its agent from here.
     private var readOnly: Bool { model.isDrivenFromCLI(session.id) }
     /// Its agent starts once it's set up; its first message is already there.
@@ -31,7 +39,7 @@ struct ComposerView: View {
     /// A review or attachments can go on their own; otherwise there must be something typed.
     private var canSend: Bool {
         !readOnly && !settingUp && !sending && (!remote || model.remote.unreachableMessage(session.id) == nil)
-            && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.comments(session.id).isEmpty || !attachments.isEmpty)
+            && (hasDraft || (!queueing && !queue.isEmpty))
     }
     private var attachments: [PromptAttachment] {
         get { model.draftAttachments[session.id] ?? [] }
@@ -69,6 +77,10 @@ struct ComposerView: View {
                     .frame(maxWidth: Space.readingWidth, alignment: .leading)
                     .padding(.bottom, Space.sm)
             }
+            QueuedMessages(session: session, working: queueing, edit: editQueued)
+                .padding(.horizontal, Space.lg)
+                .padding(.bottom, queue.isEmpty ? 0 : Space.sm)
+                .frame(maxWidth: Space.readingWidth + 2 * Space.lg)
             HStack {
                 ReviewPill(sessionId: session.id)
                 Spacer(minLength: 0)
@@ -128,8 +140,30 @@ struct ComposerView: View {
                         }
                         Spacer(minLength: Space.sm)
 
-                        // The send button becomes Stop while the agent works.
-                        if working {
+                        // Mid-turn: Queue, and Steer or Interrupt to act on the turn now.
+                        if queueing {
+                            if hasDraft || !queue.isEmpty {
+                                Button("Steer") { act(model.steer) }
+                                    .buttonStyle(.btGhost)
+                                    .disabled(sending || !model.canSteer(session.id))
+                                    .help(model.steerUnavailable(session.id) ?? "Send this into the turn now")
+                                Button("Interrupt") { act(model.interrupt) }
+                                    .buttonStyle(.btGhost)
+                                    .disabled(sending)
+                                    .help("Stop this turn and send now")
+                            } else {
+                                Button("Stop") { model.stop(session.id) }
+                                    .buttonStyle(.btGhost)
+                                    .disabled(remote && model.remote.unreachableMessage(session.id) != nil)
+                                    .help(model.remote.unreachableMessage(session.id) ?? "Stop the agent (⌘.)")
+                            }
+                            if hasDraft {
+                                Button("Queue", action: send)
+                                    .buttonStyle(.btPrimary)
+                                    .disabled(!canSend)
+                                    .help(model.remote.unreachableMessage(session.id) ?? "Send when this turn ends (Return)")
+                            }
+                        } else if working {
                             Button("Stop") { model.stop(session.id) }
                                 .buttonStyle(.btGhost)
                                 .disabled(remote && model.remote.unreachableMessage(session.id) != nil)
@@ -237,6 +271,36 @@ struct ComposerView: View {
             sent()
         } catch {
             model.flash(error.localizedDescription, isError: true)
+        }
+    }
+
+    /// Steer or Interrupt, with what's typed.
+    private func act(_ action: @escaping (String, String, [PromptAttachment]) async throws -> Void) {
+        guard !sending, !readOnly, !settingUp else { return }
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let message = hasDraft ? model.messageWithReview(session.id, text: text) : ""
+        let pending = attachments
+        sending = true
+        Task {
+            do {
+                try await action(session.id, message, pending)
+                if !message.isEmpty || !pending.isEmpty { sent() }
+            } catch { model.flash(error.localizedDescription, isError: true) }
+            sending = false
+        }
+    }
+
+    /// A queued message back in the box, ahead of anything typed since.
+    private func editQueued(_ message: QueuedMessage) {
+        Task {
+            guard let message = await model.takeQueued(session.id, id: message.id) else {
+                model.flash("That message has already been sent.")
+                return
+            }
+            draft = draft.isEmpty ? message.text : message.text + "\n\n" + draft
+            attachments += message.attachments
+            previewingMarkdown = false
+            focused = true
         }
     }
 

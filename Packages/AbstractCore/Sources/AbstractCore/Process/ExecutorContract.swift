@@ -14,7 +14,12 @@ public struct OutputLine: Sendable, Hashable, Codable {
     /// When it was logged, on the Mac that ran the agent. Lines logged before
     /// times were kept have none.
     public var at: Date?
-    public init(stream: OutputStreamKind, line: String, at: Date? = nil) { self.stream = stream; self.line = line; self.at = at }
+    /// A message you sent from the queue: the queued messages it delivered,
+    /// so a relaunch never sends them again.
+    public var queued: [String]?
+    public init(stream: OutputStreamKind, line: String, at: Date? = nil, queued: [String]? = nil) {
+        self.stream = stream; self.line = line; self.at = at; self.queued = queued
+    }
 }
 
 public enum AbstractError: Error, LocalizedError, Sendable, Equatable {

@@ -110,6 +110,14 @@ public enum RemoteRequest: Codable, Sendable {
     /// ask and the pre-filled prompt. Only send it to a Mac whose
     /// snapshot says `codeHistory`.
     case askAuthor(root: String, path: String, lineStart: Int, lineEnd: Int, code: [String], revision: String?, sessionId: String?)
+    /// Messages sent while the agent works (ABS-103). `send` queues on its
+    /// own mid-turn. Steer sends the queue and `text` into the running turn;
+    /// Interrupt stops the turn and sends them as the next. Only send these
+    /// to a Mac whose snapshot says `messageQueue`.
+    case steer(sessionId: String, text: String)
+    case interrupt(sessionId: String, text: String)
+    case editQueued(sessionId: String, id: String, text: String)
+    case removeQueued(sessionId: String, id: String)
 
     // The host's worktrees, so a chat there reviews, browses and edits here
     // as it would on the host. Only inside its projects and worktrees; only
@@ -315,6 +323,15 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
     /// Present (even when empty) only on a Mac that takes
     /// `savePermissionRule` / `deletePermissionRule`. Optional for older peers.
     public var permissionRules: [String: [PermissionRule]]?
+    /// Messages waiting for each chat's turn to end, by chat id; only chats
+    /// with some. Optional for older peers.
+    public var queuedMessages: [String: [QueuedMessage]]?
+    /// A host that queues messages sent mid-turn and takes `steer`,
+    /// `interrupt`, `editQueued` and `removeQueued`. Optional for older peers.
+    public var messageQueue: Bool?
+    /// The agents Steer reaches mid-turn (those that read stdin), by id.
+    /// Optional for older peers.
+    public var steerAgents: [String]?
 
     /// The largest uploaded icon a snapshot carries; larger ones are left out.
     public static let maxProjectIconBytes = 512 << 10
@@ -332,7 +349,8 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
                 everythingPaused: Bool? = nil, pausedProjectIds: [String]? = nil, pauseControl: Bool? = nil,
                 stalls: [String: RemoteStall]? = nil,
                 codeHistory: Bool? = nil, plans: [String: RemotePlan]? = nil, planApproval: Bool? = nil,
-                permissionRules: [String: [PermissionRule]]? = nil) {
+                permissionRules: [String: [PermissionRule]]? = nil,
+                queuedMessages: [String: [QueuedMessage]]? = nil, messageQueue: Bool? = nil, steerAgents: [String]? = nil) {
         self.projects = projects; self.sessions = sessions; self.providers = providers; self.alive = alive
         self.home = home; self.modelCatalogs = modelCatalogs; self.defaultModelNames = defaultModelNames
         self.pullRequests = pullRequests
@@ -356,6 +374,9 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
         self.plans = plans
         self.planApproval = planApproval
         self.permissionRules = permissionRules
+        self.queuedMessages = queuedMessages
+        self.messageQueue = messageQueue
+        self.steerAgents = steerAgents
     }
 }
 

@@ -457,7 +457,10 @@ final class RemoteService {
                               planApproval: true,
                               permissionRules: Dictionary(uniqueKeysWithValues: model.projects.filter { $0.archivedAt == nil }.map {
                                   ($0.id, model.permissionRules(for: $0.id))
-                              }))
+                              }),
+                              queuedMessages: model.queues.filter { !$0.key.hasPrefix(Self.mirrorPrefix) },
+                              messageQueue: true,
+                              steerAgents: ProviderRegistry.all.filter { $0.followUpMode == .stdin }.map(\.id))
     }
 
     /// Each project's uploaded icon as bytes, so a viewing Mac can show it
@@ -871,6 +874,14 @@ final class HostedPeer {
             } catch {
                 return .failed(error.localizedDescription)
             }
+        case let .steer(session, text):
+            do { try await model.steer(session, text: text); return .ok } catch { return .failed(error.localizedDescription) }
+        case let .interrupt(session, text):
+            do { try await model.interrupt(session, text: text); return .ok } catch { return .failed(error.localizedDescription) }
+        case let .editQueued(session, id, text):
+            return model.editQueued(session, id: id, text: text) ? .ok : .failed("That message has already been sent.")
+        case let .removeQueued(session, id):
+            return model.removeQueued(session, id: id) == nil ? .failed("That message has already been sent.") : .ok
         case let .start(project, provider, prompt, policy):
             do {
                 let id = try await model.startChat(projectId: project, providerId: RetiredAgents.current(provider), prompt: prompt, baseRef: nil,
