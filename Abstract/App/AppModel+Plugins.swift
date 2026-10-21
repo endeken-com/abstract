@@ -326,7 +326,7 @@ extension AppModel {
         // One line per comment, whatever it holds, so none can pass for
         // another; a plugin's comments say so.
         func flat(_ text: String, _ limit: Int) -> String {
-            let line = String(text.unicodeScalars.map { CharacterSet.controlCharacters.contains($0) ? " " : Character($0) })
+            let line = String(text.unicodeScalars.map { CharacterSet.controlCharacters.union(.newlines).contains($0) ? " " : Character($0) })
             return line.count > limit ? line.prefix(limit) + "… (\(line.count - limit) more characters)" : line
         }
         var lines = all.prefix(8).map { c in
