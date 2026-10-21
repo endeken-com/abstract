@@ -49,7 +49,8 @@ import Testing
         #expect(WorkflowEngine.afterTurn(p, status: .waitingInput, stopped: false, queued: false, backgroundTasks: 0) == .none)
         // Your queued messages go first; the step ends after them.
         #expect(WorkflowEngine.afterTurn(p, status: .idle, stopped: false, queued: true, backgroundTasks: 0) == .none)
-        #expect(WorkflowEngine.afterTurn(p, status: .idle, stopped: false, queued: false, backgroundTasks: 1) == .none)
+        // Work left running in the background: it waits for you instead.
+        #expect(WorkflowEngine.afterTurn(p, status: .idle, stopped: false, queued: false, backgroundTasks: 1) == .waitForYou(next: 2))
     }
 
     @Test func onlyAWorkingWorkflowMovesOn() {
@@ -175,6 +176,13 @@ import Testing
         #expect(AutomationEvents.automations(for: archived, in: all).map(\.id) == ["any", "mine"])
         let standalone = AutomationEventOccurrence(event: .chatArchived, sessionId: "s", projectId: nil)
         #expect(AutomationEvents.automations(for: standalone, in: all).map(\.id) == ["any"])
+    }
+
+    @Test func onlyAutomationsOnThisMacHearEvents() {
+        var elsewhere = automation("elsewhere", events: [.chatArchived])
+        elsewhere.deviceId = "mac-mini"
+        let occurrence = AutomationEventOccurrence(event: .chatArchived, sessionId: "s", projectId: nil)
+        #expect(AutomationEvents.automations(for: occurrence, in: [elsewhere, automation("here", events: [.chatArchived])]).map(\.id) == ["here"])
     }
 
     @Test func anAutomationIsNeverStartedByWhatItLedTo() {

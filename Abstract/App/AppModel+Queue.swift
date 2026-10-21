@@ -106,6 +106,8 @@ extension AppModel {
             return
         }
         guard let session = session(sessionId), let provider = ProviderRegistry.provider(session.providerId) else { return }
+        // Yours now: events in it may start any automation again.
+        eventChains[sessionId] = nil
         guard canSteer(sessionId) else {
             // The turn ended meanwhile: it goes as the next one.
             try sendFollowUp(sessionId, text: text, attachments: attachments)
@@ -129,6 +131,7 @@ extension AppModel {
             throw AbstractError.message("The agent is restarting; interrupt again in a moment.")
         }
         if Self.hasContent(text, attachments) { enqueue(sessionId, QueuedMessage(text: text, attachments: attachments)) }
+        eventChains[sessionId] = nil
         guard turnInProgress(sessionId) else { sendQueue(sessionId); return }
         interrupting.insert(sessionId)
         stop(sessionId)

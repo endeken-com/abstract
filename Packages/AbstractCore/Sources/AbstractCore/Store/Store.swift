@@ -458,8 +458,8 @@ public final class Store: Sendable {
         try writer.write { db in try WorkflowRow(workflow).save(db) }
     }
 
-    /// Chats running it keep their copy; automations that named it run
-    /// on their profile or their own settings.
+    /// Chats running it keep their copy; automations that follow it fail
+    /// their runs until they're given another.
     public func deleteWorkflow(_ id: String) throws {
         try writer.write { db in
             try db.execute(sql: "DELETE FROM workflows WHERE id = ?", arguments: [id])

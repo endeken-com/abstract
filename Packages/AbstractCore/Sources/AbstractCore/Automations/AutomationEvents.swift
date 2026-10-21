@@ -18,10 +18,12 @@ public struct AutomationEventOccurrence: Sendable, Hashable {
 /// Which automations an event starts, apart from starting them.
 public enum AutomationEvents {
     /// Enabled automations listening for the event, in the chat's project
-    /// (or any, for one with no project), that didn't lead to it.
+    /// (or any, for one with no project), that didn't lead to it. Only
+    /// those that run on this Mac: what led to a run on another Mac isn't
+    /// known there, so two Macs could keep starting each other's.
     public static func automations(for occurrence: AutomationEventOccurrence, in automations: [Automation]) -> [Automation] {
         automations.filter { a in
-            a.enabled && a.events.contains(occurrence.event)
+            a.enabled && a.deviceId == nil && a.events.contains(occurrence.event)
                 && (a.projectId == nil || a.projectId == occurrence.projectId)
                 && !occurrence.chain.contains(a.id)
         }

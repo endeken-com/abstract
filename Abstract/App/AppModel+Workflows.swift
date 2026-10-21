@@ -62,9 +62,20 @@ extension AppModel {
         if sessionId.hasPrefix(RemoteService.mirrorPrefix) {
             throw AbstractError.message("Start a workflow in a chat on another Mac from that Mac.")
         }
+        // Mid-turn, the step would take over a turn that isn't its own.
+        if turnInProgress(sessionId) || handingOff.contains(sessionId) || setups[sessionId] != nil {
+            throw AbstractError.message("“\(chatName(sessionId) ?? "The chat")” is busy, so “\(workflow.name)” didn't start in it.")
+        }
+        let previous = session(sessionId)?.workflow
         let progress = workflowProgress(workflow)
-        try takeStep(sessionId, progress: progress,
-                     message: WorkflowEngine.firstMessage(progress.workflow, task: task), chain: chain)
+        do {
+            try takeStep(sessionId, progress: progress,
+                         message: WorkflowEngine.firstMessage(progress.workflow, task: task), chain: chain)
+        } catch {
+            updateWorkflow(sessionId) { $0 = previous ?? WorkflowProgress(workflow: progress.workflow, state: .stopped,
+                                                                         note: error.localizedDescription) }
+            throw error
+        }
     }
 
     /// On to the next step of a chat waiting for you.

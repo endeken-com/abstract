@@ -120,12 +120,13 @@ struct SettingsView: View {
                     Rectangle().fill(Color.btBorder).frame(width: 1)
 
                     ScrollView {
-                        VStack(alignment: .leading, spacing: 0) {
+                        VStack(spacing: 0) {
                             header
+                            // A grouped form centres itself at its own width;
+                            // capping it as well sends layout round in circles.
                             pane
+                                .frame(maxWidth: .infinity, alignment: .top)
                         }
-                        .frame(maxWidth: SettingsLayout.columnWidth)
-                        .frame(maxWidth: .infinity, alignment: .top)
                         .padding(.bottom, Space.xl)
                     }
                     .id(tab)
@@ -229,8 +230,9 @@ struct SettingsView: View {
                 .foregroundStyle(Color.btTextSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, SettingsLayout.inset)
+        .frame(maxWidth: SettingsLayout.rowWidth - 2 * SettingsLayout.textInset, alignment: .leading)
+        .padding(.horizontal, SettingsLayout.margin + SettingsLayout.textInset)
+        .frame(maxWidth: .infinity)
         .padding(.top, Space.xl)
         .padding(.bottom, Space.xs)
     }
@@ -257,12 +259,13 @@ struct SettingsView: View {
     private func close() { model.isSettingsOpen = false }
 }
 
-/// Where a settings pane's words line up. A grouped form keeps its rows
-/// about 704 points wide with 20 around them, and their words start 10 in;
-/// the title above and panes of their own follow it.
+/// Where a settings pane's words line up. A grouped form centres its rows,
+/// at most about 704 points wide with 20 around them, and their words start
+/// 10 in; the title above and panes of their own follow it.
 enum SettingsLayout {
-    static let columnWidth: CGFloat = 744
-    static let inset: CGFloat = 30
+    static let rowWidth: CGFloat = 704
+    static let margin: CGFloat = 20
+    static let textInset: CGFloat = 10
 }
 
 /// Filters the settings sections as you type; Return opens the first.

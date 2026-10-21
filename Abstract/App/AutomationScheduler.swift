@@ -180,6 +180,9 @@ final class AutomationScheduler {
     /// The run's instructions in a chat that exists: its workflow starts
     /// there with them, or they arrive as your next message would.
     private func deliver(_ a: Automation, to chatId: String, chain: Set<String> = []) async throws {
+        if a.workflowId != nil, model.workflow(a.workflowId) == nil {
+            throw AbstractError.message("Its workflow was deleted, so this run didn't start.")
+        }
         if let workflow = model.workflow(a.workflowId) {
             if model.session(chatId)?.archivedAt != nil { model.setArchived(chatId, false) }
             try model.startWorkflow(workflow, in: chatId, task: a.prompt, chain: chain)

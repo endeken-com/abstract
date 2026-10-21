@@ -16,9 +16,11 @@ struct UsageSettingsPane: View {
                 Hairline()
                 TokenUsageSection()
             }
-            .padding(.horizontal, SettingsLayout.inset)
+            // The same column the settings title and forms keep.
+            .padding(.horizontal, SettingsLayout.margin + SettingsLayout.textInset)
             .padding(.vertical, Space.lg)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: SettingsLayout.rowWidth + 2 * SettingsLayout.margin, alignment: .leading)
+            .frame(maxWidth: .infinity)
         }
         .task {
             // Limits move as agents work; re-read every few minutes while this is open.

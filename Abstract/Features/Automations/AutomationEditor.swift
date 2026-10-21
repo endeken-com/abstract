@@ -231,6 +231,7 @@ struct AutomationDraft: Equatable {
     var blocker: String? {
         if prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "Instructions are empty" }
         if workflowId != nil, deviceId != nil, isPinned { return "A workflow runs on this Mac in a chat it continues" }
+        if !events.isEmpty, deviceId != nil { return "Events start runs only on This Mac" }
         if triggers.contains(where: { !TriggerCheck($0).isValid }) { return "A trigger needs fixing" }
         return nil
     }

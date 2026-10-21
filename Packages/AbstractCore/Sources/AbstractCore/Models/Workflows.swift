@@ -175,14 +175,16 @@ public enum WorkflowEngine {
     }
 
     /// After a turn ends in a chat. A step is done when its agent's turn
-    /// ended on its own (not stopped, not failed), with nothing queued and
-    /// nothing still running in the background.
+    /// ended on its own (not stopped, not failed), with nothing queued. One
+    /// that left work running in the background waits for you rather than
+    /// hand the chat on under it: nothing says when that work ends.
     public static func afterTurn(_ progress: WorkflowProgress?, status: SessionStatus, stopped: Bool,
                                  queued: Bool, backgroundTasks: Int) -> Next {
         guard let progress, progress.state == .working, let current = progress.current else { return .none }
-        guard status == .idle || status == .finished, !stopped, !queued, backgroundTasks == 0 else { return .none }
+        guard status == .idle || status == .finished, !stopped, !queued else { return .none }
         if progress.isLastStep { return .finished }
-        return current.step.advance == .automatic ? .advance(to: progress.step + 1) : .waitForYou(next: progress.step + 1)
+        let next = progress.step + 1
+        return current.step.advance == .automatic && backgroundTasks == 0 ? .advance(to: next) : .waitForYou(next: next)
     }
 
     /// The first message of a workflow's chat: the first step's prompt,
