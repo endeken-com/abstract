@@ -3,23 +3,26 @@
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:">
+<link rel="stylesheet" href="/_abstract/abstract-ui.css">
 <link rel="stylesheet" href="style.css">
 <title>Approvals</title>
 </head>
 <body>
-<main>
-  <header>
-    <h1>Approvals</h1>
-    <p id="summary" class="note"></p>
+<div class="ab-page">
+  <header class="ab-header">
+    <div class="ab-header-title">
+      <h1>Approvals</h1>
+      <span id="summary" class="ab-tertiary ab-small"></span>
+    </div>
+    <span class="ab-spacer"></span>
+    <div id="tabs"></div>
   </header>
-  <p id="error" class="notice" hidden></p>
-  <p id="empty" class="notice" hidden>Nothing is waiting for you. When an agent asks for permission or has a question, it shows up here.</p>
-  <ul id="queue" aria-label="Waiting for you"></ul>
-  <section id="answered-section" hidden>
-    <h2>Answered here</h2>
-    <ul id="answered"></ul>
-  </section>
-</main>
+  <main class="content">
+    <p id="error" class="ab-notice ab-error" role="alert" hidden></p>
+    <div id="panel"></div>
+  </main>
+</div>
+<script src="/_abstract/abstract-ui.js"></script>
 <script src="queue.js"></script>
 <script src="app.js"></script>
 </body>

@@ -2,7 +2,7 @@
   "api": 2,
   "id": "sh.abstract.approvals",
   "name": "Approvals",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Every permission request and question waiting across your chats, in one list, oldest first. Allow, deny or answer each without opening its chat.",
   "entry": "index.html",
   "capabilities": ["projects.read", "chats.read", "chats.open", "permissions.answer"],

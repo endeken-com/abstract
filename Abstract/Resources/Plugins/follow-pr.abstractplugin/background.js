@@ -205,13 +205,30 @@ const FollowPR = (() => {
     return result;
   }
 
-  return { batchMs, dailyLimit, day, feedback, failedChecks, allTrusted, message, step };
+  const historyLimit = 20;
+
+  /**
+   * What was sent, for the chat's Follow PR tab: `history` by chat id, the
+   * newest first, with the batch `follow` held before it went. Only kinds
+   * and counts are kept, never what anyone wrote.
+   */
+  function logSent(history, chatId, follow, now) {
+    const entry = { at: new Date(now).toISOString(), number: follow.number, count: follow.pending.length,
+                    kinds: follow.pending.map((item) => item.kind) };
+    const next = { ...(history || {}) };
+    next[chatId] = [entry].concat(next[chatId] || []).slice(0, historyLimit);
+    return next;
+  }
+
+  return { batchMs, dailyLimit, day, feedback, failedChecks, allTrusted, message, step, logSent };
 })();
 
 if (typeof window !== "undefined" && window.AbstractPlugin) {
   const host = window.AbstractPlugin;
   // By followed chat id. Kept, so a relaunch carries on where it was.
   let follows = {};
+  // What went, by chat id, for the side-panel tab.
+  let history = {};
   // Whether each chat's agent is working, from the first snapshot and then
   // status events: a background script isn't sent a snapshot per change.
   const working = {};
@@ -225,10 +242,12 @@ if (typeof window !== "undefined" && window.AbstractPlugin) {
   };
 
   // One change at a time, in order: each reads and writes `follows`.
-  let queue = host.send("storage.get", { key: "follows" }).then((reply) => {
-    follows = (reply && reply.value) || {};
-    for (const chatId of Object.keys(follows)) arm(chatId);
-  });
+  let queue = Promise.all([host.send("storage.get", { key: "follows" }), host.send("storage.get", { key: "history" })])
+    .then(([reply, sent]) => {
+      follows = (reply && reply.value) || {};
+      history = (sent && sent.value) || {};
+      for (const chatId of Object.keys(follows)) arm(chatId);
+    });
   const enqueue = (work) => {
     queue = queue.then(work, work);
     return queue;
@@ -246,7 +265,8 @@ if (typeof window !== "undefined" && window.AbstractPlugin) {
   function apply(chatId, happening, read) {
     return enqueue(async () => {
       if (read) happening = { ...happening, pr: await readPullRequest(chatId) };
-      const result = FollowPR.step(follows[chatId] || null, { ...happening, now: Date.now(), working: !!working[chatId] });
+      const before = follows[chatId] || null;
+      const result = FollowPR.step(before, { ...happening, now: Date.now(), working: !!working[chatId] });
       if (result.follow) follows[chatId] = result.follow; else delete follows[chatId];
       await save();
       arm(chatId);
@@ -255,6 +275,9 @@ if (typeof window !== "undefined" && window.AbstractPlugin) {
         const reply = await host.send("sendMessage", { chatId, text: result.effect.text, ask: result.effect.ask });
         if (!reply || reply.sent !== true) {
           await notice((reply && reply.message) || "The news from the pull request couldn't be sent.");
+        } else if (before) {
+          history = FollowPR.logSent(history, chatId, before, Date.now());
+          await host.send("storage.set", { key: "history", value: history });
         }
       }
     });

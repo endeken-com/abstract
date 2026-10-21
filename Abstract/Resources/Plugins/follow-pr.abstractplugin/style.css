@@ -1,0 +1,28 @@
+/* Follow PR's side-panel tab on Abstract's plugin kit. */
+
+.ab-header {
+  min-height: 42px;
+}
+.content {
+  padding: var(--ab-space-md);
+}
+.status {
+  display: grid;
+  gap: 6px;
+}
+.status-head {
+  display: flex;
+  align-items: center;
+  gap: var(--ab-space-sm);
+}
+.status-title {
+  flex: 1;
+  font-weight: 600;
+}
+.hint {
+  margin: var(--ab-space-md) 2px 0;
+  line-height: 1.5;
+}
+.ab-empty {
+  padding: 36px 12px;
+}

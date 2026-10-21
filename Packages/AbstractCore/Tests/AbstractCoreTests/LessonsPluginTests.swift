@@ -46,7 +46,13 @@ import Testing
         let save = try #require(manifest.contributes.chatMenuItems.first)
         #expect(save.title == "Save What We Learned…")
         #expect(Set(save.needs ?? []) == [.chatsRead, .chatsMessage])
-        #expect(manifest.appearanceSentences == ["Save What We Learned… — an item in a chat's More menu."])
+        // And beside a chat, as a side-panel tab that works on that chat (ABS-134).
+        let tab = try #require(manifest.contributes.chatPanelTabs.first)
+        #expect(Set(tab.needs ?? []) == [.chatsRead, .chatsMessage])
+        #expect(manifest.appearanceSentences == [
+            "Lessons — a tab in a chat's side panel, next to Review, Files and Terminal.",
+            "Save What We Learned… — an item in a chat's More menu.",
+        ])
     }
 
     // MARK: The request, per target

@@ -6,6 +6,8 @@ let lastSnapshot = null;
 const headingEl = document.getElementById("heading");
 const whereEl = document.getElementById("where");
 const logEl = document.getElementById("log");
+const emptyEl = document.getElementById("empty");
+emptyEl.append(window.AbstractUI.empty("Nothing has run yet", "Its chat menu item and ⌘K command log here."));
 
 function render() {
   const title = ChatPanel.chatTitle(lastContext, lastSnapshot);
@@ -19,9 +21,10 @@ function render() {
 
 function log(line) {
   if (!line) return;
-  const item = document.createElement("li");
-  item.textContent = line;
-  logEl.prepend(item);
+  emptyEl.hidden = true;
+  logEl.prepend(window.AbstractUI.h("li", { class: "ab-row" },
+    window.AbstractUI.h("span", { class: "ab-status ab-done", "aria-hidden": "true" }),
+    window.AbstractUI.h("span", { class: "ab-row-title" }, line)));
 }
 
 window.AbstractPlugin.on("context", (context) => {

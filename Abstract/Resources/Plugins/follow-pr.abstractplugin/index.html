@@ -3,9 +3,19 @@
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:">
+<link rel="stylesheet" href="/_abstract/abstract-ui.css">
+<link rel="stylesheet" href="style.css">
 <title>Follow pull request</title>
 </head>
 <body>
-<p>Follow pull request works from a chat's Pull Request tab: turn on Follow there.</p>
+<div class="ab-page">
+  <header class="ab-header">
+    <div id="tabs"></div>
+  </header>
+  <main id="panel" class="content"></main>
+</div>
+<script src="/_abstract/abstract-ui.js"></script>
+<script src="panel.js"></script>
+<script src="app.js"></script>
 </body>
 </html>

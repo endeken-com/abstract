@@ -65,9 +65,12 @@ extension AppModel {
         return hasher.finalize()
     }
 
-    /// The current palette, the way a plugin receives it.
-    func pluginTheme() -> Theme {
-        ThemeState.shared.theme(for: NSApp.effectiveAppearance)
+    /// The palette a plugin draws in: the theme picked in Abstract
+    /// (ABS-134). The Mac's appearance, which is what `NSApp` reports, only
+    /// counts under Match System; Graphite stays dark on a Mac set to Light.
+    func pluginAppearance() -> PluginAppearance {
+        let look = ThemeState.look(of: NSApp.effectiveAppearance)
+        return .resolve(choice: ThemeState.shared.current, systemDark: look.dark, increasedContrast: look.increasedContrast)
     }
 
     func setPluginEnabled(_ id: String, _ enabled: Bool, transcriptProjectKeys: [String]? = nil) {

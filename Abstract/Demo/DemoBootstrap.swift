@@ -256,10 +256,16 @@ struct Snapshotter {
         shootAppIcon()
 
         let themes: [ThemeChoice] = ProcessInfo.processInfo.arguments.contains("--quick") ? [.graphite] : [.graphite, .paper, .ink]
+        // `--plugins-only`: just the bundled plugins, in each theme.
+        let pluginsOnly = ProcessInfo.processInfo.arguments.contains("--plugins-only")
         for theme in themes {
             UserDefaults.standard.set(theme.rawValue, forKey: "theme")
             try? await Task.sleep(for: .milliseconds(500))
             let t = theme.rawValue
+            if pluginsOnly {
+                await shootPlugins(theme: t, beside: idle?.id)
+                continue
+            }
 
             model.destination = .home
             await shot("\(t)-01-home")
@@ -382,9 +388,63 @@ struct Snapshotter {
                 await shot("\(t)-17-project-settings", settle: 1.5)
                 await tallShot("\(t)-18-project-settings-full")
             }
+            await shootPlugins(theme: t, beside: idle?.id)
         }
         UserDefaults.standard.set(ThemeChoice.graphite.rawValue, forKey: "theme")
         await projectLifecycleCheck()
+    }
+
+    /// Every bundled plugin, on (ABS-134): each screen, Kanban's three tabs,
+    /// and each tab beside a chat. A theme's plugins must draw in it from
+    /// the first frame, whatever the Mac is set to.
+    private func shootPlugins(theme t: String, beside sessionId: String?) async {
+        for folder in model.plugins.bundledFolders {
+            guard let inspection = try? PluginPackage.inspect(folder: folder),
+                  model.plugins.plugin(inspection.manifest.id) == nil else { continue }
+            _ = try? model.plugins.install(from: folder, sourceKind: .bundled, enable: true)
+        }
+        if let sessionId { seedPluginStorage(beside: sessionId) }
+        let kanban = "sh.abstract.kanban"
+        for plugin in model.plugins.usable.sorted(by: { $0.id < $1.id }) {
+            guard let view = plugin.manifest?.view else { continue }
+            let name = plugin.id.split(separator: ".").last.map(String.init) ?? plugin.id
+            let views = plugin.id == kanban ? ["board", "list", "mine"] : [""]
+            for tab in views {
+                if !tab.isEmpty { _ = try? model.plugins.manager.storage(for: kanban).set(.string(tab), forKey: "view") }
+                // Away and back, so the screen opens fresh, as it would.
+                model.destination = .home
+                try? await Task.sleep(for: .milliseconds(200))
+                model.destination = .plugin(plugin.id, view.id)
+                await shot("\(t)-40-plugin-\(name)\(tab.isEmpty ? "" : "-\(tab)")", settle: 1.6)
+            }
+        }
+        _ = try? model.plugins.manager.storage(for: kanban).set(.string("board"), forKey: "view")
+        guard let sessionId else { return }
+        model.open(sessionId)
+        for contribution in model.plugins.contributions(.chatPanel) {
+            let name = contribution.pluginId.split(separator: ".").last.map(String.init) ?? contribution.pluginId
+            model.showPluginPanelTab(contribution, in: sessionId)
+            await shot("\(t)-41-panel-\(name)", settle: 1.6)
+        }
+        model.resetLayout(sessionId)
+    }
+
+    /// What Follow PR and Second opinion would have stored for a chat, so
+    /// their tabs show something to read. Nothing in it is due, so neither
+    /// background script acts on it.
+    private func seedPluginStorage(beside sessionId: String) {
+        let at = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-3_000))
+        let follow = JSONValue(any: [
+            "follows": [sessionId: ["number": 42, "seen": [], "failing": [], "pending": [], "dueAt": NSNull(),
+                                    "waiting": false, "day": "", "sent": 0]],
+            "history": [sessionId: [["at": at, "number": 42, "count": 3, "kinds": ["code", "code", "check"]]]],
+        ] as [String: Any])
+        for (key, value) in follow.object ?? [:] {
+            _ = try? model.plugins.manager.storage(for: "sh.abstract.follow-pr").set(value, forKey: key)
+        }
+        let review = JSONValue(any: [sessionId: ["agentId": "codex", "agentName": "Codex", "scope": "uncommitted",
+                                                 "reviewerId": "none", "round": 1, "phase": "waiting"]] as [String: Any])
+        _ = try? model.plugins.manager.storage(for: "sh.abstract.second-opinion").set(review, forKey: "reviews")
     }
 
     /// The whole settings page: the window made tall enough, then put back.

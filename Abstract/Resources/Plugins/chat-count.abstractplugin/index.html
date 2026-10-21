@@ -3,18 +3,27 @@
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:">
+<link rel="stylesheet" href="/_abstract/abstract-ui.css">
 <link rel="stylesheet" href="style.css">
 <title>Chat count</title>
 </head>
 <body>
-<main>
-  <h1>Chat count</h1>
-  <p class="note">A sample plugin. It sees only your chats' titles, agents and progress, and opens a chat when you click it.</p>
-  <section id="counts" aria-label="Chats by progress"></section>
-  <label class="toggle"><input type="checkbox" id="show-done"> Show done chats</label>
-  <ul id="chats"></ul>
-  <p id="empty" class="note" hidden>No chats yet.</p>
-</main>
+<div class="ab-page">
+  <header class="ab-header">
+    <div class="ab-header-title">
+      <h1>Chat count</h1>
+      <span class="ab-tertiary ab-small">A sample plugin</span>
+    </div>
+    <span class="ab-spacer"></span>
+    <div id="tabs"></div>
+  </header>
+  <main class="content">
+    <p class="ab-secondary ab-small note">It sees only your chats' titles, agents and progress, and opens a chat when you click it.</p>
+    <section id="counts" class="counts" aria-label="Chats by progress"></section>
+    <div id="chats"></div>
+  </main>
+</div>
+<script src="/_abstract/abstract-ui.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

@@ -255,8 +255,113 @@ var KanbanBoard = (function () {
     };
   }
 
+  // The board's views, as tabs: every chat by column, the same as one
+  // dense list, and only what waits on you.
+  var VIEWS = [
+    { id: "board", title: "Board" },
+    { id: "list", title: "List" },
+    { id: "mine", title: "Mine" },
+  ];
+  var MINE = ["needsYou", "readyToReview"];
+
+  // A saved view comes back as whatever was stored.
+  function normalizeView(raw) {
+    for (var i = 0; i < VIEWS.length; i++) if (VIEWS[i].id === raw) return raw;
+    return "board";
+  }
+
+  // What a view shows, in order: groups of cards. Board keeps every column,
+  // empty ones included; List drops empty groups; Mine is what needs you
+  // and what's ready for your review.
+  function groups(built, view) {
+    var v = normalizeView(view);
+    var columns = built.columns;
+    if (v === "board") return columns;
+    if (v === "mine") columns = columns.filter(function (c) { return MINE.indexOf(c.key) !== -1; });
+    return columns.filter(function (c) { return c.cards.length > 0; });
+  }
+
+  // How many chats wait on you, for the Mine tab.
+  function mineCount(built) {
+    return built.columns
+      .filter(function (c) { return MINE.indexOf(c.key) !== -1; })
+      .reduce(function (sum, c) { return sum + c.cards.length; }, 0);
+  }
+
+  // A key press as an action, or null for keys the board leaves alone.
+  // Modified keys belong to Abstract (⌘K and friends).
+  function keyAction(key, modifiers) {
+    var m = modifiers || {};
+    if (m.meta || m.ctrl || m.alt) return null;
+    switch (key) {
+      case "j": case "ArrowDown": return "down";
+      case "k": case "ArrowUp": return "up";
+      case "h": case "ArrowLeft": return "left";
+      case "l": case "ArrowRight": return "right";
+      case "g": case "Home": return "first";
+      case "G": case "End": return "last";
+      case "Enter": case "o": return "open";
+      case "/": return "search";
+      case "Escape": return "escape";
+      case "1": return "view:board";
+      case "2": return "view:list";
+      case "3": return "view:mine";
+      default: return null;
+    }
+  }
+
+  function locate(list, id) {
+    for (var g = 0; g < list.length; g++) {
+      for (var c = 0; c < list[g].cards.length; c++) if (list[g].cards[c].id === id) return { g: g, c: c };
+    }
+    return null;
+  }
+
+  // The card selected after `move` from `selectedId`. On the Board, up and
+  // down stay in the column and left and right cross to the nearest
+  // non-empty column at the same height; in List and Mine, up and down run
+  // through every row and left and right jump between groups. With
+  // nothing selected, any move picks the first card.
+  function navigate(list, selectedId, move, view) {
+    var flat = [];
+    for (var g = 0; g < list.length; g++) for (var c = 0; c < list[g].cards.length; c++) flat.push(list[g].cards[c].id);
+    if (!flat.length) return null;
+    var at = selectedId == null ? null : locate(list, selectedId);
+    if (!at) return move === "last" ? flat[flat.length - 1] : flat[0];
+    if (move === "first") return flat[0];
+    if (move === "last") return flat[flat.length - 1];
+    var cards = list[at.g].cards;
+    if (normalizeView(view) === "board") {
+      if (move === "down") return cards[Math.min(at.c + 1, cards.length - 1)].id;
+      if (move === "up") return cards[Math.max(at.c - 1, 0)].id;
+      var step = move === "right" ? 1 : move === "left" ? -1 : 0;
+      if (!step) return selectedId;
+      for (var next = at.g + step; next >= 0 && next < list.length; next += step) {
+        var target = list[next].cards;
+        if (target.length) return target[Math.min(at.c, target.length - 1)].id;
+      }
+      return selectedId;
+    }
+    var index = flat.indexOf(selectedId);
+    if (move === "down") return flat[Math.min(index + 1, flat.length - 1)];
+    if (move === "up") return flat[Math.max(index - 1, 0)];
+    if (move === "right" || move === "left") {
+      var dir = move === "right" ? 1 : -1;
+      for (var n = at.g + dir; n >= 0 && n < list.length; n += dir) {
+        if (list[n].cards.length) return list[n].cards[0].id;
+      }
+    }
+    return selectedId;
+  }
+
   return {
     COLUMNS: COLUMNS,
+    VIEWS: VIEWS,
+    normalizeView: normalizeView,
+    groups: groups,
+    mineCount: mineCount,
+    keyAction: keyAction,
+    navigate: navigate,
     STANDALONE_KEY: STANDALONE_KEY,
     STANDALONE_NAME: STANDALONE_NAME,
     agentName: agentName,

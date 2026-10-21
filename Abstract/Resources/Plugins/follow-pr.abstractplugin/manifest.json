@@ -2,7 +2,7 @@
   "api": 2,
   "id": "sh.abstract.follow-pr",
   "name": "Follow pull request",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Turn on Follow in a chat's Pull Request tab, and new review comments, requested changes and failed checks go to the chat's agent as one message, a couple of minutes after they arrive. It stops when the pull request is merged or closed.",
   "entry": "index.html",
   "capabilities": ["chats.read", "turns.read", "pullRequests.read", "chats.message", "storage.own"],
@@ -10,6 +10,9 @@
   "contributes": {
     "pullRequestSwitches": [
       { "id": "follow", "title": "Follow", "symbol": "dot.radiowaves.left.and.right" }
+    ],
+    "chatPanelTabs": [
+      { "id": "follow", "title": "Follow PR", "symbol": "dot.radiowaves.left.and.right", "needs": ["chats.read", "storage.own"] }
     ]
   }
 }

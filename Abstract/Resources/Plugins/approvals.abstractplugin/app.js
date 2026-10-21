@@ -15,12 +15,23 @@ const picks = {};
 const busy = new Set();
 let shownCount = -1;
 
-const queueEl = document.getElementById("queue");
+const ui = window.AbstractUI;
+const h = ui.h;
+let tab = "waiting";
+let pulled = false;
+
+const panelEl = document.getElementById("panel");
 const summaryEl = document.getElementById("summary");
-const emptyEl = document.getElementById("empty");
 const errorEl = document.getElementById("error");
-const answeredSection = document.getElementById("answered-section");
-const answeredEl = document.getElementById("answered");
+
+const tabs = ui.tabs({
+  label: "Requests",
+  style: "segmented",
+  selected: tab,
+  tabs: [{ id: "waiting", label: "Waiting" }, { id: "answered", label: "Answered" }],
+  onSelect: (id) => { tab = id; render(); },
+});
+document.getElementById("tabs").append(tabs.element);
 
 async function pull() {
   const asked = queue.nextPull(state);
@@ -28,6 +39,7 @@ async function pull() {
   const reply = await host.send("getPermissions");
   if (reply && reply.message && !reply.requests) return showError(reply.message);
   state = queue.applyPull(state, asked.seq, reply);
+  pulled = true;
   render();
 }
 
@@ -66,38 +78,29 @@ async function answer(targets, message, payload) {
 }
 
 function button(label, onClick, options) {
-  const b = document.createElement("button");
-  b.type = "button";
-  b.textContent = label;
-  if (options && options.primary) b.className = "primary";
-  if (options && options.disabled) b.disabled = true;
-  b.addEventListener("click", onClick);
-  return b;
+  const o = options || {};
+  return h("button", {
+    type: "button",
+    class: "ab-button" + (o.primary ? " ab-primary" : "") + (o.ghost ? " ab-ghost" : "") + (o.picked ? " ab-picked" : ""),
+    disabled: !!o.disabled,
+    title: o.title || null,
+    onclick: onClick,
+  }, label);
 }
 
 function meta(row) {
-  const line = document.createElement("p");
-  line.className = "meta";
-  line.textContent = [row.chatTitle, row.projectName, row.agentName, age(row.requestedAt)].filter(Boolean).join(" · ");
-  return line;
+  return h("p", { class: "meta ab-truncate" },
+    [row.chatTitle, row.projectName, row.agentName].filter(Boolean).join(" · "));
 }
 
 function renderQuestions(row, disabled) {
-  const box = document.createElement("div");
-  box.className = "questions";
+  const box = h("div", { class: "questions" });
   const single = row.questions.length === 1 && !row.questions[0].multiSelect;
   for (const q of row.questions) {
-    const block = document.createElement("div");
-    block.className = "question";
-    const text = document.createElement("p");
-    text.className = "question-text";
-    text.textContent = q.question;
-    block.append(text);
-    const options = document.createElement("div");
-    options.className = "options";
     const chosen = (picks[row.key] && picks[row.key][q.question]) || [];
+    const options = h("div", { class: "ab-buttons" });
     for (const option of q.options || []) {
-      const b = button(option.label, () => {
+      options.append(button(option.label, () => {
         if (single) {
           return answer([row], "answerQuestion",
             { chatId: row.chatId, requestId: row.requestId, answers: { [q.question]: option.label } });
@@ -108,48 +111,32 @@ function renderQuestions(row, disabled) {
         else { now.clear(); now.add(option.label); }
         mine[q.question] = [...now];
         render();
-      }, { disabled });
-      if (chosen.includes(option.label)) b.className = "picked";
-      if (option.description) b.title = option.description;
-      options.append(b);
+      }, { disabled, picked: chosen.includes(option.label), title: option.description }));
     }
-    if (!(q.options || []).length) {
-      const none = document.createElement("p");
-      none.className = "meta";
-      none.textContent = "Open the chat to answer this one.";
-      options.append(none);
-    }
-    block.append(options);
-    box.append(block);
+    if (!(q.options || []).length) options.append(h("p", { class: "meta" }, "Open the chat to answer this one."));
+    box.append(h("div", { class: "question" }, h("p", { class: "question-text" }, q.question), options));
   }
   if (!single) {
     const answers = queue.questionAnswers(row.questions, picks[row.key]);
-    box.append(button("Answer", () => {
+    box.append(h("div", { class: "ab-buttons" }, button("Answer", () => {
       answer([row], "answerQuestion", { chatId: row.chatId, requestId: row.requestId, answers });
-    }, { primary: true, disabled: disabled || !answers }));
+    }, { primary: true, disabled: disabled || !answers })));
   }
   return box;
 }
 
 function renderRow(row, offeredGroups) {
-  const item = document.createElement("li");
-  item.className = "row";
   const disabled = busy.has(row.key);
-
-  const summary = document.createElement("p");
-  summary.className = "summary";
-  summary.textContent = row.summary;
-  item.append(summary, meta(row));
-
-  if (row.command && row.command.includes("\n")) {
-    const pre = document.createElement("pre");
-    pre.textContent = row.command;
-    item.append(pre);
-  }
+  const item = h("li", { class: "request ab-card", dataset: { key: row.key } },
+    h("div", { class: "request-head" },
+      h("span", { class: "ab-status ab-needsYou", "aria-hidden": "true" }),
+      h("p", { class: "summary" + (row.command ? " ab-mono" : "") }, row.summary),
+      h("span", { class: "age ab-tertiary ab-small" }, age(row.requestedAt))),
+    meta(row));
+  if (row.command && row.command.includes("\n")) item.append(h("pre", { class: "ab-selectable" }, row.command));
   if (row.kind === "question") item.append(renderQuestions(row, disabled));
 
-  const actions = document.createElement("div");
-  actions.className = "actions";
+  const actions = h("div", { class: "ab-buttons actions" });
   if (row.kind === "permission") {
     const target = [{ chatId: row.chatId, requestId: row.requestId }];
     actions.append(
@@ -165,7 +152,8 @@ function renderRow(row, offeredGroups) {
         { requests: row.sameCommand, allow: true }), { disabled: busy.has(group) }));
     }
   }
-  actions.append(button("Open Chat", () => host.send("openChat", { chatId: row.chatId })));
+  actions.append(h("span", { class: "ab-spacer" }),
+    button("Open Chat", () => host.send("openChat", { chatId: row.chatId }), { ghost: true }));
   item.append(actions);
   return item;
 }
@@ -177,27 +165,41 @@ function render() {
     host.send("setBadge", { count: built.count });
   }
   summaryEl.textContent = built.count === 0 ? "" :
-    built.count === 1 ? "1 request is waiting for you." : built.count + " requests are waiting for you, oldest first.";
-  emptyEl.hidden = built.count !== 0;
+    built.count === 1 ? "1 waiting" : built.count + " waiting, oldest first";
+  tabs.update([
+    { id: "waiting", label: "Waiting", count: built.count || null },
+    { id: "answered", label: "Answered", count: built.answered.length || null },
+  ]);
 
-  queueEl.textContent = "";
-  const offered = new Set();
-  for (const row of built.rows) queueEl.append(renderRow(row, offered));
-
-  answeredSection.hidden = built.answered.length === 0;
-  answeredEl.textContent = "";
-  for (const row of built.answered) {
-    const item = document.createElement("li");
-    item.className = "row answered";
-    const summary = document.createElement("p");
-    summary.className = "summary";
-    summary.textContent = row.summary;
-    const note = document.createElement("p");
-    note.className = "meta";
-    note.textContent = row.note;
-    item.append(summary, meta(row), note);
-    answeredEl.append(item);
+  panelEl.textContent = "";
+  if (!pulled) {
+    panelEl.append(ui.skeleton(3));
+    return;
   }
+  if (tab === "waiting") {
+    if (built.count === 0) {
+      panelEl.append(ui.empty("Nothing is waiting for you",
+        "When an agent asks for permission or has a question, it shows up here."));
+      return;
+    }
+    const list = h("ul", { class: "ab-list requests", "aria-label": "Waiting for you" });
+    const offered = new Set();
+    for (const row of built.rows) list.append(renderRow(row, offered));
+    panelEl.append(list);
+    return;
+  }
+  if (built.answered.length === 0) {
+    panelEl.append(ui.empty("Nothing answered here yet", "What you allow, deny or answer here is listed until you leave."));
+    return;
+  }
+  const list = h("ul", { class: "ab-list", "aria-label": "Answered here" });
+  for (const row of built.answered) {
+    list.append(h("li", { class: "ab-row answered" },
+      h("span", { class: "ab-status ab-done", "aria-hidden": "true" }),
+      h("span", { class: "ab-row-title" + (row.command ? " ab-mono" : "") }, row.summary),
+      h("span", { class: "ab-row-meta" }, h("span", { class: "ab-truncate" }, row.chatTitle), row.note)));
+  }
+  panelEl.append(list);
 }
 
 host.on("snapshot", (next) => {

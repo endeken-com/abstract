@@ -1,0 +1,10 @@
+/* The gallery's own layout; the components are the kit's. */
+body { padding: 0; background: #808088; }
+.component { display: grid; grid-template-columns: repeat(3, 1fr); width: 1080px; }
+.panel { padding: 18px 20px 22px; background: var(--ab-canvas); color: var(--ab-text); min-height: 100%; }
+.panel > .theme-name { margin-bottom: 12px; color: var(--ab-text-3); font-size: 11px; font-weight: 600; text-transform: capitalize; }
+.stack { display: grid; gap: 10px; align-content: start; }
+.line { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.demo-hover { background: var(--ab-hover); }
+.demo-focus { box-shadow: var(--ab-focus-ring); }
+.demo-popover { position: static; animation: none; }

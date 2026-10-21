@@ -143,23 +143,21 @@ public enum PluginContext {
                                  capabilities: Set<PluginCapability>,
                                  placement: PluginPlacement? = nil,
                                  chat: PluginSnapshot.Chat? = nil) -> JSONValue {
-        let roles: [PaletteRole] = [.canvas, .sidebar, .surface, .surfaceRaised, .inset, .hover, .selection,
-                                    .field, .border, .borderStrong, .text, .prose, .textSecondary, .textTertiary,
-                                    .accent, .onAccent, .added, .removed]
-        var tokens: [String: JSONValue] = [:]
-        for role in roles {
-            let swatch = role.swatch(in: theme)
-            tokens[role.rawValue] = .string(css(swatch))
-        }
-        var object: [String: JSONValue] = [
-            "theme": .string(theme.rawValue),
-            "tokens": .object(tokens),
-            "fontFamily": .string("-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"),
-            "locale": .string(locale),
-            "pluginId": .string(pluginId),
-            "pluginVersion": .string(pluginVersion),
-            "capabilities": .array(capabilities.map(\.rawValue).sorted().map(JSONValue.string)),
-        ]
+        jsonValue(appearance: PluginAppearance(theme: theme), locale: locale, pluginId: pluginId,
+                  pluginVersion: pluginVersion, capabilities: capabilities, placement: placement, chat: chat)
+    }
+
+    /// The environment every plugin gets: the theme picked in Abstract and
+    /// all its colours (ABS-134), locale, and the plugin's own id/version.
+    public static func jsonValue(appearance: PluginAppearance, locale: String, pluginId: String, pluginVersion: String,
+                                 capabilities: Set<PluginCapability>,
+                                 placement: PluginPlacement? = nil,
+                                 chat: PluginSnapshot.Chat? = nil) -> JSONValue {
+        var object = appearance.jsonValue()
+        object["locale"] = .string(locale)
+        object["pluginId"] = .string(pluginId)
+        object["pluginVersion"] = .string(pluginVersion)
+        object["capabilities"] = .array(capabilities.map(\.rawValue).sorted().map(JSONValue.string))
         // Where this showing sits (ABS-96). The chat's id is the user's own
         // target; its snapshot row is included only under `chats.read`, and
         // only for the chat this place sits beside.

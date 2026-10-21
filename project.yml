@@ -41,8 +41,12 @@ targets:
         excludes:
           - Resources/Brand
           - Resources/Plugins
+          - Resources/PluginKit
       # Bundled plugins keep their folder shape inside the app.
       - path: Abstract/Resources/Plugins
+        type: folder
+      # The design kit every plugin can link (ABS-134), served from the host's scheme.
+      - path: Abstract/Resources/PluginKit
         type: folder
     dependencies:
       - package: AbstractCore
