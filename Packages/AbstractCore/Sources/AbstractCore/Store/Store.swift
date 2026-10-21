@@ -734,8 +734,12 @@ public final class Store: Sendable {
         migrator.registerMigration("v17-reviewer-chats") { db in
             try db.execute(sql: "ALTER TABLE sessions ADD COLUMN reviews_session_id TEXT")
         }
+        // Each project's setting for each plugin tool (ABS-97).
+        migrator.registerMigration("v18-plugin-tools") { db in
+            try db.execute(sql: "ALTER TABLE projects ADD COLUMN plugin_tools TEXT")
+        }
         // The MCP servers a project gives its chats' agents (ABS-123).
-        migrator.registerMigration("v18-project-tool-servers") { db in
+        migrator.registerMigration("v19-project-tool-servers") { db in
             try db.execute(sql: """
                 CREATE TABLE project_tool_servers (
                   id          TEXT PRIMARY KEY NOT NULL,
@@ -779,6 +783,12 @@ private func jsonText(_ list: [String]) throws -> String {
     String(decoding: try JSONEncoder().encode(list), as: UTF8.self)
 }
 
+private func jsonText(_ modes: [String: PluginToolMode]) throws -> String {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = .sortedKeys
+    return String(decoding: try encoder.encode(modes), as: UTF8.self)
+}
+
 private struct ProjectRow: FetchableRecord, PersistableRecord {
     static let databaseTableName = "projects"
     let value: Project
@@ -812,6 +822,9 @@ private struct ProjectRow: FetchableRecord, PersistableRecord {
         if let picked: String = try row.decode(forColumn: "profile_ids") {
             project.profileIds = (try? JSONDecoder().decode([String].self, from: Data(picked.utf8))) ?? []
         }
+        if let tools: String = try row.decode(forColumn: "plugin_tools") {
+            project.pluginTools = try? JSONDecoder().decode([String: PluginToolMode].self, from: Data(tools.utf8))
+        }
         value = project
     }
 
@@ -839,6 +852,7 @@ private struct ProjectRow: FetchableRecord, PersistableRecord {
         container["default_device_id"] = value.defaultDeviceId
         container["agent_history"] = value.agentHistory
         container["profile_ids"] = try value.profileIds.map { try jsonText($0) }
+        container["plugin_tools"] = try value.pluginTools.map { try jsonText($0) }
     }
 }
 

@@ -86,6 +86,16 @@ public struct OpenCodeProvider: ProviderDefinition {
             ])
             if let file = tool.instructionFile { instructions.append(.string(file)) }
         }
+        // The plugin-tools server (ABS-97), merged the same way.
+        if let tools = ctx.pluginTools {
+            var servers = config["mcp"]?.object ?? [:]
+            servers[PluginTools.serverName] = .object([
+                "type": .string("local"),
+                "command": .array(tools.serverCommand.map(JSONValue.string)),
+                "enabled": .bool(true),
+            ])
+            config["mcp"] = .object(servers)
+        }
         // The project's servers (ABS-123), merged the same way. `run` can't
         // ask, so an Ask first tool is turned off like an Off one.
         if !ctx.toolServers.isEmpty {

@@ -62,6 +62,9 @@ public struct LaunchSettings: Sendable {
     /// The code-history tool for this launch's chat, when its project
     /// gives agents that history; nil leaves the agent without it.
     public var codeHistory: CodeHistorySettings?
+    /// The `abstract` command that serves this launch's plugin tools
+    /// (ABS-97), when a plugin offers any; nil leaves the agent without.
+    public var pluginToolsCommand: String?
     /// The MCP servers of the launch's project (ABS-123); each agent gets
     /// the ones chosen for it.
     public var toolServers: [ProjectToolServer]
@@ -92,12 +95,13 @@ public struct LaunchSettings: Sendable {
 
     /// What `provider` gets of the project's MCP servers in `session`:
     /// only its own project's, only those chosen for it, and never one
-    /// named like Abstract's own server or an earlier one.
+    /// named like one of Abstract's own servers or an earlier one.
     func toolServers(for session: Session, provider: any ProviderDefinition) -> [MCPServerLaunch] {
         guard let projectId = session.projectId else { return [] }
-        var taken: Set<String> = [CodeHistory.serverName]
+        var taken: Set<String> = [CodeHistory.serverName, PluginTools.serverName]
         return toolServers.filter { $0.projectId == projectId }.compactMap { server in
-            guard taken.insert(server.name).inserted else { return nil }
+            guard !server.name.isEmpty, ProjectToolServer.cleanName(server.name) == server.name,
+                  taken.insert(server.name).inserted else { return nil }
             return server.launch(for: provider)
         }
     }
@@ -131,6 +135,9 @@ public enum AgentLaunch {
                                     HistoryToolLaunch(command: $0.command, chatId: session.id, instructionFile: $0.instructionFile)
                                 },
                                 instructions: session.profileInstructions,
+                                pluginTools: settings.pluginToolsCommand.map {
+                                    PluginToolsLaunch(command: $0, chatId: session.id)
+                                },
                                 toolServers: settings.toolServers(for: session, provider: provider),
                                 configDirectory: settings.agentConfigRoot.map {
                                     ChatConfigFiles.directory(root: $0, chatId: session.id)

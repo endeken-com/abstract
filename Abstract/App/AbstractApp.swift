@@ -108,6 +108,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         TerminalRegistry.shared.closeAll()
         model.appLink?.stop()
+        model.pluginToolLink?.stop()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

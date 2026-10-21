@@ -1,0 +1,21 @@
+{
+  "api": 2,
+  "id": "sh.abstract.test.echo",
+  "name": "Echo",
+  "version": "1.0.0",
+  "description": "A test plugin: gives agents an echo tool that answers with what it was sent.",
+  "entry": "index.html",
+  "capabilities": ["agent.tools"],
+  "background": "background.js",
+  "tools": [
+    {
+      "name": "echo",
+      "description": "Answers with the text you send it.",
+      "inputSchema": {
+        "type": "object",
+        "properties": { "text": { "type": "string", "description": "What to echo back." } },
+        "required": ["text"]
+      }
+    }
+  ]
+}

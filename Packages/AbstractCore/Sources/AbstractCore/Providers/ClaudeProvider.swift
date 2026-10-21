@@ -148,7 +148,8 @@ public struct ClaudeProvider: ProviderDefinition {
     public var toolServerSupport: ToolServerSupport { .askFirst }
 
     /// Every MCP server the chat gets, in one config: the code-history
-    /// tool (ABS-61, checked in ABS-60) and the project's servers (ABS-123).
+    /// tool (ABS-61, checked in ABS-60), the plugin-tools server (ABS-97)
+    /// and the project's servers (ABS-123).
     /// It sits beside the user's own servers (never `--strict-mcp-config`,
     /// which would drop theirs) and is passed on every resume too, or the
     /// tools disappear. With a chat folder it's a file only the user can
@@ -180,8 +181,9 @@ public struct ClaudeProvider: ProviderDefinition {
         }
         let json = JSONValue.object(["mcpServers": .object(config)]).compact()
         var args = ["--mcp-config", ctx.configDirectory.flatMap { ChatConfigFiles.write(json, named: "claude-mcp.json", in: $0) } ?? json]
-        // The code-history tools by name; another server whose tools all
-        // run (a plugin's, say) by the server's.
+        // The code-history tools by name; the plugin-tools server's by its
+        // name: Abstract asks itself for a plugin tool set to Ask first, so
+        // Claude mustn't ask again, and the list can change mid-chat.
         let allowed = servers.flatMap { server -> [String] in
             if server.name == CodeHistory.serverName && server.allowsEverything {
                 return [CodeHistory.historyTool, CodeHistory.excerptTool].map(CodeHistory.streamName)

@@ -82,6 +82,8 @@ chat in the app later and it's handed over once the agent is idle. See `CommandL
 and runs a scripted stand-in agent that speaks Claude's real stream format and
 edits real files, so every screen can be exercised without spending tokens.
 Add `--snapshot <dir>` to capture every screen in both themes and quit.
+`scripts/demo-snapshot.sh <Abstract.app> <dir>` does the same with a time limit; CI runs
+it on every pull request and links the PNGs, the "Screenshots" artifact, in a comment.
 
 ## Layout
 

@@ -1,0 +1,107 @@
+# Builds every pull request into main in Debug, runs demo mode's snapshot of every screen
+# in each theme, uploads the PNGs as the "Screenshots" artifact and links it in a comment.
+# Its own workflow, kept out of the required `test` check: the screens are for a person
+# to look at, and nothing here compares pixels or fails on how they look.
+name: Screenshots
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: screenshots-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  screenshots:
+    runs-on: macos-26
+    timeout-minutes: 75
+    outputs:
+      url: ${{ steps.upload.outputs.artifact-url }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install tools
+        run: brew install xcodegen
+
+      - uses: actions/cache/restore@v4
+        id: iroh-cache
+        with:
+          path: Packages/Iroh/Iroh.xcframework
+          key: iroh-apple-${{ hashFiles('scripts/prepare-iroh.sh') }}
+      - name: Prepare internet transport
+        run: scripts/prepare-iroh.sh apple
+
+      - uses: ./.github/actions/apple-build-cache
+        with:
+          name: macos-debug
+          path: |
+            build/dd/Build
+            build/dd/SourcePackages
+            build/dd/ModuleCache.noindex
+            build/dd/SDKStatCaches.noindex
+            build/dd/CompilationCache.noindex
+          dependencies: ${{ hashFiles('project.yml', 'Packages/*/Package.swift', 'Packages/*/Package.resolved', 'scripts/prepare-iroh.sh') }}
+          sources: ${{ hashFiles('Abstract/**', 'Packages/*/Sources/**') }}
+      - name: Build the app
+        run: |
+          xcodegen generate
+          mkdir -p build
+          xcodebuild -project Abstract.xcodeproj -scheme Abstract -configuration Debug \
+            -derivedDataPath build/dd -skipPackagePluginValidation COMPILATION_CACHE_ENABLE_CACHING=YES \
+            build > build/xcodebuild-debug.log 2>&1 || { tail -40 build/xcodebuild-debug.log; exit 1; }
+
+      - name: Capture every screen
+        run: scripts/demo-snapshot.sh build/dd/Build/Products/Debug/Abstract.app "$RUNNER_TEMP/screenshots"
+
+      - uses: actions/upload-artifact@v4
+        id: upload
+        if: ${{ !cancelled() }}
+        with:
+          name: Screenshots
+          path: ${{ runner.temp }}/screenshots
+          if-no-files-found: ignore
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: xcodebuild-debug-log
+          path: build/xcodebuild-debug.log
+          if-no-files-found: ignore
+
+  # A pull request from a fork gets a read-only token, so only same-repository ones are
+  # commented on; their artifact is still on the run's page.
+  comment:
+    needs: screenshots
+    if: ${{ !cancelled() && needs.screenshots.outputs.url != '' && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR: ${{ github.event.pull_request.number }}
+      SHA: ${{ github.event.pull_request.head.sha }}
+      URL: ${{ needs.screenshots.outputs.url }}
+      OUTCOME: ${{ needs.screenshots.result }}
+      MARKER: "<!-- abstract-screenshots -->"
+    steps:
+      - name: Link the screenshots
+        run: |
+          BODY="$MARKER
+          **Screenshots** of every screen in demo mode, in the Graphite, Paper and Ink themes, for ${SHA:0:7}: [download them]($URL).
+
+          They're here to look at; nothing compares them or fails the build on how they look."
+          if [ "$OUTCOME" != success ]; then
+            BODY="$BODY
+
+          The capture didn't finish, so some screens may be missing; its log is \`demo.log\` in the download."
+          fi
+          ID=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
+            --jq '.[] | select(.body | startswith(env.MARKER)) | .id' | head -n 1)
+          if [ -n "$ID" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$ID" -f body="$BODY" > /dev/null
+          else
+            gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -f body="$BODY" > /dev/null
+          fi

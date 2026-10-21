@@ -27,6 +27,10 @@ public enum PluginCapability: String, Sendable, Hashable, Codable, CaseIterable 
     /// Read a chat's pull request in full: its checks, reviews and
     /// comments, the way its Pull Request tab shows them (ABS-109).
     case pullRequestsRead = "pullRequests.read"
+    /// Give agents the tools its manifest lists (ABS-97), run by its
+    /// background script. Each project sets each tool Allowed, Ask first
+    /// or Off.
+    case agentTools = "agent.tools"
 
     /// The capabilities that do something to a chat or an automation, as
     /// opposed to reading. Each asks first until always allowed.
@@ -56,6 +60,7 @@ public enum PluginCapability: String, Sendable, Hashable, Codable, CaseIterable 
         case .automationsRun: "Run your automations"
         case .reviewComment: "Add comments to your chats' Review, for you to send or delete"
         case .pullRequestsRead: "Read your chats' pull requests: their checks, reviews and comments"
+        case .agentTools: "Give your agents tools it runs, which ask you first until you allow them in a project's settings"
         }
     }
 
@@ -213,6 +218,8 @@ public struct PluginManifest: Sendable, Hashable, Codable {
     /// A script Abstract runs from launch while the plugin is on, with its
     /// screen closed (ABS-93): same sandbox, no page of its own.
     public var background: String?
+    /// Tools it gives agents (ABS-97), under `agent.tools`.
+    public var tools: [PluginAgentTool]?
 
     /// The exact hosts a plugin with `network` may reach (ABS-94). No
     /// wildcards: every host is shown at review and checked per request.
@@ -325,9 +332,11 @@ public struct PluginManifest: Sendable, Hashable, Codable {
                 chatPanelTabs: [Contribution] = [], chatMenuItems: [Contribution] = [],
                 paletteCommands: [Contribution] = [], settingsPage: Contribution? = nil,
                 homeWidgets: [Contribution] = [], reviewActions: [Contribution] = [],
-                pullRequestSwitches: [Contribution] = [], background: String? = nil) {
+                pullRequestSwitches: [Contribution] = [], background: String? = nil,
+                tools: [PluginAgentTool] = []) {
         self.api = api; self.id = id; self.name = name; self.version = version
         self.background = background
+        self.tools = tools.isEmpty ? nil : tools
         self.description = description; self.entry = entry
         self.capabilities = capabilities
         self.network = networkHosts.isEmpty ? nil : Network(hosts: networkHosts)
@@ -352,7 +361,10 @@ public struct PluginManifest: Sendable, Hashable, Codable {
         secrets = try box.decodeIfPresent([Secret].self, forKey: .secrets)
         contributes = try box.decodeIfPresent(Contributes.self, forKey: .contributes) ?? Contributes()
         background = try box.decodeIfPresent(String.self, forKey: .background)
+        tools = try box.decodeIfPresent([PluginAgentTool].self, forKey: .tools)
     }
+
+    public var agentTools: [PluginAgentTool] { tools ?? [] }
 
     /// Every place this plugin appears, one plain sentence each, for the
     /// review screen.
@@ -373,6 +385,10 @@ public struct PluginManifest: Sendable, Hashable, Codable {
         }
         if background != nil {
             sentences.append("In the background — it runs while it's on, even with its screen closed.")
+        }
+        if !agentTools.isEmpty {
+            let names = agentTools.map(\.name).joined(separator: ", ")
+            sentences.append("Tools for your agents — \(names).")
         }
         return sentences
     }
@@ -420,7 +436,7 @@ public struct PluginManifest: Sendable, Hashable, Codable {
         }
         // Actions are API 2: an API 1 plugin was reviewed as read-only,
         // so it doesn't gain them by listing a new string.
-        if api < 2, grantedCapabilities.contains(where: { $0.isAction || $0 == .reviewComment }) {
+        if api < 2, grantedCapabilities.contains(where: { $0.isAction || $0 == .reviewComment || $0 == .agentTools }) {
             throw PluginValidationError.invalidManifest("action capabilities need api 2")
         }
         // Hosts and secrets exist only under their grants, and a grant with
@@ -484,9 +500,38 @@ public struct PluginManifest: Sendable, Hashable, Codable {
         guard contributes.pullRequestSwitches.isEmpty || background != nil else {
             throw PluginValidationError.invalidManifest("pullRequestSwitches need a background script")
         }
+        try validateTools()
         let total = contributes.views.count + places.map(\.1.count).reduce(0, +)
         guard total > 0 || background != nil else {
             throw PluginValidationError.invalidManifest("the plugin doesn't add anything")
+        }
+    }
+
+    /// Tools exist only under their grant, and the grant needs tools; the
+    /// background script runs them (ABS-97).
+    private func validateTools() throws {
+        guard grantedCapabilities.contains(.agentTools) == !agentTools.isEmpty else {
+            throw PluginValidationError.invalidManifest("agent.tools needs its tools listed, and tools need the agent.tools capability")
+        }
+        guard agentTools.isEmpty || background != nil else {
+            throw PluginValidationError.invalidManifest("tools need a background script")
+        }
+        guard agentTools.count <= PluginTools.limit, Set(agentTools.map(\.name)).count == agentTools.count else {
+            throw PluginValidationError.invalidManifest("at most \(PluginTools.limit) tools, each with its own name")
+        }
+        for tool in agentTools {
+            guard tool.hasSoundName else {
+                throw PluginValidationError.invalidManifest("a tool's name is up to \(PluginAgentTool.nameLimit) letters, digits, _ or -")
+            }
+            let description = tool.description.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !description.isEmpty, description.count <= PluginAgentTool.descriptionLimit else {
+                throw PluginValidationError.invalidManifest("tool \(tool.name) needs a description")
+            }
+            if let schema = tool.inputSchema {
+                guard schema["type"]?.string == "object", schema.compact().count <= PluginAgentTool.schemaLimit else {
+                    throw PluginValidationError.invalidManifest("tool \(tool.name)'s inputSchema must be a small object schema")
+                }
+            }
         }
     }
 

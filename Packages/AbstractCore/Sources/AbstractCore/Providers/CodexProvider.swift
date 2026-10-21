@@ -108,7 +108,7 @@ public struct CodexProvider: ProviderDefinition {
                 + Self.sandboxArgs(ctx.permissionPolicy, resuming: resuming) + (ctx.model.map { ["-m", $0] } ?? [])
                 // A config override; the value is TOML, so the level is quoted.
                 + (ctx.effort.map { ["-c", "model_reasoning_effort=\"\($0)\""] } ?? [])
-                + Self.developerInstructions(ctx) + Self.historyArgs(ctx.historyTool)
+                + Self.developerInstructions(ctx) + Self.historyArgs(ctx.historyTool) + Self.pluginArgs(ctx.pluginTools)
                 + Self.toolServerArgs(ctx.toolServers).args + ctx.extraArgs
                 + ctx.images.flatMap { ["--image", $0] }
                 // A prompt like "- fix the parser" would otherwise parse as a flag,
@@ -193,6 +193,18 @@ public struct CodexProvider: ProviderDefinition {
 
     static func tomlArray(_ items: [String]) -> String {
         "[" + items.map(tomlString).joined(separator: ", ") + "]"
+    }
+
+    /// The plugin-tools server (ABS-97), the same way. Its tools say
+    /// they're read-only so `exec` runs them, and a call may wait for
+    /// you to answer Ask first, so Codex waits as long as Abstract does.
+    static func pluginArgs(_ tools: PluginToolsLaunch?) -> [String] {
+        guard let tools else { return [] }
+        let server = "mcp_servers.\(PluginTools.serverName)"
+        let args = "[" + tools.serverArgs.map(tomlString).joined(separator: ", ") + "]"
+        let wait = Int(PluginTools.askTimeout + PluginTools.timeout + 30)
+        return ["-c", "\(server).command=\(tomlString(tools.command))", "-c", "\(server).args=\(args)",
+                "-c", "\(server).tool_timeout_sec=\(wait)"]
     }
 
     /// A TOML basic string; its escapes match JSON's, all but `\/`, which
