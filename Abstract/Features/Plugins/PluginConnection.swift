@@ -113,6 +113,15 @@ final class PluginConnection {
             send(type: "reply", id: id, payload: model.pluginAutomations(page: page))
         case .getPullRequest(let id, let chatId):
             send(type: "reply", id: id, payload: model.pluginPullRequest(chatId: chatId))
+        case .getPermissions(let id):
+            // Only chats its snapshot shows it, the ones it may already act on.
+            let visible = Set(model.pluginSnapshot(capabilities: capabilities, revision: 0).chats?.map(\.id) ?? [])
+            let pending = PluginPermissions.visible(model.pluginPendingRequests(), chatIds: visible)
+            for chatId in Set(pending.map(\.chatId)) { bridge.know(chatId: chatId) }
+            send(type: "reply", id: id, payload: PluginPermissions.list(pending))
+        case .badge(let id, let count):
+            model.plugins.setBadge(plugin.id, count)
+            send(type: "reply", id: id, payload: .object(["count": .number(Double(count))]))
         case .addReviewComments(let id, let chatId, let author, let comments):
             let added = model.addPluginReviewComments(chatId, author: author, comments)
             send(type: "reply", id: id, payload: .object(["added": .number(Double(added))]))
@@ -148,6 +157,12 @@ final class PluginConnection {
         var info = action.sendsReview
             ? model.reviewSendPreview(action.chatId ?? "", text: action.text)
             : action.detail.map { String($0.prefix(600)) } ?? ""
+        // Allowing shows all of what it lets through (ABS-111): a command
+        // too long to show whole can't be allowed from a plugin.
+        if action.capability == .permissionsAnswer, action.answers.isEmpty,
+           let preview = model.pluginAnswerPreview(action) {
+            info = action.batch.isEmpty ? preview : "Each one runs exactly this command:\n\(preview)"
+        }
         if !info.isEmpty { info += "\n\n" }
         info += "Always allow lets \(manifest.name) do this kind of thing without asking. You can change your mind in Settings → Plugins."
         alert.informativeText = info

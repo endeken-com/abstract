@@ -27,6 +27,8 @@ public struct PluginBridge: Sendable {
     public static let reviewCommentTextLimit = 2_000
     /// A notice is one short sentence.
     public static let noticeTextLimit = 200
+    /// The most a sidebar badge counts (ABS-111).
+    public static let badgeLimit = 9_999
 
     public var capabilities: Set<PluginCapability>
     /// Action kinds the person always allows for this plugin; every
@@ -67,6 +69,10 @@ public struct PluginBridge: Sendable {
         case getAutomations(id: String?, page: PluginPage)
         /// One chat's pull request in full, as the host knows it now (ABS-109).
         case getPullRequest(id: String?, chatId: String)
+        /// The permission requests and questions waiting across chats (ABS-111).
+        case getPermissions(id: String?)
+        /// Show this count on the plugin's sidebar row; 0 hides it.
+        case badge(id: String?, count: Int)
         /// Add these comments to the chat's Review, marked with `author` (ABS-112).
         case addReviewComments(id: String?, chatId: String, author: String, [PluginReviewComment])
         /// Show this, with the plugin's name, where Abstract shows its own notices.
@@ -214,12 +220,27 @@ public struct PluginBridge: Sendable {
                 comments.append(comment)
             }
             return .addReviewComments(id: id, chatId: chatId, author: author, comments)
+        case "getPermissions":
+            // What's waiting, and its request ids, are for a plugin that
+            // may answer it, as in `permission.requested`, and only in the
+            // chats it can already see.
+            guard capabilities.contains(.permissionsAnswer), capabilities.contains(.chatsRead) else {
+                return refuse(id, "This plugin hasn't been granted answering your agents' questions and permission requests.")
+            }
+            return .getPermissions(id: id)
+        case "setBadge":
+            // Only its own sidebar row, so it needs no grant.
+            guard let count = payload?["count"]?.int, count >= 0, count <= Self.badgeLimit else {
+                return refuse(id, "A badge is a count from 0 to \(Self.badgeLimit).")
+            }
+            return .badge(id: id, count: count)
         case "showNotice":
             guard let text = nonEmpty(payload?["text"]?.string), text.count <= Self.noticeTextLimit else {
                 return refuse(id, "A notice is one short sentence.")
             }
             return .notice(id: id, text: text)
-        case "createChat", "sendMessage", "sendReview", "controlChat", "answerPermission", "answerQuestion", "runAutomation":
+        case "createChat", "sendMessage", "sendReview", "controlChat", "answerPermission", "answerPermissions", "answerQuestion",
+             "runAutomation":
             // Actions are API 2: an API 1 plugin was granted reading only.
             guard api >= 2 else { return refuse(id, "This plugin hasn't been granted acting on your chats.") }
             return actionOutcome(type: type, id: id, payload: payload, now: now)
@@ -349,6 +370,28 @@ public struct PluginBridge: Sendable {
                 return refuse(id, "That answer needs the chat and the request it answers.")
             }
             built = PluginAction(capability: .permissionsAnswer, chatId: chatId, requestId: requestId, allow: allow)
+        case "answerPermissions":
+            // Allow only: declining several at once isn't offered. The host
+            // checks they're all exactly the same command (ABS-111).
+            guard capabilities.contains(.permissionsAnswer) else {
+                return refuse(id, "This plugin hasn't been granted answering your agents' questions and permission requests.")
+            }
+            let items = payload?["requests"]?.array ?? []
+            var targets: [PluginAction.Target] = []
+            for item in items {
+                guard let chatId = knownChat(item), let requestId = nonEmpty(item["requestId"]?.string) else {
+                    return refuse(id, "Each request needs a chat in the plugin's list and the request it answers.")
+                }
+                targets.append(PluginAction.Target(chatId: chatId, requestId: requestId))
+            }
+            guard payload?["allow"]?.bool == true else {
+                return refuse(id, "Several requests can only be allowed at once, not declined.")
+            }
+            guard targets.count >= 2, targets.count <= PluginPermissions.batchLimit,
+                  Set(targets).count == targets.count else {
+                return refuse(id, "Allow several at once takes between 2 and \(PluginPermissions.batchLimit) different requests.")
+            }
+            built = PluginAction(capability: .permissionsAnswer, allow: true, batch: targets)
         case "answerQuestion":
             guard capabilities.contains(.permissionsAnswer) else {
                 return refuse(id, "This plugin hasn't been granted answering your agents' questions and permission requests.")

@@ -63,7 +63,8 @@ struct SidebarView: View {
                             RailNavRow(title: view.title,
                                        symbol: NSImage(systemSymbolName: view.symbolOrFallback, accessibilityDescription: nil) != nil
                                            ? view.symbolOrFallback : PluginManifest.fallbackSymbol,
-                                       destination: .plugin(plugin.id, view.id))
+                                       destination: .plugin(plugin.id, view.id),
+                                       count: model.plugins.badges[plugin.id] ?? 0)
                         }
                     }
                 }

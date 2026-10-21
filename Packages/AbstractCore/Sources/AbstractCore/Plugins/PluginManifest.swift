@@ -52,7 +52,7 @@ public enum PluginCapability: String, Sendable, Hashable, Codable, CaseIterable 
         case .chatsCreate: "Start chats in your projects"
         case .chatsMessage: "Send messages to your chats"
         case .chatsControl: "Stop and resume your agents"
-        case .permissionsAnswer: "Answer your agents' questions and permission requests"
+        case .permissionsAnswer: "See and answer your agents' questions and permission requests, with what each one asks"
         case .automationsRun: "Run your automations"
         case .reviewComment: "Add comments to your chats' Review, for you to send or delete"
         case .pullRequestsRead: "Read your chats' pull requests: their checks, reviews and comments"

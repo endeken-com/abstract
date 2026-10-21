@@ -59,6 +59,8 @@ extension AppModel {
         }
         for id in branchStates.keys.sorted() { hasher.combine(id); hasher.combine(branchStates[id]?.dirty) }
         hasher.combine(remote.paired.map(\.id))
+        // A request can arrive or be answered without its chat's status moving.
+        for id in permissions.keys.sorted() { hasher.combine(id); hasher.combine(permissions[id]?.map(\.requestId)) }
         for (id, link) in remote.links { hasher.combine(id); hasher.combine(link.snapshot?.sessions.count ?? -1) }
         return hasher.finalize()
     }
@@ -145,6 +147,65 @@ extension AppModel {
              lastRun: (try? store.lastRun(automationId: automation.id)) ?? nil)
         }
         return PluginData.automations(items: items, page: page)
+    }
+
+    // MARK: Waiting requests (ABS-111)
+
+    /// Every permission request and question waiting in a chat here or
+    /// on a paired Mac, the way a plugin that may answer them sees them.
+    func pluginPendingRequests() -> [PluginPendingRequest] {
+        permissions.flatMap { chatId, requests -> [PluginPendingRequest] in
+            guard let session = session(chatId) else { return [] }
+            return requests.map {
+                PluginPendingRequest(chatId: chatId, requestId: $0.requestId, toolName: $0.toolName, input: $0.input,
+                                     requestedAt: $0.requestedAt, root: session.worktreePath)
+            }
+        }
+    }
+
+    /// Whose requests are waiting, for `permission.resolved`.
+    func pluginPendingTargets() -> Set<PluginAction.Target> {
+        Set(permissions.flatMap { chatId, requests in
+            requests.map { PluginAction.Target(chatId: chatId, requestId: $0.requestId) }
+        })
+    }
+
+    /// What answering would let through, for the ask: the command or file
+    /// the request is about.
+    func pluginAnswerPreview(_ action: PluginAction) -> String? {
+        let pending = pluginPendingRequests()
+        let target = action.batch.first ?? action.chatId.flatMap { chatId in
+            action.requestId.map { PluginAction.Target(chatId: chatId, requestId: $0) }
+        }
+        guard let target, let request = pending.first(where: {
+            $0.chatId == target.chatId && $0.requestId == target.requestId
+        }) else { return nil }
+        if let command = request.command { return command }
+        return PluginPermissions.path(request).map { "\(request.toolName) \($0)" } ?? request.toolName
+    }
+
+    /// Answers one request as the chat's own card would, and notes on its
+    /// tool row where it was answered.
+    private func answerFromPlugin(_ chatId: String, requestId: String, allow: Bool?, answers: [String: String],
+                                  pluginName: String) throws {
+        guard let request = pendingPermissions(chatId).first(where: { $0.requestId == requestId }) else {
+            throw AbstractError.message("That request isn't waiting any more.")
+        }
+        guard !answers.isEmpty || allow != nil else { throw AbstractError.message("That answer couldn't be read.") }
+        if allow == true, !PluginPermissions.mayAllowFromPlugin(PluginPendingRequest(
+            chatId: chatId, requestId: requestId, toolName: request.toolName, input: request.input, requestedAt: request.requestedAt)) {
+            throw AbstractError.message("That command is too long to show here. Allow it in its chat.")
+        }
+        recordAnswerNote("Answered from \(pluginName)", requestId: requestId, toolName: request.toolName,
+                         input: request.input, in: chatId)
+        if !answers.isEmpty {
+            answerQuestion(chatId, requestId: requestId, answers: answers)
+        } else if let allow {
+            answerPermission(chatId, requestId: requestId, allow: allow)
+        }
+        if !chatId.hasPrefix(RemoteService.mirrorPrefix) {
+            engine.record(sessionId: chatId, OutputLine(stream: .note, line: "Answered by \(pluginName)."))
+        }
     }
 
     // MARK: Actions (ABS-92)
@@ -244,24 +305,24 @@ extension AppModel {
             }
             return .object(["done": .bool(true)])
 
+        case .permissionsAnswer where !action.batch.isEmpty:
+            // All still waiting and exactly the same command, or none answered.
+            let requests = try PluginPermissions.batch(action.batch, pending: pluginPendingRequests())
+            guard requests.allSatisfy(PluginPermissions.mayAllowFromPlugin) else {
+                throw AbstractError.message("That command is too long to show here. Allow it in each chat.")
+            }
+            for request in requests {
+                try answerFromPlugin(request.chatId, requestId: request.requestId, allow: true, answers: [:],
+                                     pluginName: pluginName)
+            }
+            return .object(["done": .bool(true), "answered": .number(Double(requests.count))])
+
         case .permissionsAnswer:
             guard let chatId = action.chatId, let requestId = action.requestId else {
                 throw AbstractError.message("That answer needs the chat and the request it answers.")
             }
-            guard pendingPermissions(chatId).contains(where: { $0.requestId == requestId }) else {
-                throw AbstractError.message("That request isn't waiting any more.")
-            }
-            if !action.answers.isEmpty {
-                answerQuestion(chatId, requestId: requestId, answers: action.answers)
-            } else if let allow = action.allow {
-                answerPermission(chatId, requestId: requestId, allow: allow)
-            } else {
-                throw AbstractError.message("That answer couldn't be read.")
-            }
-            if !chatId.hasPrefix(RemoteService.mirrorPrefix) {
-                engine.record(sessionId: chatId,
-                              OutputLine(stream: .note, line: "Answered by \(pluginName)."))
-            }
+            try answerFromPlugin(chatId, requestId: requestId, allow: action.allow, answers: action.answers,
+                                 pluginName: pluginName)
             return .object(["done": .bool(true)])
 
         case .automationsRun:
