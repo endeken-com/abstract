@@ -57,7 +57,10 @@ import Testing
             turns += await HistoryBackfill.backfill(chat, lines: engine.replay(sessionId: chat.id), store: store, exec: exec, repo: repo,
                                                     subjects: subjects).count
         }
-        let pullRequests = Dictionary((try await GitHub.pullRequests(exec, repo: repo, state: "all", limit: 500)).map { ($0.number, $0.head) },
+        // As the GitHub plugin lists them (ABS-139).
+        let listed = try await exec.run("gh", ["pr", "list", "--state", "all", "--limit", "500", "--json", "number,headRefName"], cwd: repo)
+        let rows = (try JSONDecoder().decode(JSONValue.self, from: Data(listed.stdout.utf8))).array ?? []
+        let pullRequests = Dictionary(rows.compactMap { row in row["number"]?.int.map { ($0, row["headRefName"]?.string ?? "") } },
                                       uniquingKeysWith: { first, _ in first })
         let history = TurnHistory(store: store, projectId: project.id)
         let coverage = try await HistoryCoverage.measure(history, exec: exec, repo: repo, ref: ref, since: since, pullRequests: pullRequests)

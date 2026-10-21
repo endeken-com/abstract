@@ -4,7 +4,7 @@ import AbstractCore
 
 // A chat on another Mac works here as it does there: its review, files,
 // editor, git actions and pull request read and change its worktree on that
-// Mac, through a `RemoteExecutor` that runs git, gh and revund and reads and
+// Mac, through a `RemoteExecutor` that runs git, revund and plugins' tools and reads and
 // writes files over the pairing link.
 
 /// Runs commands and reads files in a paired Mac's worktrees.

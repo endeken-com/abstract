@@ -261,6 +261,17 @@ struct PullRequestPane: View {
         }
     }
 
+    /// What the tab says when the code host's tool is missing or signed out.
+    private static func unavailable(_ access: CodeHostAccess, _ title: String) -> Phase? {
+        switch access {
+        case .ready: nil
+        case .missing(let install):
+            .unavailable("\(title) CLI needed", install.map { "Install it with `\($0)`, then sign in." } ?? "Install it, then sign in.")
+        case .signedOut(let hint):
+            .unavailable("Sign in to \(title)", hint.map { "Run `\($0)` in a terminal, then come back here." } ?? "Sign in, then come back here.")
+        }
+    }
+
     private var checksRunning: Bool {
         guard let pr = model.pullRequests[session.id], pr.state == .open else { return false }
         return pr.checksSummary.pending > 0
@@ -273,20 +284,15 @@ struct PullRequestPane: View {
             return
         }
         if !model.isDemo {
-            // A chat on another Mac uses that Mac's GitHub sign-in.
-            let remote = model.remoteLink(for: session.id) != nil
-            if model.githubAccess == nil, !remote { model.githubAccess = await GitHub.access(model.executor) }
-            switch remote ? await GitHub.access(model.executor(for: session.id)) : model.githubAccess {
-            case .missing?:
-                phase = .unavailable("GitHub CLI needed", "Install it with `brew install gh`, then run `gh auth login`.")
+            // The project's code host plugin answers (ABS-139); none means nothing to show.
+            guard let host = await model.codeHost(for: project, chatId: session.id) else {
+                phase = .unavailable("No code host", await model.codeHostMissing(project))
                 return
-            case .signedOut?:
-                phase = .unavailable("Sign in to GitHub", "Run `gh auth login` in a terminal, then come back here.")
-                return
-            default: break
             }
-            guard await model.isOnGitHub(project) else {
-                phase = .unavailable("Not a GitHub repository", "\(project.name)'s origin isn't on GitHub.")
+            // A chat on another Mac uses that Mac's sign-in.
+            let remote = model.remoteLink(for: session.id) != nil
+            if let blocked = PullRequestPane.unavailable(remote ? await host.access() : await model.codeHostAccess(host), host.title) {
+                phase = blocked
                 return
             }
         }

@@ -348,7 +348,7 @@ private final class FakeCLI: Executor {
         let git = PluginCLI(binary: "git", commands: [.init(["fetch"], .write)])
         #expect(RemoteAccess.refusal("git", ["-c", "core.sshCommand=x", "fetch"], cwd: "/Users/test/shop", plugins: [git],
                                      allowed: inside) != nil)
-        // gh's own rules stand; a plugin's declared command adds to them.
+        // gh runs only as a plugin declares it.
         #expect(RemoteAccess.refusal("gh", ["run", "rerun", "1"], cwd: "/Users/test/shop", allowed: inside) != nil)
         #expect(RemoteAccess.refusal("gh", ["run", "rerun", "1"], cwd: "/Users/test/shop", plugins: [Self.gh], allowed: inside) == nil)
     }

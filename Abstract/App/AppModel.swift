@@ -193,12 +193,13 @@ final class AppModel {
     /// Each chat's pull request, by chat id: the list's summary, or the full
     /// detail once its tab has loaded it. A chat takes its title as its name.
     var pullRequests: [String: PullRequest] = [:] { didSet { nameChatsForPullRequests(); notePullRequestEvents() } }
-    /// Recent pull requests of each GitHub project, by project id.
+    /// Recent pull requests of each project, from its code host, by project id.
     var projectPullRequests: [String: [PullRequest]] = [:]
-    var githubAccess: GitHubAccess?
-    var githubViewer: String?
-    /// Whether each project's origin is on GitHub, by project id.
-    @ObservationIgnored var githubProjects: [String: Bool] = [:]
+    /// Whether each code host plugin's tool is there and signed in, and
+    /// when that was asked, by plugin id (ABS-139).
+    var codeHostAccess: [String: (access: CodeHostAccess, at: ContinuousClock.Instant)] = [:]
+    /// Each project's `origin`, by project id; empty when it has none.
+    @ObservationIgnored var projectOrigins: [String: String] = [:]
     /// Whether you can push to each GitHub repository, by `owner/name`, once asked.
     @ObservationIgnored var repoAccess: [String: RepoAccess] = [:]
     /// When each project's pull requests were last listed, by project id.
@@ -950,15 +951,15 @@ final class AppModel {
               let worktree = s.worktreePath, let project = project(s.projectId) else { return false }
         if allowCommits, s.status == .running || s.status == .waitingInput { return false }
         let exec = executor(for: sessionId)
-        let onGitHub = await isOnGitHub(project)
+        let host = await codeHost(for: project, chatId: sessionId)
         let base = await Diff.resolveBase(exec, worktree: worktree, preferred: s.baseRef)
         let renamed = await AutomationRunNaming.renameBranch(
             exec, worktree: worktree, from: branch, suggestion: suggestion, prefix: project.branchPrefix ?? branchPrefix,
             base: base, allowCommits: allowCommits
         ) { branch in
-            guard onGitHub else { return false }
+            guard let host else { return false }
             // Unknown counts as having one: a pull request's branch is never renamed under it.
-            do { return try await GitHub.pullRequest(exec, repo: project.rootPath, branch: branch) != nil } catch { return true }
+            do { return try await host.pullRequest(branch: branch) != nil } catch { return true }
         }
         guard let renamed else { return false }
         if let head = renamed.head { followBranch(sessionId, to: head) }
