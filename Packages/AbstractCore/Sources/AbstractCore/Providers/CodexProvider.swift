@@ -108,12 +108,14 @@ public struct CodexProvider: ProviderDefinition {
                 + Self.sandboxArgs(ctx.permissionPolicy, resuming: resuming) + (ctx.model.map { ["-m", $0] } ?? [])
                 // A config override; the value is TOML, so the level is quoted.
                 + (ctx.effort.map { ["-c", "model_reasoning_effort=\"\($0)\""] } ?? [])
-                + Self.developerInstructions(ctx) + Self.historyArgs(ctx.historyTool) + Self.pluginArgs(ctx.pluginTools) + ctx.extraArgs
+                + Self.developerInstructions(ctx) + Self.historyArgs(ctx.historyTool) + Self.pluginArgs(ctx.pluginTools)
+                + Self.toolServerArgs(ctx.toolServers).args + ctx.extraArgs
                 + ctx.images.flatMap { ["--image", $0] }
                 // A prompt like "- fix the parser" would otherwise parse as a flag,
                 // and `--image` takes every value up to the next flag.
                 + (ctx.prompt.hasPrefix("-") || !ctx.images.isEmpty ? ["--", ctx.prompt] : [ctx.prompt]),
             cwd: ctx.cwd,
+            env: Self.toolServerArgs(ctx.toolServers).env,
             stdinInitial: nil,
             // `codex exec` waits on an open stdin forever.
             keepStdinOpen: false
@@ -130,7 +132,8 @@ public struct CodexProvider: ProviderDefinition {
         case .readOnly: Plan.readOnlyInstruction
         default: nil as String?
         }
-        let parts = [ctx.instructions, ctx.outputStyle.instructions, mode, ctx.historyTool == nil ? nil : CodeHistory.instruction]
+        let parts = [ctx.instructions, ctx.outputStyle.instructions, mode, ctx.historyTool == nil ? nil : CodeHistory.instruction,
+                     MCPServerLaunch.instructions(ctx.toolServers)]
             .compactMap { $0 }
         return parts.isEmpty ? [] : ["-c", "developer_instructions=\(tomlString(parts.joined(separator: "\n\n")))"]
     }
@@ -144,6 +147,52 @@ public struct CodexProvider: ProviderDefinition {
         let server = "mcp_servers.\(CodeHistory.serverName)"
         let args = "[" + tool.serverArgs.map(tomlString).joined(separator: ", ") + "]"
         return ["-c", "\(server).command=\(tomlString(tool.command))", "-c", "\(server).args=\(args)"]
+    }
+
+    /// `exec` can't stop and ask Abstract, so a tool set to Ask first is
+    /// left out like an Off one.
+    public var toolServerSupport: ToolServerSupport { .allowOrOff }
+
+    /// The project's MCP servers (ABS-123) as config overrides beside the
+    /// code-history one, on `exec` and `exec resume` alike. Allowed tools
+    /// are approved outright (`exec` never asks, so it would refuse one
+    /// that doesn't say it only reads); Off and Ask first ones are disabled.
+    /// Header and environment values travel in the environment, named
+    /// here, never in argv (checked against codex-cli 0.156.1's config).
+    static func toolServerArgs(_ servers: [MCPServerLaunch]) -> (args: [String], env: [String: String]) {
+        var args: [String] = []
+        var env: [String: String] = [:]
+        for server in servers {
+            let key = "mcp_servers.\(server.name)"
+            switch server.connection {
+            case let .url(url, headers):
+                args += ["-c", "\(key).url=\(tomlString(url))"]
+                if !headers.isEmpty {
+                    let names = headers.keys.sorted().map { header -> String in
+                        env[server.secretVariable(header)] = headers[header]
+                        return "\(tomlString(header)) = \(tomlString(server.secretVariable(header)))"
+                    }
+                    args += ["-c", "\(key).env_http_headers={ \(names.joined(separator: ", ")) }"]
+                }
+            case let .command(argv, vars):
+                args += ["-c", "\(key).command=\(tomlString(argv.first ?? ""))",
+                         "-c", "\(key).args=\(tomlArray(Array(argv.dropFirst())))"]
+                if !vars.isEmpty {
+                    for (name, value) in vars { env[name] = value }
+                    args += ["-c", "\(key).env_vars=\(tomlArray(vars.keys.sorted()))"]
+                }
+            }
+            if !server.allowed.isEmpty {
+                let tools = server.allowed.map { "\(tomlString($0)) = { approval_mode = \"approve\" }" }
+                args += ["-c", "\(key).tools={ \(tools.joined(separator: ", ")) }"]
+            }
+            if !server.withheld.isEmpty { args += ["-c", "\(key).disabled_tools=\(tomlArray(server.withheld))"] }
+        }
+        return (args, env)
+    }
+
+    static func tomlArray(_ items: [String]) -> String {
+        "[" + items.map(tomlString).joined(separator: ", ") + "]"
     }
 
     /// The plugin-tools server (ABS-97), the same way. Its tools say

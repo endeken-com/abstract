@@ -250,6 +250,27 @@ public final class Store: Sendable {
         }
     }
 
+    // MARK: - Project tool servers
+
+    /// A project's MCP servers (ABS-123), oldest first.
+    public func toolServers(projectId: String) throws -> [ProjectToolServer] {
+        try writer.read { db in
+            try ToolServerRow.fetchAll(
+                db, sql: "SELECT * FROM project_tool_servers WHERE project_id = ? ORDER BY created_at, rowid",
+                arguments: [projectId]).map(\.value)
+        }
+    }
+
+    public func save(_ server: ProjectToolServer) throws {
+        try writer.write { db in try ToolServerRow(server).save(db) }
+    }
+
+    public func deleteToolServer(_ id: String) throws {
+        try writer.write { db in
+            try db.execute(sql: "DELETE FROM project_tool_servers WHERE id = ?", arguments: [id])
+        }
+    }
+
     // MARK: - Usage
 
     public func record(_ usage: UsageRecord) throws {
@@ -717,6 +738,25 @@ public final class Store: Sendable {
         migrator.registerMigration("v18-plugin-tools") { db in
             try db.execute(sql: "ALTER TABLE projects ADD COLUMN plugin_tools TEXT")
         }
+        // The MCP servers a project gives its chats' agents (ABS-123).
+        migrator.registerMigration("v19-project-tool-servers") { db in
+            try db.execute(sql: """
+                CREATE TABLE project_tool_servers (
+                  id          TEXT PRIMARY KEY NOT NULL,
+                  project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                  name        TEXT NOT NULL,
+                  connection  TEXT NOT NULL,
+                  agents      TEXT NOT NULL DEFAULT '[]',
+                  notes       TEXT NOT NULL DEFAULT '',
+                  tools       TEXT NOT NULL DEFAULT '[]',
+                  access      TEXT NOT NULL DEFAULT '{}',
+                  listed_at   DATETIME,
+                  list_error  TEXT,
+                  created_at  DATETIME NOT NULL
+                );
+                CREATE INDEX project_tool_servers_project ON project_tool_servers(project_id);
+                """)
+        }
         return migrator
     }
 }
@@ -1088,6 +1128,50 @@ private struct PermissionRuleRow: FetchableRecord, PersistableRecord {
         container["pattern"] = value.pattern
         container["decision"] = value.decision.rawValue
         container["expires_at"] = value.expiresAt
+        container["created_at"] = value.createdAt
+    }
+}
+
+private struct ToolServerRow: FetchableRecord, PersistableRecord {
+    static let databaseTableName = "project_tool_servers"
+    let value: ProjectToolServer
+
+    init(_ value: ProjectToolServer) { self.value = value }
+
+    init(row: Row) throws {
+        let decoder = JSONDecoder()
+        func json<T: Decodable>(_ column: String, _ type: T.Type) throws -> T {
+            let text: String = try row.decode(forColumn: column)
+            return try decoder.decode(T.self, from: Data(text.utf8))
+        }
+        value = ProjectToolServer(
+            id: try row.decode(forColumn: "id"),
+            projectId: try row.decode(forColumn: "project_id"),
+            name: try row.decode(forColumn: "name"),
+            connection: try json("connection", ProjectToolServer.Connection.self),
+            agents: try row.stringList("agents"),
+            notes: try row.decode(forColumn: "notes"),
+            tools: (try? json("tools", [ProjectToolServer.Tool].self)) ?? [],
+            access: (try? json("access", [String: ToolAccess].self)) ?? [:],
+            listedAt: try row.decode(forColumn: "listed_at"),
+            listError: try row.decode(forColumn: "list_error"),
+            createdAt: try row.decode(forColumn: "created_at"))
+    }
+
+    func encode(to container: inout PersistenceContainer) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        func json<T: Encodable>(_ value: T) throws -> String { String(decoding: try encoder.encode(value), as: UTF8.self) }
+        container["id"] = value.id
+        container["project_id"] = value.projectId
+        container["name"] = value.name
+        container["connection"] = try json(value.connection)
+        container["agents"] = try jsonText(value.agents)
+        container["notes"] = value.notes
+        container["tools"] = try json(value.tools)
+        container["access"] = try json(value.access)
+        container["listed_at"] = value.listedAt
+        container["list_error"] = value.listError
         container["created_at"] = value.createdAt
     }
 }

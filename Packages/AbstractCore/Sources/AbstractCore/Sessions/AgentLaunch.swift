@@ -65,14 +65,21 @@ public struct LaunchSettings: Sendable {
     /// The `abstract` command that serves this launch's plugin tools
     /// (ABS-97), when a plugin offers any; nil leaves the agent without.
     public var pluginToolsCommand: String?
+    /// The MCP servers of the launch's project (ABS-123); each agent gets
+    /// the ones chosen for it.
+    public var toolServers: [ProjectToolServer]
+    /// Where each chat's own launch files go (`ChatConfigFiles`); nil
+    /// passes everything inline.
+    public var agentConfigRoot: String?
 
     public init(providerOverrides: [String: ProviderOverride], outputStyle: OutputStyle, claudeProfile: String?,
                 standardClaudeProfile: String = NSHomeDirectory() + "/.claude", attachmentsDirectory: String,
                 agentDefaults: [String: AgentDefaults] = [:], modelCatalogs: [String: ModelCatalog] = [:],
-                codeHistory: CodeHistorySettings? = nil) {
+                codeHistory: CodeHistorySettings? = nil, toolServers: [ProjectToolServer] = [], agentConfigRoot: String? = nil) {
         self.providerOverrides = providerOverrides; self.outputStyle = outputStyle; self.claudeProfile = claudeProfile
         self.standardClaudeProfile = standardClaudeProfile; self.attachmentsDirectory = attachmentsDirectory
         self.agentDefaults = agentDefaults; self.modelCatalogs = modelCatalogs; self.codeHistory = codeHistory
+        self.toolServers = toolServers; self.agentConfigRoot = agentConfigRoot
     }
 
     /// As the app last saved them, for a launch that doesn't go through the app.
@@ -82,7 +89,21 @@ public struct LaunchSettings: Sendable {
                   claudeProfile: store.setting("claudeProfile", as: String.self),
                   attachmentsDirectory: dataDirectory.appendingPathComponent("attachments").path,
                   agentDefaults: store.setting("agentDefaults", as: [String: AgentDefaults].self) ?? [:],
-                  modelCatalogs: store.setting("modelCatalogs", as: [String: ModelCatalog].self) ?? [:])
+                  modelCatalogs: store.setting("modelCatalogs", as: [String: ModelCatalog].self) ?? [:],
+                  agentConfigRoot: dataDirectory.appendingPathComponent("agent-config").path)
+    }
+
+    /// What `provider` gets of the project's MCP servers in `session`:
+    /// only its own project's, only those chosen for it, and never one
+    /// named like one of Abstract's own servers or an earlier one.
+    func toolServers(for session: Session, provider: any ProviderDefinition) -> [MCPServerLaunch] {
+        guard let projectId = session.projectId else { return [] }
+        var taken: Set<String> = [CodeHistory.serverName, PluginTools.serverName]
+        return toolServers.filter { $0.projectId == projectId }.compactMap { server in
+            guard !server.name.isEmpty, ProjectToolServer.cleanName(server.name) == server.name,
+                  taken.insert(server.name).inserted else { return nil }
+            return server.launch(for: provider)
+        }
     }
 
     /// The default effort, when the model that will run takes it; else nil,
@@ -116,6 +137,10 @@ public enum AgentLaunch {
                                 instructions: session.profileInstructions,
                                 pluginTools: settings.pluginToolsCommand.map {
                                     PluginToolsLaunch(command: $0, chatId: session.id)
+                                },
+                                toolServers: settings.toolServers(for: session, provider: provider),
+                                configDirectory: settings.agentConfigRoot.map {
+                                    ChatConfigFiles.directory(root: $0, chatId: session.id)
                                 })
         var spec = resumeId.map { provider.buildResume(ctx, resumeId: $0) } ?? provider.buildLaunch(ctx)
         if provider.id == "claude", let profile = settings.claudeProfile, profile != settings.standardClaudeProfile {
