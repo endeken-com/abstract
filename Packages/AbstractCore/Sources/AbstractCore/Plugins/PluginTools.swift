@@ -116,6 +116,20 @@ public enum PluginTools {
 
     public static func key(pluginId: String, tool: String) -> String { "\(pluginId)/\(tool)" }
 
+    /// An Ask first card's request id. Only you answer those, in the chat
+    /// or from your phone: no plugin sees or answers them, or a plugin
+    /// could allow its own tool.
+    public static let askPrefix = "plugin-tool-"
+    public static func isAsk(_ requestId: String) -> Bool { requestId.hasPrefix(askPrefix) }
+
+    /// Whether a project rule may answer an Ask first card. A deny always
+    /// may; an allow only when it names the tool itself, so a command or
+    /// path rule never lets through a plugin tool whose input happens to
+    /// carry a matching `command` or `path`.
+    public static func ruleAnswersAsk(_ rule: PermissionRule) -> Bool {
+        rule.decision == .deny || rule.kind == .tool
+    }
+
     /// Every plugin's tools with the names agents call them, whatever the
     /// project says, in a stable order.
     public static func all(_ offers: [PluginToolOffer], project: Project?) -> [PublishedPluginTool] {

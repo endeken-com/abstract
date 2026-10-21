@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import AbstractCore
 
 /// Plugin tools for agents (ABS-97), from the model's side: which tools
@@ -41,6 +42,17 @@ extension AppModel {
         return FileManager.default.isExecutableFile(atPath: tool) ? tool : nil
     }
 
+    /// The chat's token, made once per run of the app: a server launched
+    /// for this chat carries it, and nothing else knows it.
+    func pluginToolToken(_ sessionId: String) -> String {
+        if let token = pluginToolTokens[sessionId] { return token }
+        var bytes = [UInt8](repeating: 0, count: 32)
+        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        let token = bytes.map { String(format: "%02x", $0) }.joined()
+        pluginToolTokens[sessionId] = token
+        return token
+    }
+
     /// Lets each chat's plugin-tools server ask the app what to list and
     /// run its calls, while the app is open.
     func servePluginTools() {
@@ -54,6 +66,12 @@ extension AppModel {
     func answerPluginTools(_ request: PluginToolLink.Request) async -> PluginToolLink.Reply {
         let offers = pluginToolOffers()
         PluginToolLabels.shared.update(PluginTools.all(offers, project: nil))
+        // Only the server launched for this chat, while its agent runs.
+        guard let expected = pluginToolTokens[request.chatId], request.token == expected,
+              isAlive(request.chatId) else {
+            return request.op == "list" ? PluginToolLink.Reply(tools: [])
+                : PluginToolLink.Reply(text: "This chat's agent isn't running here, so it has no plugin tools.", isError: true)
+        }
         let session = session(request.chatId)
         let project = project(session?.projectId)
         switch request.op {

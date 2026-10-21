@@ -156,7 +156,7 @@ extension AppModel {
     func pluginPendingRequests() -> [PluginPendingRequest] {
         permissions.flatMap { chatId, requests -> [PluginPendingRequest] in
             guard let session = session(chatId) else { return [] }
-            return requests.map {
+            return requests.filter { !PluginTools.isAsk($0.requestId) }.map {
                 PluginPendingRequest(chatId: chatId, requestId: $0.requestId, toolName: $0.toolName, input: $0.input,
                                      requestedAt: $0.requestedAt, root: session.worktreePath)
             }
@@ -166,7 +166,7 @@ extension AppModel {
     /// Whose requests are waiting, for `permission.resolved`.
     func pluginPendingTargets() -> Set<PluginAction.Target> {
         Set(permissions.flatMap { chatId, requests in
-            requests.map { PluginAction.Target(chatId: chatId, requestId: $0.requestId) }
+            requests.filter { !PluginTools.isAsk($0.requestId) }.map { PluginAction.Target(chatId: chatId, requestId: $0.requestId) }
         })
     }
 
@@ -188,7 +188,8 @@ extension AppModel {
     /// tool row where it was answered.
     private func answerFromPlugin(_ chatId: String, requestId: String, allow: Bool?, answers: [String: String],
                                   pluginName: String) throws {
-        guard let request = pendingPermissions(chatId).first(where: { $0.requestId == requestId }) else {
+        guard let request = pendingPermissions(chatId).first(where: { $0.requestId == requestId }),
+              !PluginTools.isAsk(requestId) else {
             throw AbstractError.message("That request isn't waiting any more.")
         }
         guard !answers.isEmpty || allow != nil else { throw AbstractError.message("That answer couldn't be read.") }

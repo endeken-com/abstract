@@ -59,17 +59,19 @@ public struct HistoryToolLaunch: Sendable, Hashable {
 
 /// The plugin tools handed to one chat's agent (ABS-97): the `abstract`
 /// command that serves them, for this chat only. Which tools it lists is
-/// the app's to say, call by call.
+/// the app's to say, call by call. The token ties the server's requests
+/// to this launch: the app answers no other caller for the chat.
 public struct PluginToolsLaunch: Sendable, Hashable {
     public var command: String
     public var chatId: String
+    public var token: String
 
-    public init(command: String, chatId: String) {
-        self.command = command; self.chatId = chatId
+    public init(command: String, chatId: String, token: String) {
+        self.command = command; self.chatId = chatId; self.token = token
     }
 
-    /// What runs the server: `abstract mcp --chat <id> --plugins`.
-    public var serverArgs: [String] { ["mcp", "--chat", chatId, "--plugins"] }
+    /// What runs the server: `abstract mcp --chat <id> --plugins --token <t>`.
+    public var serverArgs: [String] { ["mcp", "--chat", chatId, "--plugins", "--token", token] }
     public var serverCommand: [String] { [command] + serverArgs }
 }
 

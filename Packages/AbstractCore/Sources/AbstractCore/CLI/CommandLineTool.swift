@@ -11,7 +11,7 @@ import Synchronization
 ///     abstract agent respawn    --session <id> --agent claude --prompt-file <path|->
 ///     abstract history          <file>[:<line>[-<line>]] [--project <p>]
 ///     abstract mcp              --chat <id>   (the code-history tools, over stdio)
-///     abstract mcp              --chat <id> --plugins   (the chat's plugin tools, over stdio)
+///     abstract mcp              --chat <id> --plugins --token <t>   (the chat's plugin tools, over stdio)
 ///
 /// `--project` takes a project's id, root path or name. Every command prints
 /// one JSON value on stdout and nothing else; a failure prints
@@ -37,11 +37,13 @@ public enum CommandLineTool {
         // it; it is not one of the one-JSON-value commands.
         if args.first == "mcp" {
             if args.contains("--plugins") {
-                guard let chat = option("chat", in: Array(args.dropFirst())), !chat.isEmpty else {
+                let tokens = Array(args.dropFirst())
+                guard let chat = option("chat", in: tokens), !chat.isEmpty,
+                      let token = option("token", in: tokens), !token.isEmpty else {
                     FileHandle.standardError.write(Data("abstract mcp: no chat to serve plugin tools for.\n".utf8))
                     return 1
                 }
-                await PluginMCPServer(source: LinkedPluginTools(chatId: chat)).run()
+                await PluginMCPServer(source: LinkedPluginTools(chatId: chat, token: token)).run()
                 return 0
             }
             guard let chat = option("chat", in: Array(args.dropFirst())), let server = HistoryMCPServer.open(chatId: chat) else {
@@ -68,7 +70,7 @@ public enum CommandLineTool {
         session create --project <p> --name <n> --branch <b> --agent <agent> --prompt-file <path|-> | \
         agent find --session <id> | agent send --session <id> --agent <id> --text-file <path|-> | \
         agent respawn --session <id> --agent <agent> --prompt-file <path|-> | \
-        history <file>[:<line>[-<line>]] [--project <p>] | mcp --chat <id> [--plugins]
+        history <file>[:<line>[-<line>]] [--project <p>] | mcp --chat <id> [--plugins --token <t>]
         """
 
     /// `--name value` or `--name=value` among `tokens`; nil when absent.

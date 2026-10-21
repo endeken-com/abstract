@@ -157,6 +157,19 @@ import Testing
         #expect(CodeHistory.tool(inStreamName: "abstract-plugins_git_code_history") == nil)
     }
 
+    @Test func onlyYouAnswerAToolsAskFirstCard() {
+        #expect(PluginTools.isAsk(PluginTools.askPrefix + "x"))
+        #expect(!PluginTools.isAsk("toolu_01"))
+        func rule(_ kind: PermissionRuleKind, _ decision: PermissionDecision) -> PermissionRule {
+            PermissionRule(projectId: "p1", kind: kind, pattern: "*", decision: decision)
+        }
+        // A rule naming the tool answers it; a command or path allow never does.
+        #expect(PluginTools.ruleAnswersAsk(rule(.tool, .allow)))
+        #expect(!PluginTools.ruleAnswersAsk(rule(.command, .allow)))
+        #expect(!PluginTools.ruleAnswersAsk(rule(.path, .allow)))
+        #expect(PluginTools.ruleAnswersAsk(rule(.command, .deny)))
+    }
+
     // MARK: Routing a call
 
     @Test func aCallRunsAsksOrIsRefusedByTheProjectsSetting() {
@@ -279,7 +292,7 @@ import Testing
 
     @Test func aCallReachesTheAppOverItsSocketAndSaysSoWhenTheAppIsClosed() async throws {
         let path = (NSTemporaryDirectory() as NSString).appendingPathComponent("abs97-\(UUID().uuidString.prefix(8)).sock")
-        let closed = LinkedPluginTools(chatId: "chat-1", path: path)
+        let closed = LinkedPluginTools(chatId: "chat-1", token: "t0k3n", path: path)
         #expect(await closed.list() == nil)
         #expect(await closed.call("echo_echo", arguments: .object([:])) == ("Abstract isn't open, so plugin tools can't run.", true))
 
@@ -293,17 +306,18 @@ import Testing
         // A second app for the same data folder doesn't take it over.
         #expect(PluginToolLink.Server(path: path) { _ in .init() } == nil)
 
-        let open = LinkedPluginTools(chatId: "chat-1", path: path)
+        let open = LinkedPluginTools(chatId: "chat-1", token: "t0k3n", path: path)
         #expect(await open.list() == [.object(["name": .string("echo_echo")])])
         let reply = await open.call("echo_echo", arguments: .object(["text": .string("hi")]))
         #expect(reply.text == "Echo: hi" && !reply.isError)
         #expect(seen.withLock { $0 }.map(\.chatId) == ["chat-1", "chat-1"])
+        #expect(seen.withLock { $0 }.allSatisfy { $0.token == "t0k3n" })
         #expect(seen.withLock { $0 }.last?.name == "echo_echo")
     }
 
     // MARK: Each agent's launch
 
-    let plugins = PluginToolsLaunch(command: "/Applications/Abstract.app/Contents/Helpers/abstract", chatId: "chat-1")
+    let plugins = PluginToolsLaunch(command: "/Applications/Abstract.app/Contents/Helpers/abstract", chatId: "chat-1", token: "t0k3n")
     let history = HistoryToolLaunch(command: "/Applications/Abstract.app/Contents/Helpers/abstract", chatId: "chat-1")
 
     @Test func claudeGetsBothServersInOneConfigWithPluginToolsAllowedByServer() throws {
@@ -312,7 +326,7 @@ import Testing
         let config = try #require(spec.args.firstIndex(of: "--mcp-config").map { spec.args[$0 + 1] })
         let servers = try json(config)["mcpServers"]
         #expect(servers?[CodeHistory.serverName] != nil)
-        #expect(servers?[PluginTools.serverName]?["args"] == .array(["mcp", "--chat", "chat-1", "--plugins"].map(JSONValue.string)))
+        #expect(servers?[PluginTools.serverName]?["args"] == .array(["mcp", "--chat", "chat-1", "--plugins", "--token", "t0k3n"].map(JSONValue.string)))
         let allowed = try #require(spec.args.firstIndex(of: "--allowedTools").map { spec.args[$0 + 1] })
         #expect(allowed.split(separator: ",").contains("mcp__abstract-plugins"))
         #expect(spec.args.filter { $0 == "--mcp-config" }.count == 1)
@@ -331,7 +345,7 @@ import Testing
     @Test func codexGetsTheServerAsConfigOverridesAndWaitsForAnAnswer() {
         let spec = CodexProvider().buildLaunch(LaunchContext(cwd: "/w", prompt: "hi", permissionPolicy: .autoEdits, pluginTools: plugins))
         #expect(spec.args.contains(#"mcp_servers.abstract-plugins.command="/Applications/Abstract.app/Contents/Helpers/abstract""#))
-        #expect(spec.args.contains(#"mcp_servers.abstract-plugins.args=["mcp", "--chat", "chat-1", "--plugins"]"#))
+        #expect(spec.args.contains(#"mcp_servers.abstract-plugins.args=["mcp", "--chat", "chat-1", "--plugins", "--token", "t0k3n"]"#))
         #expect(spec.args.contains("mcp_servers.abstract-plugins.tool_timeout_sec=660"))
         #expect(spec.args.last == "hi")
         let none = CodexProvider().buildLaunch(LaunchContext(cwd: "/w", prompt: "hi", permissionPolicy: .autoEdits))
@@ -355,8 +369,13 @@ import Testing
         let without = AgentLaunch.spec(for: session, provider: ClaudeProvider(), prompt: "hi", resumeId: nil, settings: settings, home: "/h")
         #expect(!without.args.contains("mcp__abstract-plugins"))
         settings.pluginToolsCommand = "/bin/abstract"
+        // Never without the chat's token.
+        let tokenless = AgentLaunch.spec(for: session, provider: ClaudeProvider(), prompt: "hi", resumeId: nil, settings: settings, home: "/h")
+        #expect(!tokenless.args.contains("mcp__abstract-plugins"))
+        settings.pluginToolsToken = "t0k3n"
         let with = AgentLaunch.spec(for: session, provider: ClaudeProvider(), prompt: "hi", resumeId: nil, settings: settings, home: "/h")
         #expect(with.args.contains("mcp__abstract-plugins"))
+        #expect(with.args.contains { $0.contains(#""--token","t0k3n""#) })
     }
 
     // MARK: Saved per project
@@ -387,7 +406,7 @@ import Testing
         defer { try? FileManager.default.removeItem(at: data) }
         let path = PluginToolLink.socketPath(storePath: data.appendingPathComponent("abstract.sqlite").path)
         let server = try #require(PluginToolLink.Server(path: path) { request in
-            guard request.chatId == "chat-1" else { return .init(tools: []) }
+            guard request.chatId == "chat-1", request.token == "t0k3n" else { return .init(tools: []) }
             if request.op == "list" {
                 return .init(tools: [.object(["name": .string("echo_echo"), "description": .string("From the Echo plugin.")])])
             }
@@ -409,15 +428,17 @@ import Testing
                 done.resume(with: Result {
                     let process = Process()
                     process.executableURL = binary
-                    process.arguments = ["mcp", "--chat", "chat-1", "--plugins"]
+                    process.arguments = ["mcp", "--chat", "chat-1", "--plugins", "--token", "t0k3n"]
                     process.environment = environment
                     let stdout = Pipe(), stdin = Pipe()
                     process.standardOutput = stdout
                     process.standardInput = stdin
                     process.standardError = FileHandle.nullDevice
                     try process.run()
-                    stdin.fileHandleForWriting.write(Data(input.utf8))
-                    try stdin.fileHandleForWriting.close()
+                    // A command that already exited must fail this write, not kill the test run.
+                    _ = fcntl(stdin.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
+                    try? stdin.fileHandleForWriting.write(contentsOf: Data(input.utf8))
+                    try? stdin.fileHandleForWriting.close()
                     let data = stdout.fileHandleForReading.readDataToEndOfFile()
                     process.waitUntilExit()
                     return (process.terminationStatus, data)

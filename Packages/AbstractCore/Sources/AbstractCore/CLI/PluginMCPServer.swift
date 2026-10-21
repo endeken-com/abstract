@@ -123,11 +123,13 @@ public enum PluginToolLink {
         /// `list` or `call`.
         public var op: String
         public var chatId: String
+        /// The token the chat's agent was launched with.
+        public var token: String
         public var name: String?
         public var arguments: JSONValue?
 
-        public init(op: String, chatId: String, name: String? = nil, arguments: JSONValue? = nil) {
-            self.op = op; self.chatId = chatId; self.name = name; self.arguments = arguments
+        public init(op: String, chatId: String, token: String, name: String? = nil, arguments: JSONValue? = nil) {
+            self.op = op; self.chatId = chatId; self.token = token; self.name = name; self.arguments = arguments
         }
     }
 
@@ -210,19 +212,20 @@ public enum PluginToolLink {
 /// A chat's plugin tools, asked of the running app.
 public struct LinkedPluginTools: PluginToolSource {
     public let chatId: String
+    public let token: String
     public let path: String
 
-    public init(chatId: String, path: String = PluginToolLink.socketPath()) {
-        self.chatId = chatId; self.path = path
+    public init(chatId: String, token: String, path: String = PluginToolLink.socketPath()) {
+        self.chatId = chatId; self.token = token; self.path = path
     }
 
     public func list() async -> [JSONValue]? {
-        await PluginToolLink.send(.init(op: "list", chatId: chatId), path: path, timeout: 5)?.tools
+        await PluginToolLink.send(.init(op: "list", chatId: chatId, token: token), path: path, timeout: 5)?.tools
     }
 
     public func call(_ name: String, arguments: JSONValue) async -> (text: String, isError: Bool) {
         // Long enough for you to answer an Ask first card, then the script.
-        let reply = await PluginToolLink.send(.init(op: "call", chatId: chatId, name: name, arguments: arguments),
+        let reply = await PluginToolLink.send(.init(op: "call", chatId: chatId, token: token, name: name, arguments: arguments),
                                               path: path, timeout: PluginTools.askTimeout + PluginTools.timeout + 30)
         guard let reply else { return ("Abstract isn't open, so plugin tools can't run.", true) }
         return (reply.text ?? "", reply.isError ?? false)

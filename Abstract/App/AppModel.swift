@@ -314,6 +314,8 @@ final class AppModel {
     @ObservationIgnored var pluginBackground: PluginBackgroundHost?
     /// Where agents' plugin tool calls reach the app (ABS-97); see AppModel+PluginTools.
     @ObservationIgnored var pluginToolLink: PluginToolLink.Server?
+    /// Each chat's token for its plugin-tools server, made at its first launch.
+    @ObservationIgnored var pluginToolTokens: [String: String] = [:]
     /// Plugin tool calls waiting on an Ask first card, by request id.
     @ObservationIgnored private var pluginToolAsks: [String: CheckedContinuation<Bool, Never>] = [:]
     /// Automation chats whose run was already reported to plugins.
@@ -1022,6 +1024,7 @@ final class AppModel {
                                       agentDefaults: agentDefaults, modelCatalogs: modelCatalogs,
                                       codeHistory: historySettings(for: session))
         settings.pluginToolsCommand = pluginToolsCommand(for: session)
+        if settings.pluginToolsCommand != nil { settings.pluginToolsToken = pluginToolToken(session.id) }
         var spec = AgentLaunch.spec(for: session, provider: provider, prompt: prompt, resumeId: resumeId, images: images,
                                     settings: settings, home: executor.homeDirectory)
         let cwd = spec.cwd
@@ -1401,7 +1404,7 @@ final class AppModel {
     /// false when you decline, the card goes away with its turn, or
     /// nobody answers in time.
     func askPluginTool(_ sessionId: String, toolName: String, input: JSONValue) async -> Bool {
-        let requestId = "plugin-tool-\(UUID().uuidString)"
+        let requestId = PluginTools.askPrefix + UUID().uuidString
         let deadline = Date().addingTimeInterval(PluginTools.askTimeout)
         return await withCheckedContinuation { continuation in
             pluginToolAsks[requestId] = continuation
@@ -1755,7 +1758,8 @@ final class AppModel {
                                                            toolName: toolName, questions: []))
             notify(sessionId, .waitingInput, detail: "\(ProviderRegistry.name(session(sessionId)?.providerId ?? "")) wrote a plan for your approval")
         case let .permissionRequest(requestId, toolName, input):
-            if let rule = permissionRuleAnswer(sessionId, toolName: toolName, input: input) {
+            if let rule = permissionRuleAnswer(sessionId, toolName: toolName, input: input),
+               !PluginTools.isAsk(requestId) || PluginTools.ruleAnswersAsk(rule) {
                 recordRuleAnswer(rule, requestId: requestId, toolName: toolName, input: input, in: sessionId)
                 permissions[sessionId, default: []].append(PendingPermission(requestId: requestId, toolName: toolName, input: input))
                 answerPermission(sessionId, requestId: requestId, allow: rule.decision == .allow)
@@ -1768,8 +1772,10 @@ final class AppModel {
             }
             permissions[sessionId, default: []].append(PendingPermission(requestId: requestId, toolName: toolName, input: input))
             setStatus(sessionId, .waitingInput, detail: "\(toolName) needs approval")
-            pluginBackground?.deliver(.permissionRequested(chatId: sessionId, requestId: requestId, kind: "permission",
-                                                           toolName: toolName, questions: []))
+            if !PluginTools.isAsk(requestId) {
+                pluginBackground?.deliver(.permissionRequested(chatId: sessionId, requestId: requestId, kind: "permission",
+                                                               toolName: toolName, questions: []))
+            }
             notify(sessionId, .waitingInput, detail: "\(ProviderRegistry.name(session(sessionId)?.providerId ?? "")) wants to use \(toolName)")
         case let .text(.assistant, text, _, false):
             lastReplies[sessionId] = text
