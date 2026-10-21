@@ -142,7 +142,10 @@ final class PluginConnection {
     private func ask(_ action: PluginAction, id: String?) {
         let alert = NSAlert()
         alert.messageText = model.pluginActionDescription(action, pluginName: manifest.name)
-        var info = action.detail.map { String($0.prefix(600)) } ?? ""
+        // Sending Review shows what goes, comment by comment (ABS-112).
+        var info = action.sendsReview
+            ? model.reviewSendPreview(action.chatId ?? "", text: action.text)
+            : action.detail.map { String($0.prefix(600)) } ?? ""
         if !info.isEmpty { info += "\n\n" }
         info += "Always allow lets \(manifest.name) do this kind of thing without asking. You can change your mind in Settings → Plugins."
         alert.informativeText = info

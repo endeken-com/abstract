@@ -190,8 +190,9 @@ public struct PluginBridge: Sendable {
                 return refuse(id, "This plugin hasn't been granted adding comments to your chats' Review.")
             }
             guard let chatId = knownChat(payload) else { return refuse(id, "That chat isn't in the plugin's list.") }
-            guard let author = nonEmpty(payload?["author"]?.string), author.count <= 40 else {
-                return refuse(id, "Review comments need to say who wrote them.")
+            // Signed by an agent, never as you or as Abstract.
+            guard let author = payload?["author"]?.string, ProviderRegistry.all.contains(where: { $0.name == author }) else {
+                return refuse(id, "Review comments need the name of the agent that wrote them.")
             }
             let items = payload?["comments"]?.array ?? []
             guard !items.isEmpty, items.count <= Self.reviewCommentLimit else {
@@ -433,5 +434,18 @@ public struct PluginReviewComment: Sendable, Equatable {
               let text = value["text"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines),
               !text.isEmpty, text.count <= PluginBridge.reviewCommentTextLimit else { return nil }
         self.init(path: path, line: line, text: text)
+    }
+
+    /// A file's lines, quoted back with a comment, only when it really is a
+    /// file inside the worktree: a symlink out of it, a folder or a huge
+    /// file reads as nothing.
+    public static func lines(inWorktree root: String, path: String) -> [Substring] {
+        let base = URL(fileURLWithPath: root).resolvingSymlinksInPath().standardizedFileURL.path
+        let file = URL(fileURLWithPath: root).appendingPathComponent(path).resolvingSymlinksInPath().standardizedFileURL
+        guard file.path.hasPrefix(base.hasSuffix("/") ? base : base + "/"),
+              let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+              values.isRegularFile == true, (values.fileSize ?? .max) <= 2_000_000,
+              let text = try? String(contentsOf: file, encoding: .utf8) else { return [] }
+        return text.split(separator: "\n", omittingEmptySubsequences: false)
     }
 }

@@ -235,6 +235,8 @@ import Testing
         let bad = [
             #"{"chatId":"chat-9","author":"Codex","comments":[{"path":"a.swift","line":3,"text":"x"}]}"#,
             #"{"chatId":"chat-1","comments":[{"path":"a.swift","line":3,"text":"x"}]}"#,
+            #"{"chatId":"chat-1","author":"You","comments":[{"path":"a.swift","line":3,"text":"x"}]}"#,
+            #"{"chatId":"chat-1","author":"Abstract","comments":[{"path":"a.swift","line":3,"text":"x"}]}"#,
             #"{"chatId":"chat-1","author":"Codex","comments":[]}"#,
             #"{"chatId":"chat-1","author":"Codex","comments":[{"path":"../a.swift","line":3,"text":"x"}]}"#,
             #"{"chatId":"chat-1","author":"Codex","comments":[{"path":"/etc/hosts","line":3,"text":"x"}]}"#,
@@ -249,6 +251,22 @@ import Testing
         let flood = #"{"api":2,"type":"addReviewComments","id":"3","payload":{"chatId":"chat-1","author":"Codex","comments":["#
             + many.joined(separator: ",") + "]}}"
         guard case .refused = b.handle(flood, storage: storage) else { Issue.record("too many comments added"); return }
+    }
+
+    @Test func aCommentQuotesOnlyFilesInsideTheWorktree() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("abstract-review-lines-\(UUID().uuidString)")
+        let worktree = root.appendingPathComponent("worktree")
+        try fm.createDirectory(at: worktree.appendingPathComponent("src"), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+        try "one\ntwo\n".write(to: worktree.appendingPathComponent("src/a.swift"), atomically: true, encoding: .utf8)
+        try "secret\n".write(to: root.appendingPathComponent("outside.txt"), atomically: true, encoding: .utf8)
+        try fm.createSymbolicLink(at: worktree.appendingPathComponent("escape"), withDestinationURL: root.appendingPathComponent("outside.txt"))
+
+        #expect(PluginReviewComment.lines(inWorktree: worktree.path, path: "src/a.swift").prefix(2) == ["one", "two"])
+        #expect(PluginReviewComment.lines(inWorktree: worktree.path, path: "escape").isEmpty)
+        #expect(PluginReviewComment.lines(inWorktree: worktree.path, path: "src").isEmpty)
+        #expect(PluginReviewComment.lines(inWorktree: worktree.path, path: "missing.swift").isEmpty)
     }
 
     @Test func sendingReviewIsAMessageThatAsksFirst() {

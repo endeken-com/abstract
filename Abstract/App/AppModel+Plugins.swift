@@ -310,14 +310,25 @@ extension AppModel {
         for comment in comments {
             // The line's code, quoted back to the agent, when the file reads.
             if lines[comment.path] == nil, let root = s.worktreePath, !chatId.hasPrefix(RemoteService.mirrorPrefix) {
-                let text = (try? String(contentsOfFile: (root as NSString).appendingPathComponent(comment.path), encoding: .utf8)) ?? ""
-                lines[comment.path] = text.split(separator: "\n", omittingEmptySubsequences: false)
+                lines[comment.path] = PluginReviewComment.lines(inWorktree: root, path: comment.path)
             }
             let code = lines[comment.path].flatMap { comment.line <= $0.count ? String($0[comment.line - 1]) : nil } ?? ""
             addComment(chatId, on: LineRef(path: comment.path, line: comment.line, side: .new), code: code,
                        text: comment.text, source: "\(author)'s review", author: author)
         }
         return comments.count
+    }
+
+    /// What sending a chat's Review would send, for the ask: each comment,
+    /// who wrote it, and where.
+    func reviewSendPreview(_ chatId: String, text: String?) -> String {
+        let all = comments(chatId)
+        var lines = all.prefix(8).map { c in
+            "• \(c.author ?? "You") on \(c.ref.path):\(c.ref.line): \(c.text.prefix(120))"
+        }
+        if all.count > 8 { lines.append("and \(all.count - 8) more") }
+        if let text, !text.isEmpty { lines.insert(String(text.prefix(300)), at: 0) }
+        return lines.isEmpty ? "There are no comments in Review." : lines.joined(separator: "\n")
     }
 
     /// Run a plugin's Review command (ABS-112): its background script is
