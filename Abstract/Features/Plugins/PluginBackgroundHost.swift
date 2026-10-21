@@ -78,6 +78,12 @@ final class PluginBackgroundHost {
         return await runner.callTool(name, input: input, chatId: chatId)
     }
 
+    /// Asks a plugin's script how a link in a chat stands (ABS-126).
+    func lookUpLink(_ match: PluginLinks.Match) async -> PluginLinkLookup {
+        guard let runner = runners[match.pluginId] else { return .failed }
+        return await runner.lookUpLink(match)
+    }
+
     // MARK: Status and pull-request changes
 
     /// Follows the same facts a plugin's screen redraws on, and turns the
@@ -128,6 +134,8 @@ final class PluginBackgroundRunner: NSObject, WKScriptMessageHandler, WKNavigati
     private var stopped = false
     /// Agents' tool calls the script hasn't answered yet (ABS-97).
     private let toolCalls: PluginToolCalls
+    /// Link lookups the script hasn't answered yet (ABS-126).
+    private let linkLookups = PluginLinkLookups()
 
     init(model: AppModel, plugin: InstalledPlugin, manifest: PluginManifest, onStopped: @escaping (String) -> Void) {
         self.model = model
@@ -180,6 +188,7 @@ final class PluginBackgroundRunner: NSObject, WKScriptMessageHandler, WKNavigati
         stopped = true
         connection.tearDown()
         Task { [toolCalls, name = manifest.name] in await toolCalls.failAll("\(name) stopped before its tool answered.") }
+        Task { [linkLookups] in await linkLookups.failAll() }
         ticker?.cancel()
         ticker = nil
         guard let webView else { return }
@@ -230,8 +239,26 @@ final class PluginBackgroundRunner: NSObject, WKScriptMessageHandler, WKNavigati
         }
     }
 
+    /// Only a link one of its decorators names, cut the way its pattern
+    /// cuts it, goes to the script: nothing else from the chat does.
+    func lookUpLink(_ match: PluginLinks.Match) async -> PluginLinkLookup {
+        let decorators = PluginContributions.resolve([plugin], place: .link)
+        guard let url = URL(string: match.url), PluginLinks.match(url, decorators: decorators) == match else { return .failed }
+        return await linkLookups.lookUp { [weak self] callId in
+            await MainActor.run {
+                guard let self, self.connection.ready, !self.stopped else { return false }
+                self.connection.send(type: "link", payload: .object([
+                    "callId": .string(callId), "contributionId": .string(match.contributionId), "url": .string(match.url),
+                ]))
+                return true
+            }
+        }
+    }
+
     private func handle(_ outcome: PluginBridge.Outcome) {
         switch outcome {
+        case .linkResult(let callId, let lookup):
+            Task { [linkLookups] in await linkLookups.finish(callId, lookup) }
         case .toolResult(let callId, let result):
             Task { [toolCalls] in await toolCalls.finish(callId, result) }
         case .subscribe(let id, let types):

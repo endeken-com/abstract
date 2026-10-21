@@ -173,6 +173,41 @@ Tabs beside a chat, from the side panel's + menu: **Follow PR** (Following and H
 ![Lessons](images/plugins/panel-lessons.png)
 ![Chat panel](images/plugins/panel-chat-panel.png)
 
+## Statuses after links
+
+A plugin can put a short status after links in chats (ABS-126). It lists
+`linkDecorators` in `contributes`, each with the links it knows as `patterns`, and
+needs a background script to answer:
+
+```json
+"linkDecorators": [
+  { "id": "github", "title": "GitHub", "patterns": ["https://github.com/*/*/pull/*"] }
+]
+```
+
+A pattern is `https://`, an exact host, then path segments, where `*` is any one
+segment. A link matches when its path starts with those segments. The script is handed
+the link alone, cut to the pattern's segments, with no query or fragment, and never the
+chat or the message. The review screen names the sites the patterns cover.
+
+```js
+AbstractPlugin.links.decorate("github", async (url) => ({ label: "Merged", tone: "merged" }));
+```
+
+Return `{ label, tone }` or `null` for nothing to show. The label is one line of up to
+40 characters; the tone is `open`, `draft`, `merged`, `closed`, `failing` or `neutral`,
+and Abstract picks the colour. A link is asked about once its message has finished
+arriving and while it's on screen, and again when its status is more than four and a
+half minutes old, so a change shows within five minutes. A failed lookup keeps the last
+status. Clicking the status opens the link.
+
+**Link status**, bundled, does this for GitHub pull requests (open, draft, merged or
+closed, with checks) and issues, and Linear issues (state and assignee). Private
+repositories need a GitHub token and Linear needs a Linear API key, entered under
+Settings › Plugins.
+
+![Link status](images/plugins/link-status.png)
+
 ## Previewing a plugin
 
 `python3 docs/plugin-kit/preview.py` serves the bundled plugins, the kit and a stand-in

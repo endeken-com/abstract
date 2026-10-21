@@ -138,7 +138,7 @@ final class PluginConnection {
                  payload: .object(["message": .string("It acted too many times in a minute, so Abstract paused it.")]))
             model.plugins.noteError(plugin.id, "It acted too many times in a minute, so it was paused. Turn it on again here when you're ready.")
             model.setPluginEnabled(plugin.id, false)
-        case .subscribe, .scheduleJob, .cancelJob, .jobDone, .toolResult:
+        case .subscribe, .scheduleJob, .cancelJob, .jobDone, .toolResult, .linkResult:
             onBackground(outcome)
         case .refused(let id, let reason):
             model.plugins.noteError(plugin.id, reason)
@@ -288,6 +288,7 @@ enum PluginShim {
       const listeners = new Map();
       const jobs = new Map();
       const toolHandlers = new Map();
+      const linkHandlers = new Map();
       let next = 1;
       const post = (message) => window.webkit.messageHandlers.abstractPlugin.postMessage(JSON.stringify(message));
       const api = {
@@ -317,6 +318,11 @@ enum PluginShim {
           // Answers agents' calls to a tool its manifest lists (ABS-97):
           // fn(input, { chatId }) returns text or JSON, or throws.
           handle(name, fn) { toolHandlers.set(name, fn); }
+        },
+        links: {
+          // Says how a link stands (ABS-126), for the link decorator its
+          // manifest lists: fn(url) returns { label, tone }, or null.
+          decorate(id, fn) { linkHandlers.set(id, fn); }
         },
         jobs: {
           schedule(id, rrule, fn, timezone) {
@@ -369,6 +375,19 @@ enum PluginShim {
               }
               done({ result: value });
             }, (error) => done({ error: String((error && error.message) || error) }));
+          return;
+        }
+        if (message.type === "link") {
+          const lookup = message.payload || {};
+          const done = (body) => {
+            try { post({ api: \(api), type: "links.result", payload: Object.assign({ callId: lookup.callId }, body) }); } catch {}
+          };
+          const fn = linkHandlers.get(lookup.contributionId);
+          if (!fn) { done({ status: null }); return; }
+          Promise.resolve()
+            .then(() => fn(lookup.url))
+            .then((status) => done({ status: status || null }),
+                  (error) => done({ error: String((error && error.message) || error) }));
           return;
         }
         for (const fn of listeners.get(message.type) || []) {

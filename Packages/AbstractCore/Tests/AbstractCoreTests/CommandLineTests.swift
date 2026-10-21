@@ -154,7 +154,10 @@ private final class Sandbox {
         process.standardInput = input
         process.standardError = FileHandle.nullDevice
         try process.run()
-        if let stdin { input.fileHandleForWriting.write(Data(stdin.utf8)) }
+        // A command that exits before reading would otherwise end the whole
+        // test run with SIGPIPE; this way only its own test fails.
+        _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
+        if let stdin { try? input.fileHandleForWriting.write(contentsOf: Data(stdin.utf8)) }
         try input.fileHandleForWriting.close()
         let data = out.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()

@@ -93,6 +93,9 @@ public struct PluginBridge: Sendable {
         /// The script's answer to an agent's tool call (ABS-97): text or
         /// JSON, or why it failed.
         case toolResult(callId: String, PluginToolOutcome)
+        /// The script's answer to a link lookup (ABS-126): a status to
+        /// show after the link, nothing, or why it couldn't say.
+        case linkResult(callId: String, PluginLinkLookup)
         case refused(id: String?, reason: String)
         /// The plugin flooded the bridge; the host tears its view down.
         case flooded
@@ -264,6 +267,20 @@ public struct PluginBridge: Sendable {
                 return .toolResult(callId: callId, .failed(String(text.prefix(2_000))))
             }
             return .toolResult(callId: callId, .result(PluginTools.resultText(payload?["result"] ?? .null)))
+        case "links.result":
+            guard isBackground else {
+                return refuse(id, "Only a plugin's background script can answer a link lookup.")
+            }
+            guard let callId = nonEmpty(payload?["callId"]?.string) else {
+                return refuse(id, "A link status needs the lookup it answers.")
+            }
+            if let error = payload?["error"], error != .null { return .linkResult(callId: callId, .failed) }
+            guard let status = payload?["status"], status != .null else { return .linkResult(callId: callId, .status(nil)) }
+            guard let parsed = PluginLinkStatus(status) else {
+                _ = refuse(id, "A link status is a label of up to \(PluginLinkStatus.labelLimit) characters and a known tone.")
+                return .linkResult(callId: callId, .failed)
+            }
+            return .linkResult(callId: callId, .status(parsed))
         case "__error":
             return refuse(id, "The plugin reported an error.")
         default:

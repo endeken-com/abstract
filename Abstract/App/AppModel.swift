@@ -69,6 +69,8 @@ final class AppModel {
     let turnRecorder: TurnRecorder
     /// Installed plugins and their host state; see Features/Plugins.
     let plugins: PluginService
+    /// How links in chats stand, from plugins' link decorators (ABS-126).
+    let pluginLinks = PluginLinkStatuses()
 
     // Data
     var projects: [Project] = []
@@ -387,8 +389,12 @@ final class AppModel {
         scheduler = AutomationScheduler(model: self)
         scheduler?.start()
         pluginBackground = PluginBackgroundHost(model: self)
+        pluginLinks.lookUp = { [weak self] match in
+            await self?.pluginBackground?.lookUpLink(match) ?? .failed
+        }
         plugins.onChange = { [weak self] in
             self?.pluginBackground?.reconcile()
+            if let self { pluginLinks.keep(pluginIds: Set(plugins.usable.map(\.id))) }
             if let self { PluginToolLabels.shared.update(PluginTools.all(pluginToolOffers(), project: nil)) }
         }
         pluginBackground?.reconcile()

@@ -1,0 +1,21 @@
+{
+  "api": 2,
+  "id": "sh.abstract.link-status",
+  "name": "Link status",
+  "version": "1.0.0",
+  "description": "GitHub pull requests and issues and Linear issues linked in a chat show how they stand after the link: open, draft, merged or closed, with checks, and a Linear issue's state and assignee. They refresh every five minutes while you can see them. Private repositories need a GitHub token, and Linear needs your Linear API key, both entered here in Settings.",
+  "entry": "index.html",
+  "capabilities": ["network", "secrets"],
+  "network": { "hosts": ["api.github.com", "api.linear.app"] },
+  "secrets": [
+    { "name": "github-token", "title": "GitHub token" },
+    { "name": "linear-api-key", "title": "Linear API key" }
+  ],
+  "background": "background.js",
+  "contributes": {
+    "linkDecorators": [
+      { "id": "github", "title": "GitHub", "patterns": ["https://github.com/*/*/pull/*", "https://github.com/*/*/issues/*"] },
+      { "id": "linear", "title": "Linear", "patterns": ["https://linear.app/*/issue/*"] }
+    ]
+  }
+}

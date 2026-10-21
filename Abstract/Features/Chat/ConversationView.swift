@@ -315,6 +315,7 @@ private struct HandoffRow: View {
 }
 
 private struct UserBubble: View {
+    @Environment(AppModel.self) private var model
     @Environment(\.proseStyle) private var prose
     @Environment(\.transcriptExpansion) private var expansion
     @Environment(\.transcriptRow) private var row
@@ -353,7 +354,10 @@ private struct UserBubble: View {
             Spacer(minLength: 80)
             VStack(alignment: .leading, spacing: prose.lineSpacing - 1) {
                 if shownText.count <= 24_000 {
-                    AgentProse(markdown: long && !open ? MarkdownHealing.heal(shownText) : shownText, findField: "user")
+                    let links = model.linkPills(in: shownText)
+                    AgentProse(markdown: long && !open ? MarkdownHealing.heal(shownText) : shownText, findField: "user",
+                               links: links.pills)
+                        .task(id: links.matches) { await model.pluginLinks.follow(links.matches) }
                 } else {
                     SelectableLines(shown.map { TextClip.line($0, max: 4_000) }, spacing: prose.lineSpacing - 1)
                         .font(prose.font(size: prose.points - 1))
@@ -393,6 +397,11 @@ private struct UserBubble: View {
     }
 }
 
+private struct ProseParseKey: Hashable {
+    let marks: FindMarkKey?
+    let links: LinkPills?
+}
+
 /// Markdown at a size meant for reading, with selectable text and quiet code blocks.
 struct AgentProse: View {
     @Environment(\.proseStyle) private var prose
@@ -403,6 +412,8 @@ struct AgentProse: View {
     var streaming: Bool?
     /// Which of the row's texts this is, for ⌘F to mark its matches.
     var findField: String?
+    /// Statuses to show after its links (ABS-126), once it has stopped streaming.
+    var links: LinkPills?
     @State private var fade = StreamFade()
     @State private var tick = 0.0
 
@@ -420,8 +431,10 @@ struct AgentProse: View {
         }
     }
 
-    /// The parser, marking what ⌘F is finding when this text is one it looks through.
+    /// The parser, marking what ⌘F is finding when this text is one it
+    /// looks through, with its links' statuses after them.
     private func marking(_ parser: any MarkupParser) -> any MarkupParser {
+        let parser = links.map { LinkPillParser(base: parser, pills: $0) } ?? parser
         guard let findField, let find else { return parser }
         return FindMarkParser(base: parser, query: find.query, current: find.current(in: findField))
     }
@@ -431,9 +444,15 @@ struct AgentProse: View {
         return FindMarkKey(query: find.query, current: find.current(in: findField))
     }
 
+    /// What the parse depends on besides the text: ⌘F's marks and the links' statuses.
+    private var parseKey: AnyHashable? {
+        guard marks != nil || links != nil else { return nil }
+        return AnyHashable(ProseParseKey(marks: marks, links: links))
+    }
+
     private func styled(_ text: StructuredText) -> some View {
         text
-            .parsing(key: marks)
+            .parsing(key: parseKey)
             .font(prose.body)
             .foregroundStyle(Color.btProse)
             .textual.structuredTextStyle(.gitHub)
