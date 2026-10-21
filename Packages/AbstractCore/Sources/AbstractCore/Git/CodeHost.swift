@@ -208,8 +208,9 @@ public struct CodeHost: Sendable {
     }
 
     /// Recent pull requests, newest first; `state` is `all` or `open`.
-    public func pullRequests(state: String = "all", limit: Int = 100) async throws -> [PullRequest] {
-        let out = try await ask(.listPullRequests, ["state": .string(state), "limit": .number(Double(limit))])
+    public func pullRequests(state: String = "all", limit: Int = 100, branches: [String] = []) async throws -> [PullRequest] {
+        let out = try await ask(.listPullRequests, ["state": .string(state), "limit": .number(Double(limit)),
+                                                    "branches": .array(branches.map(JSONValue.string))])
         guard let list = out["pullRequests"]?.array else { throw CodeHostError.malformed(.listPullRequests) }
         return list.compactMap(PullRequest.init(contract:))
     }
@@ -315,6 +316,7 @@ public extension PullRequest {
             "mergeable": string(mergeable), "mergeState": string(mergeState),
             "additions": optionalNumber(additions), "deletions": optionalNumber(deletions), "changedFiles": optionalNumber(changedFiles),
             "createdAt": iso(createdAt), "updatedAt": iso(updatedAt), "body": string(body), "mergeCommit": string(mergeCommit),
+            "hostTitle": .string(hostTitle), "mergeMethods": .array(mergeMethods.map { .string($0.rawValue) }),
             "checks": .array(checks.map { check in
                 .object(["name": .string(check.name), "workflow": string(check.workflow),
                          "outcome": .string(Check.Outcome.words[check.outcome] ?? "pending"), "url": link(check.url)])
@@ -360,6 +362,10 @@ public extension PullRequest {
                               association: c["association"]?.string)
                   },
                   threads: (json["threads"]?.array ?? []).compactMap(ReviewThread.init(contract:)))
+        hostTitle = json["hostTitle"]?.string ?? "GitHub"
+        if let methods = json["mergeMethods"]?.array {
+            mergeMethods = methods.compactMap { $0.string.flatMap(MergeMethod.init(rawValue:)) }
+        }
     }
 }
 

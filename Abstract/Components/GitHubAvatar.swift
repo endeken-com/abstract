@@ -1,13 +1,14 @@
 import SwiftUI
 import AppKit
 
-/// A GitHub account's picture, round, loaded once per account and kept for
-/// the session. Until it arrives (or if it can't), the login's initial.
+/// A code host account's picture, round, loaded once per account and kept
+/// for the session. Until it arrives (or if it can't), the login's initial.
 struct GitHubAvatar: View {
     let login: String
-    /// The account's own avatar URL, when GitHub gave one; else its `.png` URL.
+    /// The account's own avatar URL, when the host gave one.
     var url: URL? = nil
     var size: CGFloat = 20
+    var hostTitle: String = "GitHub"
     @State private var image: NSImage?
 
     var body: some View {
@@ -25,7 +26,9 @@ struct GitHubAvatar: View {
         .clipShape(Circle())
         .overlay(Circle().strokeBorder(Color.btBorder, lineWidth: 0.5))
         .help(login)
-        .task(id: login) { image = await AvatarStore.shared.image(login: login, url: url, pixels: Int(size * 2)) }
+        .task(id: "\(hostTitle):\(login):\(url?.absoluteString ?? "")") {
+            image = await AvatarStore.shared.image(login: login, url: url, pixels: Int(size * 2), hostTitle: hostTitle)
+        }
     }
 }
 
@@ -35,21 +38,23 @@ final class AvatarStore {
     private var images: [String: NSImage] = [:]
     private var loading: [String: Task<NSImage?, Never>] = [:]
 
-    func image(login: String, url: URL?, pixels: Int) async -> NSImage? {
+    func image(login: String, url: URL?, pixels: Int, hostTitle: String = "GitHub") async -> NSImage? {
         // Demo accounts are made up; their names may belong to real people.
         if DemoBootstrap.current != nil { return nil }
-        if let image = images[login] { return image }
-        if let task = loading[login] { return await task.value }
-        guard let source = url.map({ Self.sized($0, pixels) }) ?? URL(string: "https://github.com/\(login).png?size=\(pixels)") else { return nil }
+        let key = "\(hostTitle):\(login):\(url?.absoluteString ?? "")"
+        if let image = images[key] { return image }
+        if let task = loading[key] { return await task.value }
+        guard let source = url.map({ hostTitle == "GitHub" ? Self.sized($0, pixels) : $0 })
+            ?? (hostTitle == "GitHub" ? URL(string: "https://github.com/\(login).png?size=\(pixels)") : nil) else { return nil }
         let task = Task { () -> NSImage? in
             guard let (data, response) = try? await URLSession.shared.data(from: source),
                   (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
             return NSImage(data: data)
         }
-        loading[login] = task
+        loading[key] = task
         let image = await task.value
-        loading[login] = nil
-        if let image { images[login] = image }
+        loading[key] = nil
+        if let image { images[key] = image }
         return image
     }
 

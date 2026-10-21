@@ -25,8 +25,9 @@ extension AppModel {
     /// Re-reads every project's recent pull requests from its code host and matches them to chats by branch.
     func refreshPullRequests(projectId: String? = nil) async {
         for project in projects where project.archivedAt == nil && (projectId == nil || project.id == projectId) {
+            let branches = sessions.filter { $0.projectId == project.id }.compactMap(\.branch)
             guard let host = await codeHost(for: project), await !codeHostAccess(host).blocks,
-                  let list = try? await host.pullRequests() else { continue }
+                  let list = try? await host.pullRequests(branches: branches) else { continue }
             projectPullRequests[project.id] = list
             pullRequestsListedAt[project.id] = .now
             for session in sessions where session.projectId == project.id {
@@ -180,6 +181,7 @@ extension AppModel {
     /// about, so its commands run in that chat's worktree, on its Mac.
     func codeHost(for project: Project, chatId: String? = nil) async -> CodeHost? {
         let origin = await origin(of: project)
+        if let origin { plugins.enableBitbucketForRemote(origin) }
         return codeHost(remote: origin, context: CodeHostContext(projectKey: pluginProjectKey(project.id), chatId: chatId))
     }
 

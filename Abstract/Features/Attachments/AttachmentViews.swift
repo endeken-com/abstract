@@ -166,6 +166,7 @@ struct AttachmentButtons: View {
     @Binding var attachments: [PromptAttachment]
     var size: CGFloat = 26
     @State private var picking: AttachSource?
+    @State private var supportsGitHubIssues = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -176,13 +177,25 @@ struct AttachmentButtons: View {
                 }
             }
             if repoRoot != nil {
-                button(.githubIssue, help: "Link a GitHub issue") {
-                    Image(nsImage: BrandGlyph.issue).renderingMode(.template).resizable().frame(width: 13, height: 13)
+                if supportsGitHubIssues {
+                    button(.githubIssue, help: "Link a GitHub issue") {
+                        Image(nsImage: BrandGlyph.issue).renderingMode(.template).resizable().frame(width: 13, height: 13)
+                    }
                 }
                 button(.pullRequest, help: "Link a pull request") {
                     PullRequestGlyph(kind: .open).frame(width: 13, height: 13)
                 }
             }
+        }
+        .task(id: repoRoot) {
+            guard repoRoot != nil,
+                  let project = model.project(projectId ?? model.session(sessionId)?.projectId) else {
+                supportsGitHubIssues = false
+                return
+            }
+            let origin = await model.origin(of: project)
+            supportsGitHubIssues = origin.flatMap(GitRemote.host) == "github.com"
+                || model.codeHost(remote: origin, context: CodeHostContext())?.pluginId == "sh.abstract.github"
         }
     }
 
@@ -442,10 +455,12 @@ private struct AttachPicker: View {
                 }
                 let found = try await host.search(query, pullRequests: source == .pullRequest)
                 items = found.map {
-                    Item(id: $0.id, reference: "#\($0.number)", title: $0.title,
+                    var attachment = $0.attachment
+                    if source == .pullRequest { attachment.trackerName = host.title }
+                    return Item(id: $0.id, reference: "#\($0.number)", title: $0.title,
                          state: $0.isDraft ? "Draft" : $0.state.capitalized,
                          stateTint: source == .pullRequest ? prStateTint($0.state, isDraft: $0.isDraft) : nil,
-                         attachment: $0.attachment)
+                         attachment: attachment)
                 }
             }
             problem = nil

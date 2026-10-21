@@ -147,7 +147,7 @@ private struct PullRequestRow: View {
                             Image(systemName: "text.bubble").help("Opened from \(chat.name)")
                             if chat.name != pr.title { Text(chat.name).lineLimit(1) }
                         } else if let author = pr.author {
-                            GitHubAvatar(login: author, size: 14)
+                            GitHubAvatar(login: author, size: 14, hostTitle: pr.hostTitle)
                             Text(author)
                         }
                         Text(pr.head).font(.btMonoSmall).lineLimit(1).truncationMode(.middle)
@@ -171,10 +171,10 @@ private struct PullRequestRow: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .help(chat == nil ? "Open on GitHub" : "Open in \(chat!.name)")
+        .help(chat == nil ? "Open on \(pr.hostTitle)" : "Open in \(chat!.name)")
         .contextMenu {
             if let url = pr.url {
-                Button("Open on GitHub") { NSWorkspace.shared.open(url) }
+                Button("Open on \(pr.hostTitle)") { NSWorkspace.shared.open(url) }
                 Button("Copy Link") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(url.absoluteString, forType: .string)

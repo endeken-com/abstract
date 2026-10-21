@@ -1,0 +1,34 @@
+{
+  "api": 2,
+  "id": "sh.abstract.bitbucket",
+  "name": "Bitbucket",
+  "version": "1.0.0",
+  "description": "Pull requests, approvals, builds and merging for Bitbucket Cloud and Data Center. Uses your bkt sign-in and keeps no token of its own.",
+  "entry": "index.html",
+  "capabilities": ["cli"],
+  "cli": {
+    "binary": "bkt",
+    "install": "brew install bitbucket-cli",
+    "commands": [
+      { "args": ["auth", "status"], "access": "read" },
+      { "args": ["pr", "list"], "access": "read" },
+      { "args": ["pr", "view"], "access": "read" },
+      { "args": ["pr", "checks"], "access": "read" },
+      { "args": ["pr", "comments"], "access": "read" },
+      { "args": ["pr", "create"], "access": "write" },
+      { "args": ["pr", "merge"], "access": "write" },
+      { "args": ["pr", "publish"], "access": "write" },
+      { "args": ["pr", "decline"], "access": "write" }
+    ]
+  },
+  "background": "background.js",
+  "contributes": {
+    "settingsPage": { "id": "settings", "title": "Bitbucket", "symbol": "arrow.triangle.pull" },
+    "codeHost": {
+      "title": "Bitbucket",
+      "hosts": ["bitbucket.org"],
+      "operations": ["access", "listPullRequests", "pullRequest", "create", "merge", "markReady", "close",
+                     "reviewThreads", "searchIssuesAndPullRequests"]
+    }
+  }
+}
