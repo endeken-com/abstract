@@ -64,13 +64,6 @@ public struct ProjectToolServer: Sendable, Hashable, Identifiable, Codable {
             self.name = name; self.detail = detail; self.readOnly = readOnly
         }
 
-        /// A name as MCP allows it: letters, digits, `_`, `-` and `.`, at
-        /// most 128. Anything else is never passed on: a name with a comma
-        /// would widen Claude's `--allowedTools` to another tool.
-        public static func isValidName(_ name: String) -> Bool {
-            !name.isEmpty && name.count <= 128
-                && name.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_" || $0 == "-" || $0 == ".") }
-        }
     }
 
     /// A tool's access: what was chosen, else Allowed for a tool that only
@@ -84,7 +77,7 @@ public struct ProjectToolServer: Sendable, Hashable, Identifiable, Codable {
     public func launch(for provider: any ProviderDefinition) -> MCPServerLaunch? {
         guard agents.contains(provider.id), provider.toolServerSupport != .none else { return nil }
         var launch = MCPServerLaunch(name: name, connection: connection, notes: notes)
-        for tool in tools where Tool.isValidName(tool.name) {
+        for tool in tools {
             switch access(tool) {
             case .allowed: launch.allowed.append(tool.name)
             case .askFirst: launch.askFirst.append(tool.name)

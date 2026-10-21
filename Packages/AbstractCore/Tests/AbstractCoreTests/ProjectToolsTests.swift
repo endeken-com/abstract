@@ -44,18 +44,20 @@ import Testing
         #expect(launch.withheld == ["delete_issue", "create_issue"])
     }
 
-    @Test func aToolNameThatCouldWidenARuleIsDropped() throws {
+    @Test func anOddToolNameStaysOneRuleForThatTool() throws {
         let listed = MCPToolList.tools(in: .object(["tools": .array([
             .object(["name": .string("list_issues")]), .object(["name": .string("x,Bash")]),
-            .object(["name": .string("a b")]), .object(["name": .string("issues.get")]),
         ])]))
-        #expect(listed.tools.map(\.name) == ["list_issues", "issues.get"])
+        #expect(listed.tools.map(\.name) == ["list_issues", "x,Bash"])
         var server = Self.linear()
         server.tools.append(.init(name: "y,Bash", readOnly: true))
-        let launch = try Self.launch(server, ClaudeProvider())
-        #expect(launch.allowed == ["list_issues"])
-        let args = ClaudeProvider().buildLaunch(Self.context([launch])).args
-        #expect(!args.contains { $0.contains("Bash") })
+        server.tools.append(.init(name: "z,Read"))
+        server.access["z,Read"] = .off
+        let args = ClaudeProvider().buildLaunch(Self.context([try Self.launch(server, ClaudeProvider())])).args
+        let allowed = try #require(Self.value(after: "--allowedTools", in: args)).split(separator: ",")
+        #expect(allowed == ["mcp__linear__list_issues", "mcp__linear__y_Bash"])
+        let off = try #require(Self.value(after: "--disallowedTools", in: args)).split(separator: ",")
+        #expect(off == ["mcp__linear__delete_issue", "mcp__linear__z_Read"])
     }
 
     @Test func onlyTheChosenAgentsThatCanTakeItGetTheServer() {

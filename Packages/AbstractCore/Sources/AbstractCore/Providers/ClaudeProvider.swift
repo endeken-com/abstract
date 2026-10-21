@@ -196,8 +196,14 @@ public struct ClaudeProvider: ProviderDefinition {
         return args
     }
 
-    /// How Claude names an MCP tool in rules and in its stream.
-    static func toolName(_ server: String, _ tool: String) -> String { "mcp__\(server)__\(tool)" }
+    /// How Claude names an MCP tool in rules and in its stream: anything
+    /// but letters, digits, `_` and `-` becomes `_`, as Claude does it. A
+    /// server's odd tool name (`x,Bash`) so stays one rule for that tool and
+    /// can't widen `--allowedTools` to another.
+    static func toolName(_ server: String, _ tool: String) -> String {
+        let clean = { (s: String) in String(s.map { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_" || $0 == "-") ? $0 : "_" }) }
+        return "mcp__\(clean(server))__\(clean(tool))"
+    }
 
     /// Everything appended to Claude's system prompt, as one argument:
     /// the profile's instructions (ABS-101) first, then how to use the

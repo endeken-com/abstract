@@ -56,7 +56,7 @@ public enum MCPToolList {
     /// The tools of one `tools/list` result, and the cursor of the next page.
     static func tools(in result: JSONValue) -> (tools: [ProjectToolServer.Tool], next: String?) {
         let tools = (result["tools"]?.array ?? []).compactMap { tool -> ProjectToolServer.Tool? in
-            guard let name = tool["name"]?.string, ProjectToolServer.Tool.isValidName(name) else { return nil }
+            guard let name = tool["name"]?.string, !name.isEmpty else { return nil }
             let detail = tool["description"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines)
             return ProjectToolServer.Tool(name: name, detail: detail?.isEmpty == false ? detail : nil,
                                           readOnly: tool["annotations"]?["readOnlyHint"]?.bool ?? false)
