@@ -198,6 +198,8 @@ final class AgentHost: @unchecked Sendable {
             settings.codeHistory = CodeHistorySettings(
                 command: executable, instructionFile: CodeHistorySettings.instructionFile(in: directory))
         }
+        // The project's MCP servers (ABS-123), as the app gives them.
+        settings.toolServers = (try? session.projectId.map { try store.toolServers(projectId: $0) }) ?? []
         let spec = AgentLaunch.spec(for: session, provider: provider, prompt: request.prompt, resumeId: nil,
                                     settings: settings, home: executor.homeDirectory)
         do {

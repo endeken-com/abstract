@@ -156,6 +156,8 @@ final class AppModel {
     var autoContinueTools: [String: Set<String>] = [:]
     /// Remembered permission answers, by project id; see AppModel+Permissions.
     var permissionRules: [String: [PermissionRule]] = [:]
+    /// Each project's MCP servers, by project id; see AppModel+ToolServers.
+    var toolServers: [String: [ProjectToolServer]] = [:]
     /// Requests a rule answered, by chat: the note for a tool row, by the
     /// call's id (or the request's, when the call has no row of its own).
     var ruleNotes: [String: [String: String]] = [:]
@@ -401,6 +403,7 @@ final class AppModel {
         automations = (try? store.automations()) ?? []
         profiles = (try? store.profiles()) ?? []
         permissionRules = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, (try? store.permissionRules(projectId: $0.id)) ?? []) })
+        toolServers = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, (try? store.toolServers(projectId: $0.id)) ?? []) })
         alive = engine.aliveSessionIds
     }
 
@@ -1012,7 +1015,8 @@ final class AppModel {
         let settings = LaunchSettings(providerOverrides: providerOverrides, outputStyle: outputStyle, claudeProfile: claudeProfile,
                                       standardClaudeProfile: accounts.standardProfilePath, attachmentsDirectory: AttachmentStore.root.path,
                                       agentDefaults: agentDefaults, modelCatalogs: modelCatalogs,
-                                      codeHistory: historySettings(for: session))
+                                      codeHistory: historySettings(for: session),
+                                      toolServers: toolServers(for: session.projectId), agentConfigRoot: Self.agentConfigRoot)
         var spec = AgentLaunch.spec(for: session, provider: provider, prompt: prompt, resumeId: resumeId, images: images,
                                     settings: settings, home: executor.homeDirectory)
         let cwd = spec.cwd
@@ -1564,6 +1568,7 @@ final class AppModel {
             do { try executor.removeItem(path) } catch { flash("Folder not removed: \(error.localizedDescription)", isError: true) }
         }
         engine.deleteLog(sessionId: sessionId)
+        ChatConfigFiles.remove(root: Self.agentConfigRoot, chatId: sessionId)
         discardLayout(sessionId)
         mainTabs.removeSession(sessionId)
         try? store.deleteSession(sessionId)
