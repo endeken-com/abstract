@@ -323,11 +323,17 @@ extension AppModel {
     /// who wrote it, and where.
     func reviewSendPreview(_ chatId: String, text: String?) -> String {
         let all = comments(chatId)
+        // One line per comment, whatever it holds, so none can pass for
+        // another; a plugin's comments say so.
+        func flat(_ text: String, _ limit: Int) -> String {
+            let line = String(text.unicodeScalars.map { CharacterSet.controlCharacters.contains($0) ? " " : Character($0) })
+            return line.count > limit ? line.prefix(limit) + "… (\(line.count - limit) more characters)" : line
+        }
         var lines = all.prefix(8).map { c in
-            "• \(c.author ?? "You") on \(c.ref.path):\(c.ref.line): \(c.text.prefix(120))"
+            "• \(c.author.map { "\(flat($0, 40)), added by a plugin" } ?? "You") on \(flat(c.ref.path, 80)):\(c.ref.line): \(flat(c.text, 120))"
         }
         if all.count > 8 { lines.append("and \(all.count - 8) more") }
-        if let text, !text.isEmpty { lines.insert(String(text.prefix(300)), at: 0) }
+        if let text, !text.isEmpty { lines.insert(flat(text, 300), at: 0) }
         return lines.isEmpty ? "There are no comments in Review." : lines.joined(separator: "\n")
     }
 
