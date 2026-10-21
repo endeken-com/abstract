@@ -396,6 +396,7 @@ private struct PullRequestDetail: View {
             if let standing = pr.standing {
                 Text(standing).font(.btCallout).foregroundStyle(pr.checksSummary.failed > 0 ? Color.btRemoved : Color.btTextSecondary)
             }
+            if pr.state == .open { PluginPullRequestSwitches(sessionId: session.id) }
         }
     }
 

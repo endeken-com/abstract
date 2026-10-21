@@ -31,7 +31,8 @@ public enum PluginEvent: Sendable, Equatable {
     case turnFinished(chatId: String, outcome: String, endedAt: Date)
     /// `kind` is `permission`, `question` or `plan`.
     case permissionRequested(chatId: String, requestId: String, kind: String, toolName: String, questions: [String])
-    /// `changes` names what moved: `opened`, `state`, `checks`, `review`.
+    /// `changes` names what moved: `opened`, `state`, `checks`, `review`,
+    /// `comments`.
     case pullRequestUpdated(chatId: String, pullRequest: PluginSnapshot.PullRequest, changes: [String])
     /// `outcome` is `done`, `stopped` or `failed`; `chatId` is the run's chat.
     case automationRunFinished(automationId: String, outcome: String, at: Date, chatId: String?)
@@ -119,8 +120,9 @@ public struct PluginEventDetector: Sendable {
                     changes = ["opened"]
                 } else if let old = before.pullRequest {
                     if old.state != pr.state || old.isDraft != pr.isDraft { changes.append("state") }
-                    if old.checks != pr.checks { changes.append("checks") }
+                    if old.checks != pr.checks || old.failedChecks != pr.failedChecks { changes.append("checks") }
                     if old.changesRequested != pr.changesRequested { changes.append("review") }
+                    if old.comments != pr.comments { changes.append("comments") }
                 }
                 events.append(.pullRequestUpdated(chatId: chat.id, pullRequest: pr, changes: changes))
             }

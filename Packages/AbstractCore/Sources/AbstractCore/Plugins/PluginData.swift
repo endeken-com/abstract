@@ -24,8 +24,8 @@ public struct PluginPage: Sendable, Hashable {
     }
 }
 
-/// The payloads behind `usage.read`, `turns.read`, `transcripts.read` and
-/// `automations.read`. Each builder encodes only its allowlisted fields;
+/// The payloads behind `usage.read`, `turns.read`, `transcripts.read`,
+/// `automations.read` and `pullRequests.read`. Each builder encodes only its allowlisted fields;
 /// nothing else about a chat, a file or an automation is ever included.
 public enum PluginData {
     static func iso(_ date: Date) -> String {
@@ -287,5 +287,58 @@ public enum PluginData {
             return .object(object)
         }
         return envelope(items: Array(page.slice(all)), total: all.count, page: page)
+    }
+
+    // MARK: Pull requests (ABS-109)
+
+    /// Longest text one review or comment carries; GitHub allows far more.
+    public static let pullRequestTextLimit = 4_000
+
+    /// A chat's pull request as its Pull Request tab shows it: checks,
+    /// reviews, comments, and the threads on its code. No avatars, and
+    /// nothing about the repository beyond the pull request's own link.
+    public static func pullRequest(_ pr: PullRequest) -> JSONValue {
+        func text(_ body: String) -> JSONValue {
+            .string(body.count > pullRequestTextLimit ? body.prefix(pullRequestTextLimit - 1) + "…" : body)
+        }
+        func date(_ value: Date?) -> JSONValue { value.map { .string(iso($0)) } ?? .null }
+        func optional(_ value: Int?) -> JSONValue { value.map { .number(Double($0)) } ?? .null }
+        let outcome: [PullRequest.Check.Outcome: String] = [.pending: "pending", .passed: "passed", .failed: "failed", .skipped: "skipped"]
+        let verdict: [PullRequest.Review.Verdict: String] = [
+            .approved: "approved", .changesRequested: "changesRequested", .commented: "commented",
+            .dismissed: "dismissed", .pending: "pending",
+        ]
+        var object: [String: JSONValue] = [
+            "number": .number(Double(pr.number)),
+            "title": .string(pr.title),
+            "state": .string(pr.state.rawValue.lowercased()),
+            "isDraft": .bool(pr.isDraft),
+            "url": pr.url.map { .string($0.absoluteString) } ?? .null,
+            "checks": .array(pr.checks.map { check in
+                .object(["name": .string(check.name), "workflow": check.workflow.map(JSONValue.string) ?? .null,
+                         "outcome": .string(outcome[check.outcome] ?? "pending"),
+                         "url": check.url.map { .string($0.absoluteString) } ?? .null])
+            }),
+            "reviews": .array(pr.reviews.map { review in
+                .object(["author": .string(review.author), "verdict": .string(verdict[review.verdict] ?? "commented"),
+                         "body": text(review.body), "submittedAt": date(review.submittedAt)])
+            }),
+            "comments": .array(pr.comments.map { comment in
+                .object(["author": .string(comment.author), "body": text(comment.body),
+                         "createdAt": date(comment.createdAt), "isBot": .bool(comment.isBot)])
+            }),
+            "threads": .array(pr.threads.map { thread in
+                .object(["id": .string(thread.id), "path": .string(thread.path),
+                         "line": optional(thread.line), "originalLine": optional(thread.originalLine),
+                         "isResolved": .bool(thread.isResolved), "isOutdated": .bool(thread.isOutdated),
+                         "comments": .array(thread.comments.map { comment in
+                             .object(["id": .string(comment.id), "author": .string(comment.author), "body": text(comment.body),
+                                      "createdAt": date(comment.createdAt),
+                                      "url": comment.url.map { .string($0.absoluteString) } ?? .null])
+                         })])
+            }),
+        ]
+        if let decision = pr.reviewDecision { object["reviewDecision"] = .string(decision.rawValue.lowercased()) }
+        return .object(object)
     }
 }

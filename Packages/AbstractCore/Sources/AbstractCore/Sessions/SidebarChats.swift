@@ -36,17 +36,25 @@ public enum SidebarChats {
         public var isDraft: Bool
         public var checks: Checks?
         public var changesRequested: Bool
+        /// Reviews, comments and comments on the code known so far: zero
+        /// until the pull request's detail has been read (ABS-109).
+        public var comments: Int
+        public var failedChecks: Int
 
-        public init(number: Int, state: PullRequest.State, isDraft: Bool = false, checks: Checks? = nil, changesRequested: Bool = false) {
+        public init(number: Int, state: PullRequest.State, isDraft: Bool = false, checks: Checks? = nil, changesRequested: Bool = false,
+                    comments: Int = 0, failedChecks: Int = 0) {
             self.number = number; self.state = state; self.isDraft = isDraft
             self.checks = checks; self.changesRequested = changesRequested
+            self.comments = comments; self.failedChecks = failedChecks
         }
 
         public init(_ pr: PullRequest) {
             let sum = pr.checksSummary
             self.init(number: pr.number, state: pr.state, isDraft: pr.isDraft,
                       checks: Self.checks(passed: sum.passed, failed: sum.failed, pending: sum.pending),
-                      changesRequested: pr.reviewDecision == .changesRequested)
+                      changesRequested: pr.reviewDecision == .changesRequested,
+                      comments: pr.reviews.count + pr.comments.count + pr.threads.reduce(0) { $0 + $1.comments.count },
+                      failedChecks: sum.failed)
         }
 
         /// A pull request as a paired Mac reports it.

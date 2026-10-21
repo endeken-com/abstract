@@ -32,7 +32,7 @@ public enum PluginContributions {
                 (.chatPanel, contributes.chatPanelTabs), (.chatMenu, contributes.chatMenuItems),
                 (.palette, contributes.paletteCommands),
                 (.settings, contributes.settingsPage.map { [$0] } ?? []), (.home, contributes.homeWidgets),
-                (.review, contributes.reviewActions),
+                (.review, contributes.reviewActions), (.pullRequest, contributes.pullRequestSwitches),
             ]
             for (place, items) in places {
                 out += items.map {

@@ -40,13 +40,21 @@ public struct PluginSnapshot: Sendable, Hashable, Codable {
         public var isDraft: Bool
         public var checks: String?
         public var changesRequested: Bool
-        public init(number: Int, state: String, isDraft: Bool, checks: String?, changesRequested: Bool) {
+        /// How many reviews and comments are known, and how many checks
+        /// failed (ABS-109): a change in either is news. The words
+        /// themselves are pulled with `getPullRequest`.
+        public var comments: Int
+        public var failedChecks: Int
+        public init(number: Int, state: String, isDraft: Bool, checks: String?, changesRequested: Bool,
+                    comments: Int = 0, failedChecks: Int = 0) {
             self.number = number; self.state = state; self.isDraft = isDraft
             self.checks = checks; self.changesRequested = changesRequested
+            self.comments = comments; self.failedChecks = failedChecks
         }
         public init(_ facts: SidebarChats.PullRequestFacts) {
             self.init(number: facts.number, state: facts.state.rawValue.lowercased(), isDraft: facts.isDraft,
-                      checks: facts.checks?.rawValue, changesRequested: facts.changesRequested)
+                      checks: facts.checks?.rawValue, changesRequested: facts.changesRequested,
+                      comments: facts.comments, failedChecks: facts.failedChecks)
         }
     }
 

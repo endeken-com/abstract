@@ -389,4 +389,43 @@ extension AppModel {
         guard capabilities.contains(.chatsRead) else { return nil }
         return pluginSnapshot(capabilities: capabilities, revision: 0).chats?.first { $0.id == chatId }
     }
+
+    // MARK: Pull Request switches (ABS-109)
+
+    /// Flip a plugin's switch in a chat's Pull Request tab: its background
+    /// script is told first, and the switch moves only if it was.
+    func setPluginSwitch(_ contribution: ResolvedPluginContribution, chatId: String, on: Bool) {
+        let invocation = PluginInvocation(place: .pullRequest, contributionId: contribution.contribution.id,
+                                          chatId: chatId, on: on)
+        guard pluginBackground?.invoke(contribution.pluginId, invocation) == true else {
+            flash("\(contribution.pluginName) isn't running. Turn it on, with its background script, in Settings → Plugins.",
+                  isError: true)
+            return
+        }
+        plugins.setSwitch(pluginId: contribution.pluginId, contributionId: contribution.contribution.id, chatId: chatId, on: on)
+    }
+
+    /// A chat's pull request in full, as far as Abstract has read it.
+    func pluginPullRequest(chatId: String) -> JSONValue {
+        guard let pr = pullRequests[chatId] else { return .object(["pullRequest": .null]) }
+        return .object(["pullRequest": PluginData.pullRequest(pr)])
+    }
+
+    /// Keeps every pull request a switch is on for read in full, its
+    /// reviews and comments included, as the Pull Request tab does while
+    /// it's open. A switch goes off once its pull request is merged or
+    /// closed, or its chat is gone, and its plugin is told.
+    func refreshSwitchedPullRequests() async {
+        for item in plugins.switchesOn {
+            let chatId = item.chatId
+            let finished = pullRequests[chatId].map { $0.state != .open } ?? false
+            if session(chatId) == nil || finished {
+                let invocation = PluginInvocation(place: .pullRequest, contributionId: item.contributionId, chatId: chatId, on: false)
+                _ = pluginBackground?.invoke(item.pluginId, invocation)
+                plugins.setSwitch(pluginId: item.pluginId, contributionId: item.contributionId, chatId: chatId, on: false)
+                continue
+            }
+            _ = try? await refreshPullRequest(chatId)
+        }
+    }
 }

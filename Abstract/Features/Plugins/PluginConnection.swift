@@ -111,6 +111,8 @@ final class PluginConnection {
                  payload: model.pluginTranscript(page: page, chatId: chatId, allowedProjectKeys: keys))
         case .getAutomations(let id, let page):
             send(type: "reply", id: id, payload: model.pluginAutomations(page: page))
+        case .getPullRequest(let id, let chatId):
+            send(type: "reply", id: id, payload: model.pluginPullRequest(chatId: chatId))
         case .addReviewComments(let id, let chatId, let author, let comments):
             let added = model.addPluginReviewComments(chatId, author: author, comments)
             send(type: "reply", id: id, payload: .object(["added": .number(Double(added))]))

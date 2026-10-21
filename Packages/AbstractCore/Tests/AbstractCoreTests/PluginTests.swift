@@ -298,7 +298,7 @@ import Testing
         let mac = try #require(json["macs"]?.array?.first?.object)
         #expect(Set(mac.keys) == ["id", "name", "isThisMac", "reachable"])
         let pr = try #require(chat["pullRequest"]?.object)
-        #expect(Set(pr.keys) == ["number", "state", "isDraft", "checks", "changesRequested"])
+        #expect(Set(pr.keys) == ["number", "state", "isDraft", "checks", "changesRequested", "comments", "failedChecks"])
         #expect(pr["checks"] == .string("failing"))
     }
 
