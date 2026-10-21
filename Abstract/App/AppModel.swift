@@ -312,6 +312,10 @@ final class AppModel {
     @ObservationIgnored var scheduler: AutomationScheduler?
     /// Plugins' background scripts (ABS-93), started at launch.
     @ObservationIgnored var pluginBackground: PluginBackgroundHost?
+    /// Where agents' plugin tool calls reach the app (ABS-97); see AppModel+PluginTools.
+    @ObservationIgnored var pluginToolLink: PluginToolLink.Server?
+    /// Plugin tool calls waiting on an Ask first card, by request id.
+    @ObservationIgnored private var pluginToolAsks: [String: CheckedContinuation<Bool, Never>] = [:]
     /// Automation chats whose run was already reported to plugins.
     @ObservationIgnored private var reportedAutomationRuns: Set<String> = []
 
@@ -365,8 +369,12 @@ final class AppModel {
         scheduler = AutomationScheduler(model: self)
         scheduler?.start()
         pluginBackground = PluginBackgroundHost(model: self)
-        plugins.onChange = { [weak self] in self?.pluginBackground?.reconcile() }
+        plugins.onChange = { [weak self] in
+            self?.pluginBackground?.reconcile()
+            if let self { PluginToolLabels.shared.update(PluginTools.all(pluginToolOffers(), project: nil)) }
+        }
         pluginBackground?.reconcile()
+        servePluginTools()
         Task { await watchForStalls() }
         Task { await watchPullRequests() }
         Task { await readEveryBranch() }
@@ -1009,10 +1017,11 @@ final class AppModel {
                 flash("The earlier conversation wasn't found, so the agent starts fresh in this worktree.")
             }
         }
-        let settings = LaunchSettings(providerOverrides: providerOverrides, outputStyle: outputStyle, claudeProfile: claudeProfile,
+        var settings = LaunchSettings(providerOverrides: providerOverrides, outputStyle: outputStyle, claudeProfile: claudeProfile,
                                       standardClaudeProfile: accounts.standardProfilePath, attachmentsDirectory: AttachmentStore.root.path,
                                       agentDefaults: agentDefaults, modelCatalogs: modelCatalogs,
                                       codeHistory: historySettings(for: session))
+        settings.pluginToolsCommand = pluginToolsCommand(for: session)
         var spec = AgentLaunch.spec(for: session, provider: provider, prompt: prompt, resumeId: resumeId, images: images,
                                     settings: settings, home: executor.homeDirectory)
         let cwd = spec.cwd
@@ -1386,7 +1395,41 @@ final class AppModel {
         if plan.current != nil { plans[sessionId] = plan }
     }
 
+    /// Asks about one plugin tool call (ABS-97) the way an agent's own
+    /// request is asked: a card on its tool row, the chat waiting for you,
+    /// and your project's remembered answers. True once you allow it;
+    /// false when you decline, the card goes away with its turn, or
+    /// nobody answers in time.
+    func askPluginTool(_ sessionId: String, toolName: String, input: JSONValue) async -> Bool {
+        let requestId = "plugin-tool-\(UUID().uuidString)"
+        let deadline = Date().addingTimeInterval(PluginTools.askTimeout)
+        return await withCheckedContinuation { continuation in
+            pluginToolAsks[requestId] = continuation
+            apply(.permissionRequest(requestId: requestId, toolName: toolName, input: input), to: sessionId)
+            Task { @MainActor [weak self] in
+                while let self, self.pluginToolAsks[requestId] != nil {
+                    let waiting = self.permissions[sessionId]?.contains { $0.requestId == requestId } ?? false
+                    if !waiting || Date() >= deadline {
+                        self.permissions[sessionId]?.removeAll { $0.requestId == requestId }
+                        self.pluginToolAsks.removeValue(forKey: requestId)?.resume(returning: false)
+                        return
+                    }
+                    try? await Task.sleep(for: .seconds(1))
+                }
+            }
+        }
+    }
+
     private func respond(_ sessionId: String, requestId: String, allow: Bool, input: JSONValue?) {
+        // A plugin tool's card answers the waiting call, not the agent.
+        if let waiting = pluginToolAsks.removeValue(forKey: requestId) {
+            permissions[sessionId]?.removeAll { $0.requestId == requestId }
+            if session(sessionId)?.status == .waitingInput, permissions[sessionId]?.isEmpty ?? true {
+                setStatus(sessionId, .running)
+            }
+            waiting.resume(returning: allow)
+            return
+        }
         guard let session = session(sessionId), let provider = ProviderRegistry.provider(session.providerId) else { return }
         if let line = provider.buildPermissionResponse(requestId: requestId, allow: allow, input: input) {
             do { try engine.write(sessionId: sessionId, line) } catch { flash(error.localizedDescription, isError: true) }

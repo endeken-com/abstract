@@ -138,7 +138,7 @@ final class PluginConnection {
                  payload: .object(["message": .string("It acted too many times in a minute, so Abstract paused it.")]))
             model.plugins.noteError(plugin.id, "It acted too many times in a minute, so it was paused. Turn it on again here when you're ready.")
             model.setPluginEnabled(plugin.id, false)
-        case .subscribe, .scheduleJob, .cancelJob, .jobDone:
+        case .subscribe, .scheduleJob, .cancelJob, .jobDone, .toolResult:
             onBackground(outcome)
         case .refused(let id, let reason):
             model.plugins.noteError(plugin.id, reason)
@@ -287,6 +287,7 @@ enum PluginShim {
       const pending = new Map();
       const listeners = new Map();
       const jobs = new Map();
+      const toolHandlers = new Map();
       let next = 1;
       const post = (message) => window.webkit.messageHandlers.abstractPlugin.postMessage(JSON.stringify(message));
       const api = {
@@ -311,6 +312,11 @@ enum PluginShim {
             if (fn) api.on("event", (event) => { if (types.includes(event.type)) return fn(event); });
             return api.send("events.subscribe", { types });
           }
+        },
+        tools: {
+          // Answers agents' calls to a tool its manifest lists (ABS-97):
+          // fn(input, { chatId }) returns text or JSON, or throws.
+          handle(name, fn) { toolHandlers.set(name, fn); }
         },
         jobs: {
           schedule(id, rrule, fn, timezone) {
@@ -343,6 +349,26 @@ enum PluginShim {
             .then(() => fn && fn(message.payload))
             .catch(report)
             .finally(() => { try { post({ api: \(api), type: "jobs.done", payload: { id } }); } catch {} });
+          return;
+        }
+        if (message.type === "tool") {
+          const call = message.payload || {};
+          const done = (body) => {
+            try { post({ api: \(api), type: "tools.result", payload: Object.assign({ callId: call.callId }, body) }); } catch {}
+          };
+          const fn = toolHandlers.get(call.tool);
+          if (!fn) { done({ error: "This plugin has no tool called " + call.tool + "." }); return; }
+          Promise.resolve()
+            .then(() => fn(call.input || {}, { chatId: call.chatId }))
+            .then((result) => {
+              let value = result === undefined ? null : result;
+              if (typeof value === "string" && value.length > \(PluginTools.resultLimit)) value = value.slice(0, \(PluginTools.resultLimit));
+              else if (value !== null && typeof value !== "string") {
+                const text = JSON.stringify(value);
+                if (text && text.length > \(PluginTools.resultLimit)) value = text.slice(0, \(PluginTools.resultLimit));
+              }
+              done({ result: value });
+            }, (error) => done({ error: String((error && error.message) || error) }));
           return;
         }
         for (const fn of listeners.get(message.type) || []) {
