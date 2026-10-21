@@ -1,0 +1,16 @@
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ab-space-lg);
+  padding: var(--ab-space-lg) var(--ab-space-xl);
+}
+
+.status {
+  color: var(--ab-text-2);
+  font-size: var(--ab-text-sm);
+  margin: 0;
+}
+
+.status.problem {
+  color: var(--ab-text);
+}

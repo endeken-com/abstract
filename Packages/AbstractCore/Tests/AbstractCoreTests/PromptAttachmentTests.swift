@@ -37,12 +37,6 @@ struct PromptAttachmentTests {
         #expect(chips.count == 1)
     }
 
-    @Test func linearIdentifiersAreLookedUpDirectly() {
-        #expect(Linear.identifier(in: "eng-123") == "ENG-123")
-        #expect(Linear.identifier(in: "https://linear.app/acme/issue/ENG-9/fix-login") == "ENG-9")
-        #expect(Linear.identifier(in: "fix login") == nil)
-    }
-
     @Test func claudeGetsImagesAsImageBlocks() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

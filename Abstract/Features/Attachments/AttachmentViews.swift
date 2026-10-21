@@ -3,9 +3,8 @@ import SwiftUI
 import UniformTypeIdentifiers
 import AbstractCore
 
-/// Linear's mark and GitHub's issue octicon (MIT), drawn in the text colour.
+/// GitHub's issue octicon (MIT), drawn in the text colour.
 enum BrandGlyph {
-    static let linear = template(#"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"><path d="M2.886 4.18A11.982 11.982 0 0 1 11.99 0C18.624 0 24 5.376 24 12.009c0 3.64-1.62 6.903-4.18 9.105L2.887 4.18ZM1.817 5.626l16.556 16.556c-.524.33-1.075.62-1.65.866L.951 7.277c.247-.575.537-1.126.866-1.65ZM.322 9.163l14.515 14.515c-.71.172-1.443.282-2.195.322L0 11.358a12 12 0 0 1 .322-2.195Zm-.17 4.862 9.823 9.824a12.02 12.02 0 0 1-9.824-9.824Z"/></svg>"#)
     static let issue = template(#"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><path d="M8 9.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z"/><path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Z"/></svg>"#)
 
     private static func template(_ svg: String) -> NSImage {
@@ -32,6 +31,8 @@ private enum Thumbnails {
 struct AttachmentGlyph: View {
     let kind: PromptAttachment.Kind
     var path: String?
+    /// Tracker issues: the plugin whose icon it shows.
+    var tracker: String?
     var size: CGFloat = 13
 
     var body: some View {
@@ -49,8 +50,8 @@ struct AttachmentGlyph: View {
             Image(nsImage: BrandGlyph.issue).renderingMode(.template).resizable().frame(width: size, height: size)
         case .pullRequest:
             PullRequestGlyph(kind: .open).frame(width: size, height: size)
-        case .linearIssue:
-            Image(nsImage: BrandGlyph.linear).renderingMode(.template).resizable().frame(width: size - 1, height: size - 1)
+        case .trackerIssue:
+            TrackerGlyph(pluginId: tracker, size: size)
         case .revundReview:
             RevundGlyph(size: size)
         }
@@ -59,6 +60,20 @@ struct AttachmentGlyph: View {
     private func isFolder(_ path: String) -> Bool {
         var isDir: ObjCBool = false
         return FileManager.default.fileExists(atPath: path, isDirectory: &isDir) && isDir.boolValue
+    }
+}
+
+/// A tracker plugin's icon, or a plain ticket when it isn't on.
+struct TrackerGlyph: View {
+    let pluginId: String?
+    var size: CGFloat = 13
+
+    var body: some View {
+        if let image = TrackerIcons.image(pluginId) {
+            Image(nsImage: image).renderingMode(.template).resizable().frame(width: size - 1, height: size - 1)
+        } else {
+            Image(systemName: "ticket").font(.system(size: size * 0.8)).frame(width: size, height: size)
+        }
     }
 }
 
@@ -85,7 +100,7 @@ private struct AttachmentPill: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            AttachmentGlyph(kind: attachment.kind, path: attachment.path, size: 14)
+            AttachmentGlyph(kind: attachment.kind, path: attachment.path, tracker: attachment.tracker, size: 14)
                 .foregroundStyle(Color.btTextSecondary)
             Text(attachment.label)
                 .font(BTFont.ui(12))
@@ -139,10 +154,11 @@ enum AttachmentActions {
     }
 }
 
-/// Linear (once connected in Settings › Integrations), GitHub issue and pull
-/// request buttons, beside Send. They ask the project's code host (ABS-139);
-/// a nil `repoRoot` hides them.
+/// Issue tracker (while a tracker plugin is on, ABS-141), GitHub issue and
+/// pull request buttons, beside Send. GitHub's ask the project's code host
+/// (ABS-139); a nil `repoRoot` hides them.
 struct AttachmentButtons: View {
+    @Environment(AppModel.self) private var model
     let repoRoot: String?
     /// The chat, or else the project, whose code host is asked, on its Mac.
     var sessionId: String? = nil
@@ -150,13 +166,13 @@ struct AttachmentButtons: View {
     @Binding var attachments: [PromptAttachment]
     var size: CGFloat = 26
     @State private var picking: AttachSource?
-    @AppStorage(LinearAccount.connectedKey) private var linearConnected = false
 
     var body: some View {
         HStack(spacing: 0) {
-            if linearConnected {
-                button(.linear, help: "Link a Linear issue") {
-                    Image(nsImage: BrandGlyph.linear).renderingMode(.template).resizable().frame(width: 12, height: 12)
+            let trackers = model.issueTrackers
+            if !trackers.isEmpty {
+                button(.tracker, help: trackers.count == 1 ? "Link a \(trackers[0].title) issue" : "Link an issue") {
+                    TrackerGlyph(pluginId: trackers.count == 1 ? trackers[0].pluginId : nil, size: 13)
                 }
             }
             if repoRoot != nil {
@@ -206,11 +222,15 @@ struct AttachUploadButton: View {
 }
 
 enum AttachSource: Hashable {
-    case linear, githubIssue, pullRequest
+    /// Every issue tracker plugin that's on (ABS-141).
+    case tracker, githubIssue, pullRequest
 
-    var placeholder: String {
+    func placeholder(_ trackers: [ResolvedIssueTracker]) -> String {
         switch self {
-        case .linear: "Search Linear issues, or paste ENG-123"
+        case .tracker:
+            trackers.count == 1
+                ? "Search \(trackers[0].title) issues, or paste \(trackers[0].declaration.keyExample)"
+                : "Search issues, or paste a key or link"
         case .githubIssue: "Search issues, or #number"
         case .pullRequest: "Search pull requests, or #number"
         }
@@ -218,7 +238,7 @@ enum AttachSource: Hashable {
 
     var empty: String {
         switch self {
-        case .linear: "No open issues assigned to you."
+        case .tracker: "No open issues assigned to you."
         case .githubIssue: "No open issues."
         case .pullRequest: "No open pull requests."
         }
@@ -226,7 +246,7 @@ enum AttachSource: Hashable {
 
     var kind: PromptAttachment.Kind {
         switch self {
-        case .linear: .linearIssue
+        case .tracker: .trackerIssue
         case .githubIssue: .githubIssue
         case .pullRequest: .pullRequest
         }
@@ -250,6 +270,9 @@ private struct AttachPicker: View {
         var state: String
         var stateTint: Color? = nil
         var attachment: PromptAttachment
+        /// The tracker it came from, named above its first result when
+        /// several trackers answer.
+        var section: String? = nil
     }
 
     @State private var query = ""
@@ -257,18 +280,22 @@ private struct AttachPicker: View {
     @State private var selection = 0
     @State private var loading = true
     @State private var problem: String?
-    @State private var linear = LinearAccount.shared
+    /// Trackers that couldn't be asked, each with what to do.
+    @State private var trackerProblems: [String] = []
+    /// The newest search; an older one still answering doesn't overwrite it.
+    @State private var generation = 0
     @FocusState private var focused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
-                AttachmentGlyph(kind: source.kind, size: 13).foregroundStyle(Color.btTextTertiary)
-                TextField(source.placeholder, text: $query)
+                AttachmentGlyph(kind: source.kind, tracker: model.issueTrackers.count == 1 ? model.issueTrackers[0].pluginId : nil,
+                                size: 13).foregroundStyle(Color.btTextTertiary)
+                TextField(source.placeholder(model.issueTrackers), text: $query)
                     .textFieldStyle(.plain)
                     .font(BTFont.ui(13))
                     .focused($focused)
-                    .onSubmit { if items.indices.contains(selection) { pick(items[selection].attachment) } }
+                    .onSubmit { if !loading, items.indices.contains(selection) { choose(items[selection]) } }
                     .onKeyPress(.downArrow) { selection = min(selection + 1, max(items.count - 1, 0)); return .handled }
                     .onKeyPress(.upArrow) { selection = max(selection - 1, 0); return .handled }
                 if loading { ProgressView().controlSize(.small) }
@@ -280,7 +307,7 @@ private struct AttachPicker: View {
         }
         .frame(width: 420)
         .onAppear { focused = true }
-        .task(id: "\(query)|\(linear.key ?? "")") {
+        .task(id: query) {
             // Typing settles before searching.
             if !query.isEmpty { try? await Task.sleep(for: .milliseconds(250)) }
             guard !Task.isCancelled else { return }
@@ -290,10 +317,17 @@ private struct AttachPicker: View {
 
     @ViewBuilder
     private var content: some View {
-        if source == .linear, !linear.isConnected {
-            LinearConnectForm()
-                .padding(12)
-        } else if let problem {
+        if !trackerProblems.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(trackerProblems, id: \.self) { line in
+                    Text(line).font(.btCallout).foregroundStyle(Color.btTextSecondary)
+                        .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+        }
+        if let problem {
             Text(problem)
                 .font(.btCallout)
                 .foregroundStyle(Color.btTextSecondary)
@@ -301,16 +335,27 @@ private struct AttachPicker: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(12)
         } else if items.isEmpty {
-            Text(loading ? " " : query.isEmpty ? source.empty : "Nothing matches.")
-                .font(.btCallout)
-                .foregroundStyle(Color.btTextTertiary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(12)
+            if trackerProblems.isEmpty || loading {
+                Text(loading ? " " : query.isEmpty ? source.empty : "Nothing matches.")
+                    .font(.btCallout)
+                    .foregroundStyle(Color.btTextTertiary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+            }
         } else {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 0) {
                         ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                            if let section = item.section {
+                                Text(section)
+                                    .font(BTFont.ui(11, .medium))
+                                    .foregroundStyle(Color.btTextTertiary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.horizontal, 8)
+                                    .padding(.top, index == 0 ? 4 : 10)
+                                    .padding(.bottom, 4)
+                            }
                             row(item, selected: index == selection).id(index)
                         }
                     }
@@ -324,7 +369,7 @@ private struct AttachPicker: View {
     }
 
     private func row(_ item: Item, selected: Bool) -> some View {
-        Button { pick(item.attachment) } label: {
+        Button { choose(item) } label: {
             HStack(spacing: 10) {
                 Text(item.reference)
                     .font(BTFont.mono(11.5))
@@ -350,16 +395,35 @@ private struct AttachPicker: View {
         .help(item.attachment.url ?? "")
     }
 
+    private func choose(_ item: Item) {
+        guard item.attachment.kind == .trackerIssue else { pick(item.attachment); return }
+        Task {
+            loading = true
+            pick(await model.completeTrackerIssue(item.attachment))
+            loading = false
+        }
+    }
+
     private func load() async {
+        generation += 1
+        let mine = generation
         loading = true
-        defer { loading = false }
+        defer { if mine == generation { loading = false } }
         do {
             switch source {
-            case .linear:
-                guard let key = linear.apiKey() else { items = []; return }
-                items = try await Linear.search(query, apiKey: key).map {
-                    Item(id: $0.id, reference: $0.identifier, title: $0.title, state: $0.state ?? "", attachment: $0.attachment)
+            case .tracker:
+                let groups = await model.searchIssueTrackers(query)
+                guard mine == generation, !Task.isCancelled else { return }
+                let named = groups.filter { !$0.issues.isEmpty }.count > 1
+                items = groups.flatMap { group in
+                    group.issues.enumerated().map { index, issue in
+                        Item(id: "\(group.tracker.pluginId):\(issue.key)", reference: issue.key, title: issue.title,
+                             state: issue.state ?? "",
+                             attachment: issue.attachment(trackerId: group.tracker.pluginId, trackerName: group.tracker.title),
+                             section: named && index == 0 ? group.tracker.title : nil)
+                    }
                 }
+                trackerProblems = groups.compactMap(\.problem)
             case .githubIssue, .pullRequest:
                 // The project's code host answers (ABS-139).
                 guard repoRoot != nil, let project = model.project(projectId ?? model.session(sessionId)?.projectId) else { return }
@@ -399,51 +463,6 @@ private struct AttachPicker: View {
         case "MERGED": return .btPullRequestMergedInk
         case "CLOSED": return .btPullRequestClosedInk
         default: return .btTextTertiary
-        }
-    }
-}
-
-/// Paste a personal API key; it's checked with Linear, then kept in the keychain.
-struct LinearConnectForm: View {
-    @State private var key = ""
-    @State private var connecting = false
-    @State private var error: String?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Connect Linear with a personal API key. It's kept in your keychain.")
-                .font(.btCallout)
-                .foregroundStyle(Color.btTextSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 6) {
-                SecureField("lin_api_…", text: $key)
-                    .btField(compact: true)
-                    .onSubmit(connect)
-                Button(connecting ? "Checking…" : "Connect", action: connect)
-                    .buttonStyle(.bt(.secondary, size: .small))
-                    .disabled(connecting || key.trimmingCharacters(in: .whitespaces).isEmpty)
-            }
-            HStack(spacing: 4) {
-                if let error {
-                    Text(error).font(.btCallout).foregroundStyle(Color.btRemoved)
-                } else {
-                    Button("Create a key in Linear") {
-                        NSWorkspace.shared.open(URL(string: "https://linear.app/settings/account/security")!)
-                    }
-                    .buttonStyle(.link)
-                    .font(.btCallout)
-                }
-            }
-        }
-    }
-
-    private func connect() {
-        guard !connecting else { return }
-        connecting = true
-        error = nil
-        Task {
-            do { try await LinearAccount.shared.connect(key) } catch { self.error = error.localizedDescription }
-            connecting = false
         }
     }
 }
@@ -532,7 +551,8 @@ struct AttachmentChips: View {
             ForEach(Array(chips.enumerated()), id: \.offset) { _, chip in
                 Button { AttachmentActions.open(chip.target) } label: {
                     HStack(spacing: 6) {
-                        AttachmentGlyph(kind: chip.kind, path: chip.target?.hasPrefix("/") == true ? chip.target : nil, size: 13)
+                        AttachmentGlyph(kind: chip.kind, path: chip.target?.hasPrefix("/") == true ? chip.target : nil,
+                                        tracker: chip.tracker, size: 13)
                             .foregroundStyle(Color.btTextSecondary)
                         Text(chip.label)
                             .font(.btChatCaption)

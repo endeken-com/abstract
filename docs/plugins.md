@@ -313,6 +313,49 @@ Abstract makes no `gh` calls, and the pull request screens say a code host plugi
 needed; turning it off or removing it sticks. Its logic is plain JavaScript in
 `background.js` (`GitHubHost`), tested in `GitHubPluginTests` against recorded `gh` output.
 
+## Issue trackers
+
+A plugin can answer the composer's issue search for a tracker (ABS-141). It declares
+`issueTracker` in `contributes` and answers in its background script:
+
+```json
+"issueTracker": {
+  "title": "Linear",
+  "icon": "icon.svg",
+  "keyExample": "ENG-123",
+  "keyPattern": "[A-Za-z][A-Za-z0-9]*-[0-9]+"
+}
+```
+
+The icon is an SVG or PNG in the package, drawn in the text colour. A query that is
+one key, whole, or an `https://` link is asked for as one issue; anything else is
+searched for. Abstract asks every tracker that's on and groups what they find by
+tracker.
+
+```js
+AbstractPlugin.issueTracker.handle(async (operation, input) => {
+  switch (operation) {
+    case "access": return { ready: true, account: "Ada" };    // or { ready: false, problem: "…" }
+    case "searchIssues": return { issues: [] };                // input: { query, project? }
+    case "issue": return { issue: null };                       // input: { reference }, a key or a link
+    case "listProjects": return { projects: [] };               // { id, name, kind: "team" | "project", key? }
+  }
+});
+```
+
+An issue is `{ key, title, url, state?, assignee?, excerpt? }`, with an `https` link
+and the start of its description as `excerpt`. The plugin is handed only what was typed
+in the search. Abstract draws the results and the chip, and writes the line the agent
+reads, `<Tracker> Issue KEY: title`, so every tracker reads the same.
+
+**Linear**, bundled, does this one of two ways, picked on its settings page: a personal
+Linear API key entered under Settings › Plugins and sent only to api.linear.app, or the
+[Linear CLI](https://github.com/schpet/linear-cli) signed in on the Mac, through `cli`
+with read commands only (`auth whoami`, `auth list`, `issue query`, `issue view`,
+`team list`, `project list`) in the workspace picked there. Abstract never reads the
+CLI's token. Both give the same results. It's turned on by itself when Abstract
+finds a Linear key from before it was a plugin, or the CLI signed in.
+
 ## Previewing a plugin
 
 `python3 docs/plugin-kit/preview.py` serves the bundled plugins, the kit and a stand-in

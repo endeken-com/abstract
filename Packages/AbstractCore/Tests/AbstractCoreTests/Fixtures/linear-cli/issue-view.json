@@ -1,0 +1,32 @@
+{
+  "identifier": "ENG-12",
+  "title": "Fix login",
+  "description": "Steps to reproduce",
+  "url": "https://linear.app/example/issue/eng-12/fix-login",
+  "branchName": "sample/eng-12-fix-login",
+  "state": {
+    "name": "In Progress",
+    "color": "#f2c94c"
+  },
+  "assignee": {
+    "name": "Sample Person",
+    "displayName": "sample"
+  },
+  "priority": 2,
+  "project": null,
+  "projectMilestone": null,
+  "cycle": null,
+  "labels": {
+    "nodes": []
+  },
+  "parent": null,
+  "children": {
+    "nodes": []
+  },
+  "attachments": {
+    "nodes": []
+  },
+  "documents": {
+    "nodes": []
+  }
+}

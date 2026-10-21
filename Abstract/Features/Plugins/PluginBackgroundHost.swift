@@ -84,6 +84,15 @@ final class PluginBackgroundHost {
         return await runner.lookUpLink(match)
     }
 
+    /// Asks a plugin's script one of the issue tracker's questions (ABS-141).
+    func askTracker(_ pluginId: String, _ request: TrackerRequest) async -> TrackerAnswer {
+        guard let runner = runners[pluginId] else {
+            let name = model.plugins.plugin(pluginId)?.record.name ?? "That plugin"
+            return .failed("\(name) isn't running.")
+        }
+        return await runner.askTracker(request)
+    }
+
     // MARK: Code hosts (ABS-139)
 
     /// Whether a plugin's script is running now.
@@ -154,6 +163,8 @@ final class PluginBackgroundRunner: NSObject, WKScriptMessageHandler, WKNavigati
     private let toolCalls: PluginToolCalls
     /// Link lookups the script hasn't answered yet (ABS-126).
     private let linkLookups = PluginLinkLookups()
+    /// Issue tracker questions the script hasn't answered yet (ABS-141).
+    private let trackerCalls: PluginTrackerCalls
     /// Core's code host calls the script hasn't answered yet (ABS-139).
     private let codeHostCalls: PluginCodeHostCalls
     /// Hosts the script said its tool is signed in to, while it runs.
@@ -165,6 +176,7 @@ final class PluginBackgroundRunner: NSObject, WKScriptMessageHandler, WKNavigati
         self.manifest = manifest
         self.onStopped = onStopped
         toolCalls = PluginToolCalls(pluginName: manifest.name)
+        trackerCalls = PluginTrackerCalls(pluginName: manifest.name)
         codeHostCalls = PluginCodeHostCalls(pluginName: manifest.name)
         super.init()
         connection = PluginConnection(
@@ -213,6 +225,7 @@ final class PluginBackgroundRunner: NSObject, WKScriptMessageHandler, WKNavigati
         connection.tearDown()
         Task { [toolCalls, name = manifest.name] in await toolCalls.failAll("\(name) stopped before its tool answered.") }
         Task { [linkLookups] in await linkLookups.failAll() }
+        Task { [trackerCalls] in await trackerCalls.failAll() }
         Task { [codeHostCalls, name = manifest.name] in await codeHostCalls.failAll("\(name) stopped before it answered.") }
         ticker?.cancel()
         ticker = nil
@@ -280,6 +293,21 @@ final class PluginBackgroundRunner: NSObject, WKScriptMessageHandler, WKNavigati
         }
     }
 
+    /// Only a plugin that declares a tracker is asked; the question carries
+    /// what was typed in the composer's search, nothing about the chat.
+    func askTracker(_ request: TrackerRequest) async -> TrackerAnswer {
+        guard manifest.contributes.issueTracker != nil else { return .failed("\(manifest.name) isn't an issue tracker.") }
+        return await trackerCalls.call(request) { [weak self] callId in
+            await MainActor.run {
+                guard let self, self.connection.ready, !self.stopped else { return false }
+                self.connection.send(type: "tracker", payload: .object([
+                    "callId": .string(callId), "operation": .string(request.operation), "input": request.input,
+                ]))
+                return true
+            }
+        }
+    }
+
     /// The call goes to the script as a `codeHost` message; its
     /// `codeHost.result` answers it. The project and chat it is about are
     /// core's own pick, so the script may run its commands there.
@@ -299,6 +327,8 @@ final class PluginBackgroundRunner: NSObject, WKScriptMessageHandler, WKNavigati
 
     private func handle(_ outcome: PluginBridge.Outcome) {
         switch outcome {
+        case .trackerResult(let callId, let payload):
+            Task { [trackerCalls] in await trackerCalls.finish(callId, payload: payload) }
         case .codeHostResult(let callId, let answer):
             Task { [codeHostCalls] in await codeHostCalls.finish(callId, answer) }
         case .codeHostHosts(let id, let hosts):

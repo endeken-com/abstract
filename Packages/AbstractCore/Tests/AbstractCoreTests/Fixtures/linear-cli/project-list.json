@@ -1,0 +1,13 @@
+{
+  "nodes": [
+    {
+      "id": "00000000-0000-0000-0000-000000000080",
+      "name": "Checkout",
+      "slugId": "checkout-0080"
+    }
+  ],
+  "pageInfo": {
+    "hasNextPage": false,
+    "endCursor": null
+  }
+}

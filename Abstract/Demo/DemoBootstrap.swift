@@ -723,15 +723,19 @@ struct Snapshotter {
         try? model.sendFollowUp(sessionId, text: "This is the bug from the issue; the screenshot shows it.",
                                 attachments: [issue] + (screenshot.map { [$0] } ?? []))
         model.draftAttachments[sessionId] = [
-            PromptAttachment(kind: .linearIssue, title: "Status dot for archived chats", reference: "ENG-318",
-                             url: "https://linear.app/acme/issue/ENG-318", details: ["State: In Progress"]),
+            PromptAttachment(kind: .trackerIssue, title: "Status dot for archived chats", reference: "ENG-318",
+                             url: "https://linear.app/acme/issue/ENG-318", details: ["State: In Progress"],
+                             tracker: PromptAttachment.linearTrackerId, trackerName: "Linear"),
             PromptAttachment(kind: .pullRequest, title: "Derive status from the process", reference: "#57",
                              url: "https://github.com/acme/app/pull/57"),
             PromptAttachment(kind: .file, title: "SessionRow.swift", path: "/tmp/SessionRow.swift"),
         ]
-        UserDefaults.standard.set(true, forKey: LinearAccount.connectedKey)
+        // The Linear plugin puts its issue search beside Send (ABS-141).
+        if model.plugins.plugin(PromptAttachment.linearTrackerId) == nil,
+           let folder = model.plugins.bundledFolders.first(where: { $0.lastPathComponent == "linear.abstractplugin" }) {
+            _ = try? model.plugins.install(from: folder, sourceKind: .bundled, enable: true)
+        }
         await shot("graphite-03c-attachments", settle: 2.5)
-        UserDefaults.standard.removeObject(forKey: LinearAccount.connectedKey)
         model.draftAttachments[sessionId] = nil
     }
 

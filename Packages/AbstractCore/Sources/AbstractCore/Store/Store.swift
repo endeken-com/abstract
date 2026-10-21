@@ -814,6 +814,15 @@ public final class Store: Sendable {
             try db.execute(sql: "ALTER TABLE automation_runs ADD COLUMN event TEXT")
             try db.execute(sql: "ALTER TABLE automation_runs ADD COLUMN source_session_id TEXT")
         }
+        // Linear moved into a plugin (ABS-141): a chat's first message
+        // names its Linear issues as tracker issues of the Linear plugin.
+        migrator.registerMigration("v22-tracker-attachments") { db in
+            try db.execute(sql: """
+                UPDATE sessions SET prompt = REPLACE(prompt, '<attachment kind="linearIssue" label=',
+                  '<attachment kind="trackerIssue" tracker="sh.abstract.linear" label=')
+                WHERE prompt LIKE '%<attachment kind="linearIssue" %'
+                """)
+        }
         return migrator
     }
 }
