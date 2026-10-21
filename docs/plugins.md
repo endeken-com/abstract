@@ -340,8 +340,13 @@ and the start of its description as `excerpt`. The plugin is handed only what wa
 in the search. Abstract draws the results and the chip, and writes the line the agent
 reads, `<Tracker> Issue KEY: title`, so every tracker reads the same.
 
-**Linear**, bundled, does this with a personal Linear API key entered under
-Settings › Plugins, sent only to api.linear.app.
+**Linear**, bundled, does this one of two ways, picked on its settings page: a personal
+Linear API key entered under Settings › Plugins and sent only to api.linear.app, or the
+[Linear CLI](https://github.com/schpet/linear-cli) signed in on the Mac, through `cli`
+with read commands only (`auth whoami`, `auth list`, `issue query`, `issue view`,
+`team list`, `project list`) in the workspace picked there. Abstract never reads the
+CLI's token. Both give the same results. It's turned on by itself when Abstract
+finds a Linear key from before it was a plugin, or the CLI signed in.
 
 ## Previewing a plugin
 

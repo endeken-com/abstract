@@ -1,0 +1,50 @@
+{
+  "nodes": [
+    {
+      "id": "00000000-0000-0000-0000-000000000012",
+      "identifier": "ENG-12",
+      "title": "Fix login",
+      "url": "https://linear.app/example/issue/eng-12/fix-login",
+      "priority": 2,
+      "priorityLabel": "High",
+      "estimate": null,
+      "createdAt": "2026-10-01T12:00:00.000Z",
+      "updatedAt": "2026-10-01T12:00:00.000Z",
+      "state": {
+        "id": "00000000-0000-0000-0000-000000000050",
+        "name": "In Progress",
+        "color": "#f2c94c",
+        "type": "started"
+      },
+      "assignee": {
+        "id": "00000000-0000-0000-0000-000000000060",
+        "name": "Sample Person",
+        "displayName": "sample",
+        "initials": "SP"
+      },
+      "team": {
+        "id": "00000000-0000-0000-0000-000000000070",
+        "key": "ENG",
+        "name": "Engineering"
+      },
+      "project": null,
+      "projectMilestone": null,
+      "cycle": null,
+      "labels": {
+        "nodes": []
+      },
+      "inverseRelations": {
+        "nodes": []
+      },
+      "metadata": {
+        "context": {},
+        "score": 0.5
+      }
+    }
+  ],
+  "pageInfo": {
+    "hasNextPage": false,
+    "endCursor": null
+  },
+  "totalCount": 1
+}

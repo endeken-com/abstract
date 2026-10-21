@@ -1,0 +1,7 @@
+Workspace: Example
+  Slug: example
+  URL: https://linear.app/example
+User: Sample Person
+  Display name: sample
+  Email: person@example.com
+  Role: member

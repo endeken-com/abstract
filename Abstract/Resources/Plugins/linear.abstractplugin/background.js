@@ -4,13 +4,20 @@
 // Abstract draws the results and writes the line the agent reads; this
 // script only finds issues.
 //
-// It connects with a personal API key, kept in the keychain as the
-// plugin's `api-key` secret and put into requests to api.linear.app by
-// Abstract, so this script never sees it.
+// It connects one of two ways, picked on its settings page:
 //
-// `LinearTracker` is plain logic: every call takes the fetch to use, so
-// tests run it over recorded replies. The wiring at the bottom runs only
-// inside Abstract.
+// - a personal API key, kept in the keychain as the plugin's `api-key`
+//   secret and put into requests to api.linear.app by Abstract, so this
+//   script never sees it;
+// - the Linear CLI (`linear`, https://github.com/schpet/linear-cli),
+//   signed in on this Mac, run through the `cli` capability with read
+//   commands only. The CLI keeps its own credentials; this script never
+//   asks it for a token.
+//
+// Both give the same answers. `LinearTracker` is plain logic: every call
+// takes the fetch, the command runner and the saved settings to use, so
+// tests run it over recorded replies and recorded CLI output. The wiring
+// at the bottom runs only inside Abstract.
 const LinearTracker = (() => {
   const endpoint = "https://api.linear.app/graphql";
   const excerptLimit = 12000;
@@ -156,14 +163,204 @@ const LinearTracker = (() => {
     },
   };
 
+  // MARK: The Linear CLI
+
+  const install = "brew install schpet/tap/linear";
+  const noCLI = `The Linear CLI isn't installed. Install it with \`${install}\`, then run \`linear auth login\`.`;
+  const signedOut = "The Linear CLI isn't signed in. Run `linear auth login` in a terminal, then try again.";
+  const openStates = ["triage", "backlog", "unstarted", "started"];
+
+  function plain(text) {
+    // eslint-disable-next-line no-control-regex
+    return String(text || "").replace(/\u001b\[[0-9;]*m/g, "");
+  }
+
+  /** The first line the CLI wrote about a failure, without its ✗. */
+  function failure(out) {
+    const line = plain((out && (out.stderr || out.stdout)) || "").split("\n").map((l) => l.trim()).find(Boolean);
+    return line ? line.replace(/^✗\s*/, "") : "The Linear CLI didn't answer.";
+  }
+
   /**
-   * Answers one of Abstract's questions. `env` is `{ fetch }`; the result
-   * is what goes back as `tracker.result`.
+   * `linear auth list`'s table: each workspace's slug and organisation,
+   * and which is the default. Who's signed in (names, emails) is left out.
+   */
+  function workspaces(text) {
+    const lines = plain(text).split("\n").filter((line) => line.trim());
+    const header = lines.findIndex((line) => /\bWORKSPACE\b/.test(line));
+    if (header < 0) return [];
+    const orgAt = lines[header].indexOf("ORG NAME");
+    const userAt = lines[header].indexOf("USER");
+    return lines.slice(header + 1).map((line) => {
+      const isDefault = /^\s*\*/.test(line);
+      const slug = line.replace(/^\s*\*?\s*/, "").split(/\s+/)[0];
+      const name = orgAt >= 0 && userAt > orgAt ? line.slice(orgAt, userAt).trim() : "";
+      return { slug, name: name || slug, isDefault };
+    }).filter((w) => /^[a-z0-9][a-z0-9-]*$/i.test(w.slug));
+  }
+
+  /** `linear auth whoami`: the signed-in person's name. */
+  function whoami(text) {
+    const match = /^User:\s*(.+)$/m.exec(plain(text));
+    return match ? match[1].trim() : null;
+  }
+
+  /** `linear team list`'s table: each team's key and name. */
+  function teams(text) {
+    const lines = plain(text).split("\n").filter((line) => line.trim());
+    const header = lines.findIndex((line) => /^\s*KEY\s+NAME\b/.test(line));
+    if (header < 0) return [];
+    const nameAt = lines[header].indexOf("NAME");
+    const after = lines[header].slice(nameAt + 4).search(/\S/);
+    const nameEnd = after < 0 ? -1 : nameAt + 4 + after;
+    return lines.slice(header + 1).map((line) => {
+      const key = line.trim().split(/\s+/)[0];
+      const name = (nameEnd > nameAt ? line.slice(nameAt, nameEnd) : line.slice(nameAt)).trim();
+      return { key, name };
+    }).filter((team) => /^[A-Z0-9]+$/i.test(team.key) && team.name);
+  }
+
+  function parseJSON(out) {
+    try { return JSON.parse(out.stdout); } catch { throw new Error("The Linear CLI's answer couldn't be read."); }
+  }
+
+  /** The workspace to use: the one picked, while the CLI still has it, else its default. */
+  function workspace(list, picked) {
+    const found = list.find((w) => w.slug === picked);
+    if (found) return found;
+    return list.find((w) => w.isDefault) || list[0] || null;
+  }
+
+  const cli = {
+    /** Runs one read command; throws with what the CLI said when it fails. */
+    async run(env, args) {
+      let out;
+      try {
+        out = await env.cli(args);
+      } catch (error) {
+        if (error && error.missing) throw Object.assign(new Error(noCLI), { missing: true });
+        throw error;
+      }
+      if (!out || !out.ok) throw new Error(failure(out));
+      return out;
+    },
+
+    /** The CLI's workspaces, or why there are none. */
+    async workspaces(env) {
+      const out = await cli.run(env, ["auth", "list"]);
+      return workspaces(out.stdout);
+    },
+
+    /** The workspace this plugin uses now. */
+    async current(env) {
+      const list = await cli.workspaces(env);
+      const picked = workspace(list, env.settings && env.settings.workspace);
+      if (!picked) throw new Error(signedOut);
+      return picked.slug;
+    },
+
+    async access(env) {
+      try {
+        const slug = await cli.current(env);
+        const out = await cli.run(env, ["auth", "whoami", "--workspace", slug]);
+        const name = whoami(out.stdout);
+        if (!name) return { ready: false, problem: signedOut };
+        return { ready: true, account: name };
+      } catch (error) {
+        return { ready: false, problem: String((error && error.message) || error) };
+      }
+    },
+
+    async searchIssues(env, query, project) {
+      const term = String(query || "").trim();
+      const key = identifier(term);
+      if (key) {
+        const found = await cli.issue(env, key);
+        if (found) delete found.excerpt;
+        return found ? [found] : [];
+      }
+      const slug = await cli.current(env);
+      const args = ["issue", "query", "--workspace", slug];
+      const match = /^(team|project):(.+)$/.exec(String(project || ""));
+      // What was typed goes as `--search=…`, so it's never read as an option.
+      if (match && match[1] === "team") args.push(`--team=${match[2]}`);
+      else args.push("--all-teams");
+      if (match && match[1] === "project") args.push(`--project=${match[2]}`);
+      if (term) args.push(`--search=${term}`);
+      else {
+        args.push("--assignee", "self");
+        for (const state of openStates) args.push("--state", state);
+      }
+      args.push("--limit", String(searchLimit), "--json", "--no-pager");
+      const out = await cli.run(env, args);
+      return issues(parseJSON(out));
+    },
+
+    async issue(env, reference) {
+      const key = identifier(reference);
+      if (!key) return null;
+      const slug = await cli.current(env);
+      let out;
+      try {
+        out = await cli.run(env, ["issue", "view", key, "--workspace", slug, "--json", "--no-comments", "--no-download", "--no-pager"]);
+      } catch (error) {
+        if (/could not find|not found/i.test(String(error && error.message))) return null;
+        throw error;
+      }
+      return issue(parseJSON(out));
+    },
+
+    async listProjects(env) {
+      const slug = await cli.current(env);
+      const teamsOut = await cli.run(env, ["team", "list", "--workspace", slug]);
+      const projectsOut = await cli.run(env, ["project", "list", "--workspace", slug, "--all-teams", "--json"]);
+      const found = parseJSON(projectsOut);
+      return projects({ teams: { nodes: teams(teamsOut.stdout) }, projects: { nodes: Array.isArray(found) ? found : found.nodes } });
+    },
+  };
+
+  // MARK: Choosing
+
+  /**
+   * Which way it connects: the one picked on the settings page, else the
+   * API key once one is entered, else the CLI once it's signed in.
+   */
+  async function mode(env) {
+    const picked = env.settings && env.settings.mode;
+    if (picked === "apiKey" || picked === "cli") return picked;
+    if (!env.cli) return "apiKey";
+    const key = await apiKey.access(env.fetch);
+    if (key.ready || key.problem !== noKey) return "apiKey";
+    const signedIn = await cli.access(env);
+    return signedIn.ready ? "cli" : "apiKey";
+  }
+
+  /**
+   * Answers one of Abstract's questions. `env` is `{ fetch, cli, settings }`:
+   * the fetch, the command runner (absent without the CLI grant) and the
+   * saved `{ mode, workspace }`. The result goes back as `tracker.result`.
    */
   async function answer(operation, input, env) {
     const args = input || {};
+    const how = await mode(env);
+    if (how === "cli") {
+      switch (operation) {
+        case "access": return cli.access(env);
+        case "searchIssues": return { issues: await cli.searchIssues(env, args.query, args.project) };
+        case "issue": return { issue: await cli.issue(env, args.reference) };
+        case "listProjects": return { projects: await cli.listProjects(env) };
+        default: throw new Error(`Linear doesn't answer ${operation}.`);
+      }
+    }
     switch (operation) {
-      case "access": return apiKey.access(env.fetch);
+      case "access": {
+        const access = await apiKey.access(env.fetch);
+        // With neither connected, say both ways.
+        if (!access.ready && access.problem === noKey && env.cli) {
+          return { ready: false, problem: "Enter your Linear API key, or sign in to the Linear CLI, in Settings → Plugins → Linear." };
+        }
+        return access;
+      }
       case "searchIssues": return { issues: await apiKey.searchIssues(env.fetch, args.query, args.project) };
       case "issue": return { issue: await apiKey.issue(env.fetch, args.reference) };
       case "listProjects": return { projects: await apiKey.listProjects(env.fetch) };
@@ -171,11 +368,26 @@ const LinearTracker = (() => {
     }
   }
 
-  return { identifier, issue, issues, projects, scope, apiKey, answer, noKey, refused };
+  return {
+    identifier, issue, issues, projects, scope, apiKey, cli, mode, answer, workspaces, whoami, teams, workspace,
+    noKey, refused, noCLI, signedOut, install,
+  };
 })();
+
+/** What `LinearTracker` runs with inside Abstract, with the settings as saved now. */
+async function linearEnvironment(host) {
+  const read = async (key) => {
+    const reply = await host.send("storage.get", { key });
+    return reply && reply.value !== undefined ? reply.value : null;
+  };
+  return {
+    fetch: (url, options) => host.fetch(url, options),
+    cli: host.cli ? (args) => host.cli.run(args) : null,
+    settings: { mode: await read("mode"), workspace: await read("workspace") },
+  };
+}
 
 if (typeof window !== "undefined" && window.AbstractPlugin && window.AbstractPlugin.issueTracker) {
   const host = window.AbstractPlugin;
-  const env = { fetch: (url, options) => host.fetch(url, options) };
-  host.issueTracker.handle((operation, input) => LinearTracker.answer(operation, input, env));
+  host.issueTracker.handle(async (operation, input) => LinearTracker.answer(operation, input, await linearEnvironment(host)));
 }

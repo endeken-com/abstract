@@ -398,9 +398,9 @@ final class AppModel {
             if let self { PluginToolLabels.shared.update(PluginTools.all(pluginToolOffers(), project: nil)) }
             self?.refreshTrackerIcons()
         }
-        adoptLinearPlugin()
         refreshTrackerIcons()
         pluginBackground?.reconcile()
+        Task { await adoptLinearPlugin() }
         servePluginTools()
         Task { await watchForStalls() }
         Task { await watchPullRequests() }

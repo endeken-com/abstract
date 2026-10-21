@@ -41,36 +41,59 @@ extension AppModel {
 
     // MARK: Upgrading from Linear in core
 
-    /// Abstract used to keep a Linear API key of its own (Settings →
-    /// Integrations). The first launch after Linear became a plugin
-    /// installs and turns on the bundled Linear plugin and moves the key
-    /// to it, so Linear search keeps working. Done once it's moved, or
-    /// when there was no key; a launch where it couldn't be moved tries
-    /// again next time and keeps the old copy.
-    func adoptLinearPlugin() {
+    /// Linear is a bundled plugin, on when you have a way into Linear
+    /// (ABS-141). Abstract used to keep a Linear API key of its own
+    /// (Settings → Integrations): the first launch after Linear became a
+    /// plugin installs and turns on the Linear plugin and moves the key to
+    /// it. With no key, it's turned on if the Linear CLI is signed in on
+    /// this Mac. Done once; a key that couldn't be moved is tried again
+    /// next launch, and its old copy kept until then.
+    func adoptLinearPlugin() async {
         guard !isDemo, store.setting(Self.linearAdoptedKey, as: Bool.self) != true else { return }
+        let pluginId = PromptAttachment.linearTrackerId
         // Only a Mac that had connected Linear has a key to read: reading
         // the keychain can ask for the password.
-        guard UserDefaults.standard.bool(forKey: Self.legacyLinearConnectedKey),
-              let key = Keychain.read(Self.legacyLinearAccount) else {
-            try? store.setSetting(Self.linearAdoptedKey, true)
-            return
+        if UserDefaults.standard.bool(forKey: Self.legacyLinearConnectedKey),
+           let key = Keychain.read(Self.legacyLinearAccount) {
+            guard turnOnLinearPlugin() else { return }
+            if !plugins.hasSecret(pluginId: pluginId, name: "api-key") {
+                plugins.setSecret(key, pluginId: pluginId, name: "api-key")
+            }
+            // The old copy goes only once the plugin's is there.
+            guard plugins.hasSecret(pluginId: pluginId, name: "api-key") else { return }
+            Keychain.write(Self.legacyLinearAccount, nil)
+            UserDefaults.standard.removeObject(forKey: Self.legacyLinearConnectedKey)
+        } else if plugins.plugin(pluginId) == nil {
+            // Couldn't tell (it timed out, say): ask again next launch.
+            guard let signedIn = await linearCLISignedIn() else { return }
+            if signedIn { guard turnOnLinearPlugin() else { return } }
         }
-        guard let folder = plugins.bundledFolders.first(where: { $0.lastPathComponent == "linear.abstractplugin" }) else { return }
+        try? store.setSetting(Self.linearAdoptedKey, true)
+    }
+
+    /// Installs the bundled Linear plugin if needed and turns it on.
+    private func turnOnLinearPlugin() -> Bool {
         let pluginId = PromptAttachment.linearTrackerId
         if plugins.plugin(pluginId) == nil {
-            guard (try? plugins.install(from: folder, sourceKind: .bundled, enable: true)) != nil else { return }
+            guard let folder = plugins.bundledFolders.first(where: { $0.lastPathComponent == "linear.abstractplugin" }),
+                  (try? plugins.install(from: folder, sourceKind: .bundled, enable: true)) != nil else { return false }
         } else if plugins.plugin(pluginId)?.record.enabled != true {
             setPluginEnabled(pluginId, true)
         }
-        if !plugins.hasSecret(pluginId: pluginId, name: "api-key") {
-            plugins.setSecret(key, pluginId: pluginId, name: "api-key")
-        }
-        // The old copy goes only once the plugin's is there.
-        guard plugins.hasSecret(pluginId: pluginId, name: "api-key") else { return }
-        Keychain.write(Self.legacyLinearAccount, nil)
-        UserDefaults.standard.removeObject(forKey: Self.legacyLinearConnectedKey)
-        try? store.setSetting(Self.linearAdoptedKey, true)
+        return plugins.plugin(pluginId)?.isUsable == true
+    }
+
+    /// Whether `linear auth list` names a workspace: the bundled plugin's
+    /// own declared read, run the way the plugin would run it. Nil when
+    /// the CLI is there but didn't answer.
+    private func linearCLISignedIn() async -> Bool? {
+        guard let folder = plugins.bundledFolders.first(where: { $0.lastPathComponent == "linear.abstractplugin" }),
+              let cli = try? PluginPackage.inspect(folder: folder).manifest.cli,
+              let command = cli.command(for: ["auth", "list"]) else { return nil }
+        guard await executor.which(cli.binary) != nil else { return false }
+        guard let out = try? await PluginCLIRunner().run(PluginCLIRequest(args: command.args, command: command), cli: cli,
+                                                         executor: executor, cwd: nil, readable: []) else { return nil }
+        return out.code == 0 && out.stdout.contains("WORKSPACE")
     }
 
     static let linearAdoptedKey = "plugins.linearAdopted"
