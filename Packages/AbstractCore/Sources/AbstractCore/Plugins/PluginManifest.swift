@@ -31,6 +31,9 @@ public enum PluginCapability: String, Sendable, Hashable, Codable, CaseIterable 
     /// background script. Each project sets each tool Allowed, Ask first
     /// or Off.
     case agentTools = "agent.tools"
+    /// Run the command-line tool its manifest names, with only the
+    /// subcommands it lists (ABS-139). Writes ask first until always allowed.
+    case cli = "cli"
 
     /// The capabilities that do something to a chat or an automation, as
     /// opposed to reading. Each asks first until always allowed.
@@ -39,6 +42,12 @@ public enum PluginCapability: String, Sendable, Hashable, Codable, CaseIterable 
     ]
 
     public var isAction: Bool { Self.actionCases.contains(self) }
+
+    /// The kinds that ask first and that the person may always allow: the
+    /// actions, and a CLI's write commands.
+    public static let askingCases: [PluginCapability] = actionCases + [.cli]
+
+    public var asksFirst: Bool { Self.askingCases.contains(self) }
 
     /// The sentence shown when the person reviews the plugin.
     public var plainWords: String {
@@ -61,6 +70,7 @@ public enum PluginCapability: String, Sendable, Hashable, Codable, CaseIterable 
         case .reviewComment: "Add comments to your chats' Review, for you to send or delete"
         case .pullRequestsRead: "Read your chats' pull requests: their checks, reviews and comments"
         case .agentTools: "Give your agents tools it runs, which ask you first until you allow them in a project's settings"
+        case .cli: "Run the command-line tool it names, with only the commands it lists"
         }
     }
 
@@ -224,6 +234,8 @@ public struct PluginManifest: Sendable, Hashable, Codable {
     public var background: String?
     /// Tools it gives agents (ABS-97), under `agent.tools`.
     public var tools: [PluginAgentTool]?
+    /// The command-line tool it runs (ABS-139), under `cli`.
+    public var cli: PluginCLI?
 
     /// The exact hosts a plugin with `network` may reach (ABS-94). No
     /// wildcards: every host is shown at review and checked per request.
@@ -299,16 +311,21 @@ public struct PluginManifest: Sendable, Hashable, Codable {
         public var linkDecorators: [Contribution]
         /// The issue tracker its background script answers for (ABS-141).
         public var issueTracker: PluginIssueTrackerDeclaration?
+        /// The code host it answers for (ABS-139): core asks it for the
+        /// pull requests of projects whose remote is on one of its hosts.
+        public var codeHost: CodeHostDeclaration?
 
         public init(views: [View] = [], chatPanelTabs: [Contribution] = [], chatMenuItems: [Contribution] = [],
                     paletteCommands: [Contribution] = [], settingsPage: Contribution? = nil,
                     homeWidgets: [Contribution] = [], reviewActions: [Contribution] = [],
                     pullRequestSwitches: [Contribution] = [], linkDecorators: [Contribution] = [],
-                    issueTracker: PluginIssueTrackerDeclaration? = nil) {
+                    issueTracker: PluginIssueTrackerDeclaration? = nil,
+                    codeHost: CodeHostDeclaration? = nil) {
             self.views = views; self.chatPanelTabs = chatPanelTabs; self.chatMenuItems = chatMenuItems
             self.paletteCommands = paletteCommands; self.settingsPage = settingsPage; self.homeWidgets = homeWidgets
             self.reviewActions = reviewActions; self.pullRequestSwitches = pullRequestSwitches
             self.linkDecorators = linkDecorators; self.issueTracker = issueTracker
+            self.codeHost = codeHost
         }
 
         // Manifests written before the extra places carry only `views`.
@@ -324,6 +341,7 @@ public struct PluginManifest: Sendable, Hashable, Codable {
             pullRequestSwitches = try box.decodeIfPresent([Contribution].self, forKey: .pullRequestSwitches) ?? []
             linkDecorators = try box.decodeIfPresent([Contribution].self, forKey: .linkDecorators) ?? []
             issueTracker = try box.decodeIfPresent(PluginIssueTrackerDeclaration.self, forKey: .issueTracker)
+            codeHost = try box.decodeIfPresent(CodeHostDeclaration.self, forKey: .codeHost)
         }
     }
 
@@ -349,10 +367,12 @@ public struct PluginManifest: Sendable, Hashable, Codable {
                 homeWidgets: [Contribution] = [], reviewActions: [Contribution] = [],
                 pullRequestSwitches: [Contribution] = [], linkDecorators: [Contribution] = [],
                 issueTracker: PluginIssueTrackerDeclaration? = nil,
-                background: String? = nil, tools: [PluginAgentTool] = []) {
+                codeHost: CodeHostDeclaration? = nil,
+                background: String? = nil, tools: [PluginAgentTool] = [], cli: PluginCLI? = nil) {
         self.api = api; self.id = id; self.name = name; self.version = version
         self.background = background
         self.tools = tools.isEmpty ? nil : tools
+        self.cli = cli
         self.description = description; self.entry = entry
         self.capabilities = capabilities
         self.network = networkHosts.isEmpty ? nil : Network(hosts: networkHosts)
@@ -360,7 +380,7 @@ public struct PluginManifest: Sendable, Hashable, Codable {
         self.contributes = Contributes(views: views, chatPanelTabs: chatPanelTabs, chatMenuItems: chatMenuItems,
                                        paletteCommands: paletteCommands, settingsPage: settingsPage, homeWidgets: homeWidgets,
                                        reviewActions: reviewActions, pullRequestSwitches: pullRequestSwitches,
-                                       linkDecorators: linkDecorators, issueTracker: issueTracker)
+                                       linkDecorators: linkDecorators, issueTracker: issueTracker, codeHost: codeHost)
     }
 
     // A plugin that only runs in the background (ABS-93) may leave out
@@ -379,6 +399,7 @@ public struct PluginManifest: Sendable, Hashable, Codable {
         contributes = try box.decodeIfPresent(Contributes.self, forKey: .contributes) ?? Contributes()
         background = try box.decodeIfPresent(String.self, forKey: .background)
         tools = try box.decodeIfPresent([PluginAgentTool].self, forKey: .tools)
+        cli = try box.decodeIfPresent(PluginCLI.self, forKey: .cli)
     }
 
     public var agentTools: [PluginAgentTool] { tools ?? [] }
@@ -413,6 +434,9 @@ public struct PluginManifest: Sendable, Hashable, Codable {
         if !agentTools.isEmpty {
             let names = agentTools.map(\.name).joined(separator: ", ")
             sentences.append("Tools for your agents — \(names).")
+        }
+        if let codeHost = contributes.codeHost {
+            sentences.append("Pull requests for \(codeHost.hosts.joined(separator: " and ")) — Abstract asks it for the pull requests, checks and merging of projects there.")
         }
         return sentences
     }
@@ -551,6 +575,12 @@ public struct PluginManifest: Sendable, Hashable, Codable {
             try tracker.validate()
         }
         try validateTools()
+        try validateCLI()
+        if let codeHost = contributes.codeHost {
+            // Core's calls go to its background script.
+            guard background != nil else { throw PluginValidationError.invalidManifest("codeHost needs a background script") }
+            try codeHost.validate()
+        }
         let total = contributes.views.count + places.map(\.1.count).reduce(0, +) + (contributes.issueTracker == nil ? 0 : 1)
         guard total > 0 || background != nil else {
             throw PluginValidationError.invalidManifest("the plugin doesn't add anything")
@@ -583,6 +613,17 @@ public struct PluginManifest: Sendable, Hashable, Codable {
                 }
             }
         }
+    }
+
+    /// A CLI exists only under its grant, and the grant needs one; it is
+    /// API 2, as its writes ask first like actions (ABS-139).
+    private func validateCLI() throws {
+        guard grantedCapabilities.contains(.cli) == (cli != nil) else {
+            throw PluginValidationError.invalidManifest("cli needs its binary and commands listed, and a listed cli needs the cli capability")
+        }
+        guard let cli else { return }
+        guard api >= 2 else { throw PluginValidationError.invalidManifest("cli needs api 2") }
+        try cli.validate()
     }
 
     /// An exact host name: dotted labels only. No wildcard, scheme, port,

@@ -176,12 +176,16 @@ struct PluginsSettingsPane: View {
             }
             // Action grants (ABS-92), each revocable on its own. Turning
             // the plugin off and on again reviews the whole list anew.
-            ForEach(PluginCapability.actionCases.filter { record.grantedCapabilities.contains($0) },
+            ForEach(PluginCapability.askingCases.filter { record.grantedCapabilities.contains($0) },
                     id: \.rawValue) { capability in
+                // A CLI asks first for its commands that change things (ABS-139).
+                let words = capability == .cli
+                    ? "Run \(record.grantedCLI?.binary ?? "its tool")'s commands that change things"
+                    : capability.plainWords
                 HStack(spacing: Space.sm) {
                     Text(record.alwaysAllowedActions.contains(capability)
-                         ? "\(capability.plainWords) — always allowed."
-                         : "\(capability.plainWords) — asks first.")
+                         ? "\(words) — always allowed."
+                         : "\(words) — asks first.")
                         .font(.btCaption)
                         .foregroundStyle(Color.btTextSecondary)
                     if record.alwaysAllowedActions.contains(capability) {
@@ -332,6 +336,16 @@ private struct PluginReviewSheet: View {
                     Text("Before it starts a chat, sends a message, stops or resumes an agent, answers for you, or runs an automation, Abstract will ask you first. You can let it always do one of those, and take any of them back here in Settings.")
                         .font(.btBody).foregroundStyle(Color.btTextSecondary)
                         .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            if let cli = manifest.cli {
+                // The binary and every command, in plain words (ABS-139).
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("On your Mac, it will be able to:").font(.btBodyMedium).foregroundStyle(Color.btText)
+                    ForEach(cli.sentences, id: \.self) { sentence in
+                        Text(sentence).font(.btBody).foregroundStyle(Color.btTextSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
             if !manifest.networkSentences.isEmpty {
