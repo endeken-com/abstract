@@ -90,6 +90,9 @@ public struct PluginBridge: Sendable {
         case cancelJob(id: String?, jobId: String)
         /// The script finished one run of this job.
         case jobDone(jobId: String)
+        /// The script's answer to an agent's tool call (ABS-97): text or
+        /// JSON, or why it failed.
+        case toolResult(callId: String, PluginToolOutcome)
         case refused(id: String?, reason: String)
         /// The plugin flooded the bridge; the host tears its view down.
         case flooded
@@ -102,8 +105,8 @@ public struct PluginBridge: Sendable {
               case .object(let message) = JSONValue(any: object) else {
             return refuse(nil, "That message couldn't be read.")
         }
-        // Only fetch may use the larger limit.
-        if data.count > Self.messageByteLimit, message["type"]?.string != "fetch" {
+        // Only fetch, and a tool's result (ABS-97), may use the larger limit.
+        if data.count > Self.messageByteLimit, !["fetch", "tools.result"].contains(message["type"]?.string ?? "") {
             return refuse(message["id"]?.string, "That message couldn't be read.")
         }
         return handle(message, storage: storage, now: now)
@@ -249,6 +252,18 @@ public struct PluginBridge: Sendable {
                 return refuse(id, "Only a plugin's background script can listen for events or schedule jobs.")
             }
             return backgroundOutcome(type: type, id: id, payload: payload)
+        case "tools.result":
+            guard isBackground, capabilities.contains(.agentTools) else {
+                return refuse(id, "Only the background script of a plugin granted giving agents tools can answer a tool call.")
+            }
+            guard let callId = nonEmpty(payload?["callId"]?.string) else {
+                return refuse(id, "A tool result needs the call it answers.")
+            }
+            if let error = payload?["error"], error != .null {
+                let text = error.string ?? error.compact()
+                return .toolResult(callId: callId, .failed(String(text.prefix(2_000))))
+            }
+            return .toolResult(callId: callId, .result(PluginTools.resultText(payload?["result"] ?? .null)))
         case "__error":
             return refuse(id, "The plugin reported an error.")
         default:

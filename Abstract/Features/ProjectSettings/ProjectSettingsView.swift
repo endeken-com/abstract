@@ -536,6 +536,28 @@ private struct NewChatSection: View {
                     set: { on in model.updateProject(project.id) { $0.agentHistory = on } }))
                     .frame(minHeight: ProjectPage.controlHeight)
             }
+            let tools = model.pluginTools(in: project)
+            if !tools.isEmpty {
+                SettingRow(title: "Plugin tools",
+                           detail: "Tools your plugins give this project's agents. Ask first shows each call in the chat for you to allow; Off leaves it out from the agent's next turn.") {
+                    VStack(alignment: .leading, spacing: Space.xs) {
+                        ForEach(tools, id: \.key) { tool in
+                            SentenceMenu(title: "\(tool.label): \(tool.mode.title)") {
+                                ForEach(PluginToolMode.allCases, id: \.self) { mode in
+                                    Toggle(isOn: Binding(get: { tool.mode == mode },
+                                                         set: { _ in model.setPluginToolMode(project.id, tool, mode) })) {
+                                        Text(mode.title)
+                                        Text(mode.detail)
+                                    }
+                                }
+                            }
+                            .help(tool.tool.description)
+                            .padding(.leading, -Chip.inset)
+                        }
+                    }
+                    .frame(minHeight: ProjectPage.controlHeight)
+                }
+            }
             SettingRow(title: "Branch from", detail: "The branch or commit each new chat's worktree starts from.") {
                 BTTextField("Branch from", text: $baseRef, prompt: "HEAD", mono: true)
                     .frame(maxWidth: 240)
