@@ -37,6 +37,8 @@ struct PendingPermission: Identifiable, Hashable {
     let requestId: String
     let toolName: String
     let input: JSONValue
+    /// When it started waiting, so a queue reads oldest first (ABS-111).
+    var requestedAt = Date()
 }
 
 /// A permission request a project rule answered, so its tool row can name
@@ -1470,8 +1472,11 @@ final class AppModel {
         if let pending = snapshot.pendingPermissions {
             for session in snapshot.sessions {
                 let id = RemoteService.mirrorId(device: device, session: session.id)
+                // Each snapshot repeats what's waiting: keep when it began.
+                let since = Dictionary((permissions[id] ?? []).map { ($0.requestId, $0.requestedAt) }, uniquingKeysWith: { a, _ in a })
                 permissions[id] = pending[session.id]?.map {
-                    PendingPermission(requestId: $0.requestId, toolName: $0.toolName, input: $0.input)
+                    PendingPermission(requestId: $0.requestId, toolName: $0.toolName, input: $0.input,
+                                      requestedAt: since[$0.requestId] ?? Date())
                 }
             }
         }

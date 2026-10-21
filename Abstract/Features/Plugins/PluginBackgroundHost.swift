@@ -96,6 +96,7 @@ final class PluginBackgroundHost {
             guard !runners.isEmpty else { return }
             let chats = model.pluginSnapshot(capabilities: [.chatsRead], revision: 0).chats ?? []
             for event in detector.events(from: chats) { deliver(event) }
+            for event in detector.resolved(pending: model.pluginPendingTargets()) { deliver(event) }
         }
     }
 }

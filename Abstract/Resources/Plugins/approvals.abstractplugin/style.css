@@ -1,0 +1,118 @@
+:root {
+  color-scheme: light dark;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: var(--abstract-canvas, Canvas);
+  color: var(--abstract-text, CanvasText);
+  font-family: var(--abstract-font, -apple-system, sans-serif);
+  font-size: 13px;
+}
+main {
+  max-width: 860px;
+  padding: 20px 20px 28px;
+}
+h1 {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0;
+}
+h2 {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 22px 2px 8px;
+  color: var(--abstract-textSecondary, GrayText);
+}
+.note {
+  color: var(--abstract-textSecondary, GrayText);
+  margin: 3px 0 0;
+}
+.notice {
+  margin: 14px 0 0;
+  padding: 9px 11px;
+  border: 1px solid var(--abstract-border, GrayText);
+  border-radius: 8px;
+  background: var(--abstract-inset, ButtonFace);
+  color: var(--abstract-textSecondary, GrayText);
+}
+ul {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.row {
+  padding: 10px 12px;
+  border: 1px solid var(--abstract-border, GrayText);
+  border-radius: 9px;
+  background: var(--abstract-surface, ButtonFace);
+}
+.row.answered {
+  opacity: 0.7;
+}
+.summary {
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.meta {
+  margin: 3px 0 0;
+  color: var(--abstract-textSecondary, GrayText);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+pre {
+  margin: 8px 0 0;
+  padding: 7px 9px;
+  max-height: 160px;
+  overflow: auto;
+  border-radius: 6px;
+  background: var(--abstract-inset, ButtonFace);
+  font: 12px ui-monospace, Menlo, monospace;
+  white-space: pre-wrap;
+}
+.question {
+  margin-top: 8px;
+}
+.question-text {
+  margin: 0 0 6px;
+}
+.options,
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.actions {
+  margin-top: 10px;
+}
+button {
+  font: inherit;
+  padding: 4px 10px;
+  border: 1px solid var(--abstract-border, GrayText);
+  border-radius: 7px;
+  background: var(--abstract-surfaceRaised, ButtonFace);
+  color: var(--abstract-text, ButtonText);
+  cursor: pointer;
+}
+button:hover:not(:disabled),
+button:focus-visible {
+  background: var(--abstract-hover, ButtonFace);
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+button.primary,
+button.picked {
+  border-color: var(--abstract-accent, Highlight);
+  background: var(--abstract-accent, Highlight);
+  color: var(--abstract-onAccent, HighlightText);
+}
+.questions > button.primary {
+  margin-top: 8px;
+}

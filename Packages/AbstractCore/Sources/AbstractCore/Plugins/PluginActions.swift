@@ -33,6 +33,16 @@ public struct PluginAction: Sendable, Equatable {
     /// `chats.message` sending the chat's Review comments, as your own
     /// Send would, instead of `text`.
     public var sendsReview = false
+    /// Several permission requests allowed at once (ABS-111): each one
+    /// runs exactly the same command. Empty for every other action.
+    public var batch: [Target] = []
+
+    /// One waiting request, by its chat.
+    public struct Target: Sendable, Hashable {
+        public var chatId: String
+        public var requestId: String
+        public init(chatId: String, requestId: String) { self.chatId = chatId; self.requestId = requestId }
+    }
 
     /// Stopping a chat's agent: `pause` ends its turn and leaves it
     /// resumable by the next message, `stop` ends the agent itself,
@@ -46,11 +56,12 @@ public struct PluginAction: Sendable, Equatable {
                 text: String? = nil, agentId: String? = nil, policy: String? = nil,
                 control: Control? = nil, requestId: String? = nil, allow: Bool? = nil,
                 answers: [String: String] = [:], automationId: String? = nil,
-                reviewOf: String? = nil, sendsReview: Bool = false) {
+                reviewOf: String? = nil, sendsReview: Bool = false, batch: [Target] = []) {
         self.capability = capability; self.chatId = chatId; self.projectKey = projectKey
         self.text = text; self.agentId = agentId; self.policy = policy; self.control = control
         self.requestId = requestId; self.allow = allow; self.answers = answers
         self.automationId = automationId; self.reviewOf = reviewOf; self.sendsReview = sendsReview
+        self.batch = batch
     }
 
     /// The one sentence the ask shows: who is asking, and what it will do.
@@ -76,6 +87,10 @@ public struct PluginAction: Sendable, Equatable {
             case nil: return "\(pluginName) wants to control the agent in \(chat)."
             }
         case .permissionsAnswer:
+            if !batch.isEmpty {
+                let chats = Set(batch.map(\.chatId)).count
+                return "\(pluginName) wants to allow the same command \(batch.count) times, in \(chats == 1 ? "one chat" : "\(chats) chats")."
+            }
             if !answers.isEmpty { return "\(pluginName) wants to answer the agent's questions in \(chat)." }
             return "\(pluginName) wants to \(allow == true ? "allow" : "decline") a permission request in \(chat)."
         case .automationsRun:

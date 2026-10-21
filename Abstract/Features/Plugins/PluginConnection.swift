@@ -111,6 +111,14 @@ final class PluginConnection {
                  payload: model.pluginTranscript(page: page, chatId: chatId, allowedProjectKeys: keys))
         case .getAutomations(let id, let page):
             send(type: "reply", id: id, payload: model.pluginAutomations(page: page))
+        case .getPermissions(let id):
+            let pending = model.pluginPendingRequests()
+            // Requests it may act on are the chats it already knows of.
+            for chatId in Set(pending.map(\.chatId)) where model.session(chatId) != nil { bridge.know(chatId: chatId) }
+            send(type: "reply", id: id, payload: PluginPermissions.list(pending))
+        case .badge(let id, let count):
+            model.plugins.setBadge(plugin.id, count)
+            send(type: "reply", id: id, payload: .object(["count": .number(Double(count))]))
         case .addReviewComments(let id, let chatId, let author, let comments):
             let added = model.addPluginReviewComments(chatId, author: author, comments)
             send(type: "reply", id: id, payload: .object(["added": .number(Double(added))]))
@@ -146,6 +154,11 @@ final class PluginConnection {
         var info = action.sendsReview
             ? model.reviewSendPreview(action.chatId ?? "", text: action.text)
             : action.detail.map { String($0.prefix(600)) } ?? ""
+        // Allowing shows what it lets through (ABS-111).
+        if action.capability == .permissionsAnswer, action.answers.isEmpty,
+           let preview = model.pluginAnswerPreview(action) {
+            info = String(preview.prefix(600))
+        }
         if !info.isEmpty { info += "\n\n" }
         info += "Always allow lets \(manifest.name) do this kind of thing without asking. You can change your mind in Settings → Plugins."
         alert.informativeText = info
