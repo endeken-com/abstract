@@ -189,6 +189,8 @@ public struct Session: Sendable, Hashable, Identifiable, Codable {
     /// chat's worktree and never owns it: it doesn't take it over, and
     /// deleting it never removes the folder.
     public var reviewsSessionId: String? = nil
+    /// The workflow it runs, and where it is in it; nil when it runs none.
+    public var workflow: WorkflowProgress? = nil
 
     public init(
         id: String = UUID().uuidString, projectId: String?, name: String, providerId: String,
@@ -210,6 +212,7 @@ public struct Session: Sendable, Hashable, Identifiable, Codable {
         case id, projectId, name, providerId, providerSessionId, worktreePath, branch, baseRef, status, statusDetail
         case permissionPolicy, prompt, automationId, createdAt, lastEventAt, archivedAt, model, effort, handoffFrom
         case providerSessions, pinnedAt, nameSource, profileId, profileName, profileInstructions, reviewsSessionId
+        case workflow
     }
 
     /// An older Mac's chats come without what it doesn't know yet.
@@ -236,6 +239,7 @@ public struct Session: Sendable, Hashable, Identifiable, Codable {
         profileName = try c.decodeIfPresent(String.self, forKey: .profileName)
         profileInstructions = try c.decodeIfPresent(String.self, forKey: .profileInstructions)
         reviewsSessionId = try c.decodeIfPresent(String.self, forKey: .reviewsSessionId)
+        workflow = try? c.decodeIfPresent(WorkflowProgress.self, forKey: .workflow)
     }
 }
 
@@ -343,6 +347,13 @@ public struct Automation: Sendable, Hashable, Identifiable, Codable {
     /// The profile each run starts from (ABS-101), resolved when the run
     /// starts; nil = the automation's own agent, model, effort and policy.
     public var profileId: String? = nil
+    /// The workflow each run's chat follows; nil = the profile, or the
+    /// automation's own agent. Taken over the profile when both are set.
+    public var workflowId: String? = nil
+    /// Things that happen in Abstract that start a run, beside `triggers`.
+    public var events: [AutomationEvent] = []
+    /// Where a run started by an event happens.
+    public var eventTarget: AutomationEventTarget = .triggeringChat
 
     /// The switch this replaced: fire once on launch if a scheduled time
     /// was missed while closed. Kept so older Macs and older rows, which
@@ -410,6 +421,7 @@ public struct Automation: Sendable, Hashable, Identifiable, Codable {
         case id, name, prompt, providerId, projectId, triggers, workspaceMode, pinnedSessionId
         case continueAgentSession, permissionPolicy, catchUp, concurrency, missedRuns, onlyWhenChanged
         case enabled, nextRunAt, createdAt, updatedAt, model, effort, deviceId, profileId
+        case workflowId, events, eventTarget
     }
 
     /// An older Mac's automations carry the catch-up switch instead of
@@ -434,6 +446,10 @@ public struct Automation: Sendable, Hashable, Identifiable, Codable {
                   missedRuns: try c.decodeIfPresent(AutomationMissedRuns.self, forKey: .missedRuns),
                   onlyWhenChanged: try c.decodeIfPresent(Bool.self, forKey: .onlyWhenChanged) ?? false)
         profileId = try c.decodeIfPresent(String.self, forKey: .profileId)
+        workflowId = try c.decodeIfPresent(String.self, forKey: .workflowId)
+        // An event a newer Mac knows and this one doesn't is left out.
+        events = ((try? c.decodeIfPresent([String].self, forKey: .events)) ?? []).compactMap(AutomationEvent.init(rawValue:))
+        eventTarget = (try? c.decodeIfPresent(AutomationEventTarget.self, forKey: .eventTarget)) ?? .triggeringChat
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -449,10 +465,75 @@ public struct Automation: Sendable, Hashable, Identifiable, Codable {
         try c.encode(createdAt, forKey: .createdAt); try c.encode(updatedAt, forKey: .updatedAt)
         try c.encodeIfPresent(model, forKey: .model); try c.encodeIfPresent(effort, forKey: .effort)
         try c.encodeIfPresent(deviceId, forKey: .deviceId); try c.encodeIfPresent(profileId, forKey: .profileId)
+        try c.encodeIfPresent(workflowId, forKey: .workflowId)
+        if !events.isEmpty { try c.encode(events, forKey: .events); try c.encode(eventTarget, forKey: .eventTarget) }
     }
 }
 
-public enum RunTrigger: String, Sendable, Codable { case schedule, manual }
+/// Something that happens to a chat that can start an automation's run.
+public enum AutomationEvent: String, Sendable, Hashable, Codable, CaseIterable, Identifiable {
+    /// Its agent finished a turn and the chat waits for you.
+    case turnFinished = "turn_finished"
+    /// The last step of its workflow finished.
+    case workflowFinished = "workflow_finished"
+    case chatArchived = "chat_archived"
+    case pullRequestOpened = "pull_request_opened"
+    case pullRequestMerged = "pull_request_merged"
+
+    public var id: String { rawValue }
+
+    /// "When a chat …", as the editor's sentence reads.
+    public var phrase: String {
+        switch self {
+        case .turnFinished: "finishes its turn"
+        case .workflowFinished: "finishes its workflow"
+        case .chatArchived: "is archived"
+        case .pullRequestOpened: "opens a pull request"
+        case .pullRequestMerged: "has its pull request merged"
+        }
+    }
+
+    /// As a menu item.
+    public var title: String {
+        switch self {
+        case .turnFinished: "When a Chat Finishes Its Turn"
+        case .workflowFinished: "When a Chat Finishes Its Workflow"
+        case .chatArchived: "When a Chat Is Archived"
+        case .pullRequestOpened: "When a Chat Opens a Pull Request"
+        case .pullRequestMerged: "When a Chat's Pull Request Is Merged"
+        }
+    }
+
+    public var detail: String {
+        switch self {
+        case .turnFinished: "Its agent is done and the chat waits for you; not while a workflow moves on by itself"
+        case .workflowFinished: "Every step of the chat's workflow is done"
+        case .chatArchived: "You archive it, done with it"
+        case .pullRequestOpened: "A pull request from the chat's branch shows up on GitHub"
+        case .pullRequestMerged: "The chat's pull request is merged on GitHub"
+        }
+    }
+
+    public var symbol: String {
+        switch self {
+        case .turnFinished: "checkmark.bubble"
+        case .workflowFinished: "flag.checkered"
+        case .chatArchived: "archivebox"
+        case .pullRequestOpened: "arrow.triangle.pull"
+        case .pullRequestMerged: "arrow.triangle.merge"
+        }
+    }
+}
+
+/// Where a run an event started happens.
+public enum AutomationEventTarget: String, Sendable, Hashable, Codable, CaseIterable {
+    /// Its instructions arrive in the chat the event happened to.
+    case triggeringChat = "triggering_chat"
+    /// It starts a chat as a scheduled run would.
+    case ownChat = "own_chat"
+}
+
+public enum RunTrigger: String, Sendable, Codable { case schedule, manual, event }
 
 public enum RunStatus: String, Sendable, Codable {
     case creating
@@ -476,13 +557,44 @@ public struct AutomationRun: Sendable, Hashable, Identifiable, Codable {
     /// The project's base commit when the run started; the mark a later
     /// "only when changed" run is compared with.
     public var baseCommit: String?
+    /// For a run an event started: which event, and the chat it happened to.
+    public var event: AutomationEvent?
+    public var sourceSessionId: String?
 
     public init(id: String = UUID().uuidString, automationId: String, firedAt: Date = Date(), trigger: RunTrigger,
                 status: RunStatus = .creating, sessionId: String? = nil, error: String? = nil,
-                reason: String? = nil, baseCommit: String? = nil) {
+                reason: String? = nil, baseCommit: String? = nil, event: AutomationEvent? = nil, sourceSessionId: String? = nil) {
         self.id = id; self.automationId = automationId; self.firedAt = firedAt; self.trigger = trigger
         self.status = status; self.sessionId = sessionId; self.error = error
         self.reason = reason; self.baseCommit = baseCommit
+        self.event = event; self.sourceSessionId = sourceSessionId
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, automationId, firedAt, trigger, status, sessionId, error, reason, baseCommit, event, sourceSessionId
+    }
+
+    /// An event's run reads as manual to a Mac that knows no events.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let event = (try? c.decodeIfPresent(String.self, forKey: .event)).flatMap { $0.flatMap(AutomationEvent.init(rawValue:)) }
+        self.init(id: try c.decode(String.self, forKey: .id), automationId: try c.decode(String.self, forKey: .automationId),
+                  firedAt: try c.decode(Date.self, forKey: .firedAt),
+                  trigger: event == nil ? (RunTrigger(rawValue: try c.decode(String.self, forKey: .trigger)) ?? .manual) : .event,
+                  status: try c.decode(RunStatus.self, forKey: .status), sessionId: try c.decodeIfPresent(String.self, forKey: .sessionId),
+                  error: try c.decodeIfPresent(String.self, forKey: .error), reason: try c.decodeIfPresent(String.self, forKey: .reason),
+                  baseCommit: try c.decodeIfPresent(String.self, forKey: .baseCommit), event: event,
+                  sourceSessionId: try c.decodeIfPresent(String.self, forKey: .sourceSessionId))
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id); try c.encode(automationId, forKey: .automationId); try c.encode(firedAt, forKey: .firedAt)
+        try c.encode(trigger == .event ? RunTrigger.manual : trigger, forKey: .trigger)
+        try c.encode(status, forKey: .status); try c.encodeIfPresent(sessionId, forKey: .sessionId)
+        try c.encodeIfPresent(error, forKey: .error); try c.encodeIfPresent(reason, forKey: .reason)
+        try c.encodeIfPresent(baseCommit, forKey: .baseCommit); try c.encodeIfPresent(event?.rawValue, forKey: .event)
+        try c.encodeIfPresent(sourceSessionId, forKey: .sourceSessionId)
     }
 
     public static func skipped(automationId: String, reason: AutomationSkipReason, at firedAt: Date = Date()) -> AutomationRun {

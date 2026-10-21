@@ -89,6 +89,11 @@ These come from how Abstract has been built so far and decisions already taken.
 - **Public repository.** No personal paths, accounts or fixtures from a real profile.
 - **One type per agent.** Adding an agent is one `ProviderDefinition` plus one line in
   `ProviderRegistry`. Keep it that way.
+- **Workflows stay a sequence of profiles on one chat.** A workflow hands one chat from
+  profile to profile (say, research, build, review, test), each step either moving on by
+  itself or waiting for you, and automations can follow one or start when something
+  happens to a chat. No branching, conditions or parallel steps: anything beyond a
+  straight line belongs in a plugin or the `abstract` command line.
 - **Plain language in the UI and in notes.** Sentences, not labels. No jargon a
   newcomer to the app wouldn't know.
 
@@ -105,8 +110,6 @@ These come from how Abstract has been built so far and decisions already taken.
 ## Not planned
 
 - Calling model APIs, holding model keys, or pricing tables.
-- A workflow or pipeline builder that chains agents. Abstract runs agents; it does not
-  choreograph them.
 - Windows or Linux builds of the app itself (an SSH executor is the path to remote Linux).
 - Merging a release branch back into `main`.
 

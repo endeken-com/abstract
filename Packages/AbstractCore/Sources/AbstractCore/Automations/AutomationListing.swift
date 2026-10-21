@@ -95,12 +95,12 @@ public enum AutomationListing {
         case .all: true
         case .active: isScheduled(a)
         case .paused: !a.enabled
-        case .manual: a.enabled && a.triggers.isEmpty
+        case .manual: a.enabled && a.triggers.isEmpty && a.events.isEmpty
         }
     }
 
     /// On and with a schedule to keep.
-    private static func isScheduled(_ a: Automation) -> Bool { a.enabled && !a.triggers.isEmpty }
+    private static func isScheduled(_ a: Automation) -> Bool { a.enabled && (!a.triggers.isEmpty || !a.events.isEmpty) }
 
     /// Scheduled ones first, soonest run first (none yet last); then the
     /// paused and hand-run ones by name.

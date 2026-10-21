@@ -16,9 +16,11 @@ struct UsageSettingsPane: View {
                 Hairline()
                 TokenUsageSection()
             }
-            .padding(.horizontal, Space.xl)
+            // The same column the settings title and forms keep.
+            .padding(.horizontal, SettingsLayout.margin + SettingsLayout.textInset)
             .padding(.vertical, Space.lg)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: SettingsLayout.rowWidth + 2 * SettingsLayout.margin, alignment: .leading)
+            .frame(maxWidth: .infinity)
         }
         .task {
             // Limits move as agents work; re-read every few minutes while this is open.
@@ -53,7 +55,7 @@ private struct AccountsSection: View {
         let accounts = model.accounts
         VStack(alignment: .leading, spacing: Space.xl) {
             HStack(spacing: Space.md) {
-                Text("Accounts").font(.btTitle).foregroundStyle(Color.btText)
+                Text("Accounts").font(.btHeadline).foregroundStyle(Color.btText)
                 Spacer(minLength: Space.md)
                 Text(accounts.refreshedAt.map { "Limits as each agent last reported them, checked \(RelativeTime.short($0)) ago" } ?? "Checking accounts…")
                     .font(.btCaption).foregroundStyle(Color.btTextTertiary)
@@ -396,7 +398,7 @@ private struct TokenUsageSection: View {
 
     private func header(_ report: UsageReport) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: Space.md) {
-            Text("Token usage").font(.btTitle).foregroundStyle(Color.btText)
+            Text("Token usage").font(.btHeadline).foregroundStyle(Color.btText)
             Text("\(report.start.formatted(.dateTime.month(.abbreviated).day())) – \(report.end.formatted(.dateTime.month(.abbreviated).day())), API-rate estimate from local session logs")
                 .font(.btCaption).foregroundStyle(Color.btTextTertiary)
             Spacer(minLength: Space.md)

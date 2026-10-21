@@ -46,6 +46,9 @@ struct ConversationView: View {
                 if !working, feed.turns > 0, model.setups[session.id] == nil {
                     ChatChangesSummary(session: session, turnKey: feed.turns)
                 }
+                if let progress = session.workflow {
+                    WorkflowStrip(sessionId: session.id, progress: progress)
+                }
                 if let merged = AskAuthor.mergedLine(model.pullRequests[session.id]) {
                     Text(merged)
                         .font(.btChatCaption)

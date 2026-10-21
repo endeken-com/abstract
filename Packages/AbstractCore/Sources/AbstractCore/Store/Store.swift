@@ -399,6 +399,11 @@ public final class Store: Sendable {
         try writer.write { db in try RunRow(run).save(db) }
     }
 
+    /// Test support: the trigger column as stored.
+    func rawTrigger(runId id: String) throws -> String? {
+        try writer.read { db in try String.fetchOne(db, sql: "SELECT \"trigger\" FROM automation_runs WHERE id = ?", arguments: [id]) }
+    }
+
     // MARK: - Profiles
 
     public func profiles() throws -> [AgentProfile] {
@@ -433,6 +438,32 @@ public final class Store: Sendable {
             for profile in AgentProfile.starters { try save(profile) }
         }
         try setSetting("profilesSeeded", true)
+    }
+
+    // MARK: - Workflows
+
+    public func workflows() throws -> [Workflow] {
+        try writer.read { db in
+            try WorkflowRow.fetchAll(db, sql: "SELECT * FROM workflows ORDER BY sort_order, created_at").map(\.value)
+        }
+    }
+
+    public func workflow(_ id: String) throws -> Workflow? {
+        try writer.read { db in
+            try WorkflowRow.fetchOne(db, sql: "SELECT * FROM workflows WHERE id = ?", arguments: [id])?.value
+        }
+    }
+
+    public func save(_ workflow: Workflow) throws {
+        try writer.write { db in try WorkflowRow(workflow).save(db) }
+    }
+
+    /// Chats running it keep their copy; automations that follow it fail
+    /// their runs until they're given another.
+    public func deleteWorkflow(_ id: String) throws {
+        try writer.write { db in
+            try db.execute(sql: "DELETE FROM workflows WHERE id = ?", arguments: [id])
+        }
     }
 
     // MARK: - Schema
@@ -761,6 +792,28 @@ public final class Store: Sendable {
         migrator.registerMigration("v20-project-skills") { db in
             try db.execute(sql: "ALTER TABLE projects ADD COLUMN skill_ids TEXT")
         }
+        // Workflows: profiles taking turns on a chat, the one a chat runs
+        // and where it is, the one an automation's runs follow, and the
+        // events that start automations. A run an event started keeps
+        // 'manual' as its trigger, which builds from before this read.
+        migrator.registerMigration("v21-workflows") { db in
+            try db.execute(sql: """
+                CREATE TABLE workflows (
+                  id          TEXT PRIMARY KEY NOT NULL,
+                  name        TEXT NOT NULL,
+                  icon_symbol TEXT,
+                  steps       TEXT NOT NULL DEFAULT '[]',
+                  sort_order  INTEGER NOT NULL DEFAULT 0,
+                  created_at  DATETIME NOT NULL
+                );
+                """)
+            try db.execute(sql: "ALTER TABLE sessions ADD COLUMN workflow TEXT")
+            try db.execute(sql: "ALTER TABLE automations ADD COLUMN workflow_id TEXT")
+            try db.execute(sql: "ALTER TABLE automations ADD COLUMN events TEXT NOT NULL DEFAULT '[]'")
+            try db.execute(sql: "ALTER TABLE automations ADD COLUMN event_target TEXT")
+            try db.execute(sql: "ALTER TABLE automation_runs ADD COLUMN event TEXT")
+            try db.execute(sql: "ALTER TABLE automation_runs ADD COLUMN source_session_id TEXT")
+        }
         return migrator
     }
 }
@@ -897,6 +950,9 @@ private struct SessionRow: FetchableRecord, PersistableRecord {
         value.pinnedAt = try row.decode(forColumn: "pinned_at")
         value.reviewsSessionId = try row.decode(forColumn: "reviews_session_id")
         value.nameSource = ChatNameSource(rawValue: try row.decode(forColumn: "name_source")) ?? .request
+        if let workflow: String = try row.decode(forColumn: "workflow") {
+            value.workflow = try? JSONDecoder().decode(WorkflowProgress.self, from: Data(workflow.utf8))
+        }
         let seats: String = try row.decode(forColumn: "provider_sessions")
         value.providerSessions = (try? JSONDecoder().decode([String: ProviderSeat].self, from: Data(seats.utf8))) ?? [:]
         self.value = value
@@ -929,6 +985,7 @@ private struct SessionRow: FetchableRecord, PersistableRecord {
         container["profile_instructions"] = value.profileInstructions
         container["reviews_session_id"] = value.reviewsSessionId
         container["name_source"] = value.nameSource.rawValue
+        container["workflow"] = try value.workflow.map { String(decoding: try JSONEncoder().encode($0), as: UTF8.self) }
     }
 }
 
@@ -962,6 +1019,10 @@ private struct AutomationRow: FetchableRecord, PersistableRecord {
             missedRuns: (try row.decode(forColumn: "missed_runs") as String?).flatMap(AutomationMissedRuns.init(rawValue:)),
             onlyWhenChanged: try row.decode(forColumn: "only_when_changed"))
         automation.profileId = try row.decode(forColumn: "profile_id")
+        automation.workflowId = try row.decode(forColumn: "workflow_id")
+        automation.events = try row.stringList("events").compactMap(AutomationEvent.init(rawValue:))
+        automation.eventTarget = (try row.decode(forColumn: "event_target") as String?)
+            .flatMap(AutomationEventTarget.init(rawValue:)) ?? .triggeringChat
         value = automation
     }
 
@@ -989,6 +1050,9 @@ private struct AutomationRow: FetchableRecord, PersistableRecord {
         container["missed_runs"] = value.missedRuns.rawValue
         container["only_when_changed"] = value.onlyWhenChanged
         container["profile_id"] = value.profileId
+        container["workflow_id"] = value.workflowId
+        container["events"] = try jsonText(value.events.map(\.rawValue))
+        container["event_target"] = value.eventTarget.rawValue
         container["catch_up"] = value.catchUp
         container["enabled"] = value.enabled
         container["next_run_at"] = value.nextRunAt
@@ -1087,23 +1151,29 @@ private struct RunRow: FetchableRecord, PersistableRecord {
     init(_ value: AutomationRun) { self.value = value }
 
     init(row: Row) throws {
+        let event = (try row.decode(forColumn: "event") as String?).flatMap(AutomationEvent.init(rawValue:))
         value = AutomationRun(
             id: try row.decode(forColumn: "id"),
             automationId: try row.decode(forColumn: "automation_id"),
             firedAt: try row.decode(forColumn: "fired_at"),
-            trigger: try row.rawEnum("trigger"),
+            trigger: event == nil ? try row.rawEnum("trigger") : .event,
             status: try row.rawEnum("status"),
             sessionId: try row.decode(forColumn: "session_id"),
             error: try row.decode(forColumn: "error"),
             reason: try row.decode(forColumn: "reason"),
-            baseCommit: try row.decode(forColumn: "base_commit"))
+            baseCommit: try row.decode(forColumn: "base_commit"),
+            event: event,
+            sourceSessionId: try row.decode(forColumn: "source_session_id"))
     }
 
     func encode(to container: inout PersistenceContainer) throws {
         container["id"] = value.id
         container["automation_id"] = value.automationId
         container["fired_at"] = value.firedAt
-        container["trigger"] = value.trigger.rawValue
+        // Older builds know no event trigger; the event column says which.
+        container["trigger"] = value.trigger == .event ? RunTrigger.manual.rawValue : value.trigger.rawValue
+        container["event"] = value.event?.rawValue
+        container["source_session_id"] = value.sourceSessionId
         container["status"] = value.status.rawValue
         container["session_id"] = value.sessionId
         container["error"] = value.error
@@ -1202,5 +1272,32 @@ private struct UsageRow: PersistableRecord {
         container["cost_usd"] = value.costUsd
         container["duration_ms"] = value.durationMs
         container["turns"] = value.turns
+    }
+}
+
+private struct WorkflowRow: FetchableRecord, PersistableRecord {
+    static let databaseTableName = "workflows"
+    let value: Workflow
+
+    init(_ value: Workflow) { self.value = value }
+
+    init(row: Row) throws {
+        let steps: String = try row.decode(forColumn: "steps")
+        value = Workflow(
+            id: try row.decode(forColumn: "id"),
+            name: try row.decode(forColumn: "name"),
+            iconSymbol: try row.decode(forColumn: "icon_symbol"),
+            steps: (try? JSONDecoder().decode([WorkflowStep].self, from: Data(steps.utf8))) ?? [],
+            sortOrder: try row.decode(forColumn: "sort_order"),
+            createdAt: try row.decode(forColumn: "created_at"))
+    }
+
+    func encode(to container: inout PersistenceContainer) throws {
+        container["id"] = value.id
+        container["name"] = value.name
+        container["icon_symbol"] = value.iconSymbol
+        container["steps"] = String(decoding: try JSONEncoder().encode(value.steps), as: UTF8.self)
+        container["sort_order"] = value.sortOrder
+        container["created_at"] = value.createdAt
     }
 }

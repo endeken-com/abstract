@@ -73,6 +73,18 @@ struct ChatToolbarControls: View {
                 Picker("Output Style", selection: Binding(get: { model.outputStyle }, set: { model.outputStyle = $0 })) {
                     ForEach(OutputStyle.allCases) { Text($0.title).tag($0) }
                 }
+                if !session.id.hasPrefix(RemoteService.mirrorPrefix), !model.workflows.isEmpty || session.workflow?.isActive == true {
+                    Divider()
+                    if session.workflow?.isActive == true {
+                        Button("Stop Workflow") { model.stopWorkflow(session.id) }
+                    } else {
+                        Menu("Run Workflow") {
+                            ForEach(model.workflows) { workflow in
+                                Button(workflow.name) { runWorkflow(workflow) }
+                            }
+                        }
+                    }
+                }
                 Divider()
                 Button(session.archivedAt == nil ? "Archive" : "Unarchive") { model.setArchived(session.id, session.archivedAt == nil) }
                 // Items plugins add to a chat's menu (ABS-96).
@@ -87,6 +99,17 @@ struct ChatToolbarControls: View {
                 }
             }
         }
+    }
+
+    /// Hand this chat to the workflow's first step, to carry on the work in it.
+    private func runWorkflow(_ workflow: Workflow) {
+        guard !model.turnInProgress(session.id) else {
+            model.flash("Wait for this turn to end, or stop it, before starting a workflow.", isError: true)
+            return
+        }
+        do {
+            try model.startWorkflow(workflow, in: session.id, task: "Pick up the work in this chat from where it stands.")
+        } catch { model.flash(error.localizedDescription, isError: true) }
     }
 
     private func copy(_ text: String) {
