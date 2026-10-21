@@ -297,6 +297,9 @@ public enum PluginData {
     /// A chat's pull request as its Pull Request tab shows it: checks,
     /// reviews, comments, and the threads on its code. No avatars, and
     /// nothing about the repository beyond the pull request's own link.
+    /// Each review and comment says whether its author is a collaborator:
+    /// anyone else's words are a stranger's, and shouldn't reach an agent
+    /// without you reading them first.
     public static func pullRequest(_ pr: PullRequest) -> JSONValue {
         func text(_ body: String) -> JSONValue {
             .string(body.count > pullRequestTextLimit ? body.prefix(pullRequestTextLimit - 1) + "…" : body)
@@ -321,11 +324,13 @@ public enum PluginData {
             }),
             "reviews": .array(pr.reviews.map { review in
                 .object(["author": .string(review.author), "verdict": .string(verdict[review.verdict] ?? "commented"),
-                         "body": text(review.body), "submittedAt": date(review.submittedAt)])
+                         "body": text(review.body), "submittedAt": date(review.submittedAt),
+                         "isCollaborator": .bool(PullRequest.isCollaborator(review.association))])
             }),
             "comments": .array(pr.comments.map { comment in
                 .object(["author": .string(comment.author), "body": text(comment.body),
-                         "createdAt": date(comment.createdAt), "isBot": .bool(comment.isBot)])
+                         "createdAt": date(comment.createdAt), "isBot": .bool(comment.isBot),
+                         "isCollaborator": .bool(PullRequest.isCollaborator(comment.association))])
             }),
             "threads": .array(pr.threads.map { thread in
                 .object(["id": .string(thread.id), "path": .string(thread.path),
@@ -334,7 +339,8 @@ public enum PluginData {
                          "comments": .array(thread.comments.map { comment in
                              .object(["id": .string(comment.id), "author": .string(comment.author), "body": text(comment.body),
                                       "createdAt": date(comment.createdAt),
-                                      "url": comment.url.map { .string($0.absoluteString) } ?? .null])
+                                      "url": comment.url.map { .string($0.absoluteString) } ?? .null,
+                                      "isCollaborator": .bool(PullRequest.isCollaborator(comment.association))])
                          })])
             }),
         ]

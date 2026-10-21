@@ -27,6 +27,9 @@ public struct PullRequest: Sendable, Hashable, Identifiable {
         public var verdict: Verdict
         public var body: String
         public var submittedAt: Date?
+        /// How GitHub relates its author to the repository: `OWNER`,
+        /// `MEMBER`, `COLLABORATOR`, `CONTRIBUTOR`, `NONE`…
+        public var association: String? = nil
     }
 
     public struct Comment: Sendable, Hashable {
@@ -34,6 +37,7 @@ public struct PullRequest: Sendable, Hashable, Identifiable {
         public var body: String
         public var createdAt: Date?
         public var isBot: Bool
+        public var association: String? = nil
     }
 
     /// A conversation on a line of the diff: the first comment and its replies.
@@ -45,6 +49,7 @@ public struct PullRequest: Sendable, Hashable, Identifiable {
             public var body: String
             public var createdAt: Date?
             public var url: URL?
+            public var association: String? = nil
         }
         public var id: String
         public var path: String
@@ -106,6 +111,13 @@ public struct PullRequest: Sendable, Hashable, Identifiable {
     }
 
     public var hasConflicts: Bool { mergeable == "CONFLICTING" }
+
+    /// An author who owns the repository, is in its organisation, or was
+    /// added to it: someone whose words may go to an agent unasked (ABS-109).
+    /// Anyone else can comment on a public repository's pull requests.
+    public static func isCollaborator(_ association: String?) -> Bool {
+        ["OWNER", "MEMBER", "COLLABORATOR"].contains(association ?? "")
+    }
 
     /// Apply a fresh list result without discarding fields only `pr view` loads.
     /// Checks can change while `updatedAt` stays the same.
@@ -217,7 +229,7 @@ public enum GitHub {
         let query = """
         query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) {
           reviewThreads(first: 100) { nodes { id isResolved isOutdated path line originalLine
-            comments(first: 50) { nodes { id author { login avatarUrl } body createdAt url diffHunk originalCommit { oid } } } } } } } }
+            comments(first: 50) { nodes { id author { login avatarUrl } authorAssociation body createdAt url diffHunk originalCommit { oid } } } } } } } }
         """
         let out = try await exec.run("gh", ["api", "graphql", "-F", "owner={owner}", "-F", "name={repo}", "-F", "number=\(number)",
                                             "-f", "query=\(query)"], cwd: root)
@@ -258,7 +270,7 @@ public enum GitHub {
                 return .init(id: id, author: c["author"]?["login"]?.string ?? "someone",
                              avatar: c["author"]?["avatarUrl"]?.string.flatMap(URL.init(string:)), body: c["body"]?.string ?? "",
                              createdAt: c["createdAt"]?.string.flatMap { ISO8601DateFormatter().date(from: $0) },
-                             url: c["url"]?.string.flatMap(URL.init(string:)))
+                             url: c["url"]?.string.flatMap(URL.init(string:)), association: c["authorAssociation"]?.string)
             }
             let first = t["comments"]?["nodes"]?.array?.first
             return .init(id: id, path: path, line: t["line"]?.int, originalLine: t["originalLine"]?.int,
@@ -299,13 +311,14 @@ extension PullRequest {
         reviews = (json["reviews"]?.array ?? []).compactMap { r in
             guard let verdict = r["state"]?.string.flatMap(Review.Verdict.init(rawValue:)) else { return nil }
             return Review(author: r["author"]?["login"]?.string ?? "someone", verdict: verdict, body: r["body"]?.string ?? "",
-                          submittedAt: r["submittedAt"]?.string.flatMap(Self.date))
+                          submittedAt: r["submittedAt"]?.string.flatMap(Self.date), association: r["authorAssociation"]?.string)
         }
         comments = (json["comments"]?.array ?? []).map { c in
             let login = c["author"]?["login"]?.string ?? "someone"
             return Comment(author: login, body: c["body"]?.string ?? "", createdAt: c["createdAt"]?.string.flatMap(Self.date),
                            // Apps and bots (Linear, Vercel, CI) post as accounts with no tie to the repo.
-                           isBot: login.hasSuffix("[bot]") || c["authorAssociation"]?.string == "NONE")
+                           isBot: login.hasSuffix("[bot]") || c["authorAssociation"]?.string == "NONE",
+                           association: c["authorAssociation"]?.string)
         }
     }
 
