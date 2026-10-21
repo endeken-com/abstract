@@ -246,6 +246,7 @@ private struct ReviewToolbar: View {
                     .help(review.isWorking ? "Applying…" : "Refreshing…")
             }
             Spacer(minLength: Space.sm)
+            PluginReviewMenu(sessionId: context.sessionId, scope: review.mode.source)
             RevundReviewButton(sessionId: context.sessionId, branch: review.mode != .uncommitted)
             if showsTreeToggle {
                 Button { withAnimation(.snappy(duration: 0.2)) { showTree.toggle() } } label: {

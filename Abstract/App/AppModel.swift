@@ -705,11 +705,13 @@ final class AppModel {
     /// `name` and `slug`, when given, name the chat and its branch instead;
     /// `nameSource` says whether a better name may replace it.
     /// `select` opens the new chat here; a chat started from another device doesn't take over this screen.
+    /// `reviewing` makes it that chat's reviewer (ABS-112): it reads `existing`
+    /// alongside the chat that has it, instead of taking it over.
     @discardableResult
     func startChat(projectId: String?, providerId: String, prompt text: String, attachments: [PromptAttachment] = [], baseRef: String?,
                    policy: PermissionPolicy, model: String? = nil, effort: String? = nil, existing: WorktreeInfo? = nil,
                    name: String? = nil, nameSource: ChatNameSource = .manual, slug: String? = nil, automationId: String? = nil,
-                   profile: ProfileSnapshot? = nil, select: Bool = true) async throws -> String {
+                   profile: ProfileSnapshot? = nil, reviewing: String? = nil, select: Bool = true) async throws -> String {
         let project = project(projectId)
         if projectId != nil, project == nil { throw AbstractError.notFound("project") }
         let prompt = PromptAttachments.message(text, attachments)
@@ -727,6 +729,7 @@ final class AppModel {
         // The profile it starts from, as it is now; editing the profile
         // later changes later chats, never this one (ABS-101).
         if let profile { session.apply(profile) }
+        session.reviewsSessionId = reviewing
         session.nameSource = name == nil ? .fallback : nameSource
         if naming != nil { namingRequests.insert(session.id) }
         // Its agent's first replies may still name it; an older chat's never do.
@@ -738,8 +741,10 @@ final class AppModel {
             guard FileManager.default.fileExists(atPath: existing.path) else {
                 throw AbstractError.message("That worktree's folder no longer exists.")
             }
-            let previous = takeOverWorktree(existing.path, for: session.id)
-            if let first = previous.first { flash("Took the worktree over from “\(first)”") }
+            if reviewing == nil {
+                let previous = takeOverWorktree(existing.path, for: session.id)
+                if let first = previous.first { flash("Took the worktree over from “\(first)”") }
+            }
             session.worktreePath = existing.path
             session.branch = existing.branch
         }
@@ -917,10 +922,11 @@ final class AppModel {
 
     // MARK: - Reusing worktrees
 
-    /// The chat currently holding a worktree, if any.
+    /// The chat currently holding a worktree, if any. A reviewer only
+    /// reads one (ABS-112), so it never holds it.
     func chat(usingWorktree path: String) -> Session? {
         let key = Self.canonical(path)
-        return sessions.first { $0.worktreePath.map(Self.canonical) == key }
+        return sessions.first { $0.reviewsSessionId == nil && $0.worktreePath.map(Self.canonical) == key }
     }
 
     /// One worktree, one agent: a chat starting in `path` stops the agent of
@@ -937,6 +943,18 @@ final class AppModel {
             names.append(other.name)
         }
         return names
+    }
+
+    /// The folder is going: its reviewers stop and let go of it, so none
+    /// works in a folder that's gone (ABS-112).
+    private func detachReviewers(of path: String, besides sessionId: String) {
+        let key = Self.canonical(path)
+        for var other in sessions where other.id != sessionId && other.reviewsSessionId != nil
+            && other.worktreePath.map(Self.canonical) == key {
+            stop(other.id)
+            other.worktreePath = nil
+            try? store.save(other)
+        }
     }
 
     /// The project's linked worktrees a chat can start in: not the main
@@ -1526,6 +1544,9 @@ final class AppModel {
         guard let s = session(sessionId) else { return }
         stopAgent(sessionId)
         setups[sessionId] = nil
+        // A reviewer's folder belongs to the chat it reviews (ABS-112).
+        let removeWorktree = removeWorktree && s.reviewsSessionId == nil
+        if removeWorktree, let path = s.worktreePath { detachReviewers(of: path, besides: sessionId) }
         if removeWorktree, let path = s.worktreePath, let project = project(s.projectId) {
             await runTeardownScript(project, worktree: path)
             do {

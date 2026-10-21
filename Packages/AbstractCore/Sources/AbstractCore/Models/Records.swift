@@ -176,6 +176,10 @@ public struct Session: Sendable, Hashable, Identifiable, Codable {
     public var profileId: String? = nil
     public var profileName: String? = nil
     public var profileInstructions: String? = nil
+    /// The chat whose changes this one reviews (ABS-112). It reads that
+    /// chat's worktree and never owns it: it doesn't take it over, and
+    /// deleting it never removes the folder.
+    public var reviewsSessionId: String? = nil
 
     public init(
         id: String = UUID().uuidString, projectId: String?, name: String, providerId: String,
@@ -196,7 +200,7 @@ public struct Session: Sendable, Hashable, Identifiable, Codable {
     private enum CodingKeys: String, CodingKey {
         case id, projectId, name, providerId, providerSessionId, worktreePath, branch, baseRef, status, statusDetail
         case permissionPolicy, prompt, automationId, createdAt, lastEventAt, archivedAt, model, effort, handoffFrom
-        case providerSessions, pinnedAt, nameSource, profileId, profileName, profileInstructions
+        case providerSessions, pinnedAt, nameSource, profileId, profileName, profileInstructions, reviewsSessionId
     }
 
     /// An older Mac's chats come without what it doesn't know yet.
@@ -222,6 +226,7 @@ public struct Session: Sendable, Hashable, Identifiable, Codable {
         profileId = try c.decodeIfPresent(String.self, forKey: .profileId)
         profileName = try c.decodeIfPresent(String.self, forKey: .profileName)
         profileInstructions = try c.decodeIfPresent(String.self, forKey: .profileInstructions)
+        reviewsSessionId = try c.decodeIfPresent(String.self, forKey: .reviewsSessionId)
     }
 }
 

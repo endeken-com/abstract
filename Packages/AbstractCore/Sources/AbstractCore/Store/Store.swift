@@ -709,6 +709,10 @@ public final class Store: Sendable {
                   missed_runs = CASE WHEN catch_up THEN 'run_once' ELSE 'skip' END
                 """)
         }
+        // A reviewer chat reads another chat's worktree (ABS-112).
+        migrator.registerMigration("v17-reviewer-chats") { db in
+            try db.execute(sql: "ALTER TABLE sessions ADD COLUMN reviews_session_id TEXT")
+        }
         return migrator
     }
 }
@@ -829,6 +833,7 @@ private struct SessionRow: FetchableRecord, PersistableRecord {
         value.profileInstructions = try row.decode(forColumn: "profile_instructions")
         value.handoffFrom = try row.decode(forColumn: "handoff_from")
         value.pinnedAt = try row.decode(forColumn: "pinned_at")
+        value.reviewsSessionId = try row.decode(forColumn: "reviews_session_id")
         value.nameSource = ChatNameSource(rawValue: try row.decode(forColumn: "name_source")) ?? .request
         let seats: String = try row.decode(forColumn: "provider_sessions")
         value.providerSessions = (try? JSONDecoder().decode([String: ProviderSeat].self, from: Data(seats.utf8))) ?? [:]
@@ -860,6 +865,7 @@ private struct SessionRow: FetchableRecord, PersistableRecord {
         container["profile_id"] = value.profileId
         container["profile_name"] = value.profileName
         container["profile_instructions"] = value.profileInstructions
+        container["reviews_session_id"] = value.reviewsSessionId
         container["name_source"] = value.nameSource.rawValue
     }
 }

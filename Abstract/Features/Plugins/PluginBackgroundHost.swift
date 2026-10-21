@@ -62,6 +62,12 @@ final class PluginBackgroundHost {
         for runner in runners.values { runner.deliver(event) }
     }
 
+    /// Hands a Review command to its plugin's script (ABS-112). False
+    /// when that script isn't running to take it.
+    func invoke(_ pluginId: String, _ invocation: PluginInvocation) -> Bool {
+        runners[pluginId]?.invoke(invocation) ?? false
+    }
+
     // MARK: Status and pull-request changes
 
     /// Follows the same facts a plugin's screen redraws on, and turns the
@@ -182,6 +188,15 @@ final class PluginBackgroundRunner: NSObject, WKScriptMessageHandler, WKNavigati
         guard connection.ready, !stopped, subscriptions.contains(event.type),
               let payload = event.payload(capabilities: connection.capabilities) else { return }
         connection.send(type: "event", payload: payload)
+    }
+
+    /// The chat it was run on is the person's own pick, so the script may
+    /// act on it even before its next snapshot lists it.
+    func invoke(_ invocation: PluginInvocation) -> Bool {
+        guard connection.ready, !stopped else { return false }
+        if let chatId = invocation.chatId { connection.know(chatId: chatId) }
+        connection.send(type: "invoke", payload: invocation.jsonValue())
+        return true
     }
 
     private func handle(_ outcome: PluginBridge.Outcome) {

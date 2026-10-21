@@ -49,6 +49,9 @@ final class PluginConnection {
 
     func tearDown() { dead = true }
 
+    /// A chat the person handed this plugin outside a snapshot (ABS-112).
+    func know(chatId: String) { bridge.know(chatId: chatId) }
+
     /// The grants as they stand now, not as they were when this copy
     /// started: revoking one in Settings stops the next call.
     var capabilities: Set<PluginCapability> {
@@ -108,6 +111,12 @@ final class PluginConnection {
                  payload: model.pluginTranscript(page: page, chatId: chatId, allowedProjectKeys: keys))
         case .getAutomations(let id, let page):
             send(type: "reply", id: id, payload: model.pluginAutomations(page: page))
+        case .addReviewComments(let id, let chatId, let author, let comments):
+            let added = model.addPluginReviewComments(chatId, author: author, comments)
+            send(type: "reply", id: id, payload: .object(["added": .number(Double(added))]))
+        case .notice(let id, let text):
+            model.flash("\(manifest.name): \(text)")
+            send(type: "reply", id: id, payload: .object(["shown": .bool(true)]))
         case .action(let id, let action):
             perform(action, id: id)
         case .askAction(let id, let action):
@@ -133,7 +142,10 @@ final class PluginConnection {
     private func ask(_ action: PluginAction, id: String?) {
         let alert = NSAlert()
         alert.messageText = model.pluginActionDescription(action, pluginName: manifest.name)
-        var info = action.detail.map { String($0.prefix(600)) } ?? ""
+        // Sending Review shows what goes, comment by comment (ABS-112).
+        var info = action.sendsReview
+            ? model.reviewSendPreview(action.chatId ?? "", text: action.text)
+            : action.detail.map { String($0.prefix(600)) } ?? ""
         if !info.isEmpty { info += "\n\n" }
         info += "Always allow lets \(manifest.name) do this kind of thing without asking. You can change your mind in Settings → Plugins."
         alert.informativeText = info
