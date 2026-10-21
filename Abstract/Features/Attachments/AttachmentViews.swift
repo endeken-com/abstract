@@ -438,7 +438,7 @@ private struct AttachPicker: View {
                 case .signedOut(let hint):
                     problem = "\(host.title) isn't signed in." + (hint.map { " Run `\($0)` in a terminal, then try again." } ?? "")
                     return
-                case .ready: break
+                case .ready, .unavailable: break
                 }
                 let found = try await host.search(query, pullRequests: source == .pullRequest)
                 items = found.map {

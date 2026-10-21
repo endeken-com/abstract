@@ -85,10 +85,10 @@ struct PullRequestsView: View {
         let hosts = model.plugins.usable.compactMap { plugin in plugin.manifest?.contributes.codeHost.map { (plugin.id, $0.title) } }
         guard !hosts.isEmpty else { return ("No code host", CodeHosts.needsPlugin("your code host")) }
         let states = hosts.compactMap { id, title in model.codeHostAccess[id].map { ($0.access, title) } }
-        guard let first = states.first, !states.contains(where: { $0.0.isReady }) else { return nil }
+        guard let first = states.first, states.allSatisfy({ $0.0.blocks }) else { return nil }
         let title = first.1
         switch first.0 {
-        case .ready: return nil
+        case .ready, .unavailable: return nil
         case .missing(let install):
             return ("\(title) CLI needed", install.map { "Install it with `\($0)`, then sign in." } ?? "Install it, then sign in.")
         case .signedOut(let hint):
