@@ -454,6 +454,39 @@ struct Snapshotter {
             await shot("\(t)-41-panel-\(name)", settle: 1.6)
         }
         model.resetLayout(sessionId)
+        await shootLinkStatus(theme: t, in: sessionId)
+    }
+
+    /// Link status (ABS-126): a reply naming a merged pull request, an open
+    /// issue and a Linear ticket, each with its status after it. The
+    /// statuses are seeded, so nothing is asked of GitHub or Linear.
+    private func shootLinkStatus(theme t: String, in sessionId: String) async {
+        let plugin = "sh.abstract.link-status"
+        guard model.plugins.plugin(plugin)?.isUsable == true else { return }
+        let seeded: [(String, String, PluginLinkStatus)] = [
+            ("github", "https://github.com/acme/shop/pull/43", PluginLinkStatus(label: "Merged", tone: .merged)),
+            ("github", "https://github.com/acme/shop/pull/44", PluginLinkStatus(label: "Open · Checks failing", tone: .failing)),
+            ("github", "https://github.com/acme/shop/issues/12", PluginLinkStatus(label: "Open", tone: .open)),
+            ("linear", "https://linear.app/acme/issue/SHOP-7", PluginLinkStatus(label: "In Progress · ada", tone: .open)),
+        ]
+        for (decorator, url, status) in seeded {
+            model.pluginLinks.seed(PluginLinks.Match(pluginId: plugin, contributionId: decorator, url: url), status)
+        }
+        let feed = model.feed(sessionId)
+        let before = feed.timeline
+        var shown = before
+        shown.append(.text(role: .user, text: "Where are we with https://linear.app/acme/issue/SHOP-7/empty-carts?", blockId: nil, partial: false))
+        shown.append(.text(role: .assistant, text: """
+            The discount fix landed in https://github.com/acme/shop/pull/43, which closes \
+            [the empty-cart issue](https://github.com/acme/shop/issues/12) once it ships.
+
+            - The follow-up, https://github.com/acme/shop/pull/44, still has a failing lint check.
+            - https://linear.app/acme/issue/SHOP-7 stays in progress until both are out.
+            """, blockId: nil, partial: false))
+        feed.reset(shown)
+        model.open(sessionId)
+        await shot("\(t)-42-link-status", settle: 1.6)
+        feed.reset(before)
     }
 
     /// What Follow PR and Second opinion would have stored for a chat, so

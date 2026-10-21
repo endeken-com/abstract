@@ -13,7 +13,11 @@ struct ReplyProse: View {
     @State private var linked: String?
 
     var body: some View {
-        AgentProse(markdown: streaming == nil ? linked ?? text : text, streaming: streaming, findField: "reply")
+        // Links get their statuses once the reply has finished arriving (ABS-126).
+        let links = streaming == nil ? model.linkPills(in: text) : (matches: [], pills: nil)
+        AgentProse(markdown: streaming == nil ? linked ?? text : text, streaming: streaming, findField: "reply",
+                   links: links.pills)
+            .task(id: links.matches) { await model.pluginLinks.follow(links.matches) }
             .environment(\.openURL, OpenURLAction { url in
                 guard let target = FilePathLinks.target(url) else { return .systemAction }
                 model.openFile(target.path, in: sessionId, line: target.line, preview: true)

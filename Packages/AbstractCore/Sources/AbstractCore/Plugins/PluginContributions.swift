@@ -33,6 +33,7 @@ public enum PluginContributions {
                 (.palette, contributes.paletteCommands),
                 (.settings, contributes.settingsPage.map { [$0] } ?? []), (.home, contributes.homeWidgets),
                 (.review, contributes.reviewActions), (.pullRequest, contributes.pullRequestSwitches),
+                (.link, contributes.linkDecorators),
             ]
             // An entry that needs a grant the plugin no longer holds stays
             // hidden until it's granted again (ABS-102).

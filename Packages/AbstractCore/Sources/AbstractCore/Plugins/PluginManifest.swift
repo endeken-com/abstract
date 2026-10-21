@@ -136,6 +136,9 @@ public enum PluginPlace: String, Sendable, Hashable, Codable, CaseIterable {
     /// A switch in a chat's Pull Request tab (ABS-109), on or off per
     /// chat. Its background script is told each time you flip it.
     case pullRequest
+    /// A status after links in chats that match its patterns (ABS-126).
+    /// Its background script is asked for each one; nothing opens.
+    case link
 
     /// The place in plain words, for the review screen.
     public var plainWords: String {
@@ -148,6 +151,7 @@ public enum PluginPlace: String, Sendable, Hashable, Codable, CaseIterable {
         case .home: "A card on the Home screen"
         case .review: "A command in a chat's Review"
         case .pullRequest: "A switch in a chat's Pull Request tab"
+        case .link: "A status after links in your chats"
         }
     }
 }
@@ -258,8 +262,12 @@ public struct PluginManifest: Sendable, Hashable, Codable {
         /// the plugin holds every one, so revoking one hides it instead of
         /// leaving an item that fails when chosen.
         public var needs: [PluginCapability]?
-        public init(id: String, title: String, symbol: String? = nil, needs: [PluginCapability]? = nil) {
-            self.id = id; self.title = title; self.symbol = symbol; self.needs = needs
+        /// The links a link decorator follows (ABS-126), like
+        /// `https://github.com/*/*/pull/*`. Only `linkDecorators` have them.
+        public var patterns: [String]?
+        public init(id: String, title: String, symbol: String? = nil, needs: [PluginCapability]? = nil,
+                    patterns: [String]? = nil) {
+            self.id = id; self.title = title; self.symbol = symbol; self.needs = needs; self.patterns = patterns
         }
         public var symbolOrFallback: String {
             symbol.flatMap { $0.isEmpty ? nil : $0 } ?? PluginManifest.fallbackSymbol
@@ -288,14 +296,16 @@ public struct PluginManifest: Sendable, Hashable, Codable {
         public var homeWidgets: [Contribution]
         public var reviewActions: [Contribution]
         public var pullRequestSwitches: [Contribution]
+        public var linkDecorators: [Contribution]
 
         public init(views: [View] = [], chatPanelTabs: [Contribution] = [], chatMenuItems: [Contribution] = [],
                     paletteCommands: [Contribution] = [], settingsPage: Contribution? = nil,
                     homeWidgets: [Contribution] = [], reviewActions: [Contribution] = [],
-                    pullRequestSwitches: [Contribution] = []) {
+                    pullRequestSwitches: [Contribution] = [], linkDecorators: [Contribution] = []) {
             self.views = views; self.chatPanelTabs = chatPanelTabs; self.chatMenuItems = chatMenuItems
             self.paletteCommands = paletteCommands; self.settingsPage = settingsPage; self.homeWidgets = homeWidgets
             self.reviewActions = reviewActions; self.pullRequestSwitches = pullRequestSwitches
+            self.linkDecorators = linkDecorators
         }
 
         // Manifests written before the extra places carry only `views`.
@@ -309,6 +319,7 @@ public struct PluginManifest: Sendable, Hashable, Codable {
             homeWidgets = try box.decodeIfPresent([Contribution].self, forKey: .homeWidgets) ?? []
             reviewActions = try box.decodeIfPresent([Contribution].self, forKey: .reviewActions) ?? []
             pullRequestSwitches = try box.decodeIfPresent([Contribution].self, forKey: .pullRequestSwitches) ?? []
+            linkDecorators = try box.decodeIfPresent([Contribution].self, forKey: .linkDecorators) ?? []
         }
     }
 
@@ -332,8 +343,8 @@ public struct PluginManifest: Sendable, Hashable, Codable {
                 chatPanelTabs: [Contribution] = [], chatMenuItems: [Contribution] = [],
                 paletteCommands: [Contribution] = [], settingsPage: Contribution? = nil,
                 homeWidgets: [Contribution] = [], reviewActions: [Contribution] = [],
-                pullRequestSwitches: [Contribution] = [], background: String? = nil,
-                tools: [PluginAgentTool] = []) {
+                pullRequestSwitches: [Contribution] = [], linkDecorators: [Contribution] = [],
+                background: String? = nil, tools: [PluginAgentTool] = []) {
         self.api = api; self.id = id; self.name = name; self.version = version
         self.background = background
         self.tools = tools.isEmpty ? nil : tools
@@ -343,7 +354,8 @@ public struct PluginManifest: Sendable, Hashable, Codable {
         self.secrets = secrets.isEmpty ? nil : secrets
         self.contributes = Contributes(views: views, chatPanelTabs: chatPanelTabs, chatMenuItems: chatMenuItems,
                                        paletteCommands: paletteCommands, settingsPage: settingsPage, homeWidgets: homeWidgets,
-                                       reviewActions: reviewActions, pullRequestSwitches: pullRequestSwitches)
+                                       reviewActions: reviewActions, pullRequestSwitches: pullRequestSwitches,
+                                       linkDecorators: linkDecorators)
     }
 
     // A plugin that only runs in the background (ABS-93) may leave out
@@ -382,6 +394,10 @@ public struct PluginManifest: Sendable, Hashable, Codable {
         ]
         for (place, items) in places {
             sentences += items.map { sentence($0.title(agentName: "another agent"), place) }
+        }
+        // Which links it is handed is part of what it sees, so the review names their sites.
+        sentences += contributes.linkDecorators.map { decorator in
+            "\(decorator.title) — a status after links to \(PluginLinks.sites(decorator.patterns ?? []).joined(separator: " and ")) in your chats."
         }
         if background != nil {
             sentences.append("In the background — it runs while it's on, even with its screen closed.")
@@ -476,6 +492,7 @@ public struct PluginManifest: Sendable, Hashable, Codable {
             ("settingsPage", contributes.settingsPage.map { [$0] } ?? []),
             ("reviewActions", contributes.reviewActions),
             ("pullRequestSwitches", contributes.pullRequestSwitches),
+            ("linkDecorators", contributes.linkDecorators),
         ]
         for (place, items) in places {
             guard items.count <= 8 else {
@@ -499,6 +516,24 @@ public struct PluginManifest: Sendable, Hashable, Codable {
         }
         guard contributes.pullRequestSwitches.isEmpty || background != nil else {
             throw PluginValidationError.invalidManifest("pullRequestSwitches need a background script")
+        }
+        guard contributes.linkDecorators.isEmpty || background != nil else {
+            throw PluginValidationError.invalidManifest("linkDecorators need a background script")
+        }
+        // Patterns say which links the plugin is handed: only a link
+        // decorator has them, and each is checked (ABS-126).
+        for (place, items) in places where place != "linkDecorators" {
+            guard items.allSatisfy({ $0.patterns == nil }) else {
+                throw PluginValidationError.invalidManifest("only linkDecorators have patterns")
+            }
+        }
+        for decorator in contributes.linkDecorators {
+            let patterns = decorator.patterns ?? []
+            guard !patterns.isEmpty, patterns.count <= PluginLinks.patternLimit,
+                  patterns.allSatisfy({ PluginLinks.Pattern($0) != nil }) else {
+                throw PluginValidationError.invalidManifest(
+                    "linkDecorators need up to \(PluginLinks.patternLimit) patterns like https://github.com/*/*/pull/*")
+            }
         }
         try validateTools()
         let total = contributes.views.count + places.map(\.1.count).reduce(0, +)
