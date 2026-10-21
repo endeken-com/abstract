@@ -18,7 +18,9 @@ extension AppModel {
 
     /// A message now would land mid-turn, so it waits instead.
     func turnInProgress(_ sessionId: String) -> Bool {
-        guard let session = session(sessionId), let provider = ProviderRegistry.provider(session.providerId) else { return false }
+        // Until a handover, the live process is still the outgoing agent's.
+        guard let session = session(sessionId),
+              let provider = ProviderRegistry.provider(session.handoffFrom ?? session.providerId) else { return false }
         return FollowUp.route(provider.followUpMode, alive: isAlive(sessionId), status: session.status,
                               handingOff: handingOff.contains(sessionId)) == .queue
     }
@@ -56,6 +58,13 @@ extension AppModel {
         if queues[sessionId] ?? [] != queue { queues[sessionId] = queue.isEmpty ? nil : queue }
     }
 
+    /// Puts back messages the agent didn't get after all, first in line.
+    func requeue(_ sessionId: String, _ messages: [QueuedMessage]) {
+        guard !messages.isEmpty else { return }
+        engine.requeue(sessionId: sessionId, messages)
+        refreshQueue(sessionId)
+    }
+
     func enqueue(_ sessionId: String, _ message: QueuedMessage) {
         engine.enqueue(sessionId: sessionId, message)
         refreshQueue(sessionId)
@@ -89,8 +98,11 @@ extension AppModel {
     /// Sends what's typed and the queue into the running turn now.
     func steer(_ sessionId: String, text: String, attachments: [PromptAttachment] = []) async throws {
         if let (_, host) = RemoteService.split(sessionId) {
-            if !attachments.isEmpty { try await sendRemoteFollowUp(sessionId, text: text, attachments: attachments) }
-            try await remote.perform(sessionId, .steer(sessionId: host, text: attachments.isEmpty ? text : ""))
+            guard !attachments.isEmpty else { try await remote.perform(sessionId, .steer(sessionId: host, text: text)); return }
+            // The attachments wait in that Mac's queue first; whatever happens next, they're sent once.
+            try await sendRemoteFollowUp(sessionId, text: text, attachments: attachments)
+            do { try await remote.perform(sessionId, .steer(sessionId: host, text: "")) }
+            catch { flash("Queued instead; it goes when this turn ends. \(error.localizedDescription)", isError: true) }
             return
         }
         guard let session = session(sessionId), let provider = ProviderRegistry.provider(session.providerId) else { return }
@@ -105,12 +117,17 @@ extension AppModel {
     /// Stops the turn the way Stop does, then sends what's typed and the queue.
     func interrupt(_ sessionId: String, text: String, attachments: [PromptAttachment] = []) async throws {
         if let (_, host) = RemoteService.split(sessionId) {
-            if !attachments.isEmpty { try await sendRemoteFollowUp(sessionId, text: text, attachments: attachments) }
-            try await remote.perform(sessionId, .interrupt(sessionId: host, text: attachments.isEmpty ? text : ""))
+            guard !attachments.isEmpty else { try await remote.perform(sessionId, .interrupt(sessionId: host, text: text)); return }
+            try await sendRemoteFollowUp(sessionId, text: text, attachments: attachments)
+            do { try await remote.perform(sessionId, .interrupt(sessionId: host, text: "")) }
+            catch { flash("Queued instead; it goes when this turn ends. \(error.localizedDescription)", isError: true) }
             return
         }
         if isDrivenFromCLI(sessionId) { throw Self.drivenFromCLI }
         guard session(sessionId) != nil else { return }
+        if handingOff.contains(sessionId) || relaunching.contains(sessionId) {
+            throw AbstractError.message("The agent is restarting; interrupt again in a moment.")
+        }
         if Self.hasContent(text, attachments) { enqueue(sessionId, QueuedMessage(text: text, attachments: attachments)) }
         guard turnInProgress(sessionId) else { sendQueue(sessionId); return }
         interrupting.insert(sessionId)
@@ -146,11 +163,9 @@ extension AppModel {
         let joined = FollowUp.joined(queue + (extra.map { [$0] } ?? []))
         do {
             try deliver(session, provider, message: PromptAttachments.message(joined.text, joined.attachments),
-                        images: PromptAttachments.images(joined.attachments), queued: queue.map(\.id))
+                        images: PromptAttachments.images(joined.attachments), queued: queue)
         } catch {
-            let waiting = Set(engine.queued(sessionId: session.id).map(\.id))
-            engine.requeue(sessionId: session.id, queue.filter { !waiting.contains($0.id) })
-            refreshQueue(session.id)
+            requeue(session.id, queue)
             throw error
         }
     }

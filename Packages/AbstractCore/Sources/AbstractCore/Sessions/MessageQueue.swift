@@ -29,12 +29,13 @@ public enum FollowUp {
     }
 
     /// Mid-turn, a message waits. An agent that reads stdin (Claude) is
-    /// mid-turn while it runs or asks you something; one that runs a process
-    /// per turn (Codex) for as long as that process lives.
+    /// mid-turn while it runs or asks you something, or while it restarts;
+    /// one that runs a process per turn (Codex) for as long as that process
+    /// lives. `mode` is the agent whose process it is.
     public static func route(_ mode: FollowUpMode, alive: Bool, status: SessionStatus, handingOff: Bool = false) -> Route {
         if handingOff { return .queue }
         switch mode {
-        case .stdin: return alive && working(status) ? .queue : .send
+        case .stdin: return alive ? (working(status) ? .queue : .send) : (status == .running ? .queue : .send)
         case .respawn: return alive || status == .running ? .queue : .send
         }
     }

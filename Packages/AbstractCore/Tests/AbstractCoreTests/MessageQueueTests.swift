@@ -10,6 +10,8 @@ struct MessageQueueTests {
         #expect(FollowUp.route(.stdin, alive: true, status: .waitingInput) == .queue)
         #expect(FollowUp.route(.stdin, alive: true, status: .idle) == .send)
         #expect(FollowUp.route(.stdin, alive: false, status: .finished) == .send)
+        // Restarting (a new model) between processes: still mid-turn.
+        #expect(FollowUp.route(.stdin, alive: false, status: .running) == .queue)
         // Codex and OpenCode: one process per turn, so mid-turn while it lives.
         #expect(FollowUp.route(.respawn, alive: true, status: .running) == .queue)
         #expect(FollowUp.route(.respawn, alive: true, status: .idle) == .queue)
@@ -149,6 +151,10 @@ extension GitHeavy {
             #expect(engine.editQueued(sessionId: "s", id: a.id, text: "first"))
             #expect(engine.removeQueued(sessionId: "s", id: b.id)?.text == "second")
             #expect(engine.queued(sessionId: "s").map(\.text) == ["first"])
+            // On its way (a handover logs it later): no longer yours to change.
+            engine.markSending(sessionId: "s", [a.id])
+            #expect(!engine.editQueued(sessionId: "s", id: a.id, text: "changed"))
+            #expect(engine.removeQueued(sessionId: "s", id: a.id) == nil)
             _ = deliver(engine, "s")
             #expect(!engine.editQueued(sessionId: "s", id: a.id, text: "too late"))
             #expect(engine.removeQueued(sessionId: "s", id: a.id) == nil)
@@ -190,6 +196,23 @@ extension GitHeavy {
             #expect(queue.allSatisfy { $0.sending == nil })
             // Settled on disk too.
             #expect(makeEngine(dir).0.queued(sessionId: "s").map(\.id) == ["not-logged", "waiting"])
+        }
+
+        @Test func messagesTheAgentDidntGetWaitAgainOnce() throws {
+            let (engine, dir) = makeEngine()
+            defer { try? FileManager.default.removeItem(at: dir) }
+            let logged = QueuedMessage(text: "logged"), marked = QueuedMessage(text: "marked"), untouched = QueuedMessage(text: "untouched")
+            for m in [logged, marked, untouched] { engine.enqueue(sessionId: "s", m) }
+            engine.recordInput(sessionId: "s", text: "logged", queued: [logged.id])
+            engine.markSending(sessionId: "s", [marked.id])
+            // The launch that should have carried all three failed.
+            engine.requeue(sessionId: "s", [logged, marked, untouched])
+            let queue = engine.queued(sessionId: "s")
+            #expect(queue.map(\.text) == ["logged", "marked", "untouched"])
+            #expect(queue[0].id != logged.id)
+            #expect(queue.allSatisfy { $0.sending == nil })
+            // A relaunch keeps them all: the log's id is the old one.
+            #expect(makeEngine(dir).0.queued(sessionId: "s").count == 3)
         }
 
         @Test func deletingAChatsLogDropsItsQueue() throws {

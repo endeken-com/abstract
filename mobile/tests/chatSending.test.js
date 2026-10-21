@@ -88,3 +88,14 @@ test('attachment messages reconcile using the Mac transcript tags', () => {
   assert.equal(visiblePhoneMessages(pending, [line(1, recorded)]).length, 0);
   assert.equal(visiblePhoneMessages(pending, [line(1, 'See this')]).length, 1);
 });
+
+test('a message queued mid-turn clears once the Mac logs it joined with others', () => {
+  const pending = [
+    { id: 'a', text: 'first', attachments: [], afterSeq: 4, status: 'accepted' },
+    { id: 'b', text: 'second', attachments: [], afterSeq: 4, status: 'accepted' },
+    { id: 'c', text: 'third', attachments: [], afterSeq: 4, status: 'accepted' },
+  ];
+  assert.deepEqual(visiblePhoneMessages(pending, [line(5, 'first\n\nsecond\n\nthird')]), []);
+  // Only whole parts count, not words inside them.
+  assert.deepEqual(visiblePhoneMessages([{ ...pending[0], text: 'irs' }], [line(5, 'first\n\nsecond')]).map(x => x.id), ['a']);
+});

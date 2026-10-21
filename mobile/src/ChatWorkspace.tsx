@@ -527,11 +527,20 @@ export function ChatWorkspace({ route, navigation }: any) {
     const draft = { text: message, attachments: [...attachments] };
     sendLock.current = true;
     setSending(true);
+    let queued = false;
+    const clear = () => { setMessage(''); setAttachments([]); setNotice(null); };
     (async () => {
-      if (draft.attachments.length) await mac.request('sendAttachments', { sessionId: id, text: draft.text, ...attachmentPayload(draft.attachments) });
-      await mac.request(name, { sessionId: id, text: draft.attachments.length ? '' : draft.text });
-    })().then(() => { setMessage(''); setAttachments([]); setSendError(null); setNotice(null); },
-      error => setSendError(`Could not ${name === 'steer' ? 'steer' : 'interrupt'}. ${error?.message || error}`))
+      if (draft.attachments.length) {
+        await mac.request('sendAttachments', { sessionId: id, text: draft.text, ...attachmentPayload(draft.attachments) });
+        // In the Mac's queue now: never sent again from here.
+        queued = true;
+        clear();
+      }
+      await mac.request(name, { sessionId: id, text: queued ? '' : draft.text });
+    })().then(() => { clear(); setSendError(null); },
+      error => setSendError(queued
+        ? `Queued instead; it goes when this turn ends. ${error?.message || error}`
+        : `Could not ${name === 'steer' ? 'steer' : 'interrupt'}. ${error?.message || error}`))
       .finally(() => { sendLock.current = false; setSending(false); });
   };
   const primary = actions?.primary ?? 'send';

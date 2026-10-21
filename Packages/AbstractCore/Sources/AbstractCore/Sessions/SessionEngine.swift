@@ -93,9 +93,7 @@ public final class SessionEngine: Sendable {
             record(sessionId: sessionId, OutputLine(stream: .user, line: text))
             return
         }
-        withQueue(sessionId) { queue in
-            for i in queue.indices where ids.contains(queue[i].id) { queue[i].sending = true }
-        }
+        markSending(sessionId: sessionId, ids)
         record(sessionId: sessionId, OutputLine(stream: .user, line: text, queued: ids))
         withQueue(sessionId) { $0.removeAll { ids.contains($0.id) } }
     }
@@ -112,11 +110,26 @@ public final class SessionEngine: Sendable {
         withQueue(sessionId) { $0.append(message) }
     }
 
-    /// Puts messages back at the front of the queue under new ids: ones the
-    /// agent didn't get after all. The log names their old ids as sent.
+    /// Marks queued messages as on their way: they can't be edited or
+    /// removed any more. For a send that logs them later (a handover).
+    public func markSending(sessionId: String, _ ids: [String]) {
+        withQueue(sessionId) { queue in
+            for i in queue.indices where ids.contains(queue[i].id) { queue[i].sending = true }
+        }
+    }
+
+    /// Puts back messages the agent didn't get after all. One still queued
+    /// waits again where it was; one already logged goes back to the front
+    /// under a new id, as the log names its old one as sent.
     public func requeue(sessionId: String, _ messages: [QueuedMessage]) {
-        let fresh = messages.map { QueuedMessage(text: $0.text, attachments: $0.attachments, queuedAt: $0.queuedAt) }
-        withQueue(sessionId) { $0.insert(contentsOf: fresh, at: 0) }
+        withQueue(sessionId) { queue in
+            var fresh: [QueuedMessage] = []
+            for message in messages {
+                if let i = queue.firstIndex(where: { $0.id == message.id }) { queue[i].sending = nil; continue }
+                fresh.append(QueuedMessage(text: message.text, attachments: message.attachments, queuedAt: message.queuedAt))
+            }
+            queue.insert(contentsOf: fresh, at: 0)
+        }
     }
 
     /// Returns false when the message has already gone.
