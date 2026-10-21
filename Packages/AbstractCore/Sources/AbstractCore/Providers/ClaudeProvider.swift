@@ -135,8 +135,8 @@ public struct ClaudeProvider: ProviderDefinition {
             args: Self.baseArgs + Self.policyArgs(ctx.permissionPolicy) + ctx.readableDirs.flatMap { ["--add-dir", $0] }
                 + Self.skillArgs(ctx.skills)
                 + (ctx.model.map { ["--model", $0] } ?? [])
-                + (ctx.effort.map { ["--effort", $0] } ?? []) + Self.styleArgs(ctx.outputStyle)
-                + Self.mcpArgs(ctx.historyTool, ctx.pluginTools) + Self.instructionArgs(ctx) + resumeArgs + ctx.extraArgs,
+                + (ctx.effort.map { ["--effort", $0] } ?? []) + Self.settingsArgs(ctx)
+                + Self.mcpArgs(ctx) + Self.instructionArgs(ctx) + resumeArgs + ctx.extraArgs,
             cwd: ctx.cwd,
             env: ["CLAUDE_CODE_BASH_EDIT_DIFF": "1"],
             stdinInitial: Self.userMessageLine(ctx.prompt, images: ctx.images),
@@ -153,47 +153,86 @@ public struct ClaudeProvider: ProviderDefinition {
 
     public var skillDelivery: SkillDelivery? { .addedDirectory }
 
-    /// The code-history tool (ABS-61, checked in ABS-60): inline MCP
-    /// config beside the user's own servers (never `--strict-mcp-config`,
-    /// which would drop theirs), both tools allowed outright or each
-    /// call becomes an approval request, and the instruction. Passed on
-    /// every resume too, or the tool disappears.
-    static func historyArgs(_ tool: HistoryToolLaunch?) -> [String] {
-        mcpArgs(tool, nil)
+    /// Its own `toolServerSupport`: an Ask first tool gets the chat's
+    /// permission card through `--permission-prompt-tool stdio`.
+    public var toolServerSupport: ToolServerSupport { .askFirst }
+
+    /// Every MCP server the chat gets, in one config: the code-history
+    /// tool (ABS-61, checked in ABS-60), the plugin-tools server (ABS-97)
+    /// and the project's servers (ABS-123).
+    /// It sits beside the user's own servers (never `--strict-mcp-config`,
+    /// which would drop theirs) and is passed on every resume too, or the
+    /// tools disappear. With a chat folder it's a file only the user can
+    /// read, since headers and environment can hold keys; argv can be read
+    /// by anyone on the Mac.
+    ///
+    /// Allowed tools run without asking (`--allowedTools`), Off tools are
+    /// taken away (`--disallowedTools`), and Ask first tools get an `ask`
+    /// rule in `settingsArgs`, which asks even under full autonomy
+    /// (checked against claude 2.1.283).
+    static func mcpArgs(_ ctx: LaunchContext) -> [String] {
+        let servers = ctx.mcpServers
+        guard !servers.isEmpty else { return [] }
+        var config: [String: JSONValue] = [:]
+        for server in servers {
+            switch server.connection {
+            case let .url(url, headers):
+                var entry: [String: JSONValue] = ["type": .string("http"), "url": .string(url)]
+                if !headers.isEmpty { entry["headers"] = .object(headers.mapValues(JSONValue.string)) }
+                config[server.name] = .object(entry)
+            case let .command(argv, env):
+                var entry: [String: JSONValue] = [
+                    "command": .string(argv.first ?? ""),
+                    "args": .array(argv.dropFirst().map(JSONValue.string)),
+                ]
+                if !env.isEmpty { entry["env"] = .object(env.mapValues(JSONValue.string)) }
+                config[server.name] = .object(entry)
+            }
+        }
+        let json = JSONValue.object(["mcpServers": .object(config)]).compact()
+        var args = ["--mcp-config", ctx.configDirectory.flatMap { ChatConfigFiles.write(json, named: "claude-mcp.json", in: $0) } ?? json]
+        // The code-history tools by name; the plugin-tools server's by its
+        // name: Abstract asks itself for a plugin tool set to Ask first, so
+        // Claude mustn't ask again, and the list can change mid-chat.
+        let allowed = servers.flatMap { server -> [String] in
+            if server.name == CodeHistory.serverName && server.allowsEverything {
+                return [CodeHistory.historyTool, CodeHistory.excerptTool].map(CodeHistory.streamName)
+            }
+            return server.allowsEverything ? ["mcp__\(server.name)"] : server.allowed.map { toolName(server.name, $0) }
+        }
+        if !allowed.isEmpty { args += ["--allowedTools", allowed.joined(separator: ",")] }
+        let off = servers.flatMap { server in server.off.map { toolName(server.name, $0) } }
+        if !off.isEmpty { args += ["--disallowedTools", off.joined(separator: ",")] }
+        return args
     }
 
-    /// The code-history server and the plugin-tools server (ABS-97) in
-    /// one config. Every plugin tool is allowed by its server's name:
-    /// Abstract asks itself for a tool set to Ask first, so Claude
-    /// mustn't ask again, and the list can change mid-chat.
-    static func mcpArgs(_ history: HistoryToolLaunch?, _ plugins: PluginToolsLaunch?) -> [String] {
-        var servers: [String: JSONValue] = [:]
-        var allowed: [String] = []
-        if let history {
-            servers[CodeHistory.serverName] = .object([
-                "command": .string(history.command),
-                "args": .array(history.serverArgs.map(JSONValue.string)),
-            ])
-            allowed += [CodeHistory.historyTool, CodeHistory.excerptTool].map(CodeHistory.streamName)
-        }
-        if let plugins {
-            servers[PluginTools.serverName] = .object([
-                "command": .string(plugins.command),
-                "args": .array(plugins.serverArgs.map(JSONValue.string)),
-            ])
-            allowed.append("mcp__\(PluginTools.serverName)")
-        }
-        guard !servers.isEmpty else { return [] }
-        let config = JSONValue.object(["mcpServers": .object(servers)]).compact()
-        return ["--mcp-config", config, "--allowedTools", allowed.joined(separator: ",")]
+    /// How Claude names an MCP tool in rules and in its stream: anything
+    /// but letters, digits, `_` and `-` becomes `_`, as Claude does it. A
+    /// server's odd tool name (`x,Bash`) so stays one rule for that tool and
+    /// can't widen `--allowedTools` to another.
+    static func toolName(_ server: String, _ tool: String) -> String {
+        let clean = { (s: String) in String(s.map { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_" || $0 == "-") ? $0 : "_" }) }
+        return "mcp__\(clean(server))__\(clean(tool))"
     }
 
     /// Everything appended to Claude's system prompt, as one argument:
     /// the profile's instructions (ABS-101) first, then how to use the
-    /// code-history tool when the chat gets it.
+    /// code-history tool when the chat gets it, then the project's notes
+    /// on its MCP servers.
     static func instructionArgs(_ ctx: LaunchContext) -> [String] {
-        let parts = [ctx.instructions, ctx.historyTool == nil ? nil : CodeHistory.instruction].compactMap { $0 }
+        let parts = [ctx.instructions, ctx.historyTool == nil ? nil : CodeHistory.instruction,
+                     MCPServerLaunch.instructions(ctx.toolServers)].compactMap { $0 }
         return parts.isEmpty ? [] : ["--append-system-prompt", parts.joined(separator: "\n\n")]
+    }
+
+    /// Extra settings for this run: the output style, and an `ask` rule for
+    /// every MCP tool set to Ask first.
+    static func settingsArgs(_ ctx: LaunchContext) -> [String] {
+        let ask = ctx.toolServers.flatMap { server in server.askFirst.map { toolName(server.name, $0) } }
+        guard !ask.isEmpty else { return styleArgs(ctx.outputStyle) }
+        var settings: [String: JSONValue] = ["permissions": .object(["ask": .array(ask.map(JSONValue.string))])]
+        if ctx.outputStyle != .default { settings["outputStyle"] = .string(ctx.outputStyle.title) }
+        return ["--settings", JSONValue.object(settings).compact()]
     }
 
     /// Claude's built-in styles go by their display name in its settings.

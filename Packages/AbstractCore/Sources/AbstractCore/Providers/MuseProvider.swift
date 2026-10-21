@@ -77,6 +77,12 @@ public struct MuseProvider: ProviderDefinition {
     /// Library skills (ABS-122), in the same stand-in home Codex gets.
     public var skillDelivery: SkillDelivery? { .codexHome }
 
+    /// None yet: `muse serve` takes `-c mcpServers.<name>=…` (Muse Code
+    /// 1.4.11), but has no way to keep one of a server's tools out, and
+    /// Abstract can't answer its approvals, so Off and Ask first couldn't
+    /// be kept. Project Settings says so.
+    public var toolServerSupport: ToolServerSupport { .none }
+
     public func permissionDetail(_ policy: PermissionPolicy) -> String {
         switch policy {
         case .ask: "Muse Code is read-only here because its file edits do not ask for approval. Abstract cannot answer an approval request; use the Muse Code terminal for that."

@@ -118,6 +118,13 @@ public struct LaunchContext: Sendable {
     /// The instructions of the profile this chat started from (ABS-101),
     /// as they were at the start; nil when it started from none.
     public var instructions: String?
+    /// The project's MCP servers this agent gets (ABS-123), already
+    /// narrowed to it, with each tool's access.
+    public var toolServers: [MCPServerLaunch]
+    /// This chat's own folder for the files its agent is started with
+    /// (Claude's MCP config, OpenCode's instructions); nil passes them
+    /// inline instead.
+    public var configDirectory: String?
     /// The library skills this chat gets (ABS-122); nil when it gets none.
     public var skills: SkillsLaunch?
 
@@ -125,14 +132,30 @@ public struct LaunchContext: Sendable {
                 extraArgs: [String] = [], binaryOverride: String? = nil, model: String? = nil, effort: String? = nil,
                 outputStyle: OutputStyle = .default, images: [String] = [], readableDirs: [String] = [],
                 historyTool: HistoryToolLaunch? = nil, instructions: String? = nil,
-                pluginTools: PluginToolsLaunch? = nil, skills: SkillsLaunch? = nil) {
+                pluginTools: PluginToolsLaunch? = nil, toolServers: [MCPServerLaunch] = [], configDirectory: String? = nil,
+                skills: SkillsLaunch? = nil) {
         self.cwd = cwd; self.prompt = prompt; self.resumeId = resumeId; self.permissionPolicy = permissionPolicy
         self.extraArgs = extraArgs; self.binaryOverride = binaryOverride; self.outputStyle = outputStyle
         self.images = images; self.readableDirs = readableDirs; self.historyTool = historyTool
-        self.pluginTools = pluginTools; self.skills = skills
+        self.pluginTools = pluginTools; self.toolServers = toolServers; self.configDirectory = configDirectory
+        self.skills = skills
         self.model = Self.nonBlank(model)
         self.effort = Self.nonBlank(effort)
         self.instructions = instructions.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
+    }
+
+    /// Every MCP server the agent gets: Abstract's own code-history and
+    /// plugin-tools servers first, every tool allowed, then the project's.
+    public var mcpServers: [MCPServerLaunch] {
+        let history = historyTool.map {
+            MCPServerLaunch(name: CodeHistory.serverName, connection: .command($0.serverCommand, env: [:]),
+                            allowsEverything: true)
+        }
+        let plugins = pluginTools.map {
+            MCPServerLaunch(name: PluginTools.serverName, connection: .command($0.serverCommand, env: [:]),
+                            allowsEverything: true)
+        }
+        return [history, plugins].compactMap { $0 } + toolServers
     }
 
     private static func nonBlank(_ value: String?) -> String? {
@@ -431,6 +454,8 @@ public protocol ProviderDefinition: Sendable {
     /// App commands only this agent gets in the `/` menu, and its own
     /// commands they take over.
     var commands: ProviderCommands { get }
+    /// How much of a project's MCP servers (ABS-123) this agent can take.
+    var toolServerSupport: ToolServerSupport { get }
     /// A one-off call answering `prompt` (Abstract's naming request) on the
     /// agent's fastest model, with no tools that change anything. `model` is
     /// the chat's. nil: this agent can't name chats.
@@ -463,6 +488,7 @@ public extension ProviderDefinition {
     func permissionDetail(_ policy: PermissionPolicy) -> String { policy.detail }
     var skillDelivery: SkillDelivery? { nil }
     var commands: ProviderCommands { .none }
+    var toolServerSupport: ToolServerSupport { .none }
     func namingLaunch(prompt: String, home: String, binary: String?, model: String?) -> LaunchSpec? { nil }
     func namingAnswer(_ output: String) -> String? { nil }
     func namingError(_ output: String) -> String? { nil }

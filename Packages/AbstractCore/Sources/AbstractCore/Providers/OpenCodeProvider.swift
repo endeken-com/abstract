@@ -37,10 +37,14 @@ public struct OpenCodeProvider: ProviderDefinition {
         // the prompt, like the output style; with one it goes in the
         // config's `instructions`, after the user's own.
         let historyInPrompt = ctx.historyTool != nil && ctx.historyTool?.instructionFile == nil
+        // The servers' usage notes likewise: a file in the chat's folder
+        // when it has one, else the prompt.
+        let notesInPrompt = ctx.configDirectory == nil ? MCPServerLaunch.instructions(ctx.toolServers) : nil
         let prompt = (ctx.permissionPolicy.isReadOnly ? (ctx.instructions.map { $0 + "\n\n" } ?? "") : "")
             + (ctx.outputStyle.instructions.map { $0 + "\n\n" } ?? "")
             + (ctx.permissionPolicy == .readOnly ? Plan.readOnlyInstruction + "\n\n" : "")
-            + (historyInPrompt ? CodeHistory.instruction + "\n\n" : "") + ctx.prompt
+            + (historyInPrompt ? CodeHistory.instruction + "\n\n" : "")
+            + (notesInPrompt.map { $0 + "\n\n" } ?? "") + ctx.prompt
         return LaunchSpec(
             command: override.flatMap { $0.isEmpty ? nil : $0 } ?? binary,
             // OpenCode finds its project from the inherited PWD, not the
@@ -73,6 +77,7 @@ public struct OpenCodeProvider: ProviderDefinition {
     /// `run` declines it and the declined call shows in the chat.
     static func configEnv(_ ctx: LaunchContext) -> [String: String] {
         var config: [String: JSONValue] = [:]
+        var instructions: [JSONValue] = []
         if let tool = ctx.historyTool {
             config["mcp"] = .object([
                 CodeHistory.serverName: .object([
@@ -81,7 +86,7 @@ public struct OpenCodeProvider: ProviderDefinition {
                     "enabled": .bool(true),
                 ]),
             ])
-            if let file = tool.instructionFile { config["instructions"] = .array([.string(file)]) }
+            if let file = tool.instructionFile { instructions.append(.string(file)) }
         }
         // Library skills (ABS-122): OpenCode adds the folders in
         // `skills.paths` to the ones it already reads.
@@ -98,6 +103,23 @@ public struct OpenCodeProvider: ProviderDefinition {
             ])
             config["mcp"] = .object(servers)
         }
+        // The project's servers (ABS-123), merged the same way. `run` can't
+        // ask, so an Ask first tool is turned off like an Off one.
+        if !ctx.toolServers.isEmpty {
+            var servers = config["mcp"]?.object ?? [:]
+            var tools: [String: JSONValue] = [:]
+            for server in ctx.toolServers {
+                servers[server.name] = mcpEntry(server.connection)
+                for tool in server.withheld { tools[toolKey(server.name, tool)] = .bool(false) }
+            }
+            config["mcp"] = .object(servers)
+            if !tools.isEmpty { config["tools"] = .object(tools) }
+            if let notes = MCPServerLaunch.instructions(ctx.toolServers), let directory = ctx.configDirectory,
+               let file = ChatConfigFiles.write(notes + "\n", named: "opencode-tool-notes.md", in: directory) {
+                instructions.append(.string(file))
+            }
+        }
+        if !instructions.isEmpty { config["instructions"] = .array(instructions) }
         if let instructions = ctx.instructions {
             config["agent"] = .object([profileAgent: .object([
                 "mode": .string("primary"),
@@ -105,6 +127,31 @@ public struct OpenCodeProvider: ProviderDefinition {
             ])])
         }
         return config.isEmpty ? [:] : ["OPENCODE_CONFIG_CONTENT": JSONValue.object(config).compact()]
+    }
+
+    /// Allowed and Off tools are honoured; `run` can't ask Abstract.
+    public var toolServerSupport: ToolServerSupport { .allowOrOff }
+
+    /// One server in OpenCode's `mcp` block.
+    static func mcpEntry(_ connection: ProjectToolServer.Connection) -> JSONValue {
+        switch connection {
+        case let .url(url, headers):
+            var entry: [String: JSONValue] = ["type": .string("remote"), "url": .string(url), "enabled": .bool(true)]
+            if !headers.isEmpty { entry["headers"] = .object(headers.mapValues(JSONValue.string)) }
+            return .object(entry)
+        case let .command(argv, env):
+            var entry: [String: JSONValue] = ["type": .string("local"), "command": .array(argv.map(JSONValue.string)),
+                                              "enabled": .bool(true)]
+            if !env.isEmpty { entry["environment"] = .object(env.mapValues(JSONValue.string)) }
+            return .object(entry)
+        }
+    }
+
+    /// How OpenCode names an MCP tool: server and tool, each with anything
+    /// but letters, digits, `_` and `-` made `_` (checked in OpenCode 1.18.18).
+    static func toolKey(_ server: String, _ tool: String) -> String {
+        let clean = { (s: String) in String(s.map { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_" || $0 == "-") ? $0 : "_" }) }
+        return clean(server) + "_" + clean(tool)
     }
 
     /// The code-history tool alone, as `configEnv` writes it.

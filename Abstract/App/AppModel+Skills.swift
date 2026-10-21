@@ -19,12 +19,6 @@ extension AppModel {
     /// Abstract's data folder, which holds the library's checkouts.
     var dataDirectory: String { AttachmentStore.root.deletingLastPathComponent().path }
 
-    /// Where each chat's launch files go: `agent-config/<chat id>/` beside
-    /// the attachments.
-    static var agentConfigRoot: String {
-        AttachmentStore.root.deletingLastPathComponent().appendingPathComponent("agent-config").path
-    }
-
     private var libraryFolder: String { SkillLibrary.folder(dataDirectory: dataDirectory) }
 
     /// Reads the sources' skills again, after they change on disk.

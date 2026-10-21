@@ -4,8 +4,8 @@ import UniformTypeIdentifiers
 import AbstractCore
 
 /// A project's settings as one quiet document: the header, then General,
-/// Branches & naming, New chats, Skills, Permissions, Location & checkout, Lifecycle scripts
-/// and the danger zone. Every change is stored at once; text is stored after a pause.
+/// Branches & naming, New chats, Skills, Permissions, Tools (MCP), Location & checkout,
+/// Lifecycle scripts and the danger zone. Every change is stored at once; text is stored after a pause.
 struct ProjectSettingsView: View {
     @Environment(AppModel.self) private var model
     let projectId: String
@@ -23,6 +23,7 @@ struct ProjectSettingsView: View {
                     NewChatSection(project: project)
                     SkillsSection(project: project)
                     PermissionsSection(project: project)
+                    ToolsSection(project: project)
                     LocationSection(project: project)
                     ScriptsSection(project: project)
                     DangerSection(project: project)
@@ -57,7 +58,7 @@ enum ProjectPage {
 // MARK: - Layout pieces
 
 /// A section: its small label, an optional sentence, then its rows.
-private struct PageSection<Content: View>: View {
+struct PageSection<Content: View>: View {
     let title: String
     var detail: String? = nil
     @ViewBuilder var content: () -> Content
@@ -133,7 +134,7 @@ private struct RowLabel: View {
 }
 
 /// A path or remote as it reads: mono, muted, cut in the middle when long.
-private struct PathText: View {
+struct PathText: View {
     let text: String
     var quiet = false
 

@@ -198,6 +198,8 @@ final class AgentHost: @unchecked Sendable {
             settings.codeHistory = CodeHistorySettings(
                 command: executable, instructionFile: CodeHistorySettings.instructionFile(in: directory))
         }
+        // The project's MCP servers (ABS-123), as the app gives them.
+        settings.toolServers = (try? session.projectId.map { try store.toolServers(projectId: $0) }) ?? []
         // Its library skills (ABS-122), as the app gives them.
         let dataDirectory = URL(fileURLWithPath: storePath).deletingLastPathComponent().path
         settings.addSkills(for: session, project: try? session.projectId.flatMap { try store.project($0) },
