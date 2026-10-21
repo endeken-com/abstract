@@ -57,6 +57,22 @@ public struct HistoryToolLaunch: Sendable, Hashable {
     public var serverCommand: [String] { [command] + serverArgs }
 }
 
+/// The plugin tools handed to one chat's agent (ABS-97): the `abstract`
+/// command that serves them, for this chat only. Which tools it lists is
+/// the app's to say, call by call.
+public struct PluginToolsLaunch: Sendable, Hashable {
+    public var command: String
+    public var chatId: String
+
+    public init(command: String, chatId: String) {
+        self.command = command; self.chatId = chatId
+    }
+
+    /// What runs the server: `abstract mcp --chat <id> --plugins`.
+    public var serverArgs: [String] { ["mcp", "--chat", chatId, "--plugins"] }
+    public var serverCommand: [String] { [command] + serverArgs }
+}
+
 public struct LaunchContext: Sendable {
     /// Working directory: the session's worktree.
     public var cwd: String
@@ -76,6 +92,8 @@ public struct LaunchContext: Sendable {
     public var readableDirs: [String]
     /// The code-history tool for this chat; nil when the project has it off.
     public var historyTool: HistoryToolLaunch?
+    /// The chat's plugin tools; nil when no plugin offers any.
+    public var pluginTools: PluginToolsLaunch?
     /// The instructions of the profile this chat started from (ABS-101),
     /// as they were at the start; nil when it started from none.
     public var instructions: String?
@@ -83,10 +101,12 @@ public struct LaunchContext: Sendable {
     public init(cwd: String, prompt: String, resumeId: String? = nil, permissionPolicy: PermissionPolicy,
                 extraArgs: [String] = [], binaryOverride: String? = nil, model: String? = nil, effort: String? = nil,
                 outputStyle: OutputStyle = .default, images: [String] = [], readableDirs: [String] = [],
-                historyTool: HistoryToolLaunch? = nil, instructions: String? = nil) {
+                historyTool: HistoryToolLaunch? = nil, instructions: String? = nil,
+                pluginTools: PluginToolsLaunch? = nil) {
         self.cwd = cwd; self.prompt = prompt; self.resumeId = resumeId; self.permissionPolicy = permissionPolicy
         self.extraArgs = extraArgs; self.binaryOverride = binaryOverride; self.outputStyle = outputStyle
         self.images = images; self.readableDirs = readableDirs; self.historyTool = historyTool
+        self.pluginTools = pluginTools
         self.model = Self.nonBlank(model)
         self.effort = Self.nonBlank(effort)
         self.instructions = instructions.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }

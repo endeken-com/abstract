@@ -68,6 +68,16 @@ final class PluginBackgroundHost {
         runners[pluginId]?.invoke(invocation) ?? false
     }
 
+    /// Runs an agent's call to one of a plugin's tools (ABS-97) in its
+    /// script, within the time limit.
+    func callTool(_ pluginId: String, name: String, input: JSONValue, chatId: String) async -> PluginToolOutcome {
+        guard let runner = runners[pluginId] else {
+            let name = model.plugins.plugin(pluginId)?.record.name ?? "That plugin"
+            return .failed("\(name) isn't running, so its tool can't answer.")
+        }
+        return await runner.callTool(name, input: input, chatId: chatId)
+    }
+
     // MARK: Status and pull-request changes
 
     /// Follows the same facts a plugin's screen redraws on, and turns the
@@ -116,12 +126,15 @@ final class PluginBackgroundRunner: NSObject, WKScriptMessageHandler, WKNavigati
     private var watchdog = PluginWatchdog()
     private var ticker: Task<Void, Never>?
     private var stopped = false
+    /// Agents' tool calls the script hasn't answered yet (ABS-97).
+    private let toolCalls: PluginToolCalls
 
     init(model: AppModel, plugin: InstalledPlugin, manifest: PluginManifest, onStopped: @escaping (String) -> Void) {
         self.model = model
         self.plugin = plugin
         self.manifest = manifest
         self.onStopped = onStopped
+        toolCalls = PluginToolCalls(pluginName: manifest.name)
         super.init()
         connection = PluginConnection(
             model: model, plugin: plugin, manifest: manifest, placement: nil, isBackground: true,
@@ -166,6 +179,7 @@ final class PluginBackgroundRunner: NSObject, WKScriptMessageHandler, WKNavigati
         guard !stopped else { return }
         stopped = true
         connection.tearDown()
+        Task { [toolCalls, name = manifest.name] in await toolCalls.failAll("\(name) stopped before its tool answered.") }
         ticker?.cancel()
         ticker = nil
         guard let webView else { return }
@@ -200,8 +214,26 @@ final class PluginBackgroundRunner: NSObject, WKScriptMessageHandler, WKNavigati
         return true
     }
 
+    /// The call goes to the script as a `tool` message; its `tools.result`
+    /// answers it. The chat that called is the agent's own, so the script
+    /// may act on it, as on a chat a command was run from.
+    func callTool(_ name: String, input: JSONValue, chatId: String) async -> PluginToolOutcome {
+        await toolCalls.call { [weak self] callId in
+            await MainActor.run {
+                guard let self, self.connection.ready, !self.stopped else { return false }
+                self.connection.know(chatId: chatId)
+                self.connection.send(type: "tool", payload: .object([
+                    "callId": .string(callId), "tool": .string(name), "input": input, "chatId": .string(chatId),
+                ]))
+                return true
+            }
+        }
+    }
+
     private func handle(_ outcome: PluginBridge.Outcome) {
         switch outcome {
+        case .toolResult(let callId, let result):
+            Task { [toolCalls] in await toolCalls.finish(callId, result) }
         case .subscribe(let id, let types):
             subscriptions.formUnion(types)
             connection.send(type: "reply", id: id,

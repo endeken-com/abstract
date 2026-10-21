@@ -62,6 +62,9 @@ public struct LaunchSettings: Sendable {
     /// The code-history tool for this launch's chat, when its project
     /// gives agents that history; nil leaves the agent without it.
     public var codeHistory: CodeHistorySettings?
+    /// The `abstract` command that serves this launch's plugin tools
+    /// (ABS-97), when a plugin offers any; nil leaves the agent without.
+    public var pluginToolsCommand: String?
 
     public init(providerOverrides: [String: ProviderOverride], outputStyle: OutputStyle, claudeProfile: String?,
                 standardClaudeProfile: String = NSHomeDirectory() + "/.claude", attachmentsDirectory: String,
@@ -110,7 +113,10 @@ public enum AgentLaunch {
                                 historyTool: settings.codeHistory.map {
                                     HistoryToolLaunch(command: $0.command, chatId: session.id, instructionFile: $0.instructionFile)
                                 },
-                                instructions: session.profileInstructions)
+                                instructions: session.profileInstructions,
+                                pluginTools: settings.pluginToolsCommand.map {
+                                    PluginToolsLaunch(command: $0, chatId: session.id)
+                                })
         var spec = resumeId.map { provider.buildResume(ctx, resumeId: $0) } ?? provider.buildLaunch(ctx)
         if provider.id == "claude", let profile = settings.claudeProfile, profile != settings.standardClaudeProfile {
             spec.env["CLAUDE_CONFIG_DIR"] = profile
