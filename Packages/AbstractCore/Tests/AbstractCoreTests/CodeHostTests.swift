@@ -62,9 +62,13 @@ import Testing
             let plugin = FakePlugin { _, _ in Self.json(answer) }
             #expect(await plugin.host().access() == expected)
         }
-        // A plugin that fails to answer reads as not there.
-        let broken = FakePlugin { _, _ in throw CodeHostError.unavailable("not running") }
-        #expect(await broken.host().access() == .missing(install: nil))
+        // A plugin that fails to answer says nothing about the tool: it's
+        // unavailable, never missing, and blocks nothing.
+        let broken = FakePlugin { _, _ in throw CodeHostError.unavailable("Example isn't running, so it can't answer.") }
+        let access = await broken.host().access()
+        #expect(access == .unavailable("Example isn't running, so it can't answer."))
+        #expect(!access.blocks && !access.isReady)
+        #expect(CodeHostAccess.missing(install: nil).blocks && CodeHostAccess.signedOut(hint: nil).blocks)
     }
 
     @Test func listingAndOnePullRequestDecodeAbstractsShape() async throws {

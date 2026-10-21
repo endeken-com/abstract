@@ -312,7 +312,10 @@ final class PluginBackgroundRunner: NSObject, WKScriptMessageHandler, WKNavigati
     /// `codeHost.result` answers it. The project and chat it is about are
     /// core's own pick, so the script may run its commands there.
     func callCodeHost(_ op: CodeHostOperation, input: JSONValue, context: CodeHostContext) async -> PluginCodeHostAnswer {
-        await codeHostCalls.call(op) { [weak self] callId in
+        // A script still loading (just after launch, or just turned on) is
+        // waited for a little, rather than read as not running.
+        for _ in 0..<50 where !connection.ready && !stopped { try? await Task.sleep(for: .milliseconds(100)) }
+        return await codeHostCalls.call(op) { [weak self] callId in
             await MainActor.run {
                 guard let self, self.connection.ready, !self.stopped else { return false }
                 if let chatId = context.chatId { self.connection.know(chatId: chatId) }

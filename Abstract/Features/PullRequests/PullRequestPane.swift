@@ -264,7 +264,8 @@ struct PullRequestPane: View {
     /// What the tab says when the code host's tool is missing or signed out.
     private static func unavailable(_ access: CodeHostAccess, _ title: String) -> Phase? {
         switch access {
-        case .ready: nil
+        // Couldn't be asked: load anyway, and say what went wrong if that fails too.
+        case .ready, .unavailable: nil
         case .missing(let install):
             .unavailable("\(title) CLI needed", install.map { "Install it with `\($0)`, then sign in." } ?? "Install it, then sign in.")
         case .signedOut(let hint):
