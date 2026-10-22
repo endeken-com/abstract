@@ -13,7 +13,7 @@ require.extensions['.ts'] = transpile;
 require.extensions['.tsx'] = transpile;
 // The native modules are stood in by their element names, so a row renders to a plain element tree.
 const stubs = {
-  'react-native': { Pressable: 'Pressable', Text: 'Text', TextInput: 'TextInput', View: 'View', StyleSheet: { create: styles => styles, hairlineWidth: 0.5 } },
+  'react-native': { Pressable: 'Pressable', Text: 'Text', TextInput: 'TextInput', View: 'View', StyleSheet: { create: styles => styles, hairlineWidth: 0.5 }, Platform: { OS: 'ios' } },
   'expo-symbols': { SymbolView: 'SymbolView' },
   'react-native-svg': { __esModule: true, default: 'Svg', Path: 'Path' },
   '@react-native-menu/menu': { MenuView: 'MenuView' },
@@ -120,49 +120,112 @@ test('checks read failing, then running, then passed', () => {
   assert.equal(out([]), null);
 });
 
-test('the second line renders its parts with dots between, a failing check in red', () => {
+// The texts an element tree shows, in order.
+const texts = node => [node].flat().filter(Boolean).flatMap(n => typeof n === 'string' ? [n]
+  : n.type === 'Text' ? [String(n.props.children)] : texts(n.props?.children));
+const styleOf = el => Object.assign({}, ...[el.props.style].flat().filter(Boolean));
+
+test('the second line puts identity on the left and the pull request on the right, a failing check in red with its symbol', () => {
   const line = g.lineOf(chat('x', 'idle', { pullRequest: pr(3981, 'OPEN', { checks: [{ name: 'a', outcome: 'failed' }] }) }), true);
   const el = SecondLine({ line });
   assert.equal(el.props.accessibilityLabel, 'abstract · #3981 · failing');
-  const [first, second] = el.props.children;
-  assert.equal(second, false, 'a chat without review feedback needs only one metadata line');
-  const [project, dot, prPart, , checks] = first.props.children;
-  assert.equal(project.props.children, 'abstract');
-  assert.equal(dot.props.children, '·');
-  assert.equal(prPart.props.children[1].props.children, '#3981');
-  assert.equal(checks.props.children, 'failing');
-  assert.equal(checks.props.style[1].color, '#EF6461');
+  const rows = el.props.children;
+  assert.equal(rows.length, 1, 'a chat without review feedback needs only one metadata line');
+  const [identity, trailing] = rows[0].props.children;
+  assert.deepEqual(texts(identity), ['abstract']);
+  assert.equal(styleOf(trailing).marginLeft, 'auto', 'the pull request keeps its own column at the right');
+  assert.deepEqual(texts(trailing), ['#3981', 'failing']);
+  const checks = trailing.props.children.props.children[2];
+  const [symbol, word] = checks.props.children;
+  assert.equal(symbol.props.name.ios, 'xmark', 'not colour alone');
+  assert.equal(styleOf(word).color, '#EF6461');
 });
 
-test('review feedback moves to a second line while all facts remain accessible', () => {
+test('passed and running checks carry their own symbols', () => {
+  for (const [outcome, word, ios] of [['passed', 'passed', 'checkmark'], ['pending', 'running', 'clock']]) {
+    const line = g.lineOf(chat('x', 'idle', { pullRequest: pr(7, 'OPEN', { checks: [{ name: 'a', outcome }] }) }), false);
+    const pullRequest = SecondLine({ line }).props.children[0].props.children[1];
+    const [symbol, text] = pullRequest.props.children.props.children[2].props.children;
+    assert.equal(symbol.props.name.ios, ios);
+    assert.equal(text.props.children, word);
+  }
+});
+
+test('review feedback takes its own line under the pull request while all facts remain accessible', () => {
   const line = g.lineOf(chat('x', 'idle', { projectName: 'A very long project name', mac: 'A very long Mac name',
     pullRequest: pr(3981, 'OPEN', { checks: [{ name: 'a', outcome: 'passed' }], reviewDecision: 'CHANGES_REQUESTED' }) }), true, true);
   const el = SecondLine({ line });
   assert.equal(el.props.accessibilityLabel, 'A very long project name · #3981 · passed · changes requested · A very long Mac name');
   const [first, second] = el.props.children;
-  assert.deepEqual(first.props.children.filter(child => child.type === 'Text').map(child => child.props.children),
-    ['A very long project name', '·', '·', 'passed']);
-  assert.equal(second.props.children[0].props.children, 'changes requested');
-  assert.equal(second.props.children[2].props.children[1].props.children, 'A very long Mac name');
-  for (const item of [first.props.children[0], first.props.children[4], second.props.children[0], second.props.children[2].props.children[1]]) {
-    assert.equal(item.props.numberOfLines, 1, 'metadata text cannot form a vertical word stack');
-  }
+  assert.deepEqual(texts(first), ['A very long project name', '·', 'A very long Mac name', '#3981', 'passed']);
+  assert.deepEqual(texts(second), ['changes requested']);
+  assert.equal(styleOf(second).justifyContent, 'flex-end', 'it sits under the pull request it belongs to');
+  const all = [];
+  const walk = n => [n].flat().filter(Boolean).forEach(x => { if (x.type === 'Text') all.push(x); else walk(x.props?.children); });
+  walk(el);
+  for (const item of all.filter(t => t.props.children !== '·')) assert.equal(item.props.numberOfLines, 1, 'metadata text cannot form a vertical word stack');
+});
+
+test('at accessibility text sizes the identity, pull request and review each take a line', () => {
+  const line = g.lineOf(chat('x', 'waiting_input', { pullRequest: pr(3981, 'OPEN', { checks: [{ name: 'a', outcome: 'passed' }], reviewDecision: 'CHANGES_REQUESTED' }) }), true, true);
+  const rows = SecondLine({ line, stacked: true }).props.children;
+  assert.deepEqual(rows.map(texts), [['Needs you', '·', 'abstract', '·', 'Studio'], ['#3981', 'passed'], ['changes requested']]);
+});
+
+test('why a chat needs you leads its line in words, ahead of its project', () => {
+  assert.equal(g.lineText(g.lineOf(chat('a', 'waiting_input'), true)), 'Needs you · abstract');
+  assert.equal(g.lineText(g.lineOf(chat('a', 'waiting_input'), true, false, now, 'needsYou')), 'abstract', 'the heading already says it');
+  assert.equal(g.lineText(g.lineOf(chat('a', 'waiting_input'), true, false, now, 'pinned')), 'Needs you · abstract');
+  assert.equal(g.lineText(g.lineOf(chat('b', 'errored'), true, false, now, 'needsYou')), 'Failed · abstract', 'failing is its own reason');
+  assert.equal(g.lineText(g.lineOf(chat('b', 'errored'), false)), 'Failed');
+  assert.ok(!g.lineIsEmpty(g.lineOf(chat('b', 'errored'), false)), 'a failed chat always says so');
+  assert.equal(g.lineOf(chat('c', 'running'), true).attention, undefined, 'working is the badge, not a word');
+  const failed = SecondLine({ line: g.lineOf(chat('b', 'errored'), true) }).props.children[0].props.children[0].props.children[0];
+  assert.equal(styleOf(failed).color, '#EF6461');
+});
+
+test('the badge follows the Mac: unreachable, then stalled, then the agent\'s state, then background work', () => {
+  assert.equal(g.badgeOf({ ...chat('a', 'waiting_input'), macState: 'unreachable' }), 'unreachable');
+  assert.equal(g.badgeOf({ ...chat('a', 'running'), stall: { state: 'stalled', since: now - 900 } }), 'stalled');
+  assert.equal(g.badgeOf(chat('a', 'waiting_input')), 'needsYou');
+  assert.equal(g.badgeOf(chat('a', 'errored')), 'failed');
+  assert.equal(g.badgeOf(chat('a', 'provisioning')), 'working');
+  assert.equal(g.badgeOf(chat('a', 'idle', { backgroundTasks: true })), 'working');
+  assert.equal(g.badgeOf(chat('a', 'idle')), null);
+});
+
+test('a row reads aloud the same status, identity, pull request and age it shows', () => {
+  const label = (c, showMac = true) => g.rowLabel(c, g.lineOf(c, true, showMac, now), now);
+  assert.equal(label(chat('Fix login', 'waiting_input', { ago: 12 * 60, pullRequest: pr(3981, 'OPEN', { checks: [{ name: 'a', outcome: 'failed' }], reviewDecision: 'CHANGES_REQUESTED' }) })),
+    'Fix login, Needs you, abstract, Claude Code, on Studio, pull request 3981, checks failing, changes requested, active 12 minutes ago');
+  const asking = chat('Asking', 'waiting_input');
+  assert.equal(g.rowLabel(asking, g.lineOf(asking, true, false, now, 'needsYou'), now), 'Asking, Needs you, abstract, Claude Code, active 1 minute ago',
+    'the spoken row keeps the state its heading shows');
+  assert.equal(label(chat('Tidy', 'running', { projectName: null, providerId: 'codex', ago: 3600 }), false), 'Tidy, Working, Standalone, Codex, active 1 hour ago');
+  assert.equal(label({ ...chat('Slow', 'running', { ago: 10 }), stall: { state: 'quiet', since: now - 300 } }, false),
+    'Slow, No output for 5 min, abstract, Claude Code, active now');
+  assert.equal(label(chat('Old', 'idle', { pullRequest: pr(12, 'MERGED'), archived: true, ago: 2 * 86_400 }), false),
+    'Old, abstract, Claude Code, pull request 12, merged, archived, active 2 days ago');
+  assert.equal(label({ ...chat('Away', 'running'), macState: 'unreachable' }), 'Away, abstract, Claude Code, Studio isn\'t reachable, active 1 minute ago');
 });
 
 // Check the rendered row styles with Yoga, the layout engine used by iOS and Android.
-// Each Text measures as one line of 7-point characters at the selected text scale.
-async function metadataLayout(line, width, scale) {
+// Each Text measures as one line of 7-point characters at the selected text scale; Yoga rounds to whole points.
+async function metadataLayout(line, width, scale, stacked = false) {
   const { loadYoga } = await import('yoga-layout/load');
   const Yoga = await loadYoga();
   const make = element => {
     const n = Yoga.Node.create();
-    const style = Object.assign({}, ...(Array.isArray(element.props.style) ? element.props.style.filter(Boolean) : [element.props.style || {}]));
+    const style = styleOf(element);
     if (style.flexDirection === 'row') n.setFlexDirection(Yoga.FLEX_DIRECTION_ROW);
     if (style.alignItems === 'center') n.setAlignItems(Yoga.ALIGN_CENTER);
+    if (style.justifyContent === 'flex-end') n.setJustifyContent(Yoga.JUSTIFY_FLEX_END);
     if (style.flexShrink != null) n.setFlexShrink(style.flexShrink);
     if (style.minWidth != null) n.setMinWidth(style.minWidth);
     if (style.maxWidth != null) n.setMaxWidth(style.maxWidth);
     if (style.gap != null) n.setGap(Yoga.GUTTER_ALL, style.gap);
+    if (style.marginLeft === 'auto') n.setMarginAuto(Yoga.EDGE_LEFT); else if (style.marginLeft != null) n.setMargin(Yoga.EDGE_LEFT, style.marginLeft);
+    if (style.paddingLeft != null) n.setPadding(Yoga.EDGE_LEFT, style.paddingLeft);
     if (element.type === 'Text') {
       const natural = String(element.props.children).length * 7 * scale;
       n.setMeasureFunc((available, mode) => ({ width: mode === Yoga.MEASURE_MODE_UNDEFINED ? natural : Math.min(natural, available), height: 16 * scale }));
@@ -174,37 +237,58 @@ async function metadataLayout(line, width, scale) {
     }
     return n;
   };
-  const rows = SecondLine({ line }).props.children.filter(Boolean).map(make);
-  const layouts = rows.map(row => {
+  // Every text box with its absolute frame, keyed by what it says.
+  // Texts inside the identity are marked clipped: it cuts long names at its own edge.
+  const boxes = (node, element, x, out, clipped = false) => {
+    const l = node.getComputedLayout();
+    if (element.type === 'Text') out.push({ text: String(element.props.children), left: x + l.left, width: l.width, clipped });
+    if (element.key === 'identity') out.push({ text: 'identity', left: x + l.left, width: l.width });
+    const children = element.type === 'Text' || element.type === 'SymbolView' || typeof element.type === 'function' ? [] : [element.props.children].flat().filter(Boolean);
+    children.forEach((child, i) => boxes(node.getChild(i), child, x + l.left, out, clipped || element.key === 'identity'));
+    return out;
+  };
+  const elements = SecondLine({ line, stacked }).props.children;
+  const layouts = elements.map(element => {
+    const row = make(element);
     row.calculateLayout(width, undefined, Yoga.DIRECTION_LTR);
-    return { height: row.getComputedLayout().height, items: Array.from({ length: row.getChildCount() }, (_, i) => row.getChild(i).getComputedLayout()) };
+    const layout = { height: row.getComputedLayout().height, texts: boxes(row, element, 0, []) };
+    row.freeRecursive();
+    return layout;
   });
-  rows.forEach(row => row.freeRecursive());
   return layouts;
 }
 
-test('long names yield to whole PR statuses on a narrow phone and at larger text sizes', async () => {
-  const base = { project: 'A very long project name that should be cut', mac: 'A very long Mac name that should be cut',
+test('long names yield to whole PR statuses on a small phone, and stack at larger text sizes', async () => {
+  const base = { attention: 'Needs you', project: 'A very long project name that should be cut', mac: 'A very long Mac name that should be cut',
     pullRequest: pr(3981), changesRequested: true };
-  for (const checks of ['passed', 'failing', 'running']) {
-    for (const scale of [1, 1.6, 2]) {
-      const rows = await metadataLayout({ ...base, checks }, 250, scale);
-      assert.equal(rows.length, 2);
-      for (const row of rows) {
-        assert.ok(row.height <= Math.ceil(16 * scale), 'each metadata row remains one text line tall');
-        for (const item of row.items) assert.ok(item.left + item.width <= 251, `${checks} at ${scale}x stays inside the phone row`);
-      }
-      if (scale <= 1.6) {
-        assert.ok(rows[0].items[4].width >= checks.length * 7 * scale, 'check status stays readable');
-        assert.ok(rows[1].items[0].width >= 'changes requested'.length * 7 * scale, `review status stays readable: ${JSON.stringify(rows[1])}`);
+  // 300 points of text beside the icon on the smallest current iPhone, 250 on a 320-point Android phone.
+  for (const [width, scales] of [[300, [1, 1.3, 1.6, 2, 2.4]], [250, [1, 1.6, 2, 2.4]]]) {
+    for (const checks of ['passed', 'failing', 'running']) {
+      for (const scale of scales) {
+        const stacked = scale >= 1.35;
+        const rows = await metadataLayout({ ...base, checks }, width, scale, stacked);
+        assert.equal(rows.length, stacked ? 3 : 2);
+        for (const row of rows) {
+          assert.ok(row.height <= Math.ceil(16 * scale), 'each metadata row remains one text line tall');
+          // Long names inside the identity are cut by it; everything else stays inside the row.
+          for (const box of row.texts.filter(b => !b.clipped)) assert.ok(box.left + box.width <= width + 1, `${checks} at ${scale}x stays inside a ${width}-point row: ${JSON.stringify(row.texts)}`);
+        }
+        const whole = text => rows.flatMap(r => r.texts).find(b => b.text === text);
+        const identity = whole('identity');
+        assert.ok(whole('Needs you').left + whole('Needs you').width <= identity.left + identity.width + 1, `why it needs you is never cut at ${scale}x`);
+        // Whole words up to twice the size on an iPhone; to 1.6× on the narrowest Android phone, as before.
+        if (scale <= (width >= 300 ? 2 : 1.6)) for (const word of ['#3981', checks, 'changes requested', 'Needs you']) {
+          assert.ok(whole(word).width >= word.length * 7 * scale, `${word} stays whole at ${scale}x`);
+        }
+        if (!stacked) assert.ok(Math.abs(whole(checks).left + whole(checks).width - width) <= 1, `the pull request ends at the row's right edge: ${JSON.stringify(rows[0].texts)}`);
       }
     }
   }
-  assert.equal((await metadataLayout({ project: base.project, mac: base.mac, changesRequested: false }, 250, 1.6)).length, 1,
+  assert.equal((await metadataLayout({ project: base.project, mac: base.mac, changesRequested: false }, 250, 1)).length, 1,
     'a chat without a PR stays on one metadata line');
-  const [checksOnly] = await metadataLayout({ ...base, changesRequested: false, checks: 'passed' }, 250, 1.6);
-  assert.ok(checksOnly.items.every(item => item.left + item.width <= 251), 'checks without review fit on one line');
-  assert.ok(checksOnly.items[4].width >= 'passed'.length * 7 * 1.6, 'the check result keeps its full width');
+  const [checksOnly] = await metadataLayout({ ...base, attention: undefined, changesRequested: false, checks: 'passed' }, 250, 1.3);
+  assert.ok(checksOnly.texts.filter(b => !b.clipped).every(b => b.left + b.width <= 251), 'checks without review fit on one line');
+  assert.ok(checksOnly.texts.find(b => b.text === 'passed').width >= 'passed'.length * 7 * 1.3, 'the check result keeps its full width');
 });
 
 test('ages read in the fewest characters', () => {

@@ -13,6 +13,7 @@ export const groupTitles: Record<ChatGroup, string> = {
   pinned: 'Pinned', needsYou: 'Needs you', working: 'Working', readyToReview: 'Ready to review', done: 'Done', archived: 'Archived',
 };
 export type Arrangement = 'status' | 'project';
+export const agentNames: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode' };
 export type Checks = 'passed' | 'failing' | 'running';
 
 // What the list knows of one chat, on whichever paired Mac it runs.
@@ -108,14 +109,22 @@ export function sections(chats: ChatFacts[], now: number): ChatSection[] {
 }
 
 // The quiet second line under a chat's title. Empty parts are left out.
-export type ChatLine = { stall?: string; stalled: boolean; project?: string; pullRequest?: PullRequest; checks?: Checks; changesRequested: boolean; mac?: string };
+export type ChatLine = { attention?: string; stall?: string; stalled: boolean; project?: string; pullRequest?: PullRequest; checks?: Checks; changesRequested: boolean; mac?: string };
+
+// Why a chat needs you, in the Mac's words, so the row never says it by colour
+// alone. Under the "Needs you" heading, a chat waiting on you needs no word of its own.
+export function attentionOf(session: Session, group?: ChatGroup): string | undefined {
+  if (session.status === 'errored') return 'Failed';
+  return session.status === 'waiting_input' && group !== 'needsYou' ? 'Needs you' : undefined;
+}
 
 // Checks and requested changes only matter while the pull request is open. The
-// Mac is named only when more than one is paired.
-export function lineOf(chat: ChatFacts, showProject: boolean, showMac = false, now = swiftDate()): ChatLine {
+// Mac is named only when more than one is paired. `group` is the heading the row sits under.
+export function lineOf(chat: ChatFacts, showProject: boolean, showMac = false, now = swiftDate(), group?: ChatGroup): ChatLine {
   const pr = chat.pullRequest || undefined;
   const open = !!pr && prState(pr) === 'OPEN';
   return {
+    attention: attentionOf(chat.session, group),
     stall: chat.stall ? stallRowText(chat.stall, now) : undefined,
     stalled: chat.stall?.state === 'stalled',
     project: showProject ? chat.projectName || undefined : undefined,
@@ -126,12 +135,46 @@ export function lineOf(chat: ChatFacts, showProject: boolean, showMac = false, n
   };
 }
 
-export const lineIsEmpty = (line: ChatLine) => !line.stall && !line.project && !line.pullRequest && !line.mac;
+export const lineIsEmpty = (line: ChatLine) => !line.attention && !line.stall && !line.project && !line.pullRequest && !line.mac;
 
-// "abstract · #3981 · passed · changes requested · Studio", as VoiceOver and the tests read it.
+// "abstract · #3981 · passed · changes requested · Studio", as the tests read it.
 export function lineText(line: ChatLine): string {
-  return [line.stall, line.project, line.pullRequest && `#${line.pullRequest.number}`, line.checks, line.changesRequested && 'changes requested', line.mac]
+  return [line.attention, line.stall, line.project, line.pullRequest && `#${line.pullRequest.number}`, line.checks, line.changesRequested && 'changes requested', line.mac]
     .filter(Boolean).join(' · ');
+}
+
+// The state its leading badge shows, in the Mac's words; null at rest.
+export function badgeOf(chat: ChatFacts): 'unreachable' | 'stalled' | 'needsYou' | 'failed' | 'working' | null {
+  if (chat.macState === 'unreachable') return 'unreachable';
+  if (chat.stall?.state === 'stalled') return 'stalled';
+  switch (chat.session.status) {
+    case 'waiting_input': return 'needsYou';
+    case 'errored': return 'failed';
+    case 'running': case 'provisioning': return 'working';
+  }
+  return chat.backgroundTasks ? 'working' : null;
+}
+
+const badgeWords = { unreachable: "Mac isn't reachable", stalled: 'Stalled', needsYou: 'Needs you', failed: 'Failed', working: 'Working' };
+
+// The whole row as VoiceOver and TalkBack read it: the same facts the row shows,
+// in the order it shows them, with the project and agent its icon stands for.
+export function rowLabel(chat: ChatFacts, line: ChatLine, now: number): string {
+  const badge = badgeOf(chat);
+  const pr = line.pullRequest;
+  const prWords = pr && `pull request ${pr.number}${pr.isDraft ? ', draft' : prState(pr) === 'OPEN' ? '' : `, ${pr.state.toLowerCase()}`}`;
+  return [
+    chat.session.name,
+    badge && badge !== 'unreachable' && (line.attention || line.stall || badgeWords[badge]),
+    chat.projectName || standalone,
+    agentNames[chat.session.providerId] || chat.session.providerId,
+    badge === 'unreachable' ? `${chat.mac} isn't reachable` : line.mac && `on ${line.mac}`,
+    prWords,
+    line.checks && `checks ${line.checks}`,
+    line.changesRequested && 'changes requested',
+    chat.session.archivedAt != null && 'archived',
+    spokenAge(activeAt(chat), now),
+  ].filter(Boolean).join(', ');
 }
 
 // How long ago, in the fewest characters: "now", "12m", "3h", "2d", "5w".
@@ -140,6 +183,15 @@ export function age(date: number, now: number): string {
   if (a < 45) return 'now';
   const text = a < 3600 ? `${Math.floor(a / 60)}m` : a < 86_400 ? `${Math.floor(a / 3600)}h` : a < 604_800 ? `${Math.floor(a / 86_400)}d` : `${Math.floor(a / 604_800)}w`;
   return s < 0 ? `in ${text}` : text;
+}
+
+// The same age in words: "active 12 minutes ago".
+export function spokenAge(date: number, now: number): string {
+  const a = Math.abs(now - date);
+  if (a < 45) return 'active now';
+  const [n, unit] = a < 3600 ? [Math.floor(a / 60), 'minute'] : a < 86_400 ? [Math.floor(a / 3600), 'hour'] : a < 604_800 ? [Math.floor(a / 86_400), 'day'] : [Math.floor(a / 604_800), 'week'];
+  const words = `${n} ${unit}${n === 1 ? '' : 's'}`;
+  return now < date ? `in ${words}` : `active ${words} ago`;
 }
 
 // What the search field and the filter menu narrow the list to. Empty lists let everything through.
