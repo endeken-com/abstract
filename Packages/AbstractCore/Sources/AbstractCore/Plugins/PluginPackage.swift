@@ -39,7 +39,7 @@ public enum PluginPackage {
         var total = 0
         var hash = SHA256()
         hash.update(data: manifestData)
-        for relative in files.sorted() {
+        for relative in files.sorted() where relative != "signature.json" {
             let url = folder.appendingPathComponent(relative)
             let data = try Data(contentsOf: url)
             total += data.count

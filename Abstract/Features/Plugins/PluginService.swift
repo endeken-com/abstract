@@ -10,6 +10,8 @@ import AbstractCore
 final class PluginService {
     let manager: PluginManager
     private(set) var installed: [InstalledPlugin] = []
+    private(set) var catalog: [PluginCatalog.Entry] = []
+    private(set) var catalogProblem: String?
     private(set) var orphans: [(name: String, problem: String)] = []
     /// Monotonic snapshot revision, shared by every open plugin view.
     private(set) var revision = 0
@@ -29,8 +31,6 @@ final class PluginService {
         manager = PluginManager(store: store)
         // The GitHub plugin is on unless you turned it off (ABS-139).
         manager.installDefaults(from: PluginManager.bundledFolders(in: Bundle.main.resourceURL))
-        // Linear and Jira, say, follow the copies inside the app (ABS-143).
-        manager.updateBundled(from: PluginManager.bundledFolders(in: Bundle.main.resourceURL))
         refresh()
     }
 
@@ -43,6 +43,26 @@ final class PluginService {
     /// Plugin folders inside the app, offered beside "Install…".
     var bundledFolders: [URL] {
         PluginManager.bundledFolders(in: Bundle.main.resourceURL)
+    }
+
+    func loadCatalog() async {
+        do {
+            let channel = UpdateChannel(stored: UserDefaults.standard.string(forKey: UpdateChannel.defaultsKey))
+            catalog = try await PluginCatalog.fetch(channel: channel).plugins
+            catalogProblem = nil
+        } catch {
+            catalogProblem = error.localizedDescription
+        }
+    }
+
+    func inspectCatalog(_ entry: PluginCatalog.Entry) async throws
+        -> (folder: URL, inspection: PluginPackage.Inspection, cleanup: URL) {
+        let (zip, response) = try await URLSession.shared.download(from: entry.url)
+        guard (response as? HTTPURLResponse)?.statusCode == 200,
+              response.url?.scheme == "https",
+              let size = try zip.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+              size <= PluginPackage.defaultSizeLimit else { throw PluginCatalogError.unavailable }
+        return try manager.inspectCatalogZip(zip, entry: entry)
     }
 
     /// Offer Bitbucket's bundled code host once a Bitbucket remote appears.
@@ -103,7 +123,7 @@ final class PluginService {
     func install(from folder: URL, sourceKind: PluginSource, enable: Bool,
                  transcriptProjectKeys: [String] = []) throws -> PluginRecord {
         let record = try manager.install(from: folder, sourceKind: sourceKind)
-        if enable { manager.setEnabled(record.id, true, transcriptProjectKeys: transcriptProjectKeys) }
+        manager.setEnabled(record.id, enable, transcriptProjectKeys: transcriptProjectKeys)
         refresh()
         return record
     }

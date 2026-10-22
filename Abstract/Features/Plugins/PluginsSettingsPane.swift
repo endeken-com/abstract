@@ -10,6 +10,8 @@ struct PluginsSettingsPane: View {
     @State private var enabling: InstalledPlugin?
     @State private var removing: InstalledPlugin?
     @State private var pickedProblem: String?
+    @State private var selectedTab = 0
+    @State private var catalogBusy: String?
     /// A usable plugin whose own Settings page is showing (ABS-96).
     @State private var settingsPageFor: InstalledPlugin?
 
@@ -22,7 +24,15 @@ struct PluginsSettingsPane: View {
     }
 
     var body: some View {
-        Form {
+        VStack(spacing: 0) {
+            Picker("Plugins", selection: $selectedTab) {
+                Text("Installed").tag(0)
+                Text("Catalog").tag(1)
+            }
+            .pickerStyle(.segmented)
+            .padding()
+            if selectedTab == 0 {
+            Form {
             Section {
                 if model.plugins.installed.isEmpty && model.plugins.orphans.isEmpty {
                     Text("No plugins are installed yet.")
@@ -71,15 +81,51 @@ struct PluginsSettingsPane: View {
             } header: {
                 Text("Add")
             }
+            }
+            } else {
+                Form {
+                    Section {
+                        if model.plugins.catalog.isEmpty && model.plugins.catalogProblem == nil {
+                            ProgressView("Loading plugins…")
+                        }
+                        ForEach(model.plugins.catalog) { entry in
+                            LabeledContent {
+                                let installed = model.plugins.plugin(entry.id)
+                                if installed?.record.version == entry.version && installed?.record.packageHash == entry.hash {
+                                    Text("Installed").foregroundStyle(Color.btTextSecondary)
+                                } else {
+                                    Button(installed == nil ? "Install" : "Review Update") {
+                                        download(entry)
+                                    }
+                                    .disabled(catalogBusy != nil)
+                                }
+                            } label: {
+                                Text(entry.name)
+                                Text("Version \(entry.version) · From Abstract")
+                            }
+                        }
+                        if let problem = model.plugins.catalogProblem {
+                            Text(problem).foregroundStyle(Color.btRemoved)
+                            Button("Try Again") { Task { await model.plugins.loadCatalog() } }
+                        }
+                        if let pickedProblem { Text(pickedProblem).foregroundStyle(Color.btRemoved) }
+                    } header: { Text("Catalog") }
+                }
+            }
         }
         .settingsPane()
+        .task { await model.plugins.loadCatalog() }
         .sheet(item: $pending) { item in
             PluginReviewSheet(
-                title: "Install \(item.inspection.manifest.name)?",
+                title: "\(model.plugins.plugin(item.inspection.manifest.id) == nil ? "Install" : "Update") \(item.inspection.manifest.name)?",
                 manifest: item.inspection.manifest,
                 source: item.source,
-                primaryLabel: "Install and Enable",
-                secondaryLabel: "Install Only",
+                publisher: try? PluginSignature.publisher(in: item.folder, hash: item.inspection.hash),
+                changes: model.plugins.plugin(item.inspection.manifest.id).map {
+                    PluginGrantChanges(new: item.inspection.manifest, old: $0.record, previous: $0.manifest)
+                },
+                primaryLabel: model.plugins.plugin(item.inspection.manifest.id) == nil ? "Install and Enable" : "Update and Enable",
+                secondaryLabel: model.plugins.plugin(item.inspection.manifest.id) == nil ? "Install Only" : "Update Only",
                 projectChoices: model.pluginProjectChoices(),
                 initialProjectKeys: []
             ) { enable, transcriptProjectKeys in
@@ -90,7 +136,7 @@ struct PluginsSettingsPane: View {
                 } catch let error as PluginValidationError {
                     pickedProblem = error.description
                 } catch {
-                    pickedProblem = "This plugin isn't a valid Abstract plugin."
+                    pickedProblem = error.localizedDescription
                 }
                 if let cleanup = item.cleanup { try? FileManager.default.removeItem(at: cleanup) }
                 pending = nil
@@ -123,6 +169,8 @@ struct PluginsSettingsPane: View {
                     capabilities: plugin.record.grantedCapabilities.map(\.rawValue),
                     views: [PluginManifest.View(id: "main", title: plugin.record.name)]),
                 source: plugin.record.source,
+                publisher: plugin.publisher,
+                changes: nil,
                 primaryLabel: "Enable",
                 secondaryLabel: nil,
                 projectChoices: model.pluginProjectChoices(),
@@ -161,9 +209,9 @@ struct PluginsSettingsPane: View {
                 }
             )) {
                 Text(record.name)
-                Text("Version \(record.version) · \(record.source.plainWords)")
+                Text("Version \(record.version) · \(record.source.plainWords) · \(plugin.publisher.map { "Verified publisher: \($0)" } ?? "Unverified")")
             }
-            .disabled(plugin.manifest == nil)
+            .disabled(plugin.manifest == nil || plugin.problem != nil)
 
             if let manifest = plugin.manifest, !manifest.grantedCapabilities.isEmpty {
                 // What it actually holds now; before its first review,
@@ -196,7 +244,7 @@ struct PluginsSettingsPane: View {
             }
             if let problem = plugin.problem {
                 Text(problem).font(.btCaption).foregroundStyle(Color.btRemoved)
-                if plugin.manifest != nil {
+                if plugin.manifest != nil && record.source != .catalog {
                     Button("Review") { model.plugins.reviewChangedPackage(plugin.id) }
                 }
             } else if let note = model.plugins.backgroundProblems[plugin.id] {
@@ -275,6 +323,21 @@ struct PluginsSettingsPane: View {
             pickedProblem = "This plugin isn't a valid Abstract plugin."
         }
     }
+
+    private func download(_ entry: PluginCatalog.Entry) {
+        catalogBusy = entry.id
+        pickedProblem = nil
+        Task {
+            defer { catalogBusy = nil }
+            do {
+                let result = try await model.plugins.inspectCatalog(entry)
+                pending = PendingInstall(folder: result.folder, inspection: result.inspection,
+                                         cleanup: result.cleanup, source: .catalog)
+            } catch {
+                pickedProblem = error.localizedDescription
+            }
+        }
+    }
 }
 
 /// The one review: name, version, where it came from, whether it's signed,
@@ -283,6 +346,8 @@ private struct PluginReviewSheet: View {
     let title: String
     let manifest: PluginManifest
     let source: PluginSource
+    let publisher: String?
+    let changes: PluginGrantChanges?
     let primaryLabel: String
     let secondaryLabel: String?
     /// Projects a `transcripts.read` grant can be scoped to.
@@ -302,13 +367,28 @@ private struct PluginReviewSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Space.md) {
             Text(title).font(.btHeadline).foregroundStyle(Color.btText)
-            Text("Version \(manifest.version) · \(source.plainWords)")
+            Text("Version \(manifest.version) · \(source.plainWords) · \(publisher.map { "Verified publisher: \($0)" } ?? "Unverified")")
                 .font(.btBody).foregroundStyle(Color.btTextSecondary)
+            if let changes, changes.asksForMore {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("This update asks for more:").font(.btBodyMedium)
+                    ForEach(changes.capabilities, id: \.rawValue) { capability in
+                        Text(capability.plainWords)
+                    }
+                    ForEach(changes.networkHosts, id: \.self) { host in Text("Reach \(host).") }
+                    ForEach(changes.secretNames, id: \.self) { name in Text("Use your \(name).") }
+                    ForEach(changes.places, id: \.self) { place in Text(place) }
+                    if changes.background { Text("Run in the background.") }
+                    if changes.cli { Text("Run more command-line actions.") }
+                    Text("The installed version stays on until you approve this update.")
+                        .font(.btCaption).foregroundStyle(Color.btTextSecondary)
+                }
+            }
             if let description = manifest.description, !description.isEmpty {
                 Text(description).font(.btBody).foregroundStyle(Color.btTextSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if source == .user {
+            if publisher == nil {
                 Text(manifest.networkHosts.isEmpty
                      ? "It isn't signed. It runs in a locked-down page with no network or file access, and it can only see and do what's listed here."
                      : "It isn't signed. It runs in a locked-down page, and Abstract sends its web requests for it — only to the addresses listed here.")
