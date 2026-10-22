@@ -184,6 +184,26 @@ import Testing
         #expect(throws: CodeHostError.failed("boom")) { try PluginCodeHostAnswer.failed("boom").value() }
     }
 
+    @Test func missingChatPRLookupIsThrottled() {
+        let now = ContinuousClock.now
+        #expect(PullRequestLookup.isDue(last: nil, now: now))
+        #expect(!PullRequestLookup.isDue(last: now.advanced(by: .seconds(-599)), now: now))
+        #expect(PullRequestLookup.isDue(last: now.advanced(by: .seconds(-600)), now: now))
+        #expect(!PullRequestLookup.isDue(last: now, now: now))
+    }
+
+    @Test func listingFailuresExplainTheNextStep() {
+        let at = Date(timeIntervalSince1970: 1_700_000_000)
+        #expect(PullRequestListingError.message("Resource protected by organization SAML enforcement: https://github.com/orgs/acme/sso", lastLoaded: nil, retryAfter: 30)
+            == "GitHub needs you to re-authorise SSO for acme.")
+        #expect(PullRequestListingError.message("Please run gh repo set-default", lastLoaded: nil, retryAfter: 30)
+            == "Choose the default repository: `gh repo set-default`.")
+        #expect(PullRequestListingError.message("could not resolve host: github.com", lastLoaded: at, retryAfter: 30)
+            .hasPrefix("Offline — showing PRs from "))
+        #expect(PullRequestListingError.message("API rate limit exceeded", lastLoaded: nil, retryAfter: 30)
+            .hasPrefix("GitHub rate limit — retrying at "))
+    }
+
     // MARK: Manifest and bridge
 
     func manifest(_ codeHost: CodeHostDeclaration?, background: String? = "background.js") -> PluginManifest {

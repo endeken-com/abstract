@@ -195,6 +195,8 @@ final class AppModel {
     var pullRequests: [String: PullRequest] = [:] { didSet { nameChatsForPullRequests(); notePullRequestEvents() } }
     /// Recent pull requests of each project, from its code host, by project id.
     var projectPullRequests: [String: [PullRequest]] = [:]
+    /// A failed list stays visible with the last successful list.
+    var projectPullRequestErrors: [String: String] = [:]
     /// Whether each code host plugin's tool is there and signed in, and
     /// when that was asked, by plugin id (ABS-139).
     var codeHostAccess: [String: (access: CodeHostAccess, at: ContinuousClock.Instant)] = [:]
@@ -204,6 +206,10 @@ final class AppModel {
     @ObservationIgnored var repoAccess: [String: RepoAccess] = [:]
     /// When each project's pull requests were last listed, by project id.
     @ObservationIgnored var pullRequestsListedAt: [String: ContinuousClock.Instant] = [:]
+    @ObservationIgnored var pullRequestsListedDate: [String: Date] = [:]
+    @ObservationIgnored var pullRequestRetryAt: [String: ContinuousClock.Instant] = [:]
+    @ObservationIgnored var pullRequestFailureCount: [String: Int] = [:]
+    @ObservationIgnored var pullRequestLookupsAt: [String: ContinuousClock.Instant] = [:]
     /// A pull request picked by hand for a chat, which a newer one won't replace.
     @ObservationIgnored var pinnedPullRequests: [String: Int] = [:]
     /// Where each chat's branch stands, by chat id: for its git actions and its Pull Request tab.
@@ -405,6 +411,7 @@ final class AppModel {
         servePluginTools()
         Task { await watchForStalls() }
         Task { await watchPullRequests() }
+        Task { await watchCodeHostActivation() }
         Task { await readEveryBranch() }
         if !isDemo { Task { await accounts.seedFromLogs(engine.logsURL) } }
         if !isDemo { remote.start(model: self) }

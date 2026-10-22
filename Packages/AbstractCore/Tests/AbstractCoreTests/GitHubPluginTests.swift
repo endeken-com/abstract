@@ -211,6 +211,29 @@ struct GitHubPluginTests {
         #expect(runs.first?.where_["projectKey"]?.string == "mac:p1")
     }
 
+    @Test func aChatPullRequestBeyondTheRecentLimitIsFoundByHead() throws {
+        let old = #"[{"number": 12, "title": "Old but open", "state": "OPEN", "headRefName": "chat/old", "baseRefName": "main"}]"#
+        let (value, runs) = try H.answer("listPullRequests", input: #"{"branches":["chat/old","chat/old"],"limit":100}"#,
+                                         replies: ["pr list --head": ["stdout": old], "pr list": ["stdout": "[]"]])
+        #expect(value["pullRequests"]?.array?.compactMap(PullRequest.init(contract:)).map(\.number) == [12])
+        #expect(runs.count == 2)
+        #expect(runs[1].args == ["pr", "list", "--head", "chat/old", "--state", "all", "--limit", "5",
+                                 "--json", H.summaryFields])
+    }
+
+    @Test func aProjectCallCarriesTheResolvedHostAndRepository() throws {
+        let (_, runs) = try H.answer("listPullRequests", context: #"{"projectKey":"mac:p1","host":"github.example.com","repository":"acme/app"}"#,
+                                     replies: ["pr list": ["stdout": "[]"]])
+        #expect(runs[0].where_["githubHost"]?.string == "github.example.com")
+        #expect(runs[0].where_["githubRepository"]?.string == "acme/app")
+    }
+
+    @Test func accessChecksTheProjectsEnterpriseHost() throws {
+        let (_, runs) = try H.answer("access", context: #"{"projectKey":"mac:p1","host":"github.example.com","repository":"acme/app"}"#,
+                                     replies: ["auth status": ["code": 1, "stderr": "not signed in"]])
+        #expect(runs.first?.args == ["auth", "status", "--hostname", "github.example.com"])
+    }
+
     @Test func reviewThreadsKeepTheirRepliesInOrder() throws {
         let json = #"""
         {"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": [

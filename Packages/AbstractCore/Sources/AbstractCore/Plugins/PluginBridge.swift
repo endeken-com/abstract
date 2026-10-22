@@ -372,7 +372,19 @@ public struct PluginBridge: Sendable {
         // A folder is named by its chat or project, never by a path.
         if payload?["cwd"] != nil { return refuse(id, "Name the chat or project to run in, not a folder.") }
         let callId = payload?["callId"]?.string.flatMap { $0.count <= 100 ? nonEmpty($0) : nil }
-        let request = PluginCLIRequest(args: args, command: command, chatId: chatId, projectKey: projectKey, callId: callId)
+        let githubHost = payload?["githubHost"]?.string
+        let githubRepository = payload?["githubRepository"]?.string
+        if githubHost != nil || githubRepository != nil {
+            let repositoryParts = githubRepository?.split(separator: "/", omittingEmptySubsequences: false) ?? []
+            guard cli.binary == "gh", let githubHost, PluginManifest.isExactHost(githubHost),
+                  githubRepository == nil || (repositoryParts.count == 2 && repositoryParts.allSatisfy {
+                      !$0.isEmpty && $0 != "." && $0 != ".." && $0.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" || $0 == ".") }
+                  }) else {
+                return refuse(id, "That GitHub host or repository couldn't be read.")
+            }
+        }
+        let request = PluginCLIRequest(args: args, command: command, chatId: chatId, projectKey: projectKey,
+                                       callId: callId, githubHost: githubHost, githubRepository: githubRepository)
         if request.isWrite {
             recentActions.append(now)
             recentActions.removeAll { now.timeIntervalSince($0) > Self.actionWindow }

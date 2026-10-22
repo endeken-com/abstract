@@ -34,7 +34,7 @@ struct PullRequestsView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.btCanvas)
-        .task { if model.projectPullRequests.isEmpty { await refresh() } }
+        .task { await refresh(force: false) }
     }
 
     private var header: some View {
@@ -58,13 +58,22 @@ struct PullRequestsView: View {
     @ViewBuilder
     private var content: some View {
         if let blocked {
-            EmptyStateView(symbol: PullRequestGlyph.symbol, title: blocked.0, message: blocked.1)
+            VStack(spacing: Space.md) {
+                EmptyStateView(symbol: PullRequestGlyph.symbol, title: blocked.0, message: blocked.1)
+                Button("Check again") { Task { await refresh() } }
+            }
         } else {
+            ForEach(model.projects.filter { model.projectPullRequestErrors[$0.id] != nil }) { project in
+                if let reason = model.projectPullRequestErrors[project.id] {
+                    Label("\(project.name): \(reason)", systemImage: "exclamationmark.triangle.fill")
+                        .font(.btCallout).foregroundStyle(Color.btTextSecondary).textSelection(.enabled)
+                }
+            }
             let sections = model.projects.compactMap { project -> (Project, [PullRequest])? in
                 let prs = shown(model.projectPullRequests[project.id] ?? [], in: project)
                 return prs.isEmpty ? nil : (project, prs)
             }
-            if sections.isEmpty {
+            if sections.isEmpty && model.projectPullRequestErrors.isEmpty {
                 EmptyStateView(symbol: PullRequestGlyph.symbol, title: emptyTitle, message: emptyMessage)
                     .padding(.top, Space.xxl)
             } else {
@@ -116,11 +125,10 @@ struct PullRequestsView: View {
         filter == .chats ? "Open one from a chat's Pull Request tab once its work is ready." : "Across your projects."
     }
 
-    private func refresh() async {
+    private func refresh(force: Bool = true) async {
         refreshing = true
-        // A tool installed or signed in since is noticed now.
-        model.codeHostAccess = model.codeHostAccess.filter { $0.value.access.isReady }
-        await model.refreshPullRequests()
+        await model.refreshCodeHostAccess(fresh: true)
+        await model.refreshPullRequests(force: force)
         refreshing = false
     }
 }

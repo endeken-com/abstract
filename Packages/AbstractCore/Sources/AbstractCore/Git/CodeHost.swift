@@ -119,6 +119,38 @@ public enum CodeHostError: Error, Sendable, Equatable, LocalizedError {
     }
 }
 
+/// Turns common gh failures into the reason and next step a PR screen shows.
+public enum PullRequestListingError {
+    public static func message(_ stderr: String, lastLoaded: Date?, retryAfter: Int) -> String {
+        let lower = stderr.lowercased()
+        if lower.contains("saml") || lower.contains("sso") {
+            let organization = stderr.range(of: #"/orgs/([A-Za-z0-9_.-]+)/sso"#, options: .regularExpression)
+                .map { String(stderr[$0]).split(separator: "/")[1] }
+            return "GitHub needs you to re-authorise SSO for \(organization.map(String.init) ?? "this organization")."
+        }
+        if lower.contains("repo set-default") || lower.contains("default repository") {
+            return "Choose the default repository: `gh repo set-default`."
+        }
+        if lower.contains("rate limit") || lower.contains("secondary rate") {
+            let time = Date.now.addingTimeInterval(Double(retryAfter)).formatted(date: .omitted, time: .shortened)
+            return "GitHub rate limit — retrying at \(time)."
+        }
+        if lower.contains("could not resolve host") || lower.contains("network is unreachable")
+            || lower.contains("connection refused") || lower.contains("timed out") || lower.contains("offline") {
+            if let lastLoaded { return "Offline — showing PRs from \(lastLoaded.formatted(date: .omitted, time: .shortened))." }
+            return "Offline — couldn't load pull requests."
+        }
+        return stderr.isEmpty ? "Couldn't load pull requests. Trying again soon." : "Couldn't load pull requests: \(stderr)"
+    }
+}
+
+/// A missing chat PR gets a direct branch lookup at most every ten minutes.
+public enum PullRequestLookup {
+    public static func isDue(last: ContinuousClock.Instant?, now: ContinuousClock.Instant = .now) -> Bool {
+        last.map { now - $0 >= .seconds(600) } ?? true
+    }
+}
+
 /// Picks the code host for a remote.
 public enum CodeHosts {
     /// One usable plugin's code host, with the hosts it handles now.
@@ -157,14 +189,22 @@ public struct CodeHostContext: Sendable, Hashable {
     public var projectKey: String?
     public var chatId: String?
     public var remote: String?
+    /// The resolved host and repository for a CLI such as gh. Core supplies
+    /// these from the project's origin, never from plugin input.
+    public var host: String?
+    public var repository: String?
 
-    public init(projectKey: String? = nil, chatId: String? = nil, remote: String? = nil) {
+    public init(projectKey: String? = nil, chatId: String? = nil, remote: String? = nil,
+                host: String? = nil, repository: String? = nil) {
         self.projectKey = projectKey; self.chatId = chatId; self.remote = remote
+        self.host = host; self.repository = repository
     }
 
     public func jsonValue() -> JSONValue {
         .object(["projectKey": projectKey.map(JSONValue.string) ?? .null, "chatId": chatId.map(JSONValue.string) ?? .null,
-                 "remote": remote.map(JSONValue.string) ?? .null])
+                 "remote": remote.map(JSONValue.string) ?? .null,
+                 "host": host.map(JSONValue.string) ?? .null,
+                 "repository": repository.map(JSONValue.string) ?? .null])
     }
 }
 
