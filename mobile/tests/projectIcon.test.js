@@ -13,7 +13,8 @@ require.extensions['.ts'] = transpile;
 require.extensions['.tsx'] = transpile;
 // The native modules are stood in by their element names, so a row renders to a plain element tree.
 const stubs = {
-  'react-native': { Pressable: 'Pressable', Text: 'Text', TextInput: 'TextInput', View: 'View', Image: 'Image', StyleSheet: { create: styles => styles, hairlineWidth: 0.5 } },
+  'react-native': { Pressable: 'Pressable', Text: 'Text', TextInput: 'TextInput', View: 'View', Image: 'Image', StyleSheet: { create: styles => styles, hairlineWidth: 0.5 },
+    Platform: { OS: 'ios' }, useWindowDimensions: () => ({ fontScale: 1 }) },
   'expo-symbols': { SymbolView: 'SymbolView' },
   'react-native-svg': { __esModule: true, default: 'Svg', Path: 'Path' },
   '@react-native-menu/menu': { MenuView: 'MenuView' },
@@ -115,7 +116,7 @@ test('a chat row leads with its project icon, a standalone row with its agent', 
   const uploaded = row(chats[0]);
   const image = uploaded.find(e => e.type === 'Image');
   assert.equal(image?.props.source.uri, `data:image/png;base64,${png}`);
-  assert.ok(uploaded.some(e => e.props?.accessibilityLabel === 'Alpha, Claude Code, idle'), 'mark is labelled by project, agent and state');
+  assert.ok(uploaded[0].props.accessibilityLabel.startsWith('one, Alpha, Claude Code, '), 'the row names the project and agent its icon stands for');
   const plain = row(chats[1]);
   assert.ok(plain.some(e => e.props?.children === 'B'), 'no icon chosen: the initial tile');
   const solo = row(chats[2]);
