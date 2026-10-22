@@ -859,17 +859,13 @@ final class AppModel {
         if renamed { reload() }
     }
 
-    /// How far a chat's naming from its agent's words got, for chats started
-    /// since Abstract opened.
+    /// How far a chat-title naming from its agent's words got, for chats
+    /// started since Abstract opened.
     struct RunNaming {
         /// Naming calls made on the agent's first replies.
         var replyCalls = 0
         /// The reply it was named from, which the report's naming reads too.
         var firstReply: String?
-        /// The first reply's branch, kept for the end of the turn when renaming had to wait.
-        var branch: String?
-        /// The branch has had its last try, at the end of a turn.
-        var retried = false
     }
 
     /// The fresh-worktree automation a chat is a run of.
@@ -879,10 +875,8 @@ final class AppModel {
         return automation
     }
 
-    /// The agent says what it's taking on. A run's chat and its branch are
-    /// named for that work at once, from the same answer, while nothing is
-    /// committed on the branch; a chat whose prompt said too little to name
-    /// it is renamed. Too little to go on, and its next reply is tried.
+    /// A chat whose prompt said too little to name it can take a title from
+    /// the agent's reply. Branch naming is the agent's explicit choice.
     private func nameFromReply(_ sessionId: String, _ text: String) {
         guard !namingRuns.contains(sessionId), !sessionId.hasPrefix(RemoteService.mirrorPrefix), let s = session(sessionId),
               ChatNaming.namesFromFirstReply(source: s.nameSource, weakPrompt: ChatNaming.isWeakPrompt(s.prompt),
@@ -900,9 +894,6 @@ final class AppModel {
             namingRuns.remove(sessionId)
             if let naming {
                 rename(sessionId, from: s.name, to: naming.title, source: .work)
-                if isRun, await !renameRunBranch(sessionId, for: naming.branch, allowCommits: false) {
-                    runNamings[sessionId, default: RunNaming()].branch = naming.branch
-                }
             }
             guard isRun else { return }
             // The turn ended while this was being asked: its own naming comes now.
@@ -915,17 +906,13 @@ final class AppModel {
     /// A turn of a fresh-worktree run ended. Still named for its automation,
     /// the chat is named from what the agent says it worked on, read with
     /// what it was asked and first said; a name from its first reply or its
-    /// pull request is never replaced by the report's. A branch still named
-    /// as the run started gets one last try, commits and all, unless it was
-    /// pushed.
+    /// pull request is never replaced by the report's.
     private func nameAutomationRun(_ sessionId: String) {
         guard !namingRuns.contains(sessionId), let s = session(sessionId), let automation = freshRunAutomation(s) else { return }
         let run = runNamings[sessionId, default: RunNaming()]
         let refine = AutomationRunNaming.namesFromReport(s.name, source: s.nameSource, automationName: automation.name)
-        let retry = !run.retried && s.branch.map(WorktreeNaming.isRunBranch) == true
-        let report = refine || run.branch == nil ? feed(sessionId).timeline.lastReply : nil
-        guard refine || retry, report != nil || (retry && run.branch != nil) else { return }
-        if retry { runNamings[sessionId, default: RunNaming()].retried = true }
+        let report = feed(sessionId).timeline.lastReply
+        guard refine, report != nil else { return }
         namingRuns.insert(sessionId)
         Task {
             var naming: ChatNaming.Suggestion?
@@ -939,36 +926,34 @@ final class AppModel {
             if refine, let title = naming?.title {
                 rename(sessionId, from: s.name, to: title, source: .work)
             }
-            if retry, let branch = naming?.branch ?? run.branch {
-                await renameRunBranch(sessionId, for: branch, allowCommits: true)
-            }
         }
     }
 
-    /// The run's branch, named for its work, unless it was pushed, has a pull
-    /// request or was renamed already (by Abstract or its agent). With
-    /// `allowCommits`, only once the agent is done. Whether it was renamed.
-    @discardableResult
-    private func renameRunBranch(_ sessionId: String, for suggestion: String, allowCommits: Bool) async -> Bool {
-        guard let s = session(sessionId), pullRequests[sessionId] == nil, let branch = s.branch, WorktreeNaming.isRunBranch(branch),
-              let worktree = s.worktreePath, let project = project(s.projectId) else { return false }
-        if allowCommits, s.status == .running || s.status == .waitingInput { return false }
+    /// A run's agent names its own still-provisional branch. The requesting
+    /// worktree must be the chat's, even if the caller supplied its chat id.
+    func renameRunBranch(_ sessionId: String, from cwd: String, to name: String) async throws -> String {
+        guard let s = session(sessionId), freshRunAutomation(s) != nil,
+              let branch = s.branch, let worktree = s.worktreePath, let project = project(s.projectId),
+              Self.canonical(cwd) == Self.canonical(worktree) else {
+            throw AbstractError.message("This request did not come from this automation chat's worktree.")
+        }
+        guard pullRequests[sessionId] == nil else { throw AbstractError.message("This branch already has a pull request.") }
         let exec = executor(for: sessionId)
         let host = await codeHost(for: project, chatId: sessionId)
-        let base = await Diff.resolveBase(exec, worktree: worktree, preferred: s.baseRef)
         let renamed = await AutomationRunNaming.renameBranch(
-            exec, worktree: worktree, from: branch, suggestion: suggestion, prefix: project.branchPrefix ?? branchPrefix,
-            base: base, allowCommits: allowCommits
+            exec, worktree: worktree, from: branch, name: name, prefix: project.branchPrefix ?? branchPrefix
         ) { branch in
             guard let host else { return false }
             // Unknown counts as having one: a pull request's branch is never renamed under it.
             do { return try await host.pullRequest(branch: branch) != nil } catch { return true }
         }
-        guard let renamed else { return false }
-        if let head = renamed.head { followBranch(sessionId, to: head) }
-        guard renamed.head == renamed.name else { return false }
-        engine.record(sessionId: sessionId, OutputLine(stream: .note, line: "Branch renamed to `\(renamed.name)`"))
-        return true
+        let result = try renamed.get()
+        if let head = result.head { followBranch(sessionId, to: head) }
+        guard result.head == result.name else {
+            throw AbstractError.message("A concurrent git operation changed HEAD to “\(result.head ?? "detached")”. Abstract followed that branch.")
+        }
+        engine.record(sessionId: sessionId, OutputLine(stream: .note, line: "Branch renamed to `\(result.name)`"))
+        return result.name
     }
 
     // MARK: - Reusing worktrees
@@ -1063,6 +1048,10 @@ final class AppModel {
                                       agentDefaults: agentDefaults, modelCatalogs: modelCatalogs,
                                       codeHistory: historySettings(for: session),
                                       toolServers: toolServers(for: session.projectId), agentConfigRoot: Self.agentConfigRoot)
+        if freshRunAutomation(session) != nil {
+            let tool = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/abstract").path
+            if FileManager.default.isExecutableFile(atPath: tool) { settings.branchCommand = tool }
+        }
         settings.pluginToolsCommand = pluginToolsCommand(for: session)
         settings.addSkills(for: session, project: project(session.projectId), profile: profile(session.profileId),
                            sources: skillSources, dataDirectory: dataDirectory)

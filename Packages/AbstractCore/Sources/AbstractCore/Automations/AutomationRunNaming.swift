@@ -66,57 +66,65 @@ public enum AutomationRunNaming {
         public var head: String?
     }
 
-    /// Renames a run's branch `from` for the naming call's `suggestion`
-    /// (behind `prefix`, as a new chat's branch; `-1`, `-2`… when taken).
-    /// Only a branch still named as the run started (never one its agent
-    /// renamed), with the worktree on it, never published (no upstream, no
-    /// copy on origin, no pull request) and no git lock held. While the agent
-    /// may be at work, `allowCommits` is false: the branch must hold nothing
-    /// beyond `base` either, so no commit can be under way on it. nil when it
-    /// keeps its name.
-    public static func renameBranch(
-        _ exec: any Executor, worktree: String, from: String, suggestion: String, prefix: String,
-        base: String?, allowCommits: Bool, hasPullRequest: @Sendable (String) async -> Bool
-    ) async -> BranchRename? {
-        await renameBranch(exec, worktree: worktree, from: from, suggestion: suggestion, prefix: prefix, base: base,
-                           allowCommits: allowCommits, hasPullRequest: hasPullRequest, racing: nil)
+    public enum RenameFailure: Error, Sendable, Equatable, LocalizedError {
+        case invalidName, wrongPrefix(String), alreadyNamed, changedBranch, published, pullRequest
+        case locked, collision, gitFailed
+
+        public var errorDescription: String? {
+            switch self {
+            case .invalidName: "That is not a valid git branch name. Give the exact name you want."
+            case .wrongPrefix(let prefix): "The branch name must start with “\(prefix)”."
+            case .alreadyNamed: "This automation branch was already renamed."
+            case .changedBranch: "The worktree is no longer on its provisional branch."
+            case .published: "This branch has already been pushed or has an upstream."
+            case .pullRequest: "This branch has a pull request, or Abstract could not check for one."
+            case .locked: "Git is using this branch right now. Try again after the current operation finishes."
+            case .collision: "A branch with that exact name already exists."
+            case .gitFailed: "Git could not rename the branch. The branch and chat were left as they were."
+            }
+        }
     }
 
-    /// `racing` runs straight after the rename, as a commit under way would (tests).
+    /// Renames a provisional run branch to the exact name the agent chose.
+    /// Every check runs just before git's own collision-safe rename.
+    public static func renameBranch(
+        _ exec: any Executor, worktree: String, from: String, name: String, prefix: String,
+        hasPullRequest: @Sendable (String) async -> Bool
+    ) async -> Result<BranchRename, RenameFailure> {
+        await renameBranch(exec, worktree: worktree, from: from, name: name, prefix: prefix,
+                           hasPullRequest: hasPullRequest, racing: nil)
+    }
+
+    /// `racing` simulates a concurrent commit after git renames the branch (tests).
     static func renameBranch(
-        _ exec: any Executor, worktree: String, from: String, suggestion: String, prefix: String,
-        base: String?, allowCommits: Bool, hasPullRequest: @Sendable (String) async -> Bool,
+        _ exec: any Executor, worktree: String, from: String, name: String, prefix: String,
+        hasPullRequest: @Sendable (String) async -> Bool,
         racing: (@Sendable () async -> Void)?
-    ) async -> BranchRename? {
-        guard WorktreeNaming.isRunBranch(from), let slug = WorktreeNaming.branchSlug(suggestion),
-              "\(prefix)\(slug)" != from, await !hasPullRequest(from) else { return nil }
+    ) async -> Result<BranchRename, RenameFailure> {
+        guard WorktreeNaming.isRunBranch(from) else { return .failure(.alreadyNamed) }
+        guard name.hasPrefix(prefix), name.count > prefix.count else { return .failure(.wrongPrefix(prefix)) }
+        guard let valid = try? await exec.run("git", ["check-ref-format", "--branch", name], cwd: worktree),
+              valid.ok else { return .failure(.invalidName) }
+        guard name != from else { return .failure(.alreadyNamed) }
         func out(_ args: [String]) async -> String? {
             guard let r = try? await exec.run("git", args, cwd: worktree), r.ok else { return nil }
             return r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        func isEmpty(_ branch: String) async -> Bool {
-            guard let base else { return false }
-            return await out(["rev-list", "--count", "\(base)..refs/heads/\(branch)"]) == "0"
+        guard await out(["symbolic-ref", "--quiet", "--short", "HEAD"]) == from else { return .failure(.changedBranch) }
+        let upstream = await out(["config", "--get", "branch.\(from).remote"])
+        let originBranch = await Git.branchExists(exec, root: worktree, branch: "refs/remotes/origin/\(from)")
+        if upstream != nil || originBranch {
+            return .failure(.published)
         }
-        // Checked as close to the rename as git allows.
-        if !allowCommits, await !isEmpty(from) { return nil }
-        guard await out(["symbolic-ref", "--quiet", "--short", "HEAD"]) == from,
-              await out(["config", "--get", "branch.\(from).remote"]) == nil,
-              await !Git.branchExists(exec, root: worktree, branch: "refs/remotes/origin/\(from)"),
-              let gitDir = await out(["rev-parse", "--absolute-git-dir"]),
-              let commonDir = await out(["rev-parse", "--path-format=absolute", "--git-common-dir"]) else { return nil }
+        guard await !hasPullRequest(from) else { return .failure(.pullRequest) }
+        guard let gitDir = await out(["rev-parse", "--absolute-git-dir"]),
+              let commonDir = await out(["rev-parse", "--path-format=absolute", "--git-common-dir"]) else { return .failure(.gitFailed) }
         let locks = [gitDir + "/index.lock", gitDir + "/HEAD.lock", commonDir + "/packed-refs.lock",
-                     commonDir + "/refs/heads/\(from).lock"]
-        guard !locks.contains(where: exec.fileExists) else { return nil }
-
-        var name: String?
-        for attempt in 0..<50 {
-            let candidate = prefix + (attempt == 0 ? slug : "\(slug)-\(attempt)")
-            if await Git.branchExists(exec, root: worktree, branch: "refs/heads/\(candidate)") { continue }
-            name = candidate
-            break
-        }
-        guard let name, await out(["branch", "-m", from, name]) != nil else { return nil }
+                     commonDir + "/refs/heads/\(from).lock", commonDir + "/refs/heads/\(name).lock"]
+        guard !locks.contains(where: exec.fileExists) else { return .failure(.locked) }
+        guard await !Git.branchExists(exec, root: worktree, branch: "refs/heads/\(name)") else { return .failure(.collision) }
+        let originalHead = await out(["rev-parse", "refs/heads/\(from)"])
+        guard await out(["branch", "-m", from, name]) != nil else { return .failure(.gitFailed) }
         await racing?()
 
         // A commit that started before the rename may have written the old
@@ -125,10 +133,10 @@ public enum AutomationRunNaming {
         let head = await out(["symbolic-ref", "--quiet", "--short", "HEAD"])
         if let head, head == from || head == name {
             let leftover = head == name ? from : name
-            if await Git.branchExists(exec, root: worktree, branch: "refs/heads/\(leftover)"), await isEmpty(leftover) {
+            if await out(["rev-parse", "--verify", "refs/heads/\(leftover)"]) == originalHead {
                 _ = await out(["branch", "-D", leftover])
             }
         }
-        return BranchRename(name: name, head: head)
+        return .success(BranchRename(name: name, head: head))
     }
 }

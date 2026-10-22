@@ -103,6 +103,15 @@ public struct OpenCodeProvider: ProviderDefinition {
             ])
             config["mcp"] = .object(servers)
         }
+        if let branch = ctx.branchTool {
+            var servers = config["mcp"]?.object ?? [:]
+            servers[BranchMCPServer.serverName] = .object([
+                "type": .string("local"),
+                "command": .array(branch.serverCommand.map(JSONValue.string)),
+                "enabled": .bool(true),
+            ])
+            config["mcp"] = .object(servers)
+        }
         // The project's servers (ABS-123), merged the same way. `run` can't
         // ask, so an Ask first tool is turned off like an Off one.
         if !ctx.toolServers.isEmpty {

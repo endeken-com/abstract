@@ -163,6 +163,14 @@ public final class Store: Sendable {
         try writer.write { db in try SessionRow(session).save(db) }
     }
 
+    /// A running CLI host may update status while its agent names the branch.
+    /// Change only that field so neither writer restores stale chat state.
+    public func updateSessionBranch(_ id: String, to branch: String) throws {
+        try writer.write { db in
+            try db.execute(sql: "UPDATE sessions SET branch = ? WHERE id = ?", arguments: [branch, id])
+        }
+    }
+
     /// Adds a new chat unless an unarchived chat in its project already has
     /// its name, checked in the same transaction so two callers racing for
     /// one name can't both win. Returns false when the name is taken.

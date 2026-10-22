@@ -62,6 +62,8 @@ public struct LaunchSettings: Sendable {
     /// The code-history tool for this launch's chat, when its project
     /// gives agents that history; nil leaves the agent without it.
     public var codeHistory: CodeHistorySettings?
+    /// The command that serves explicit branch naming for automation runs.
+    public var branchCommand: String?
     /// The `abstract` command that serves this launch's plugin tools
     /// (ABS-97), when a plugin offers any; nil leaves the agent without.
     public var pluginToolsCommand: String?
@@ -101,7 +103,7 @@ public struct LaunchSettings: Sendable {
     /// named like one of Abstract's own servers or an earlier one.
     func toolServers(for session: Session, provider: any ProviderDefinition) -> [MCPServerLaunch] {
         guard let projectId = session.projectId else { return [] }
-        var taken: Set<String> = [CodeHistory.serverName, PluginTools.serverName]
+        var taken: Set<String> = [CodeHistory.serverName, PluginTools.serverName, BranchMCPServer.serverName]
         return toolServers.filter { $0.projectId == projectId }.compactMap { server in
             guard !server.name.isEmpty, ProjectToolServer.cleanName(server.name) == server.name,
                   taken.insert(server.name).inserted else { return nil }
@@ -146,7 +148,10 @@ public enum AgentLaunch {
                                 historyTool: settings.codeHistory.map {
                                     HistoryToolLaunch(command: $0.command, chatId: session.id, instructionFile: $0.instructionFile)
                                 },
-                                instructions: session.profileInstructions,
+                                branchTool: settings.branchCommand.map { BranchToolLaunch(command: $0, chatId: session.id) },
+                                instructions: [session.profileInstructions,
+                                               settings.branchCommand == nil ? nil : BranchMCPServer.instruction]
+                                    .compactMap { $0 }.joined(separator: "\n\n"),
                                 pluginTools: settings.pluginToolsCommand.map {
                                     PluginToolsLaunch(command: $0, chatId: session.id)
                                 },
