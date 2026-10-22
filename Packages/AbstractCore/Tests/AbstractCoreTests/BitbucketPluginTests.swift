@@ -43,6 +43,8 @@ enum BitbucketPluginHarness {
             let __result = "pending";
             const __run = (args, where) => {
               __runs.push({args, where: where || {}});
+              // Like bkt 0.35.2, which has only the global --json flag.
+              if (args.includes("--output")) return Promise.resolve({ok: false, code: 1, stdout: "", stderr: "Error: unknown flag: --output\\n"});
               const line = args.join(" ");
               const key = Object.keys(__replies).sort((a,b) => b.length-a.length).find((one) => line.startsWith(one));
               if (!key) { const error = new Error("bkt isn't installed."); error.missing = "bkt"; return Promise.reject(error); }
@@ -64,14 +66,53 @@ enum BitbucketPluginHarness {
         if let error = result["error"]?.string { throw CodeHostError.failed(error) }
         return (result["value"] ?? .null, runs)
     }
+
+    /// Loads `script` as the app does, with `window.AbstractPlugin` and a
+    /// page's `status` and `detail` paragraphs, and `bkt` answering `reply`
+    /// (nil when it isn't installed).
+    static func load(_ script: String, reply: [String: Any]?) throws -> (texts: [String: String], runs: [[String]], hosts: [String]?) {
+        let js = try #require(JSContext())
+        let replyJSON = String(decoding: try JSONSerialization.data(withJSONObject: reply ?? ["missing": true]), as: UTF8.self)
+        js.evaluateScript("""
+            var window = this;
+            const __reply = \(replyJSON);
+            const __runs = [];
+            const __texts = {};
+            let __hosts = null;
+            var document = { getElementById: (id) => ({ set textContent(value) { __texts[id] = value; } }) };
+            window.AbstractPlugin = {
+              cli: { run: (args) => {
+                __runs.push(args);
+                if (__reply.missing) {
+                  const error = new Error("bkt isn't installed."); error.missing = "bkt";
+                  error.install = "brew install avivsinai/tap/bitbucket-cli"; return Promise.reject(error);
+                }
+                if (args.includes("--output")) return Promise.resolve({ok: false, code: 1, stdout: "", stderr: "Error: unknown flag: --output\\n"});
+                const code = __reply.code || 0;
+                return Promise.resolve({ok: code === 0, code, stdout: __reply.stdout || "", stderr: __reply.stderr || ""});
+              } },
+              codeHost: { handle: () => {}, setHosts: (hosts) => { __hosts = hosts; } },
+            };
+            """)
+        js.evaluateScript(try String(contentsOf: folder.appendingPathComponent(script), encoding: .utf8))
+        if let error = js.exception { throw AbstractError.message("\(error)") }
+        let raw = try #require(js.evaluateScript("JSON.stringify({texts: __texts, runs: __runs, hosts: __hosts})")?.toString())
+        let out = JSONValue(any: try JSONSerialization.jsonObject(with: Data(raw.utf8)))
+        let texts = (out["texts"]?.object ?? [:]).compactMapValues(\.string)
+        let runs = (out["runs"]?.array ?? []).map { $0.array?.compactMap(\.string) ?? [] }
+        return (texts, runs, out["hosts"]?.array?.compactMap(\.string))
+    }
 }
 
 @Suite("Bitbucket plugin")
 struct BitbucketPluginTests {
     typealias H = BitbucketPluginHarness
 
-    private let cloudAuth = #"{"hosts":[{"key":"cloud","kind":"cloud","base_url":"https://api.bitbucket.org/2.0","username":"sample"}],"contexts":[{"name":"cloud","host":"cloud","active":true}]}"#
-    private let dcAuth = #"{"hosts":[{"key":"team","kind":"dc","base_url":"https://code.example.com/bitbucket","username":"sample"}],"contexts":[{"name":"team","host":"team","active":true}]}"#
+    // bkt auth status --json, shaped like bkt 0.35.2's answer.
+    private let cloudAuth = #"{"active_context":"cloud","hosts":[{"key":"cloud","kind":"cloud","base_url":"https://api.bitbucket.org/2.0","username":"sample","auth_method":"basic","token_source":"keyring"}],"contexts":[{"name":"cloud","host":"cloud","workspace":"sample","active":true}]}"#
+    private let dcAuth = #"{"active_context":"team","hosts":[{"key":"team","kind":"dc","base_url":"https://code.example.com/bitbucket","username":"sample","auth_method":"basic","token_source":"keyring"}],"contexts":[{"name":"team","host":"team","active":true}]}"#
+    /// What bkt 0.35.2 answers with no host configured, exit 0.
+    private let signedOutAuth = #"{"hosts":null,"contexts":null}"#
     private let cloudPR = #"{"id":12,"title":"Fix cart","state":"OPEN","draft":true,"created_on":"2026-10-20T11:00:00Z","updated_on":"2026-10-20T12:00:00Z","description":"Fixes checkout.","author":{"nickname":"sample"},"source":{"branch":{"name":"fix/cart"}},"destination":{"branch":{"name":"main"}},"links":{"html":{"href":"https://bitbucket.org/sample/app/pull-requests/12"}},"participants":[{"user":{"nickname":"reviewer"},"approved":true}]}"#
     private let dcPR = #"{"id":9,"title":"Fix build","state":"MERGED","draft":false,"createdDate":1792494000000,"updatedDate":1792497600000,"description":"Build fix.","author":{"user":{"name":"sample"}},"fromRef":{"displayId":"fix/build"},"toRef":{"displayId":"main"},"links":{"self":[{"href":"https://code.example.com/projects/APP/repos/app/pull-requests/9"}]},"reviewers":[{"user":{"name":"reviewer"},"approved":true}]}"#
     private let builds = #"{"statuses":[{"state":"SUCCESSFUL","key":"unit","name":"Unit tests","url":"https://ci.example.com/1"},{"state":"FAILED","key":"lint","name":"Lint"},{"state":"INPROGRESS","key":"deploy"}]}"#
@@ -80,6 +121,7 @@ struct BitbucketPluginTests {
         let manifest = try PluginManifest.decode(Data(contentsOf: H.folder.appendingPathComponent("manifest.json")))
         try manifest.validate()
         #expect(manifest.cli?.binary == "bkt")
+        #expect(manifest.cli?.install == "brew install avivsinai/tap/bitbucket-cli")
         #expect(manifest.contributes.codeHost?.hosts == ["bitbucket.org"])
         #expect(manifest.contributes.codeHost?.answers == Set([.access, .listPullRequests, .pullRequest, .create, .merge,
                                                                .markReady, .close, .reviewThreads, .searchIssuesAndPullRequests]))
@@ -126,6 +168,7 @@ struct BitbucketPluginTests {
         ])
         let pr = try #require(listed["pullRequests"]?.array?.first.flatMap(PullRequest.init(contract:)))
         #expect(pr.checks.map(\.outcome) == [.passed, .failed, .pending])
+        #expect(runs[0].args == ["auth", "status", "--json"])
         #expect(runs[1].args == ["pr", "list", "--state", "ALL", "--limit", "100", "--json", "--context", "cloud",
                                   "--workspace", "sample", "--repo", "app"])
         let (detail, _) = try H.answer("pullRequest", input: #"{"number":12}"#, replies: [
@@ -186,6 +229,66 @@ struct BitbucketPluginTests {
             try H.answer("merge", input: #"{"number":9,"method":"rebase"}"#,
                          replies: ["auth status": ["stdout": cloudAuth]])
         }
+    }
+
+    @Test func accessAsksBktWithTheGlobalJSONFlag() throws {
+        let (ready, runs) = try H.answer("access", replies: ["auth status": ["stdout": cloudAuth]])
+        #expect(ready["access"]?.string == "ready" && ready["viewer"]?.string == "sample")
+        #expect(runs.map(\.args) == [["auth", "status", "--json"]])
+        #expect(!runs.contains { $0.args.contains("--output") })
+        let (signedOut, _) = try H.answer("access", replies: ["auth status": ["stdout": signedOutAuth]])
+        #expect(signedOut["access"]?.string == "signedOut" && signedOut["hint"]?.string == "bkt auth login")
+        let (missing, _) = try H.answer("access", replies: [:])
+        #expect(missing["access"]?.string == "missing" && missing["install"]?.string == "brew install avivsinai/tap/bitbucket-cli")
+        // A bkt without a flag Abstract uses is out of date, not signed out.
+        let old = ["auth status": ["code": 1, "stderr": "Error: unknown flag: --json\n"]] as [String: [String: Any]]
+        #expect {
+            try H.answer("access", replies: old)
+        } throws: { error in
+            "\(error)".contains("Update it with brew upgrade bitbucket-cli") && "\(error)".contains("unknown flag: --json")
+        }
+    }
+
+    @Test func backgroundPublishesSignedInHostsFromAuthStatusJSON() throws {
+        let started = try H.load("background.js", reply: ["stdout": dcAuth])
+        #expect(started.runs == [["auth", "status", "--json"]])
+        #expect(started.hosts == ["code.example.com"])
+        let signedOut = try H.load("background.js", reply: ["stdout": signedOutAuth])
+        #expect(signedOut.runs == [["auth", "status", "--json"]])
+        #expect(signedOut.hosts == [])
+    }
+
+    @Test func settingsShowsSignInStateWithoutAFlagError() throws {
+        let signedIn = try H.load("settings.js", reply: ["stdout": cloudAuth])
+        #expect(signedIn.runs == [["auth", "status", "--json"]])
+        #expect(signedIn.texts["status"] == "Signed in with the Bitbucket CLI.")
+        #expect(signedIn.texts["detail"] == "sample · https://api.bitbucket.org/2.0 (Cloud)")
+        let signedOut = try H.load("settings.js", reply: ["stdout": signedOutAuth])
+        #expect(signedOut.runs == [["auth", "status", "--json"]])
+        #expect(signedOut.texts["status"] == "Not signed in.")
+        #expect(signedOut.texts["detail"] == "Run bkt auth login in a terminal, then come back here.")
+        let missing = try H.load("settings.js", reply: nil)
+        #expect(missing.texts["status"] == "The Bitbucket CLI isn't installed.")
+        #expect(missing.texts["detail"] == "Install it with brew install avivsinai/tap/bitbucket-cli, then run bkt auth login.")
+        let old = try H.load("settings.js", reply: ["code": 1, "stderr": "Error: unknown flag: --json\n"])
+        #expect(old.texts["status"] == "This version of the Bitbucket CLI needs an update.")
+        #expect(old.texts["detail"]?.hasPrefix("Update it with brew upgrade bitbucket-cli") == true)
+        for page in [signedIn, signedOut, old] { #expect(!page.runs.joined().contains("--output")) }
+    }
+
+    @Test func reviewersAndParticipantsBothCount() throws {
+        // Cloud's pr list gives reviewers as bare users, with no vote.
+        let listed = #"{"id":12,"title":"Fix cart","state":"OPEN","reviewers":[{"nickname":"reviewer","display_name":"Reviewer"}]}"#
+        let summary = try #require(PullRequest(contract: H.evaluate("BitbucketHost.pr(__args[0], 'cloud')", args: [listed])))
+        #expect(summary.reviews.map(\.author) == ["reviewer"] && summary.reviewDecision == .reviewRequired)
+        // Cloud's pr view adds participants, which carry the votes; a commenter isn't a reviewer.
+        let viewed = #"{"id":12,"title":"Fix cart","state":"OPEN","reviewers":[{"nickname":"reviewer"}],"participants":[{"user":{"nickname":"reviewer"},"role":"REVIEWER","approved":true},{"user":{"nickname":"bystander"},"role":"PARTICIPANT","approved":false}]}"#
+        let detail = try #require(PullRequest(contract: H.evaluate("BitbucketHost.pr(__args[0], 'cloud')", args: [viewed])))
+        #expect(detail.reviews.map(\.author) == ["reviewer"] && detail.reviewDecision == .approved)
+        // Data Center lists reviewers and participants separately.
+        let dc = #"{"id":9,"title":"Fix build","state":"OPEN","reviewers":[{"user":{"name":"lead"},"role":"REVIEWER","approved":false,"status":"NEEDS_WORK"}],"participants":[{"user":{"name":"bystander"},"role":"PARTICIPANT","approved":false,"status":"UNAPPROVED"}]}"#
+        let mapped = try #require(PullRequest(contract: H.evaluate("BitbucketHost.pr(__args[0], 'dc')", args: [dc])))
+        #expect(mapped.reviews.map(\.author) == ["lead"] && mapped.reviewDecision == .changesRequested)
     }
 
     @Test func dataCenterHostAndUnsupportedIssueSearch() throws {

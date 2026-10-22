@@ -1,7 +1,11 @@
-// Bitbucket Cloud and Data Center's code host. bkt's --json wraps results
-// in pull_requests, pull_request, statuses and comments; this script maps
-// both API shapes to Abstract's existing pull request contract.
+// Bitbucket Cloud and Data Center's code host. bkt's global --json flag
+// wraps results in pull_requests, pull_request, statuses and comments; this
+// script maps both API shapes to Abstract's existing pull request contract.
 const BitbucketHost = (() => {
+  // bkt has no --output flag, though `auth status --help` still shows one.
+  const authStatus = ["auth", "status", "--json"];
+  const install = "brew install avivsinai/tap/bitbucket-cli";
+  const update = "brew upgrade bitbucket-cli";
   let auth = null;
   const value = (object, ...keys) => keys.reduce((part, key) => part == null ? undefined : part[key], object);
   const text = (part) => typeof part === "string" ? part : null;
@@ -55,10 +59,18 @@ const BitbucketHost = (() => {
   function pr(json, deployment) {
     if (!json || !Number.isInteger(json.id) || typeof json.title !== "string") return null;
     const cloud = deployment === "cloud";
-    const voters = json.participants && json.participants.length ? json.participants : json.reviewers || [];
-    const reviews = voters.filter((one) => one && one.role !== "AUTHOR")
-      .map((one) => ({ author: who(one.user), verdict: one.approved === true || one.state === "approved" ? "approved" :
-        one.state === "changes_requested" || one.status === "NEEDS_WORK" ? "changesRequested" : "pending", body: "", submittedAt: null, association: null }));
+    // Reviewers and participants overlap. Cloud's reviewers are bare users
+    // and only its participants carry votes; Data Center lists both.
+    const votes = new Map();
+    for (const one of [...(json.reviewers || []), ...(json.participants || [])]) {
+      if (!one || one.role === "AUTHOR") continue;
+      const author = who(one.user || one);
+      const verdict = one.approved === true || one.state === "approved" ? "approved" :
+        one.state === "changes_requested" || one.status === "NEEDS_WORK" ? "changesRequested" : "pending";
+      if (verdict === "pending" && (one.role === "PARTICIPANT" || votes.has(author))) continue;
+      votes.set(author, verdict);
+    }
+    const reviews = [...votes].map(([author, verdict]) => ({ author, verdict, body: "", submittedAt: null, association: null }));
     const reviewDecision = reviews.some((one) => one.verdict === "changesRequested") ? "changesRequested" :
       reviews.some((one) => one.verdict === "pending") ? "reviewRequired" :
       reviews.some((one) => one.verdict === "approved") ? "approved" : null;
@@ -126,16 +138,27 @@ const BitbucketHost = (() => {
       createdAt: created(one), isBot: false, association: null })), threads };
   }
 
+  // An older or newer bkt that lacks a flag or command Abstract uses.
+  const outdated = (stderr) => /unknown (?:shorthand )?(?:flag|command)/i.test(stderr || "");
+  function failure(out, args) {
+    const said = (out.stderr || "").trim();
+    if (outdated(said)) {
+      const error = new Error(`This bkt doesn't support what Abstract asks of it (${said}). Update it with ${update}.`);
+      error.outdated = true;
+      return error;
+    }
+    return new Error(said || `bkt ${args.slice(0, 2).join(" ")} failed.`);
+  }
   async function runOK(run, args, where) {
     const out = await run(args, where);
-    if (!out.ok) throw new Error((out.stderr || "").trim() || `bkt ${args.slice(0, 2).join(" ")} failed.`);
+    if (!out.ok) throw failure(out, args);
     return out;
   }
   function parsed(out) {
     try { return JSON.parse(out.stdout); } catch { throw new Error("bkt answered with something Abstract couldn't read."); }
   }
   async function getAuth(run, where) {
-    const out = await runOK(run, ["auth", "status", "--output", "json"], where);
+    const out = await runOK(run, authStatus, where);
     auth = parsed(out);
     return auth;
   }
@@ -162,10 +185,11 @@ const BitbucketHost = (() => {
     return one;
   }
   async function view(run, where, context, number) {
-    const out = await run(withContext(["pr", "view", String(number), "--json"], context), where);
+    const args = withContext(["pr", "view", String(number), "--json"], context);
+    const out = await run(args, where);
     if (!out.ok) {
       if (/not found|404/i.test(out.stderr || "")) return null;
-      throw new Error((out.stderr || "").trim() || "bkt pr view failed.");
+      throw failure(out, args);
     }
     const one = pr(parsed(out).pull_request, kind(auth, context.remote));
     if (!one) return null;
@@ -180,7 +204,9 @@ const BitbucketHost = (() => {
     if (op === "access") {
       let info;
       try { info = await getAuth(run, where); } catch (error) {
-        if (error && error.missing) return { access: "missing", install: error.install || "brew install bitbucket-cli" };
+        if (error && error.missing) return { access: "missing", install: error.install || install };
+        // Not signed out: say what to update instead, without blocking anything.
+        if (error && error.outdated) throw error;
         return { access: "signedOut", hint: "bkt auth login" };
       }
       const found = (info.hosts || [])[0];
@@ -261,7 +287,7 @@ const BitbucketHost = (() => {
     }
   }
 
-  return { pr, checks, comments, hosts, context, kind, state, answer };
+  return { authStatus, pr, checks, comments, hosts, context, kind, state, answer };
 })();
 
 if (typeof window !== "undefined" && window.AbstractPlugin) {
@@ -271,7 +297,7 @@ if (typeof window !== "undefined" && window.AbstractPlugin) {
                     "reviewThreads", "searchIssuesAndPullRequests"]) {
     host.codeHost.handle(op, (input, context) => BitbucketHost.answer(op, input, context, run));
   }
-  run(["auth", "status", "--output", "json"], {}).then((out) => {
+  run(BitbucketHost.authStatus, {}).then((out) => {
     if (out.ok) {
       try { host.codeHost.setHosts(BitbucketHost.hosts(JSON.parse(out.stdout))); } catch {}
     }

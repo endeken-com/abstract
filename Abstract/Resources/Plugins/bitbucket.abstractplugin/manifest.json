@@ -2,13 +2,13 @@
   "api": 2,
   "id": "sh.abstract.bitbucket",
   "name": "Bitbucket",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Pull requests, approvals, builds and merging for Bitbucket Cloud and Data Center. Uses your bkt sign-in and keeps no token of its own.",
   "entry": "index.html",
   "capabilities": ["cli"],
   "cli": {
     "binary": "bkt",
-    "install": "brew install bitbucket-cli",
+    "install": "brew install avivsinai/tap/bitbucket-cli",
     "commands": [
       { "args": ["auth", "status"], "access": "read" },
       { "args": ["pr", "list"], "access": "read" },
