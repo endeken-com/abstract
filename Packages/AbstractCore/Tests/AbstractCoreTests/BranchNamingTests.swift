@@ -97,4 +97,9 @@ import Testing
         }
         #expect(try store.session("chat")?.branch == named.branch)
     }
+
+    @Test func codexBranchToolOverrideIsAClosedTable() {
+        let args = CodexProvider.branchArgs(BranchToolLaunch(command: "/bin/abstract", chatId: "chat"))
+        #expect(args.contains(#"mcp_servers.abstract-branch.tools={ "name_branch" = { approval_mode = "approve" } }"#))
+    }
 }

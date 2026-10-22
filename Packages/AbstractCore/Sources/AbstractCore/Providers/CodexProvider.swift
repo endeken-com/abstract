@@ -208,7 +208,7 @@ public struct CodexProvider: ProviderDefinition {
         let argv = tomlArray(["mcp", "--chat", branch.chatId, "--branch"])
         return ["-c", "\(key).command=\(tomlString(branch.command))",
                 "-c", "\(key).args=\(argv)",
-                "-c", "\(key).tools={ \"name_branch\" = { approval_mode = \"approve\" }"]
+                "-c", "\(key).tools={ \"name_branch\" = { approval_mode = \"approve\" } }"]
     }
 
     static func tomlArray(_ items: [String]) -> String {
