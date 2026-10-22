@@ -201,7 +201,8 @@ const GitHubHost = (() => {
    * `context` is { projectKey, chatId, callId }: where the commands run.
    */
   async function answer(op, input, context, run) {
-    const where = { projectKey: context.projectKey, chatId: context.chatId, callId: context.callId };
+    const where = { projectKey: context.projectKey, chatId: context.chatId, callId: context.callId,
+                    githubHost: context.host, githubRepository: context.repository };
     const number = () => {
       if (typeof input.number !== "number") throw new Error("That needs a pull request number.");
       return String(input.number);
@@ -210,18 +211,31 @@ const GitHubHost = (() => {
       case "access": {
         // On the Mac the chat or project is on: a chat on a paired Mac uses that Mac's sign-in.
         let out;
-        try { out = await run(["auth", "status"], where); } catch (error) {
+        try { out = await run(["auth", "status"].concat(where.githubHost ? ["--hostname", where.githubHost] : []), where); } catch (error) {
           if (error && error.missing) return { access: "missing", install: error.install || "brew install gh" };
           throw error;
         }
         if (!out.ok) return { access: "signedOut", hint: "gh auth login" };
+        if (typeof window !== "undefined" && window.AbstractPlugin) {
+          await window.AbstractPlugin.codeHost.setHosts(signedInHosts(out.stdout + "\n" + out.stderr));
+        }
         return { access: "ready", viewer: await viewer(run, where) };
       }
       case "listPullRequests": {
         const state = input.state === "open" ? "open" : "all";
         const out = await ok(run, ["pr", "list", "--state", state, "--limit", String(input.limit || 100),
                                    "--json", summaryFields], where);
-        return { pullRequests: (parse(out) || []).map(pullRequest).filter(Boolean) };
+        const list = (parse(out) || []).map(pullRequest).filter(Boolean);
+        const seen = new Set(list.map((pr) => pr.head));
+        for (const branch of new Set(Array.isArray(input.branches) ? input.branches : [])) {
+          if (typeof branch !== "string" || !branch || seen.has(branch)) continue;
+          const old = await ok(run, ["pr", "list", "--head", branch, "--state", "all", "--limit", "5",
+                                     "--json", summaryFields], where);
+          for (const pr of (parse(old) || []).map(pullRequest).filter(Boolean)) {
+            if (!list.some((one) => one.number === pr.number)) list.push(pr);
+          }
+        }
+        return { pullRequests: list };
       }
       case "pullRequest":
         return { pullRequest: await view(run, typeof input.number === "number" ? input.number : input.branch, where) };

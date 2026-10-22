@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 @testable import AbstractCore
 
@@ -105,6 +106,21 @@ import Testing
         #expect(GitRemote.githubOwner("git@gitlab.com:wes/abstract.git") == nil)
         #expect(GitRemote.sameRepository("git@github.com:wes/abstract.git", "https://github.com/wes/abstract"))
         #expect(!GitRemote.sameRepository("git@github.com:wes/abstract.git", "git@github.com:wes/other.git"))
+    }
+
+    @Test func sshAliasesAndGithubSshPortResolveForCodeHosts() async {
+        let alias = SSHConfigExecutor(hostname: "github.com")
+        #expect(await GitRemote.codeHostRemote("git@github.com-work:acme/app.git", executor: alias)
+                == "https://github.com/acme/app")
+        #expect(alias.asked == ["-G", "github.com-work"])
+        let port = SSHConfigExecutor(hostname: "ssh.github.com")
+        #expect(await GitRemote.codeHostRemote("ssh://git@ssh.github.com/acme/app.git", executor: port)
+                == "https://github.com/acme/app")
+        let enterprise = SSHConfigExecutor(hostname: "github.example.com")
+        #expect(await GitRemote.codeHostRemote("git@work:acme/app.git", executor: enterprise)
+                == "https://github.example.com/acme/app")
+        #expect(await GitRemote.codeHostRemote("https://github.example.com/acme/app", executor: enterprise)
+                == "https://github.example.com/acme/app")
     }
 
     @Test func suggestedBranchNamesAreMadeSafe() {
@@ -298,6 +314,28 @@ import Testing
         }
         return out.sorted()
     }
+}
+
+private final class SSHConfigExecutor: Executor {
+    private let base = LocalExecutor.shared
+    let hostname: String
+    private let arguments = Mutex<[String]>([])
+    init(hostname: String) { self.hostname = hostname }
+    var asked: [String] { arguments.withLock { $0 } }
+    var homeDirectory: String { base.homeDirectory }
+    func run(_ command: String, _ args: [String], cwd: String?, stdin: Data?) async throws -> ExecResult {
+        arguments.withLock { $0 = args }
+        return ExecResult(code: 0, stdout: "hostname \(hostname)\nuser git\n", stderr: "")
+    }
+    func spawn(_ spec: LaunchSpec, onLine: @escaping @Sendable (OutputLine) -> Void,
+               onExit: @escaping @Sendable (Int32?) -> Void) throws -> RunningProcess {
+        try base.spawn(spec, onLine: onLine, onExit: onExit)
+    }
+    func fileExists(_ path: String) -> Bool { base.fileExists(path) }
+    func readFile(_ path: String) throws -> String { try base.readFile(path) }
+    func createDirectory(_ path: String) throws { try base.createDirectory(path) }
+    func removeItem(_ path: String) throws { try base.removeItem(path) }
+    func which(_ binary: String) async -> String? { await base.which(binary) }
 }
 
 /// The real naming call. Opt-in: it needs the `claude` binary and a signed-in

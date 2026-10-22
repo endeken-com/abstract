@@ -169,6 +169,19 @@ private final class FakeCLI: Executor {
         #expect(!request.isWrite)
     }
 
+    @Test func githubHostAndRepositoryAreCheckedBeforeRunning() throws {
+        var bridge = bridge()
+        let accepted = bridge.handle(try message(["args": ["pr", "list"], "projectKey": "mac:p1",
+            "githubHost": "github.example.com", "githubRepository": "acme/app"]), storage: storage)
+        guard case .runCLI(_, let request) = accepted else { Issue.record("\(accepted)"); return }
+        #expect(request.githubHost == "github.example.com" && request.githubRepository == "acme/app")
+        for (host, repo) in [("bad/host", "acme/app"), ("github.com", "../app"), ("github.com", "acme/app\nGH_TOKEN=x")] {
+            let outcome = bridge.handle(try message(["args": ["pr", "list"], "githubHost": host,
+                                                      "githubRepository": repo]), storage: storage)
+            guard case .refused = outcome else { Issue.record("expected refusal for \(host) \(repo)"); continue }
+        }
+    }
+
     @Test func anUndeclaredSubcommandIsRefused() throws {
         var bridge = bridge()
         for args in [["pr", "checkout", "1"], ["extension", "install", "x"], ["alias", "set"], ["--repo", "x", "pr", "list"]] {
@@ -329,6 +342,15 @@ private final class FakeCLI: Executor {
         _ = try await PluginCLIRunner(budget: budget).run(write, cli: Self.gh, executor: quick, cwd: nil, readable: [])
         #expect(quick.all.count == 1)
         #expect(budget.running == 0 && budget.queued == 0)
+    }
+
+    @Test func githubCommandsUseTheResolvedHostAndRepository() async throws {
+        let exec = FakeCLI()
+        let request = PluginCLIRequest(args: ["pr", "list"], command: .init(["pr", "list"], .read),
+                                       githubHost: "github.example.com", githubRepository: "acme/app")
+        _ = try await PluginCLIRunner(budget: GitBudget()).run(request, cli: Self.gh, executor: exec, cwd: nil, readable: [])
+        #expect(exec.all.first?.command == "/usr/bin/env")
+        #expect(exec.all.first?.args == ["GH_HOST=github.example.com", "GH_REPO=github.example.com/acme/app", "gh", "pr", "list"])
     }
 
     // MARK: Paired Macs

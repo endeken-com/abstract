@@ -131,10 +131,15 @@ public struct PluginCLIRequest: Sendable, Equatable {
     public var projectKey: String?
     /// The code host call it serves (ABS-139), when the host handed it one.
     public var callId: String?
+    /// gh's selected host and repository. These are passed as environment
+    /// variables because SSH aliases cannot be discovered by gh itself.
+    public var githubHost: String?
+    public var githubRepository: String?
 
     public init(args: [String], command: PluginCLI.Command, chatId: String? = nil, projectKey: String? = nil,
-                callId: String? = nil) {
+                callId: String? = nil, githubHost: String? = nil, githubRepository: String? = nil) {
         self.args = args; self.command = command; self.chatId = chatId; self.projectKey = projectKey; self.callId = callId
+        self.githubHost = githubHost; self.githubRepository = githubRepository
     }
 
     public var isWrite: Bool { command.access == .write }
@@ -220,15 +225,28 @@ public struct PluginCLIRunner: Sendable {
             throw PluginCLIError.missing(binary: cli.binary, install: cli.install)
         }
         let binary = cli.binary, args = request.args
+        var command = binary
+        var commandArgs = args
+        if binary == "gh", let host = request.githubHost {
+            command = "/usr/bin/env"
+            commandArgs = ["GH_HOST=\(host)"]
+            if let repo = request.githubRepository {
+                commandArgs.append("GH_REPO=\(host == "github.com" ? repo : host + "/" + repo)")
+            }
+            commandArgs.append(binary)
+            commandArgs += args
+        }
+        let launchCommand = command
+        let launchArgs = commandArgs
         let out: ExecResult
         if request.isWrite {
             out = try await withTimeLimit(PluginCLI.writeTimeout, what: "`\(binary) \(request.command.words)`") {
-                try await executor.run(binary, args, cwd: cwd, stdin: nil)
+                try await executor.run(launchCommand, launchArgs, cwd: cwd, stdin: nil)
             }
         } else {
             out = try await budget.run(in: cwd ?? "", what: "`\(binary) \(request.command.words)`",
-                                       coalescing: [binary] + args, timeout: PluginCLI.readTimeout) {
-                try await executor.run(binary, args, cwd: cwd, stdin: nil)
+                                       coalescing: [launchCommand] + launchArgs, timeout: PluginCLI.readTimeout) {
+                try await executor.run(launchCommand, launchArgs, cwd: cwd, stdin: nil)
             }
         }
         let truncated = out.stdout.utf8.count > PluginCLI.outputLimit || out.stderr.utf8.count > PluginCLI.errorOutputLimit

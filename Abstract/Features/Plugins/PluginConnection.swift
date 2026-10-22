@@ -401,7 +401,8 @@ enum PluginShim {
           // run, with error.missing and error.install when the tool isn't there.
           run(args, options) {
             const o = options || {};
-            return api.send("cli.run", { args, chatId: o.chatId, projectKey: o.projectKey, callId: o.callId })
+            return api.send("cli.run", { args, chatId: o.chatId, projectKey: o.projectKey, callId: o.callId,
+                                         githubHost: o.githubHost, githubRepository: o.githubRepository })
               .then((reply) => {
                 if (reply && typeof reply.code === "number") return reply;
                 const error = new Error((reply && reply.message) || "That command couldn't run.");
@@ -412,7 +413,7 @@ enum PluginShim {
         },
         codeHost: {
           // Answers core's calls for the code host its manifest declares
-          // (ABS-139): fn(input, { projectKey, chatId, remote, callId })
+          // (ABS-139): fn(input, { projectKey, chatId, remote, host, repository, callId })
           // returns the operation's result, or throws.
           handle(op, fn) { codeHostHandlers.set(op, fn); },
           // Hosts its tool is signed in to besides the manifest's.
@@ -489,7 +490,8 @@ enum PluginShim {
           };
           const fn = codeHostHandlers.get(call.op);
           if (!fn) { done({ error: "This plugin doesn't answer " + call.op + "." }); return; }
-          const context = { projectKey: call.projectKey, chatId: call.chatId, remote: call.remote, callId: call.callId };
+          const context = { projectKey: call.projectKey, chatId: call.chatId, remote: call.remote,
+                            host: call.host, repository: call.repository, callId: call.callId };
           Promise.resolve()
             .then(() => fn(call.input || {}, context))
             .then((result) => done({ result: result === undefined ? null : result }),

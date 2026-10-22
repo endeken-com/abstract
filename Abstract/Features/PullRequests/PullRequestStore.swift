@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import AbstractCore
 
 /// Pull requests for chats, from each project's code host (ABS-139): the
@@ -13,6 +14,7 @@ extension AppModel {
     func watchPullRequests() async {
         guard !isDemo else { return }
         while !Task.isCancelled {
+            await refreshCodeHostAccess()
             await refreshPullRequests()
             // Followed pull requests are read in full, so their new
             // comments reach the plugin following them (ABS-109).
@@ -22,13 +24,54 @@ extension AppModel {
         }
     }
 
+    /// Terminal sign-in can change while Abstract is in the background.
+    func watchCodeHostActivation() async {
+        guard !isDemo else { return }
+        for await _ in NotificationCenter.default.notifications(named: NSApplication.didBecomeActiveNotification) {
+            if Task.isCancelled { break }
+            await refreshCodeHostAccess(fresh: true)
+            await refreshPullRequests()
+        }
+    }
+
+    func refreshCodeHostAccess(fresh: Bool = false) async {
+        for plugin in plugins.usable {
+            guard let declaration = plugin.manifest?.contributes.codeHost else { continue }
+            let host = codeHost(pluginId: plugin.id, declaration: declaration, context: CodeHostContext())
+            _ = await codeHostAccess(host, fresh: fresh)
+        }
+    }
+
     /// Re-reads every project's recent pull requests from its code host and matches them to chats by branch.
-    func refreshPullRequests(projectId: String? = nil) async {
+    func refreshPullRequests(projectId: String? = nil, force: Bool = false) async {
         for project in projects where project.archivedAt == nil && (projectId == nil || project.id == projectId) {
-            let branches = sessions.filter { $0.projectId == project.id }.compactMap(\.branch)
-            guard let host = await codeHost(for: project), await !codeHostAccess(host).blocks,
-                  let list = try? await host.pullRequests(branches: branches) else { continue }
-            projectPullRequests[project.id] = list
+            if !force, let retry = pullRequestRetryAt[project.id], ContinuousClock.now < retry { continue }
+            guard let host = await codeHost(for: project), await !codeHostAccess(host).blocks else { continue }
+            let missing = sessions.filter { $0.projectId == project.id && $0.branch != nil && pullRequests[$0.id] == nil }
+            let due = missing.filter {
+                PullRequestLookup.isDue(last: pullRequestLookupsAt[$0.id])
+            }
+            let branches = Array(Set(due.compactMap(\.branch)))
+            for session in due { pullRequestLookupsAt[session.id] = .now }
+            let list: [PullRequest]
+            do { list = try await host.pullRequests(branches: branches) }
+            catch {
+                let failures = min((pullRequestFailureCount[project.id] ?? 0) + 1, 5)
+                pullRequestFailureCount[project.id] = failures
+                let retrySeconds = min(30 * (1 << (failures - 1)), 300)
+                pullRequestRetryAt[project.id] = ContinuousClock.now.advanced(by: .seconds(retrySeconds))
+                projectPullRequestErrors[project.id] = PullRequestListingError.message(
+                    error.localizedDescription, lastLoaded: pullRequestsListedDate[project.id], retryAfter: retrySeconds)
+                continue
+            }
+            pullRequestFailureCount[project.id] = nil
+            pullRequestRetryAt[project.id] = nil
+            projectPullRequestErrors[project.id] = nil
+            pullRequestsListedDate[project.id] = Date()
+            let retained = sessions.filter { $0.projectId == project.id }.compactMap { pullRequests[$0.id] }
+                .filter { old in !list.contains { $0.number == old.number } }
+            let combined = list + retained
+            projectPullRequests[project.id] = combined
             pullRequestsListedAt[project.id] = .now
             for session in sessions where session.projectId == project.id {
                 defer { if let pr = pullRequests[session.id] { recordPullRequest(session, pr) } }
@@ -96,7 +139,7 @@ extension AppModel {
             pr = try await host.pullRequest(branch: branch)
         }
         if let number = pr?.number, host.answers(.reviewThreads) {
-            pr?.threads = (try? await host.reviewThreads(number: number)) ?? []
+            pr?.threads = try await host.reviewThreads(number: number)
         }
         if pullRequests[sessionId]?.number == selected { pullRequests[sessionId] = pr }
         return pr
@@ -155,6 +198,7 @@ extension AppModel {
         // The old branch's pull request isn't this one's.
         pullRequests[sessionId] = nil
         pinnedPullRequests[sessionId] = nil
+        pullRequestLookupsAt[sessionId] = nil
         reload()
     }
 
@@ -182,7 +226,10 @@ extension AppModel {
     func codeHost(for project: Project, chatId: String? = nil) async -> CodeHost? {
         let origin = await origin(of: project)
         if let origin { plugins.enableBitbucketForRemote(origin) }
-        return codeHost(remote: origin, context: CodeHostContext(projectKey: pluginProjectKey(project.id), chatId: chatId))
+        let resolved: String?
+        if let origin { resolved = await GitRemote.codeHostRemote(origin, executor: executor(forProject: project.id)) }
+        else { resolved = nil }
+        return codeHost(remote: resolved, context: CodeHostContext(projectKey: pluginProjectKey(project.id), chatId: chatId))
     }
 
     /// What PR screens say about a project without a code host: the host

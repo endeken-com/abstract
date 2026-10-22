@@ -89,6 +89,8 @@ extension AppModel {
         guard let match = CodeHosts.match(remote: remote, among: candidates) else { return nil }
         var placed = context
         placed.remote = remote
+        placed.host = remote.flatMap(GitRemote.host)
+        placed.repository = remote.flatMap(GitRemote.repository)
         return codeHost(pluginId: match.pluginId, declaration: match.declaration, context: placed)
     }
 

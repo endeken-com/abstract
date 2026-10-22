@@ -202,7 +202,10 @@ struct PullRequestPane: View {
             case .loading:
                 ProgressView().controlSize(.small).frame(maxWidth: .infinity, maxHeight: .infinity)
             case let .unavailable(title, message):
-                EmptyStateView(symbol: PullRequestGlyph.symbol, title: title, message: message)
+                VStack(spacing: Space.md) {
+                    EmptyStateView(symbol: PullRequestGlyph.symbol, title: title, message: message)
+                    Button("Check again") { Task { await checkAgain() } }
+                }
             case .ready:
                 ScrollView {
                     VStack(alignment: .leading, spacing: Space.lg) {
@@ -295,13 +298,18 @@ struct PullRequestPane: View {
         }
         if !model.isDemo {
             // The project's code host plugin answers (ABS-139); none means nothing to show.
-            guard let host = await model.codeHost(for: project, chatId: session.id) else {
+            var host = await model.codeHost(for: project, chatId: session.id)
+            if host == nil {
+                await model.refreshCodeHostAccess(fresh: true)
+                host = await model.codeHost(for: project, chatId: session.id)
+            }
+            guard let host else {
                 phase = .unavailable("No code host", await model.codeHostMissing(project))
                 return
             }
             // A chat on another Mac uses that Mac's sign-in.
             let remote = model.remoteLink(for: session.id) != nil
-            if let blocked = PullRequestPane.unavailable(remote ? await host.access() : await model.codeHostAccess(host), host.title) {
+            if let blocked = PullRequestPane.unavailable(remote ? await host.access() : await model.codeHostAccess(host, fresh: true), host.title) {
                 phase = blocked
                 return
             }
@@ -310,10 +318,18 @@ struct PullRequestPane: View {
             if !model.isDemo { await model.refreshPullRequests(projectId: project.id) }
             try await model.refreshPullRequest(session.id)
             phase = .ready
+            error = model.projectPullRequestErrors[project.id]
         } catch {
             if phase != .ready { phase = .ready }
-            self.error = error.localizedDescription
+            self.error = PullRequestListingError.message(error.localizedDescription,
+                lastLoaded: model.pullRequestsListedDate[project.id], retryAfter: 30)
         }
+    }
+
+    private func checkAgain() async {
+        await model.refreshCodeHostAccess(fresh: true)
+        if let projectId = session.projectId { await model.refreshPullRequests(projectId: projectId, force: true) }
+        await load()
     }
 
     /// Runs an action with the tab showing it's busy, and reports a failure in place.
