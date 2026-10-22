@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, AppState, FlatList, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View, type ScrollViewProps } from 'react-native';
-import { NavigationContainer } from '@react-navigation/native';
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { AccessibilityInfo, ActivityIndicator, Alert, AppState, FlatList, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View, type ScrollViewProps } from 'react-native';
+import { CommonActions, NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
@@ -38,6 +38,7 @@ import { displayDate, swiftDate, type AgentProfile, type Automation, type Automa
 import { appliedProfile, automationProfileName, findProfile, newProfile, profileIcons, profileSnapshotOf, sessionProfileName, sortedProfiles, visibleProfiles } from './profiles';
 import { globalPauseAction, globalPauseConfirm, isProjectPaused, pauseBannerRows, pauseRequest, projectPauseAction } from './pause';
 import { MODE_CHOICES } from './plan';
+import { nextSidebarReturn, restorable, returnChat, type SidebarReturn, type StackRoute } from './sidebarReturn';
 import { CHANGED_OPTIONS, CONCURRENCY_OPTIONS, MISSED_OPTIONS, catchUpOf, concurrencyForWorkspace, policiesOf, runDetail, runStatusLabel, showsChanged } from './automationPolicies';
 
 // Graphite values come from Abstract/Theme/Palette.swift.
@@ -46,11 +47,13 @@ const bg = '#1E1E21', sidebar = '#19191C', panel = '#252529', raised = '#2B2B30'
 const accent = ink, border = 'rgba(255,255,255,0.075)';
 const Stack = createNativeStackNavigator();
 
-type IconName = 'menu' | 'back' | 'plus' | 'clock' | 'worktree' | 'pull' | 'board' | 'devices' | 'folder' | 'chat' | 'review' | 'files' | 'terminal' | 'settings' | 'chevron' | 'close' | 'refresh' | 'check' | 'failed' | 'pending' | 'skipped' | 'filter';
+type IconName = 'menu' | 'back' | 'plus' | 'compose' | 'more' | 'clock' | 'worktree' | 'pull' | 'board' | 'devices' | 'folder' | 'chat' | 'review' | 'files' | 'terminal' | 'settings' | 'chevron' | 'close' | 'refresh' | 'check' | 'failed' | 'pending' | 'skipped' | 'filter';
 const symbols: Record<IconName, { ios: string; android: string; web: string }> = {
   menu: { ios: 'sidebar.left', android: 'menu', web: 'menu' },
   back: { ios: 'chevron.left', android: 'arrow_back', web: 'arrow_back' },
   plus: { ios: 'plus', android: 'add', web: 'add' },
+  compose: { ios: 'square.and.pencil', android: 'edit_square', web: 'edit_square' },
+  more: { ios: 'ellipsis', android: 'more_horiz', web: 'more_horiz' },
   clock: { ios: 'clock.arrow.circlepath', android: 'schedule', web: 'schedule' },
   worktree: contextSymbols.worktree,
   pull: { ios: 'point.3.filled.connected.trianglepath.dotted', android: 'merge', web: 'merge' },
@@ -160,16 +163,28 @@ function askAboutLines(navigation: any, hostId: string, state: RemoteClient, req
 }
 function activeRoot(mac: RemoteClient, session: Session) { return session.worktreePath || mac.snapshot?.projects.find(x => x.id === session.projectId)?.rootPath || ''; }
 
-function RailAction({ icon, title, detail, onPress }: { icon: IconName; title: string; detail?: string; onPress: () => void }) {
-  return <Pressable accessibilityRole="button" onPress={onPress} style={styles.railAction}>
-    {icon === 'pull' ? <PullRequestIcon size={18} color={muted} /> : <Icon name={icon} size={18} />}<Text numberOfLines={1} style={styles.railActionTitle}>{title}</Text>
-    {detail ? <Text style={styles.railDetail}>{detail}</Text> : null}
-  </Pressable>;
+// The sidebar remembers the chat it was opened from, and the screens opened
+// from that chat, so closing it returns there (sidebarReturn.ts).
+const SidebarReturnContext = createContext<SidebarReturn>(null);
+function HeaderAction({ label, hint, icon, size = 19, onPress }: { label: string; hint?: string; icon: IconName; size?: number; onPress: () => void }) {
+  return <Pressable accessibilityRole="button" accessibilityLabel={label} accessibilityHint={hint} onPress={onPress} style={({ pressed }) => [styles.headerAction, pressed && styles.headerActionPressed]}><Icon name={icon} size={size} color={ink} /></Pressable>;
 }
-function WorkspaceRail({ navigate, selectedChat }: { navigate: (name: string, params?: Record<string, unknown>) => void; selectedChat?: { hostId?: string; sessionId?: string } }) {
+// Destinations beside the chats, kept in one labeled menu so the list leads.
+function MoreDestinations({ navigate }: { navigate: (name: string) => void }) {
+  const prs = macPullRequests(useRemote().macs()).length;
+  const ios = Platform.OS === 'ios';
+  return <MenuView title="Go to" actions={[
+    { id: 'Automations', title: 'Automations', image: ios ? symbols.clock.ios : undefined },
+    { id: 'Worktrees', title: 'Worktrees', image: ios ? symbols.worktree.ios : undefined },
+    { id: 'PullRequests', title: 'Pull Requests', subtitle: prs ? `${prs} open` : undefined, image: ios ? symbols.pull.ios : undefined },
+    { id: 'Kanban', title: 'Kanban', image: ios ? symbols.board.ios : undefined },
+  ]} onPressAction={({ nativeEvent }) => navigate(nativeEvent.event)}>
+    <View accessible accessibilityRole="button" accessibilityLabel="More" accessibilityHint="Automations, worktrees, pull requests and Kanban" style={styles.headerAction}><Icon name="more" size={20} color={ink} /></View>
+  </MenuView>;
+}
+function WorkspaceRail({ navigate, selectedChat }: { navigate: (name: string, params?: Record<string, unknown>) => void; selectedChat?: { hostId?: string; sessionId?: string } | null }) {
   const state = useRemote();
   const macs = state.macs();
-  const prs = macPullRequests(macs).length;
   const online = macs.filter(mac => mac.state === 'online').length;
   const footer = !macs.length ? 'Offline' : online === macs.length ? 'Connected' : online ? `${online} of ${macs.length} connected` : macs.some(mac => mac.state === 'connecting') ? 'Connecting' : 'Offline';
   const [prefs, setPrefs] = useChatListPrefs();
@@ -183,19 +198,13 @@ function WorkspaceRail({ navigate, selectedChat }: { navigate: (name: string, pa
   const openChat = (chat: ChatFacts) => navigate('Chat', { hostId: chat.hostId, sessionId: chat.session.id });
   const row = (chat: ChatFacts) => <ChatRow key={chat.session.id} chat={chat} showProject={false} now={now} selected={isSelected(chat)} onPress={() => openChat(chat)} />;
   const macRow = (mac: MacView) => <View key={`host-${mac.id}`}>
-    <Pressable onPress={() => navigate('Settings')} style={styles.railHost}><Icon name="devices" size={14} color={tertiary} /><Text numberOfLines={1} style={styles.railHostTitle}>{mac.name}</Text><View style={[styles.connectionDot, mac.state !== 'online' && { backgroundColor: tertiary }]} /></Pressable>
+    <Pressable accessibilityRole="button" accessibilityLabel={`${mac.name}, ${macStatus(mac)}`} onPress={() => navigate('Settings')} style={styles.railHost}><Icon name="devices" size={14} color={tertiary} /><Text numberOfLines={1} style={styles.railHostTitle}>{mac.name}</Text><View style={[styles.connectionDot, mac.state !== 'online' && { backgroundColor: tertiary }]} /></Pressable>
     {mac.state !== 'online' && <Text style={styles.railMacStatus}>{macStatus(mac)}</Text>}
     <View style={styles.railPause}><GlobalPauseButton mac={mac} /></View>
   </View>;
   return <View style={styles.rail}>
-    <HeaderScrollView contentContainerStyle={styles.railContent}>
+    <HeaderScrollView contentContainerStyle={styles.railContent} keyboardDismissMode="on-drag" keyboardShouldPersistTaps="handled">
       <PauseBanners macs={macs} />
-      <RailAction icon="plus" title="New" onPress={() => navigate('NewChat', {})} />
-      <RailAction icon="clock" title="Automations" onPress={() => navigate('Automations')} />
-      <RailAction icon="worktree" title="Worktrees" onPress={() => navigate('Worktrees')} />
-      <RailAction icon="pull" title="Pull Requests" detail={prs ? String(prs) : undefined} onPress={() => navigate('PullRequests')} />
-      <RailAction icon="board" title="Kanban" onPress={() => navigate('Kanban')} />
-      {macs.length > 0 && prefs.arrangement === 'status' && macs.map(macRow)}
       {macs.length > 0 && <ChatListHeader all={all} prefs={prefs} setPrefs={setPrefs} searching={searching} setSearching={setSearching} query={query} setQuery={setQuery} />}
       {prefs.arrangement === 'status'
         ? <StatusGroups chats={visible} now={now} showMac={macs.length > 1} isSelected={isSelected} openChat={openChat} />
@@ -220,32 +229,46 @@ function WorkspaceRail({ navigate, selectedChat }: { navigate: (name: string, pa
           </View>;
         })}
       {narrowing && !visible.length && <NoMatches />}
+      {macs.length > 0 && !narrowing && !visible.length && <Text style={styles.railEmpty}>No chats yet. Start one with New chat at the top.</Text>}
       {!macs.length && <Text style={styles.railEmpty}>Pair a Mac to see its projects and chats.</Text>}
+      {macs.length > 0 && prefs.arrangement === 'status' && macs.map(macRow)}
     </HeaderScrollView>
-    <Pressable onPress={() => navigate('Settings')} style={styles.railFooter}><Icon name="settings" /><Text numberOfLines={1} style={styles.railFooterTitle}>Settings</Text><Text numberOfLines={1} style={styles.railDetail}>{footer}</Text><View style={[styles.connectionDot, !online && { backgroundColor: tertiary }]} /></Pressable>
+    <Pressable accessibilityRole="button" accessibilityLabel={`Settings, ${footer}`} onPress={() => navigate('Settings')} style={({ pressed }) => [styles.railFooter, pressed && styles.railFooterPressed]}><Icon name="settings" /><Text numberOfLines={1} style={styles.railFooterTitle}>Settings</Text><Text numberOfLines={1} style={styles.railDetail}>{footer}</Text><View style={[styles.connectionDot, !online && { backgroundColor: tertiary }]} /></Pressable>
   </View>;
 }
+// The list of chats. Opened from a chat, Close (or a left swipe) returns to
+// that chat and whatever was open over it; on a cold launch, or once that
+// chat is gone, there is nothing to return to, so the list stays.
 function SidebarScreen({ navigation, route }: any) {
   const state = useRemote();
-  const selected = route.params?.selectedChat as { hostId?: string; sessionId?: string } | undefined;
-  const newest = macChats(state.macs())[0];
-  const latest = selected?.sessionId ? selected : newest && { hostId: newest.mac.id, sessionId: newest.chat.id };
+  const macs = state.macs();
+  const remembered = restorable(useContext(SidebarReturnContext), macs);
+  const chat = returnChat(remembered);
+  const chatName = chat && state.client(chat.hostId).snapshot?.sessions.find(x => x.id === chat.sessionId)?.name;
+  const close = () => {
+    if (!remembered) return;
+    navigation.dispatch(CommonActions.reset({ index: remembered.length, routes: [{ key: route.key, name: route.name, params: route.params }, ...remembered] }));
+  };
+  const navigate = (name: string, params?: Record<string, unknown>) => navigation.navigate(name, params);
   useEffect(() => {
     navigation.setOptions({
-      headerLeft: () => <Pressable accessibilityRole="button" accessibilityLabel="Close sidebar" onPress={() => { if (latest) navigation.navigate('Chat', latest); }} style={styles.headerAction}><Icon name="close" size={19} color={ink} /></Pressable>,
+      headerLeft: remembered ? () => <HeaderAction label="Close sidebar" hint={chatName ? `Returns to ${chatName}` : undefined} icon="menu" onPress={close} /> : () => null,
+      headerRight: () => <View style={styles.headerActions}>
+        <MoreDestinations navigate={navigate} />
+        <HeaderAction label="New chat" icon="compose" size={18} onPress={() => navigate('NewChat', {})} />
+      </View>,
     });
-  }, [navigation, latest?.hostId, latest?.sessionId]);
+  }, [navigation, remembered, chatName]);
   return <SafeAreaView edges={['bottom', 'left', 'right']} style={{ flex: 1, backgroundColor: sidebar }}>
-    <SwipeForward enabled={!!latest} onSwipe={() => latest && navigation.navigate('Chat', latest)}>
-      <WorkspaceRail navigate={(name, params) => navigation.navigate(name, params)} selectedChat={selected} />
+    <SwipeForward enabled={!!remembered} onSwipe={close}>
+      <WorkspaceRail navigate={navigate} selectedChat={chat} />
     </SwipeForward>
   </SafeAreaView>;
 }
+// One way back at every level: Back to the screen this one was opened from.
+// The chat itself shows the sidebar button instead (ChatWorkspace).
 function ScreenNavigation({ navigation }: { navigation: any }) {
-  return <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-    {navigation.canGoBack() && <Pressable accessibilityLabel="Back" onPress={() => navigation.goBack()} style={styles.headerAction}><Icon name="back" size={17} color={ink} /></Pressable>}
-    <Pressable accessibilityLabel="Open sidebar" onPress={() => navigation.popTo('Sidebar')} style={styles.headerAction}><Icon name="menu" size={19} color={ink} /></Pressable>
-  </View>;
+  return navigation.canGoBack() ? <HeaderAction label="Back" icon="back" size={17} onPress={() => navigation.goBack()} /> : null;
 }
 function PullRequestsScreen({ navigation }: any) {
   const state = useRemote();
@@ -823,7 +846,26 @@ function ProfileScreen({ route, navigation }: any) {
     <Section title="Delete"><Button title="Delete profile" danger onPress={() => Alert.alert('Delete profile?', draft.name, [{ text: 'Cancel' }, { text: 'Delete', style: 'destructive', onPress: () => run(async () => { await state.request('deleteProfile', { id: draft.id }); navigation.goBack(); }) }])} /></Section>
   </HeaderScrollView>;
 }
+// Reduce Motion swaps the stack's slides for a short cross-fade.
+function useReduceMotion() {
+  const [reduced, setReduced] = useState(false);
+  useEffect(() => {
+    AccessibilityInfo.isReduceMotionEnabled().then(setReduced).catch(() => {});
+    const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduced);
+    return () => subscription.remove();
+  }, []);
+  return reduced;
+}
 export default function App() {
+  const reduceMotion = useReduceMotion();
+  const stack = useRef<StackRoute[]>([]);
+  const [sidebarReturn, setSidebarReturn] = useState<SidebarReturn>(null);
+  const sidebarReturnRef = useRef<SidebarReturn>(null);
+  const followStack = (routes: StackRoute[]) => {
+    const next = nextSidebarReturn(stack.current, routes, sidebarReturnRef.current);
+    stack.current = routes;
+    if (next !== sidebarReturnRef.current) { sidebarReturnRef.current = next; setSidebarReturn(next); }
+  };
   const [fontsLoaded] = useFonts({ Inter: require('../assets/fonts/InterVariable.ttf'), JetBrainsMono: require('../assets/fonts/JetBrainsMono-Regular.ttf'), JetBrainsMonoMedium: require('../assets/fonts/JetBrainsMono-Medium.ttf') });
   useEffect(() => {
     remote.load();
@@ -833,8 +875,8 @@ export default function App() {
     return () => appState.remove();
   }, []);
   if (!fontsLoaded) return null;
-  return <SafeAreaProvider><StatusBar style="light" /><NavigationContainer theme={{ dark: true, colors: { primary: accent, background: bg, card: panel, text: ink, border, notification: accent }, fonts: { regular: { fontFamily: 'Inter', fontWeight: '400' }, medium: { fontFamily: 'Inter', fontWeight: '500' }, bold: { fontFamily: 'Inter', fontWeight: '700' }, heavy: { fontFamily: 'Inter', fontWeight: '900' } } }}>
-      <Stack.Navigator initialRouteName="Sidebar" screenOptions={({ navigation }: any) => ({ headerTransparent: true, headerStyle: { backgroundColor: 'transparent' }, headerBackground: () => <ProgressiveBlur edge="top" />, headerTitleStyle: { fontFamily: 'Inter', fontSize: 15 }, headerTintColor: ink, contentStyle: { backgroundColor: bg }, headerShadowVisible: false, headerBackVisible: false, headerLeft: () => <ScreenNavigation navigation={navigation} />, scrollEdgeEffects: Platform.OS === 'ios' ? { top: 'soft' } : undefined, animation: 'slide_from_right', gestureEnabled: true, fullScreenGestureEnabled: true, animationMatchesGesture: true })}>
+  return <SafeAreaProvider><StatusBar style="light" /><SidebarReturnContext.Provider value={sidebarReturn}><NavigationContainer onStateChange={state => followStack((state?.routes || []) as StackRoute[])} theme={{ dark: true, colors: { primary: accent, background: bg, card: panel, text: ink, border, notification: accent }, fonts: { regular: { fontFamily: 'Inter', fontWeight: '400' }, medium: { fontFamily: 'Inter', fontWeight: '500' }, bold: { fontFamily: 'Inter', fontWeight: '700' }, heavy: { fontFamily: 'Inter', fontWeight: '900' } } }}>
+      <Stack.Navigator initialRouteName="Sidebar" screenOptions={({ navigation }: any) => ({ headerTransparent: true, headerStyle: { backgroundColor: 'transparent' }, headerBackground: () => <ProgressiveBlur edge="top" />, headerTitleStyle: { fontFamily: 'Inter', fontSize: 15 }, headerTintColor: ink, contentStyle: { backgroundColor: bg }, headerShadowVisible: false, headerBackVisible: false, headerLeft: () => <ScreenNavigation navigation={navigation} />, scrollEdgeEffects: Platform.OS === 'ios' ? { top: 'soft' } : undefined, animation: reduceMotion ? 'fade' : 'slide_from_right', animationDuration: reduceMotion ? 200 : undefined, gestureEnabled: true, fullScreenGestureEnabled: true, animationMatchesGesture: true })}>
         <Stack.Screen name="Sidebar" component={SidebarScreen} options={{ headerShown: true, title: '', headerLeft: () => null, headerBackground: () => <ProgressiveBlur edge="top" surfaceColor={sidebar} /> }} />
         <Stack.Screen name="Settings" component={SettingsScreen} options={{ title: 'Settings' }} />
         <Stack.Screen name="Projects" component={ProjectsScreen} />
@@ -855,7 +897,7 @@ export default function App() {
         <Stack.Screen name="Profiles" component={ProfilesScreen} options={{ title: 'Agent profiles' }} />
         <Stack.Screen name="Profile" component={ProfileScreen} options={{ title: 'Profile' }} />
       </Stack.Navigator>
-    </NavigationContainer></SafeAreaProvider>;
+    </NavigationContainer></SidebarReturnContext.Provider></SafeAreaProvider>;
 }
 const styles = StyleSheet.create({
   launcherContent: { paddingHorizontal: 18, paddingTop: 30, paddingBottom: 48, alignItems: 'center' },
@@ -885,9 +927,9 @@ const styles = StyleSheet.create({
   launcherRecentRow: { minHeight: 38, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 8 },
   launcherRecentName: { flex: 1, color: ink, fontFamily: 'Inter', fontSize: 14 },
   launcherRecentMeta: { color: tertiary, fontFamily: 'Inter', fontSize: 11, maxWidth: 110 },
-  headerAction: { width: 42, height: 44, alignItems: 'center', justifyContent: 'center' },
+  headerAction: { width: 42, height: 44, alignItems: 'center', justifyContent: 'center' }, headerActionPressed: { opacity: 0.45 }, headerActions: { flexDirection: 'row', alignItems: 'center' },
   page: { flex: 1, backgroundColor: bg }, content: { padding: 18, gap: 16, paddingBottom: 32 }, title: { color: ink, fontFamily: 'Inter', fontSize: 25, fontWeight: '600' }, lead: { color: muted, fontFamily: 'Inter', fontSize: 14, lineHeight: 21 }, section: { backgroundColor: panel, borderRadius: 8, padding: 14, gap: 9, borderWidth: StyleSheet.hairlineWidth, borderColor: border }, sectionTitle: { color: muted, fontFamily: 'Inter', fontSize: 13.5, fontWeight: '600' }, label: { color: muted, fontFamily: 'Inter', fontSize: 12, fontWeight: '600', marginTop: 8 }, value: { color: ink, fontFamily: 'Inter', fontSize: 15 }, row: { minHeight: 56, paddingVertical: 11, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border, flexDirection: 'row', alignItems: 'center', gap: 10 }, rowTitle: { color: ink, fontFamily: 'Inter', fontSize: 15.5, fontWeight: '500' }, subtitle: { color: muted, fontFamily: 'Inter', fontSize: 12.5, marginTop: 4 }, subtitleRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4 }, subtitleText: { marginTop: 0, flexShrink: 1 }, trailing: { color: tertiary, fontFamily: 'Inter', fontSize: 11 }, button: { backgroundColor: accent, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 11, alignSelf: 'flex-start', marginRight: 5, marginBottom: 5 }, buttonText: { color: bg, fontFamily: 'Inter', fontSize: 14, fontWeight: '600' }, secondary: { backgroundColor: inset }, danger: { backgroundColor: '#9B3F43' }, input: { backgroundColor: inset, color: ink, borderRadius: 7, borderWidth: StyleSheet.hairlineWidth, borderColor: border, paddingHorizontal: 12, paddingVertical: 10, fontFamily: 'Inter', fontSize: 15, minHeight: 48 }, multiline: { minHeight: 120, textAlignVertical: 'top' }, actions: { flexDirection: 'row', flexWrap: 'wrap', marginVertical: 5 }, choices: { flexDirection: 'row', flexWrap: 'wrap' }, empty: { color: muted, fontFamily: 'Inter', fontSize: 14, lineHeight: 21 }, error: { color: '#EF6461' }, callout: { backgroundColor: raised, borderRadius: 8, borderColor: border, borderWidth: StyleSheet.hairlineWidth, padding: 15 }, code: { color: ink, fontFamily: 'JetBrainsMonoMedium', fontSize: 32, letterSpacing: 3 }, bubble: { backgroundColor: raised, padding: 13, borderRadius: 8, marginBottom: 8 }, bubbleLabel: { color: muted, fontFamily: 'Inter', fontSize: 11, marginBottom: 5 }, body: { color: ink, fontFamily: 'Inter', fontSize: 14.5, lineHeight: 22 }, mono: { color: ink, fontSize: 11, fontFamily: 'JetBrainsMono', lineHeight: 17 }, hint: { color: tertiary, fontFamily: 'Inter', fontSize: 11 }, composer: { backgroundColor: panel, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: border, padding: 10, flexDirection: 'row', alignItems: 'flex-end' }, codeScroll: { padding: 16 }, codeText: { color: ink, fontFamily: 'JetBrainsMono', fontSize: 11, textAlignVertical: 'top', minHeight: 500 },
-  rail: { flex: 1, backgroundColor: sidebar }, railContent: { paddingTop: 10, paddingBottom: 24 }, railAction: { height: 50, paddingHorizontal: 18, flexDirection: 'row', alignItems: 'center', gap: 12 }, railActionTitle: { color: ink, fontFamily: 'Inter', fontSize: 15.5, flex: 1 }, railDetail: { color: tertiary, fontFamily: 'Inter', fontSize: 12 }, railHost: { marginTop: 18, marginHorizontal: 14, height: 48, paddingHorizontal: 5, flexDirection: 'row', alignItems: 'center', gap: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: border }, railHostTitle: { color: muted, fontFamily: 'Inter', fontSize: 12, fontWeight: '600', flex: 1 }, railGroup: { paddingTop: 12 }, railGroupHeader: { paddingHorizontal: 18, height: 38, flexDirection: 'row', alignItems: 'center', gap: 6 }, railGroupTitle: { color: muted, fontFamily: 'Inter', fontSize: 14, fontWeight: '600', flex: 1 }, railMacStatus: { color: tertiary, fontFamily: 'Inter', fontSize: 12, marginHorizontal: 19, marginTop: -6, marginBottom: 4 }, unreachable: { opacity: 0.45 }, pauseBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(232,179,74,0.12)', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border, paddingHorizontal: 14, paddingVertical: 8 }, pauseBannerText: { color: ink, fontFamily: 'Inter', fontSize: 13, lineHeight: 18, flex: 1 }, pauseBannerButton: { paddingHorizontal: 8, paddingVertical: 4 }, pauseBannerButtonDisabled: { opacity: 0.45 }, pauseBannerButtonText: { color: ink, fontFamily: 'Inter', fontSize: 13, fontWeight: '600' }, pausedLabel: { color: '#E8B34A', fontFamily: 'Inter', fontSize: 11, fontWeight: '600' }, railPause: { marginHorizontal: 14 }, railEmpty: { color: muted, fontFamily: 'Inter', fontSize: 12, lineHeight: 18, margin: 18 }, railFooter: { minHeight: 60, paddingHorizontal: 18, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: border, flexDirection: 'row', alignItems: 'center', gap: 10 }, railFooterTitle: { color: ink, fontFamily: 'Inter', fontSize: 15, flex: 1 }, connectionDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#4CC38A' },
+  rail: { flex: 1, backgroundColor: sidebar }, railContent: { paddingTop: 10, paddingBottom: 24 }, railDetail: { color: tertiary, fontFamily: 'Inter', fontSize: 12 }, railHost: { marginTop: 18, marginHorizontal: 14, height: 48, paddingHorizontal: 5, flexDirection: 'row', alignItems: 'center', gap: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: border }, railHostTitle: { color: muted, fontFamily: 'Inter', fontSize: 12, fontWeight: '600', flex: 1 }, railGroup: { paddingTop: 12 }, railGroupHeader: { paddingHorizontal: 18, height: 38, flexDirection: 'row', alignItems: 'center', gap: 6 }, railGroupTitle: { color: muted, fontFamily: 'Inter', fontSize: 14, fontWeight: '600', flex: 1 }, railMacStatus: { color: tertiary, fontFamily: 'Inter', fontSize: 12, marginHorizontal: 19, marginTop: -6, marginBottom: 4 }, unreachable: { opacity: 0.45 }, pauseBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(232,179,74,0.12)', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border, paddingHorizontal: 14, paddingVertical: 8 }, pauseBannerText: { color: ink, fontFamily: 'Inter', fontSize: 13, lineHeight: 18, flex: 1 }, pauseBannerButton: { paddingHorizontal: 8, paddingVertical: 4 }, pauseBannerButtonDisabled: { opacity: 0.45 }, pauseBannerButtonText: { color: ink, fontFamily: 'Inter', fontSize: 13, fontWeight: '600' }, pausedLabel: { color: '#E8B34A', fontFamily: 'Inter', fontSize: 11, fontWeight: '600' }, railPause: { marginHorizontal: 14 }, railEmpty: { color: muted, fontFamily: 'Inter', fontSize: 12, lineHeight: 18, margin: 18 }, railFooter: { minHeight: 60, paddingHorizontal: 18, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: border, flexDirection: 'row', alignItems: 'center', gap: 10 }, railFooterPressed: { backgroundColor: raised }, railFooterTitle: { color: ink, fontFamily: 'Inter', fontSize: 15, flex: 1 }, connectionDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#4CC38A' },
   paneToolbar: { height: 45, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border, backgroundColor: bg },
   paneIconButton: { width: 42, height: 42, alignItems: 'center', justifyContent: 'center' },
   paneContent: { paddingBottom: 30 },
