@@ -129,6 +129,14 @@ extension AppModel {
     /// chat is listed like any other; it doesn't take over the screen.
     func startForCommandLine(_ request: AppLink.StartRequest) async -> AppLink.StartReply {
         let id = request.sessionId
+        if let rename = request.rename {
+            do {
+                let branch = try await renameRunBranch(id, from: rename.worktree, to: rename.name)
+                return AppLink.StartReply(agent: nil, message: nil, branch: branch)
+            } catch {
+                return AppLink.StartReply(agent: nil, message: error.localizedDescription)
+            }
+        }
         reload()
         guard let session = session(id) else { return AppLink.StartReply(agent: nil, message: "Abstract can't find session \(id).") }
         if request.fresh { feed(id).reset() }

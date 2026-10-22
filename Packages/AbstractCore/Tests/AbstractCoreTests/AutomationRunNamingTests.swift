@@ -96,38 +96,42 @@ import Testing
         return (dir, worktree)
     }
 
-    private func rename(_ worktree: String, from: String? = nil, to suggestion: String = "fix/Login button", prefix: String = "",
-                        allowCommits: Bool = false, hasPullRequest: Bool = false,
-                        racing: (@Sendable () async -> Void)? = nil) async -> AutomationRunNaming.BranchRename? {
-        await AutomationRunNaming.renameBranch(exec, worktree: worktree, from: from ?? run, suggestion: suggestion, prefix: prefix,
-                                               base: "main", allowCommits: allowCommits,
+    private func rename(_ worktree: String, from: String? = nil, to name: String = "abstract/fix/login-button",
+                        hasPullRequest: Bool = false,
+                        racing: (@Sendable () async -> Void)? = nil) async -> Result<AutomationRunNaming.BranchRename, AutomationRunNaming.RenameFailure> {
+        await AutomationRunNaming.renameBranch(exec, worktree: worktree, from: from ?? run, name: name, prefix: "abstract/",
                                                hasPullRequest: { _ in hasPullRequest }, racing: racing)
     }
 
-    @Test func anEmptyRunBranchIsRenamedFromTheFirstReply() async throws {
+    @Test func anAgentCanNameItsRunBranchExactly() async throws {
         let (dir, wt) = try await makeRun()
         defer { try? FileManager.default.removeItem(atPath: dir) }
-        let renamed = await rename(wt, prefix: "abstract/")
-        #expect(renamed == .init(name: "abstract/fix/login-button", head: "abstract/fix/login-button"))
+        let renamed = await rename(wt)
+        #expect(renamed == .success(.init(name: "abstract/fix/login-button", head: "abstract/fix/login-button")))
         #expect(try await branches(wt) == ["main", "abstract/fix/login-button"])
     }
 
-    @Test func aTakenNameGetsACounter() async throws {
+    @Test func aTakenNameIsRejectedWithoutChangingIt() async throws {
         let (dir, wt) = try await makeRun()
         defer { try? FileManager.default.removeItem(atPath: dir) }
-        try await git(wt, ["branch", "fix/login-button", "main"])
-        #expect(await rename(wt)?.name == "fix/login-button-1")
+        try await git(wt, ["branch", "abstract/fix/login-button", "main"])
+        #expect(await rename(wt) == .failure(.collision))
+        #expect(try await Git.currentBranch(exec, root: wt) == run)
     }
 
-    @Test func commitsWaitForTheEndOfTheTurn() async throws {
+    @Test func invalidNamesAndPrefixesLeaveTheProvisionalBranch() async throws {
+        let (dir, wt) = try await makeRun()
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        #expect(await rename(wt, to: "fix/without-prefix") == .failure(.wrongPrefix("abstract/")))
+        #expect(await rename(wt, to: "abstract/bad..name") == .failure(.invalidName))
+        #expect(try await Git.currentBranch(exec, root: wt) == run)
+    }
+
+    @Test func anUnpushedCommittedBranchCanBeNamed() async throws {
         let (dir, wt) = try await makeRun()
         defer { try? FileManager.default.removeItem(atPath: dir) }
         try await git(wt, ["commit", "-q", "--allow-empty", "-m", "Work"])
-        // While the agent may be committing, a branch with commits keeps its name…
-        #expect(await rename(wt) == nil)
-        #expect(try await Git.currentBranch(exec, root: wt) == run)
-        // …and is renamed once the turn is over.
-        #expect(await rename(wt, allowCommits: true)?.head == "fix/login-button")
+        #expect(await rename(wt) == .success(.init(name: "abstract/fix/login-button", head: "abstract/fix/login-button")))
     }
 
     @Test func aPushedRunBranchKeepsItsName() async throws {
@@ -136,17 +140,17 @@ import Testing
         try await git(dir, ["init", "-q", "--bare", dir + "/origin.git"])
         try await git(wt, ["remote", "add", "origin", dir + "/origin.git"])
         try await git(wt, ["push", "-q", "-u", "origin", run])
-        #expect(await rename(wt, allowCommits: true) == nil)
+        #expect(await rename(wt) == .failure(.published))
         // Pushed without an upstream, origin's copy is enough.
         try await git(wt, ["branch", "--unset-upstream"])
-        #expect(await rename(wt, allowCommits: true) == nil)
+        #expect(await rename(wt) == .failure(.published))
         #expect(try await Git.currentBranch(exec, root: wt) == run)
     }
 
     @Test func aRunBranchWithAPullRequestKeepsItsName() async throws {
         let (dir, wt) = try await makeRun()
         defer { try? FileManager.default.removeItem(atPath: dir) }
-        #expect(await rename(wt, allowCommits: true, hasPullRequest: true) == nil)
+        #expect(await rename(wt, hasPullRequest: true) == .failure(.pullRequest))
         #expect(try await Git.currentBranch(exec, root: wt) == run)
     }
 
@@ -156,9 +160,9 @@ import Testing
         let gitDir = try await exec.run("git", ["rev-parse", "--absolute-git-dir"], cwd: wt).stdout
             .trimmingCharacters(in: .whitespacesAndNewlines)
         FileManager.default.createFile(atPath: gitDir + "/index.lock", contents: nil)
-        #expect(await rename(wt) == nil)
+        #expect(await rename(wt) == .failure(.locked))
         try FileManager.default.removeItem(atPath: gitDir + "/index.lock")
-        #expect(await rename(wt)?.name == "fix/login-button")
+        #expect(await rename(wt) == .success(.init(name: "abstract/fix/login-button", head: "abstract/fix/login-button")))
     }
 
     @Test func aCommitRacingTheRenameLeavesNoStrayBranch() async throws {
@@ -166,8 +170,7 @@ import Testing
         var (dir, wt) = try await makeRun()
         var tree = wt
         var renamed = await rename(wt, racing: { [exec, run, tree] in _ = try? await exec.run("git", ["branch", run, "main"], cwd: tree) })
-        #expect(renamed == .init(name: "fix/login-button", head: "fix/login-button"))
-        #expect(try await branches(wt) == ["main", "fix/login-button"])
+        #expect(renamed == .success(.init(name: "abstract/fix/login-button", head: "abstract/fix/login-button")))
         try? FileManager.default.removeItem(atPath: dir)
 
         // HEAD ended up on the old name: the chat follows it, and the new name goes.
@@ -178,17 +181,16 @@ import Testing
             _ = try? await exec.run("git", ["branch", run, "main"], cwd: tree)
             _ = try? await exec.run("git", ["symbolic-ref", "HEAD", "refs/heads/\(run)"], cwd: tree)
         })
-        #expect(renamed == .init(name: "fix/login-button", head: run))
-        #expect(try await branches(wt) == ["main", run])
+        #expect(renamed == .success(.init(name: "abstract/fix/login-button", head: run)))
     }
 
     @Test func aBranchTheAgentRenamedIsLeftAlone() async throws {
         let (dir, wt) = try await makeRun()
         defer { try? FileManager.default.removeItem(atPath: dir) }
         try await git(wt, ["branch", "-m", "abs-51-diff-stats"])
-        #expect(await rename(wt, from: "abs-51-diff-stats", allowCommits: true) == nil)
-        #expect(await rename(wt, allowCommits: true) == nil)
+        #expect(await rename(wt, from: "abs-51-diff-stats") == .failure(.alreadyNamed))
+        #expect(await rename(wt) == .failure(.changedBranch))
         #expect(try await Git.currentBranch(exec, root: wt) == "abs-51-diff-stats")
-        #expect(await rename(wt, to: "!!!") == nil)
+        #expect(await rename(wt, to: "abstract/bad..name") == .failure(.invalidName))
     }
 }

@@ -57,6 +57,14 @@ public struct HistoryToolLaunch: Sendable, Hashable {
     public var serverCommand: [String] { [command] + serverArgs }
 }
 
+public struct BranchToolLaunch: Sendable, Hashable {
+    public var command: String
+    public var chatId: String
+
+    public init(command: String, chatId: String) { self.command = command; self.chatId = chatId }
+    public var serverCommand: [String] { [command, "mcp", "--chat", chatId, "--branch"] }
+}
+
 /// How an agent takes skills from Abstract (ABS-122), each checked
 /// against the CLI: a folder laid out where it already looks, so the
 /// user's own skills folder is never written to.
@@ -113,6 +121,8 @@ public struct LaunchContext: Sendable {
     public var readableDirs: [String]
     /// The code-history tool for this chat; nil when the project has it off.
     public var historyTool: HistoryToolLaunch?
+    /// The explicit branch-name tool for a fresh-worktree automation chat.
+    public var branchTool: BranchToolLaunch?
     /// The chat's plugin tools; nil when no plugin offers any.
     public var pluginTools: PluginToolsLaunch?
     /// The instructions of the profile this chat started from (ABS-101),
@@ -131,12 +141,12 @@ public struct LaunchContext: Sendable {
     public init(cwd: String, prompt: String, resumeId: String? = nil, permissionPolicy: PermissionPolicy,
                 extraArgs: [String] = [], binaryOverride: String? = nil, model: String? = nil, effort: String? = nil,
                 outputStyle: OutputStyle = .default, images: [String] = [], readableDirs: [String] = [],
-                historyTool: HistoryToolLaunch? = nil, instructions: String? = nil,
+                historyTool: HistoryToolLaunch? = nil, branchTool: BranchToolLaunch? = nil, instructions: String? = nil,
                 pluginTools: PluginToolsLaunch? = nil, toolServers: [MCPServerLaunch] = [], configDirectory: String? = nil,
                 skills: SkillsLaunch? = nil) {
         self.cwd = cwd; self.prompt = prompt; self.resumeId = resumeId; self.permissionPolicy = permissionPolicy
         self.extraArgs = extraArgs; self.binaryOverride = binaryOverride; self.outputStyle = outputStyle
-        self.images = images; self.readableDirs = readableDirs; self.historyTool = historyTool
+        self.images = images; self.readableDirs = readableDirs; self.historyTool = historyTool; self.branchTool = branchTool
         self.pluginTools = pluginTools; self.toolServers = toolServers; self.configDirectory = configDirectory
         self.skills = skills
         self.model = Self.nonBlank(model)
@@ -155,7 +165,11 @@ public struct LaunchContext: Sendable {
             MCPServerLaunch(name: PluginTools.serverName, connection: .command($0.serverCommand, env: [:]),
                             allowsEverything: true)
         }
-        return [history, plugins].compactMap { $0 } + toolServers
+        let branch = branchTool.map {
+            MCPServerLaunch(name: BranchMCPServer.serverName, connection: .command($0.serverCommand, env: [:]),
+                            allowsEverything: true)
+        }
+        return [history, plugins, branch].compactMap { $0 } + toolServers
     }
 
     private static func nonBlank(_ value: String?) -> String? {

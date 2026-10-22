@@ -190,6 +190,10 @@ final class AgentHost: @unchecked Sendable {
         engine.recordInput(sessionId: sessionId, text: request.prompt)
         let executor = LocalExecutor.shared
         var settings = LaunchSettings(store: store, dataDirectory: URL(fileURLWithPath: storePath).deletingLastPathComponent())
+        if let automationId = session.automationId,
+           (try? store.automation(automationId))?.workspaceMode == .newWorktree {
+            settings.branchCommand = Bundle.main.executablePath
+        }
         // The chat's agent gets the code-history tool (ABS-61) unless its
         // project has it off; this program itself serves it.
         if let project = try? session.projectId.flatMap({ try store.project($0) }), project.agentHistoryEnabled,
@@ -404,6 +408,10 @@ final class AgentHost: @unchecked Sendable {
     private func perform(_ request: HostRequest) -> HostReply {
         guard request.agentId == agent.id, !exited, engine.isAlive(sessionId) else {
             return .failed(CLIError(.agentNotRunning, "Agent \(request.agentId) isn't running."))
+        }
+        if request.op == "note", let note = request.text {
+            engine.record(sessionId: sessionId, OutputLine(stream: .note, line: note))
+            return .ok
         }
         guard request.op == "send", let text = request.text,
               let line = provider.buildUserMessage(text, images: [], sessionId: providerSessionId ?? session.providerSessionId) else {

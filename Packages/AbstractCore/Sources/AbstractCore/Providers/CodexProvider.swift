@@ -109,6 +109,7 @@ public struct CodexProvider: ProviderDefinition {
                 // A config override; the value is TOML, so the level is quoted.
                 + (ctx.effort.map { ["-c", "model_reasoning_effort=\"\($0)\""] } ?? [])
                 + Self.developerInstructions(ctx) + Self.historyArgs(ctx.historyTool) + Self.pluginArgs(ctx.pluginTools)
+                + Self.branchArgs(ctx.branchTool)
                 + Self.toolServerArgs(ctx.toolServers).args + ctx.extraArgs
                 + ctx.images.flatMap { ["--image", $0] }
                 // A prompt like "- fix the parser" would otherwise parse as a flag,
@@ -199,6 +200,15 @@ public struct CodexProvider: ProviderDefinition {
             if !server.withheld.isEmpty { args += ["-c", "\(key).disabled_tools=\(tomlArray(server.withheld))"] }
         }
         return (args, env)
+    }
+
+    static func branchArgs(_ branch: BranchToolLaunch?) -> [String] {
+        guard let branch else { return [] }
+        let key = "mcp_servers.\(BranchMCPServer.serverName)"
+        let argv = tomlArray(["mcp", "--chat", branch.chatId, "--branch"])
+        return ["-c", "\(key).command=\(tomlString(branch.command))",
+                "-c", "\(key).args=\(argv)",
+                "-c", "\(key).tools={ \"name_branch\" = { approval_mode = \"approve\" }"]
     }
 
     static func tomlArray(_ items: [String]) -> String {
