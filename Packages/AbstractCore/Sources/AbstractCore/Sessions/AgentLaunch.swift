@@ -126,7 +126,7 @@ public struct LaunchSettings: Sendable {
     /// Tells this launch's agent which tracker team and project
     /// `session`'s project links to (ABS-143), as saved on this Mac.
     public mutating func addIssueTrackers(for session: Session, plugins: PluginManager) {
-        let trackers = ProjectIssueTrackers(projectId: session.projectId, installed: plugins.installed(),
+        let trackers = ProjectIssueTrackers(projectId: session.projectId, installed: plugins.installed(saving: false),
                                             storage: plugins.storage(for:))
         environment.merge(trackers.environment) { $1 }
     }

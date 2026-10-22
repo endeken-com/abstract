@@ -15,9 +15,9 @@ function whenPlaced(settings) {
     if (context && context.place === "projectSettings") linearProjectLink();
     else settings();
   };
+  // Abstract sends the context once the page has loaded, and again when
+  // the theme changes; only the first starts the page.
   window.AbstractPlugin.on("context", begin);
-  // A host that sends no context opens the settings page.
-  setTimeout(() => begin(null), 1000);
 }
 
 /** `{ id, name, key? }` of a team or project, as the link keeps it. */
@@ -53,14 +53,22 @@ async function linearProjectLink() {
   const teams = all.filter((item) => item.kind === "team");
   const projects = all.filter((item) => item.kind === "project");
 
-  async function save(team, project) {
-    const next = team || project ? { team: linkTarget(team), project: linkTarget(project) } : null;
-    try {
-      link = (await host.issueTracker.setProjectLink(next)) || {};
-      draw();
-    } catch (error) {
-      draw(String((error && error.message) || error));
-    }
+  // One save at a time, each from the link as the last one left it.
+  let saving = Promise.resolve();
+
+  /** Applies `change(link)`, which returns `{ team, project }`, then saves. */
+  function save(change) {
+    saving = saving.then(async () => {
+      const { team, project } = change(link);
+      const next = team || project ? { team: linkTarget(team), project: linkTarget(project) } : null;
+      try {
+        link = (await host.issueTracker.setProjectLink(next)) || {};
+        draw();
+      } catch (error) {
+        draw(String((error && error.message) || error));
+      }
+    });
+    return saving;
   }
 
   function picker(title, detail, items, current, pick) {
@@ -83,9 +91,13 @@ async function linearProjectLink() {
   function draw(problem) {
     show(
       picker("Team", "The composer's Linear search in this project looks in this team first.",
-        teams, link.team, (team) => save(team, link.project)),
+        // A project picked under another team doesn't carry over.
+        teams, link.team, (team) => save((current) => ({
+          team,
+          project: team && current.team && team.id === current.team.id ? current.project : null,
+        }))),
       picker("Project", "Optional: one Linear project, searched instead of the whole team.",
-        projects, link.project, (project) => save(link.team, project)),
+        projects, link.project, (project) => save((current) => ({ team: current.team, project }))),
       problem ? h("p", { class: "status problem" }, problem) : null);
   }
 

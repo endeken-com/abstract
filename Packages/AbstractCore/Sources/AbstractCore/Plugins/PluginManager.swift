@@ -142,7 +142,9 @@ public final class PluginManager: Sendable {
     /// Every installed plugin, checked against what's on disk now. A package
     /// that changed since install is turned off until it's reviewed again;
     /// a missing or unreadable one is listed with its problem. Never throws.
-    public func installed() -> [InstalledPlugin] {
+    /// `saving` false only reads: `abstract`, beside the app, leaves the
+    /// records to the app.
+    public func installed(saving: Bool = true) -> [InstalledPlugin] {
         var records = records()
         var changed = false
         let out = records.indices.map { index -> InstalledPlugin in
@@ -168,7 +170,7 @@ public final class PluginManager: Sendable {
                                        problem: "Its files couldn't be read, so it's off.", packageURL: folder)
             }
         }
-        if changed { save(records) }
+        if changed, saving { save(records) }
         return out
     }
 

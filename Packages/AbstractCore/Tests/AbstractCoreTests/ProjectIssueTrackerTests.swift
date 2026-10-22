@@ -116,6 +116,18 @@ import Testing
             Issue.record("the link wasn't cleared"); return
         }
         #expect(TrackerProjectLink.read(storage, projectId: "p1") == nil)
+
+        // The plugin's own storage calls can't reach a link, even with storage.own.
+        TrackerProjectLink.write(Self.proj, to: storage, projectId: "p1")
+        var own = PluginBridge(capabilities: [.storageOwn])
+        for message in [#"{"api":2,"type":"storage.set","id":"6","payload":{"key":"abstract.projectLink:p1","value":null}}"#,
+                        #"{"api":2,"type":"storage.get","id":"7","payload":{"key":"abstract.projectLink:p1"}}"#] {
+            guard case .refused = own.handle(message, storage: storage) else {
+                Issue.record("storage reached a project link: \(message)"); return
+            }
+        }
+        #expect(TrackerProjectLink.read(storage, projectId: "p1") == Self.proj)
+        #expect(TrackerProjectLink.all(in: storage) == ["p1": Self.proj])
     }
 
     @Test func turningATrackerOffHidesItsLinkAndOnAgainBringsItBack() throws {

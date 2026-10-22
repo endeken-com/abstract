@@ -18,8 +18,7 @@ extension AppModel {
     /// among the ones that can run now.
     func projectIssueTrackers(_ projectId: String?) -> ProjectIssueTrackers {
         _ = plugins.trackerLinksRevision
-        return ProjectIssueTrackers(projectId: projectId, installed: plugins.installed,
-                                    storage: plugins.manager.storage(for:))
+        return ProjectIssueTrackers(projectId: projectId, installed: plugins.installed, links: plugins.trackerLinks)
     }
 
     /// A project's tracker link changed: the composer, the headers and

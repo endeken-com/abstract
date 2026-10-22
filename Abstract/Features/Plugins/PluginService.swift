@@ -70,10 +70,24 @@ final class PluginService {
         installed = manager.installed()
         orphans = manager.orphanedProblems()
         switches = manager.switches()
+        trackerLinks = [:]
         onChange()
     }
 
-    func noteTrackerLinksChanged() { trackerLinksRevision += 1 }
+    func noteTrackerLinksChanged() {
+        trackerLinks = [:]
+        trackerLinksRevision += 1
+    }
+
+    /// Each tracker's project links, read once until one changes.
+    @ObservationIgnored private var trackerLinks: [String: [String: TrackerProjectLink]] = [:]
+
+    func trackerLinks(_ pluginId: String) -> [String: TrackerProjectLink] {
+        if let kept = trackerLinks[pluginId] { return kept }
+        let read = TrackerProjectLink.all(in: manager.storage(for: pluginId))
+        trackerLinks[pluginId] = read
+        return read
+    }
 
     func nextRevision() -> Int {
         revision += 1

@@ -169,14 +169,19 @@ public struct PluginBridge: Sendable {
             guard capabilities.contains(.storageOwn) else {
                 return refuse(id, "This plugin hasn't been granted remembering its settings.")
             }
-            guard let key = payload?["key"]?.string else { return refuse(id, "That storage request has no key.") }
+            guard let key = payload?["key"]?.string, !key.hasPrefix(TrackerProjectLink.storagePrefix) else {
+                return refuse(id, "That storage request has no key.")
+            }
             let value = (try? storage.value(forKey: key)) ?? nil
             return .reply(id: id, .object(["key": .string(key), "value": value ?? .null]))
         case "storage.set":
             guard capabilities.contains(.storageOwn) else {
                 return refuse(id, "This plugin hasn't been granted remembering its settings.")
             }
-            guard let key = payload?["key"]?.string else { return refuse(id, "That storage request has no key.") }
+            // A project's tracker link is written only through projectLink.set.
+            guard let key = payload?["key"]?.string, !key.hasPrefix(TrackerProjectLink.storagePrefix) else {
+                return refuse(id, "That storage request has no key.")
+            }
             let value = payload?["value"]
             let saved = (try? storage.set(value == .null ? nil : value, forKey: key)) ?? false
             guard saved else { return refuse(id, "That would pass the plugin's storage limit.") }

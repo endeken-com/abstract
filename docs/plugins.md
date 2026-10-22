@@ -327,8 +327,8 @@ A plugin can answer the composer's issue search for a tracker (ABS-141). It decl
 }
 ```
 
-The icon is an SVG or PNG in the package. One drawn in a single colour or in
-`currentColor` takes the text colour; an SVG with colours of its own (fills, strokes or
+The icon is an SVG or PNG in the package. One that names no colour, or only
+`currentColor`, takes the text colour; an SVG that names colours (fills, strokes or
 gradient stops) keeps them, the way Jira's blue mark does. A query that is
 one key, whole, or an `https://` link is asked for as one issue; anything else is
 searched for. Abstract asks every tracker that's on and groups what they find by

@@ -10,9 +10,9 @@ import Foundation
 public struct PluginIssueTrackerDeclaration: Sendable, Hashable, Codable {
     /// "Linear": the tracker's name in the composer and the agent's line.
     public var title: String
-    /// An SVG or PNG in the package. One drawn in a single colour, or in
-    /// `currentColor`, takes the text colour; one with colours of its own
-    /// keeps them (ABS-143).
+    /// An SVG or PNG in the package. One that names no colour, or only
+    /// `currentColor`, takes the text colour; an SVG that names colours
+    /// keeps them, like Jira's blue mark (ABS-143).
     public var icon: String?
     /// What a key looks like, for the search field: "ENG-123".
     public var keyExample: String
@@ -222,7 +222,18 @@ public struct TrackerProjectLink: Sendable, Hashable, Codable {
     }
 
     /// Where a project's link to a tracker is kept in the tracker's storage.
-    public static func storageKey(projectId: String) -> String { "abstract.projectLink:\(projectId)" }
+    /// Only Abstract writes these keys: the plugin's own `storage.set` can't.
+    public static let storagePrefix = "abstract.projectLink:"
+    public static func storageKey(projectId: String) -> String { storagePrefix + projectId }
+
+    /// Every project's link in one tracker's storage, by project id.
+    public static func all(in storage: PluginStorage) -> [String: TrackerProjectLink] {
+        var out: [String: TrackerProjectLink] = [:]
+        for (key, value) in (try? storage.values()) ?? [:] where key.hasPrefix(storagePrefix) {
+            if let link = TrackerProjectLink(value) { out[String(key.dropFirst(storagePrefix.count))] = link }
+        }
+        return out
+    }
 
     public static func read(_ storage: PluginStorage, projectId: String) -> TrackerProjectLink? {
         TrackerProjectLink((try? storage.value(forKey: storageKey(projectId: projectId))) ?? nil)
@@ -457,16 +468,18 @@ public struct ProjectIssueTrackers: Sendable, Hashable {
     }
 
     /// A project's trackers as saved on this Mac: each usable tracker's
-    /// link, read from its plugin's storage.
-    public init(projectId: String?, installed: [InstalledPlugin], storage: (String) -> PluginStorage) {
+    /// link, by plugin id and project id, read from its plugin's storage.
+    public init(projectId: String?, installed: [InstalledPlugin], links: (String) -> [String: TrackerProjectLink]) {
         let available = PluginIssueTrackers.resolve(installed)
-        var links: [String: TrackerProjectLink] = [:]
+        var found: [String: TrackerProjectLink] = [:]
         if let projectId {
-            for tracker in available {
-                links[tracker.pluginId] = TrackerProjectLink.read(storage(tracker.pluginId), projectId: projectId)
-            }
+            for tracker in available { found[tracker.pluginId] = links(tracker.pluginId)[projectId] }
         }
-        self.init(available: available, links: links)
+        self.init(available: available, links: found)
+    }
+
+    public init(projectId: String?, installed: [InstalledPlugin], storage: (String) -> PluginStorage) {
+        self.init(projectId: projectId, installed: installed) { TrackerProjectLink.all(in: storage($0)) }
     }
 
     /// The trackers the issue control shows and searches: the linked ones,
@@ -495,12 +508,6 @@ public struct ProjectIssueTrackers: Sendable, Hashable {
             if let project = item.link.project { out["ABSTRACT_\(name)_PROJECT"] = project.label }
         }
         return out
-    }
-
-    /// Every variable a tracker could set, so one unlinked since is removed.
-    public static func environmentNames(_ trackers: [ResolvedIssueTracker]) -> [String] {
-        trackers.map { environmentName($0.title) }.filter { !$0.isEmpty }
-            .flatMap { ["ABSTRACT_\($0)_TEAM", "ABSTRACT_\($0)_PROJECT"] }
     }
 
     static func environmentName(_ title: String) -> String {

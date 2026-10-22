@@ -15,9 +15,9 @@ function whenPlaced(settings) {
     if (context && context.place === "projectSettings") jiraProjectLink();
     else settings();
   };
+  // Abstract sends the context once the page has loaded, and again when
+  // the theme changes; only the first starts the page.
   window.AbstractPlugin.on("context", begin);
-  // A host that sends no context opens the settings page.
-  setTimeout(() => begin(null), 1000);
 }
 
 async function jiraProjectLink() {
@@ -42,14 +42,20 @@ async function jiraProjectLink() {
   link = link || {};
   const projects = (found && found.projects) || [];
 
-  async function save(project) {
-    const next = project ? { project: { id: project.id, name: project.name, key: project.key } } : null;
-    try {
-      link = (await host.issueTracker.setProjectLink(next)) || {};
-      draw();
-    } catch (error) {
-      draw(String((error && error.message) || error));
-    }
+  // One save at a time, each from the link as the last one left it.
+  let saving = Promise.resolve();
+
+  function save(project) {
+    saving = saving.then(async () => {
+      const next = project ? { project: { id: project.id, name: project.name, key: project.key } } : null;
+      try {
+        link = (await host.issueTracker.setProjectLink(next)) || {};
+        draw();
+      } catch (error) {
+        draw(String((error && error.message) || error));
+      }
+    });
+    return saving;
   }
 
   function draw(problem) {
