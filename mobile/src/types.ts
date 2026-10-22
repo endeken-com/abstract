@@ -15,7 +15,8 @@ export type Project = {
 };
 // A named setup a chat or automation starts from, saved on the Mac.
 export type AgentProfile = {
-  id: string; name: string; iconSymbol?: string | null; providerId: string;
+  id: string; name: string; iconSymbol?: string | null; iconColor?: string | null;
+  iconImagePath?: string | null; providerId: string;
   model?: string | null; effort?: string | null; permissionPolicy: Policy;
   instructions: string; skills: string[]; mcpServers: string[];
   sortOrder: number; createdAt: number;
@@ -61,7 +62,7 @@ export type ModelCatalog = { accountDefault?: ModelOption | null; models: ModelO
 export type Stall = { state: 'quiet' | 'stalled'; since: number };
 // A message sent while the agent worked, waiting for its turn to end (ABS-103).
 export type QueuedMessage = { id: string; text: string; attachments: { id: string; kind: string; title: string; reference?: string | null }[]; queuedAt: number; sending?: boolean | null };
-export type Snapshot = { projects: Project[]; sessions: Session[]; providers: string[]; alive: string[]; home?: string; modelCatalogs?: Record<string, ModelCatalog>; defaultModelNames?: Record<string, string>; automations?: Automation[]; pendingPermissions?: Record<string, PendingPermission[]>; permissionRules?: Record<string, PermissionRule[]>; pullRequests?: Record<string, PullRequest>; turnStartedAt?: Record<string, number>; pagedHistory?: boolean; internetAddress?: InternetAddress; backgroundTasks?: string[]; unmergedWork?: Record<string, boolean>; automationDevice?: boolean; projectDefaultDevice?: boolean; profiles?: AgentProfile[]; everythingPaused?: boolean; pausedProjectIds?: string[]; pauseControl?: boolean; stalls?: Record<string, Stall>; codeHistory?: boolean; plans?: Record<string, PlanState>; planApproval?: boolean; projectIcons?: Record<string, string>; queuedMessages?: Record<string, QueuedMessage[]>; messageQueue?: boolean; steerAgents?: string[] };
+export type Snapshot = { projects: Project[]; sessions: Session[]; providers: string[]; alive: string[]; home?: string; modelCatalogs?: Record<string, ModelCatalog>; defaultModelNames?: Record<string, string>; automations?: Automation[]; pendingPermissions?: Record<string, PendingPermission[]>; permissionRules?: Record<string, PermissionRule[]>; pullRequests?: Record<string, PullRequest>; turnStartedAt?: Record<string, number>; pagedHistory?: boolean; internetAddress?: InternetAddress; backgroundTasks?: string[]; unmergedWork?: Record<string, boolean>; automationDevice?: boolean; projectDefaultDevice?: boolean; profiles?: AgentProfile[]; profileIcons?: Record<string, string>; everythingPaused?: boolean; pausedProjectIds?: string[]; pauseControl?: boolean; stalls?: Record<string, Stall>; codeHistory?: boolean; plans?: Record<string, PlanState>; planApproval?: boolean; projectIcons?: Record<string, string>; queuedMessages?: Record<string, QueuedMessage[]>; messageQueue?: boolean; steerAgents?: string[] };
 export type Peer = { id: string; name: string; publicKey: string };
 export type InternetAddress = { endpointId: string };
 export type Device = { peer: Peer; address: string; pairedAt: number; internetAddress?: InternetAddress };

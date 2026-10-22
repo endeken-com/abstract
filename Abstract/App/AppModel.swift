@@ -386,6 +386,9 @@ final class AppModel {
         let unfinished = ((try? store.sessions()) ?? []).filter { setupUnfinished($0) && cliDriven[$0.id] == nil }.map(\.id)
         _ = try? store.reconcileInterruptedSessions(excluding: Set(cliDriven.keys))
         reload()
+        if store.databasePath == Store.defaultPath() {
+            ProjectIconStore.sweep(keeping: store.managedIconPaths())
+        }
         loadQueues()
         restoreInterruptedSetups(unfinished)
         Task { await listen() }
@@ -722,18 +725,25 @@ final class AppModel {
     /// Saved in place, so editing a profile in Settings doesn't reload
     /// every chat under the text being typed.
     func saveProfile(_ profile: AgentProfile) {
-        try? store.save(profile)
+        let oldImage = self.profile(profile.id)?.iconImagePath
+        do { try store.save(profile) }
+        catch { flash(error.localizedDescription, isError: true); return }
         if let index = profiles.firstIndex(where: { $0.id == profile.id }) {
             profiles[index] = profile
         } else {
             profiles.append(profile)
             profiles.sort { ($0.sortOrder, $0.createdAt) < ($1.sortOrder, $1.createdAt) }
         }
+        if oldImage != profile.iconImagePath { ProjectIconStore.discard(oldImage) }
     }
 
     func deleteProfile(_ id: String) {
-        try? store.deleteProfile(id)
-        profiles.removeAll { $0.id == id }
+        let image = profile(id)?.iconImagePath
+        do {
+            try store.deleteProfile(id)
+            profiles.removeAll { $0.id == id }
+            ProjectIconStore.discard(image)
+        } catch { flash(error.localizedDescription, isError: true) }
     }
 
     @discardableResult

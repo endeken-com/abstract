@@ -21,6 +21,7 @@ import { SwipeForward } from './SwipeForward';
 import { useKeyboardHeight } from './useKeyboardVisible';
 import { NativeSelect } from './NativeSelect';
 import { ProviderLogo, providerMenuImage } from './ProviderLogo';
+import { ProfileIcon } from './ProfileIcon';
 import { ChatListHeader, ChatRow, NoMatches, StatusGroups, useChatListPrefs, useTicking } from './ChatList';
 import { KanbanBoardScreen } from './KanbanBoard';
 import { chatsFromMacs, filterIsEmpty, narrow, type ChatFacts } from './chatGroups';
@@ -776,7 +777,7 @@ function ProfilesScreen({ route, navigation }: any) {
     {supported && <>
       <Text style={styles.hint}>A profile is a saved setup — agent, model, effort, permissions and instructions — that new chats and automations fill in for you. Editing one changes later chats, never a chat already running.</Text>
       <Button title="Add profile" onPress={add} />
-      <Section title="Profiles">{profiles.map(profile => <Row key={profile.id} title={profile.name || 'Profile'} subtitle={`${profile.providerId}${profile.model ? ` · ${profile.model}` : ''}${profile.effort ? ` · ${profile.effort}` : ''}`} iconNode={<SymbolView name={{ ios: profile.iconSymbol || 'person.crop.circle', android: 'account_circle' } as any} size={17} tintColor={tertiary} />} onPress={() => navigation.navigate('Profile', { hostId, id: profile.id })} />)}{!profiles.length && <Empty text="No profiles on this Mac." />}</Section>
+      <Section title="Profiles">{profiles.map(profile => <Row key={profile.id} title={profile.name || 'Profile'} subtitle={`${profile.providerId}${profile.model ? ` · ${profile.model}` : ''}${profile.effort ? ` · ${profile.effort}` : ''}`} iconNode={<ProfileIcon profile={profile} imageData={state.snapshot?.profileIcons?.[profile.id]} size={20} />} onPress={() => navigation.navigate('Profile', { hostId, id: profile.id })} />)}{!profiles.length && <Empty text="No profiles on this Mac." />}</Section>
     </>}
   </HeaderScrollView>;
 }
@@ -804,7 +805,8 @@ function ProfileScreen({ route, navigation }: any) {
   if (!policies.some(([id]) => id === policy)) policies.push([policy, policy]);
   const save = async () => {
     if (!name.trim()) throw Error('Name is required.');
-    const profile: AgentProfile = { ...draft, name: name.trim(), iconSymbol, providerId: provider, model: modelName || null, effort: effort || null, permissionPolicy: policy as Policy, instructions };
+    const chosenSymbol = iconSymbol === (draft.iconSymbol || 'person.crop.circle') ? (draft.iconSymbol ?? null) : iconSymbol;
+    const profile: AgentProfile = { ...draft, name: name.trim(), iconSymbol: chosenSymbol, providerId: provider, model: modelName || null, effort: effort || null, permissionPolicy: policy as Policy, instructions };
     await state.request('saveProfile', { _0: profile });
     navigation.goBack();
   };

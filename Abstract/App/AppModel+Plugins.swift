@@ -418,6 +418,9 @@ extension AppModel {
 
     func removePlugin(_ id: String) {
         plugins.remove(id)
+        if let paths = try? store.deletePluginIcons(pluginId: id) {
+            for path in paths { ProjectIconStore.discard(path) }
+        }
         leavePluginScreen(id)
     }
 

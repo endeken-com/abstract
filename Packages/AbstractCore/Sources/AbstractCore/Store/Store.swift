@@ -8,6 +8,7 @@ import GRDB
 /// at millisecond precision.
 public final class Store: Sendable {
     let writer: any DatabaseWriter
+    public let databasePath: String?
 
     /// Opens (or creates) the database at `path` in WAL mode and runs migrations.
     public convenience init(path: String) throws {
@@ -15,11 +16,12 @@ public final class Store: Sendable {
         try FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         // DatabasePool always uses WAL.
-        try self.init(writer: DatabasePool(path: url.path, configuration: Self.configuration))
+        try self.init(writer: DatabasePool(path: url.path, configuration: Self.configuration), databasePath: url.path)
     }
 
-    private init(writer: any DatabaseWriter) throws {
+    private init(writer: any DatabaseWriter, databasePath: String? = nil) throws {
         self.writer = writer
+        self.databasePath = databasePath
         try Self.migrator.migrate(writer)
     }
 
@@ -831,6 +833,22 @@ public final class Store: Sendable {
                 WHERE prompt LIKE '%<attachment kind="linearIssue" %'
                 """)
         }
+        migrator.registerMigration("v23-shared-icons") { db in
+            for table in ["profiles", "workflows"] {
+                try db.execute(sql: "ALTER TABLE \(table) ADD COLUMN icon_color TEXT")
+                try db.execute(sql: "ALTER TABLE \(table) ADD COLUMN icon_image_path TEXT")
+            }
+            try db.execute(sql: """
+                CREATE TABLE plugin_icon_fields (
+                  plugin_id TEXT NOT NULL,
+                  field_key TEXT NOT NULL,
+                  icon_symbol TEXT,
+                  icon_color TEXT,
+                  icon_image_path TEXT,
+                  PRIMARY KEY (plugin_id, field_key)
+                )
+                """)
+        }
         return migrator
     }
 }
@@ -1134,6 +1152,8 @@ private struct ProfileRow: FetchableRecord, PersistableRecord {
             id: try row.decode(forColumn: "id"),
             name: try row.decode(forColumn: "name"),
             iconSymbol: try row.decode(forColumn: "icon_symbol"),
+            iconColor: try row.decode(forColumn: "icon_color"),
+            iconImagePath: try row.decode(forColumn: "icon_image_path"),
             providerId: try row.decode(forColumn: "provider_id"),
             model: try row.decode(forColumn: "model"),
             effort: try row.decode(forColumn: "effort"),
@@ -1149,6 +1169,8 @@ private struct ProfileRow: FetchableRecord, PersistableRecord {
         container["id"] = value.id
         container["name"] = value.name
         container["icon_symbol"] = value.iconSymbol
+        container["icon_color"] = value.iconColor
+        container["icon_image_path"] = value.iconImagePath
         container["provider_id"] = value.providerId
         container["model"] = value.model
         container["effort"] = value.effort
@@ -1304,6 +1326,8 @@ private struct WorkflowRow: FetchableRecord, PersistableRecord {
             id: try row.decode(forColumn: "id"),
             name: try row.decode(forColumn: "name"),
             iconSymbol: try row.decode(forColumn: "icon_symbol"),
+            iconColor: try row.decode(forColumn: "icon_color"),
+            iconImagePath: try row.decode(forColumn: "icon_image_path"),
             steps: (try? JSONDecoder().decode([WorkflowStep].self, from: Data(steps.utf8))) ?? [],
             sortOrder: try row.decode(forColumn: "sort_order"),
             createdAt: try row.decode(forColumn: "created_at"))
@@ -1313,6 +1337,8 @@ private struct WorkflowRow: FetchableRecord, PersistableRecord {
         container["id"] = value.id
         container["name"] = value.name
         container["icon_symbol"] = value.iconSymbol
+        container["icon_color"] = value.iconColor
+        container["icon_image_path"] = value.iconImagePath
         container["steps"] = String(decoding: try JSONEncoder().encode(value.steps), as: UTF8.self)
         container["sort_order"] = value.sortOrder
         container["created_at"] = value.createdAt

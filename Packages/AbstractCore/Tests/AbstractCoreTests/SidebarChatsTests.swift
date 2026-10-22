@@ -237,6 +237,10 @@ import AbstractCore
         let bytes = Data([0x89, 0x50])
         let paired = SidebarChats.icon(project: uploaded, isRemote: true, remoteImage: bytes, fileExists: { _ in true })
         #expect(paired == .project(.init(name: "Alpha", symbol: "cube", color: "sage", imageData: bytes)))
+        var safe = uploaded
+        safe.iconImagePath = nil
+        #expect(SidebarChats.icon(project: safe, isRemote: true, remoteImage: bytes)
+                == .project(.init(name: "Alpha", symbol: "cube", color: "sage", imageData: bytes)))
         // An older paired Mac sends no bytes: the symbol tile, not a local file that happens to match.
         let older = SidebarChats.icon(project: uploaded, isRemote: true, remoteImage: nil, fileExists: { _ in true })
         #expect(older == .project(.init(name: "Alpha", symbol: "cube", color: "sage")))

@@ -27,32 +27,37 @@ extension AppModel {
 
     /// A symbol and/or colour; either clears a custom image.
     func setProjectIcon(_ id: String, symbol: String?, color: String?) {
-        let old = project(id)?.iconImagePath
-        updateProject(id) { p in
-            p.iconSymbol = symbol
-            p.iconColor = color
-            p.iconImagePath = nil
-        }
-        ProjectIconStore.discard(old)
+        guard var item = project(id) else { return }
+        let old = item.iconImagePath
+        item.iconSymbol = symbol
+        item.iconColor = color
+        item.iconImagePath = nil
+        do {
+            try store.save(item)
+            reload()
+            ProjectIconStore.discard(old)
+        } catch { flash(error.localizedDescription, isError: true) }
     }
 
     func resetProjectIcon(_ id: String) {
-        let old = project(id)?.iconImagePath
-        updateProject(id) { p in
-            p.iconSymbol = nil
-            p.iconColor = nil
-            p.iconImagePath = nil
-        }
-        ProjectIconStore.discard(old)
+        setProjectIcon(id, symbol: nil, color: nil)
     }
 
     /// Copies the image (squared and scaled down) into Application Support.
     func importProjectIcon(_ id: String, from url: URL) {
         do {
             let path = try ProjectIconStore.save(url, projectId: id)
-            let old = project(id)?.iconImagePath
-            updateProject(id) { $0.iconImagePath = path }
-            if old != path { ProjectIconStore.discard(old) }
+            guard var item = project(id) else { ProjectIconStore.discard(path); return }
+            let old = item.iconImagePath
+            item.iconImagePath = path
+            do {
+                try store.save(item)
+                reload()
+                ProjectIconStore.discard(old)
+            } catch {
+                ProjectIconStore.discard(path)
+                throw error
+            }
         } catch {
             flash(error.localizedDescription, isError: true)
         }
@@ -207,8 +212,31 @@ enum ProjectIconStore {
         URL(fileURLWithPath: Store.defaultPath()).deletingLastPathComponent().appendingPathComponent("ProjectIcons", isDirectory: true)
     }
 
+    enum Owner {
+        case profile, workflow, plugin(String)
+
+        var directory: URL {
+            let root = URL(fileURLWithPath: Store.defaultPath()).deletingLastPathComponent()
+            switch self {
+            case .profile: return root.appendingPathComponent("ProfileIcons", isDirectory: true)
+            case .workflow: return root.appendingPathComponent("WorkflowIcons", isDirectory: true)
+            case .plugin(let id):
+                let safe = id.data(using: .utf8)!.map { String(format: "%02x", $0) }.joined()
+                return root.appendingPathComponent("PluginIcons", isDirectory: true).appendingPathComponent(safe, isDirectory: true)
+            }
+        }
+    }
+
     /// A 256 pt square PNG of the image's centre; returns its path.
     static func save(_ source: URL, projectId: String) throws -> String {
+        try save(source, in: directory, prefix: projectId)
+    }
+
+    static func save(_ source: URL, owner: Owner) throws -> String {
+        try save(source, in: owner.directory, prefix: UUID().uuidString)
+    }
+
+    private static func save(_ source: URL, in targetDirectory: URL, prefix: String) throws -> String {
         guard let image = NSImage(contentsOf: source), image.size.width > 0, image.size.height > 0 else {
             throw AbstractError.message("That file isn't an image Abstract can read.")
         }
@@ -229,8 +257,8 @@ enum ProjectIconStore {
         guard let png = rep.representation(using: .png, properties: [:]) else {
             throw AbstractError.message("Couldn't save the icon.")
         }
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let file = directory.appendingPathComponent("\(projectId)-\(UUID().uuidString.prefix(8)).png")
+        try FileManager.default.createDirectory(at: targetDirectory, withIntermediateDirectories: true)
+        let file = targetDirectory.appendingPathComponent("\(prefix)-\(UUID().uuidString.prefix(8)).png")
         try png.write(to: file)
         cache.removeAllObjects()
         return file.path
@@ -238,9 +266,29 @@ enum ProjectIconStore {
 
     /// Delete an icon Abstract copied in; never a file elsewhere.
     static func discard(_ path: String?) {
-        guard let path, path.hasPrefix(directory.path + "/") else { return }
-        try? FileManager.default.removeItem(atPath: path)
+        guard let path else { return }
+        let normalized = URL(fileURLWithPath: path).standardizedFileURL.path
+        let root = URL(fileURLWithPath: Store.defaultPath()).deletingLastPathComponent()
+        let allowed = ["ProjectIcons", "ProfileIcons", "WorkflowIcons", "PluginIcons"]
+            .map { root.appendingPathComponent($0).standardizedFileURL.path + "/" }
+        guard allowed.contains(where: { normalized.hasPrefix($0) }) else { return }
+        try? FileManager.default.removeItem(atPath: normalized)
         cache.removeObject(forKey: path as NSString)
+    }
+
+    static func sweep(keeping paths: Set<String>) {
+        let root = URL(fileURLWithPath: Store.defaultPath()).deletingLastPathComponent()
+        for name in ["ProjectIcons", "ProfileIcons", "WorkflowIcons", "PluginIcons"] {
+            let directory = root.appendingPathComponent(name, isDirectory: true)
+            guard let files = FileManager.default.enumerator(at: directory, includingPropertiesForKeys: [.isRegularFileKey],
+                                                             options: [.skipsHiddenFiles]) else { continue }
+            for case let file as URL in files {
+                guard file.pathExtension.lowercased() == "png",
+                      (try? file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true,
+                      !paths.contains(file.path) else { continue }
+                discard(file.path)
+            }
+        }
     }
 
     private static let cache = NSCache<NSString, NSImage>()
