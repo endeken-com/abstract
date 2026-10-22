@@ -28,6 +28,9 @@ final class PluginConnection {
     var onBackground: (PluginBridge.Outcome) -> Void = { _ in }
     /// After each snapshot, for a screen placed beside a chat.
     var onSnapshot: () -> Void = {}
+    /// A visible host view owns the native icon picker and previews.
+    var onIconGet: (String?, String) -> Void = { _, _ in }
+    var onIconChoose: (String?, String, PluginIconAnchor) -> Void = { _, _, _ in }
     /// Whether a write command serving this code host call may run
     /// unasked: the person started the call (ABS-139). Only a background
     /// script answers calls.
@@ -98,6 +101,10 @@ final class PluginConnection {
         let storage = model.plugins.manager.storage(for: plugin.id)
         let outcome = bridge.handle(text, storage: storage)
         switch outcome {
+        case .iconGet(let id, let key):
+            onIconGet(id, key)
+        case .iconChoose(let id, let key, let anchor):
+            onIconChoose(id, key, anchor)
         case .reply(let id, let value):
             send(type: "reply", id: id, payload: value)
         case .getSnapshot:

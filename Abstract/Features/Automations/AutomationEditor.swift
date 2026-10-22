@@ -793,7 +793,11 @@ private struct ScopeSentence: View {
                                                  set: { chooseProfile($0) })) {
                 Text("No Profile").tag(String?.none)
                 ForEach(model.profiles) { profile in
-                    Label(profile.name, systemImage: profile.iconSymbol ?? "person.crop.circle")
+                    Label {
+                        Text(profile.name)
+                    } icon: {
+                        IconTile(value: profile.iconValue, name: profile.name, context: .profile, size: 18)
+                    }
                         .tag(Optional(profile.id))
                 }
             }
@@ -803,7 +807,11 @@ private struct ScopeSentence: View {
                 Section("Follows a Workflow") {
                     Picker("Workflow", selection: Binding(get: { draft.workflowId }, set: { chooseWorkflow($0) })) {
                         ForEach(model.workflows) { workflow in
-                            Label(workflow.name, systemImage: workflow.iconSymbol ?? Workflow.defaultSymbol)
+                            Label {
+                                Text(workflow.name)
+                            } icon: {
+                                IconTile(value: workflow.iconValue, name: workflow.name, context: .workflow, size: 18)
+                            }
                                 .tag(Optional(workflow.id))
                         }
                     }

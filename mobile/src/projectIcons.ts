@@ -17,7 +17,7 @@ export function iconFor(project: Project | null | undefined, remoteImage?: strin
   const mark: ProjectMark = { name: project.name };
   if (project.iconSymbol) mark.symbol = project.iconSymbol;
   if (project.iconColor) mark.color = project.iconColor;
-  if (project.iconImagePath && remoteImage) mark.imageData = remoteImage;
+  if (remoteImage) mark.imageData = remoteImage;
   return { kind: 'project', mark };
 }
 
@@ -39,6 +39,13 @@ const materialSymbols: Record<string, string> = {
   'server.rack': 'dns', 'cloud': 'cloud', 'globe': 'public', 'iphone': 'smartphone',
   'macwindow': 'web_asset', 'gamecontroller': 'sports_esports', 'paintbrush.pointed': 'brush',
   'book.closed': 'menu_book', 'chart.bar': 'bar_chart', 'leaf': 'eco', 'bolt': 'bolt',
+  'person.crop.circle': 'account_circle', 'magnifyingglass': 'search',
+  'list.bullet.clipboard': 'assignment', 'ladybug': 'bug_report',
+  'doc.text.magnifyingglass': 'find_in_page', 'lightbulb': 'lightbulb',
+  'paintpalette': 'palette', 'checkmark.seal': 'verified',
+  'testtube.2': 'science', 'text.book.closed': 'menu_book',
+  'shield.lefthalf.filled': 'shield', 'sparkles': 'auto_awesome',
+  'point.3.connected.trianglepath.dotted': 'schema',
 };
 export const materialSymbol = (symbol?: string | null) => (symbol ? materialSymbols[symbol] : undefined);
 

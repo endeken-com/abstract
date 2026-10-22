@@ -98,19 +98,16 @@ public enum SidebarChats {
 
     /// The icon a chat's row leads with, following Project Settings: an
     /// uploaded image that is still there wins, then the symbol and colour,
-    /// then the default tile. A paired Mac's `iconImagePath` names a file on
-    /// that Mac, so it is never read here; its snapshot's bytes are used
-    /// instead, and an older Mac that sends none falls back to the tile.
+    /// then the default tile. A paired Mac sends image bytes, never its local
+    /// path; an older Mac that sends no bytes falls back to the tile.
     public static func icon(project: Project?, isRemote: Bool, remoteImage: Data?,
                             fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) -> Icon {
         guard let project else { return .agentLogo }
         var mark = ProjectMark(name: project.name, symbol: project.iconSymbol, color: project.iconColor)
-        if project.iconImagePath != nil {
-            if isRemote {
-                if let remoteImage, !remoteImage.isEmpty { mark.imageData = remoteImage }
-            } else if let path = project.iconImagePath, fileExists(path) {
-                mark.imageFile = path
-            }
+        if isRemote {
+            if let remoteImage, !remoteImage.isEmpty { mark.imageData = remoteImage }
+        } else if let path = project.iconImagePath, fileExists(path) {
+            mark.imageFile = path
         }
         return .project(mark)
     }

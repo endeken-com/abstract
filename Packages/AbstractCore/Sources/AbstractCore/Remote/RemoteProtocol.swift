@@ -301,6 +301,10 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
     /// `iconImagePath` names a file on this Mac, which a viewing Mac cannot
     /// read. Optional for older peers.
     public var projectIcons: [String: Data]?
+    /// Uploaded profile icons by profile id; paths stay on the host.
+    public var profileIcons: [String: Data]?
+    /// Uploaded workflow icons by workflow id; paths stay on the host.
+    public var workflowIcons: [String: Data]?
     /// A host that starts another Mac's automation runs (`startRun`).
     /// Optional for older peers.
     public var automationDevice: Bool?
@@ -355,7 +359,8 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
                 pendingPermissions: [String: [RemotePendingPermission]]? = nil,
                 turnStartedAt: [String: Date]? = nil, pagedHistory: Bool? = nil, execInput: Bool? = nil,
                 internetAddress: InternetAddress? = nil, backgroundTasks: [String]? = nil, unmergedWork: [String: Bool]? = nil,
-                projectIcons: [String: Data]? = nil, automationDevice: Bool? = nil,
+                projectIcons: [String: Data]? = nil, profileIcons: [String: Data]? = nil,
+                workflowIcons: [String: Data]? = nil, automationDevice: Bool? = nil,
                 projectDefaultDevice: Bool? = nil,
                 profiles: [AgentProfile]? = nil,
                 everythingPaused: Bool? = nil, pausedProjectIds: [String]? = nil, pauseControl: Bool? = nil,
@@ -376,6 +381,8 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
         self.backgroundTasks = backgroundTasks
         self.unmergedWork = unmergedWork
         self.projectIcons = projectIcons
+        self.profileIcons = profileIcons
+        self.workflowIcons = workflowIcons
         self.automationDevice = automationDevice
         self.projectDefaultDevice = projectDefaultDevice
         self.profiles = profiles

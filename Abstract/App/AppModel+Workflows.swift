@@ -14,18 +14,25 @@ extension AppModel {
     }
 
     func saveWorkflow(_ workflow: Workflow) {
-        try? store.save(workflow)
+        let oldImage = self.workflow(workflow.id)?.iconImagePath
+        do { try store.save(workflow) }
+        catch { flash(error.localizedDescription, isError: true); return }
         if let index = workflows.firstIndex(where: { $0.id == workflow.id }) {
             workflows[index] = workflow
         } else {
             workflows.append(workflow)
             workflows.sort { ($0.sortOrder, $0.createdAt) < ($1.sortOrder, $1.createdAt) }
         }
+        if oldImage != workflow.iconImagePath { ProjectIconStore.discard(oldImage) }
     }
 
     func deleteWorkflow(_ id: String) {
-        try? store.deleteWorkflow(id)
-        workflows.removeAll { $0.id == id }
+        let image = workflow(id)?.iconImagePath
+        do {
+            try store.deleteWorkflow(id)
+            workflows.removeAll { $0.id == id }
+            ProjectIconStore.discard(image)
+        } catch { flash(error.localizedDescription, isError: true) }
     }
 
     private var nextWorkflowOrder: Int { (workflows.map(\.sortOrder).max() ?? -1) + 1 }

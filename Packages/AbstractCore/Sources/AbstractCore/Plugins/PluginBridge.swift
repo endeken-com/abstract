@@ -119,6 +119,8 @@ public struct PluginBridge: Sendable {
         /// A project's tracker link was saved (ABS-143): answer by `id` with
         /// the value, and show the project's new tracker.
         case projectLinkSaved(id: String?, projectKey: String, JSONValue)
+        case iconGet(id: String?, key: String)
+        case iconChoose(id: String?, key: String, anchor: PluginIconAnchor)
         case refused(id: String?, reason: String)
         /// The plugin flooded the bridge; the host tears its view down.
         case flooded
@@ -152,6 +154,16 @@ public struct PluginBridge: Sendable {
         guard let type = message["type"]?.string else { return refuse(id, "That message has no type.") }
         let payload = message["payload"]
         switch type {
+        case "icon.get", "icon.choose":
+            guard !isBackground else { return refuse(id, "Only a visible plugin screen can show an icon picker.") }
+            guard let key = payload?["key"]?.string, PluginIconFields.validKey(key) else {
+                return refuse(id, "That icon field key isn't valid.")
+            }
+            if type == "icon.get" { return .iconGet(id: id, key: key) }
+            guard let anchor = PluginIconAnchor(payload?["anchor"]) else {
+                return refuse(id, "The icon button isn't visible.")
+            }
+            return .iconChoose(id: id, key: key, anchor: anchor)
         case "getSnapshot":
             guard capabilities.contains(.chatsRead) || capabilities.contains(.projectsRead) else {
                 return refuse(id, "This plugin hasn't been granted reading your chats or projects.")
