@@ -13,7 +13,7 @@ export const groupTitles: Record<ChatGroup, string> = {
   pinned: 'Pinned', needsYou: 'Needs you', working: 'Working', readyToReview: 'Ready to review', done: 'Done', archived: 'Archived',
 };
 export type Arrangement = 'status' | 'project';
-export const agentNames: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode' };
+export const agentNames: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode', muse: 'Muse Code' };
 export type Checks = 'passed' | 'failing' | 'running';
 
 // What the list knows of one chat, on whichever paired Mac it runs.
