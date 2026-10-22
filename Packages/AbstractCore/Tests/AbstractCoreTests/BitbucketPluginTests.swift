@@ -45,6 +45,10 @@ enum BitbucketPluginHarness {
               __runs.push({args, where: where || {}});
               // Like bkt 0.35.2, which has only the global --json flag.
               if (args.includes("--output")) return Promise.resolve({ok: false, code: 1, stdout: "", stderr: "Error: unknown flag: --output\\n"});
+              // Bitbucket Cloud takes at most 50 a page, and bkt pages by --limit.
+              const limit = args.indexOf("--limit");
+              if (args.includes("--workspace") && limit >= 0 && Number(args[limit + 1]) > 50)
+                return Promise.resolve({ok: false, code: 1, stdout: "", stderr: "Error: 400 Bad Request: Invalid pagelen\\n"});
               const line = args.join(" ");
               const key = Object.keys(__replies).sort((a,b) => b.length-a.length).find((one) => line.startsWith(one));
               if (!key) { const error = new Error("bkt isn't installed."); error.missing = "bkt"; return Promise.reject(error); }
@@ -169,12 +173,19 @@ struct BitbucketPluginTests {
         let pr = try #require(listed["pullRequests"]?.array?.first.flatMap(PullRequest.init(contract:)))
         #expect(pr.checks.map(\.outcome) == [.passed, .failed, .pending])
         #expect(runs[0].args == ["auth", "status", "--json"])
-        #expect(runs[1].args == ["pr", "list", "--state", "ALL", "--limit", "100", "--json", "--context", "cloud",
+        #expect(runs[1].args == ["pr", "list", "--state", "ALL", "--limit", "50", "--json", "--context", "cloud",
                                   "--workspace", "sample", "--repo", "app"])
         let (detail, _) = try H.answer("pullRequest", input: #"{"number":12}"#, replies: [
             "auth status": ["stdout": cloudAuth], "pr view": ["stdout": #"{"pull_request":\#(cloudPR)}"#],
             "pr checks": ["stdout": builds], "pr comments": ["stdout": notes],
         ])
+        let (byBranch, branchRuns) = try H.answer("pullRequest", input: #"{"branch":"fix/cart"}"#, replies: [
+            "auth status": ["stdout": cloudAuth], "pr list": ["stdout": #"{"pull_requests":[\#(cloudPR)]}"#],
+            "pr view": ["stdout": #"{"pull_request":\#(cloudPR)}"#], "pr checks": ["stdout": builds],
+            "pr comments": ["stdout": notes],
+        ])
+        #expect(PullRequest(contract: byBranch["pullRequest"] ?? .null)?.number == 12)
+        #expect(branchRuns[1].args.prefix(5) == ["pr", "list", "--state", "OPEN", "--limit"] && branchRuns[1].args[5] == "50")
         let whole = try #require(PullRequest(contract: detail["pullRequest"] ?? .null))
         #expect(whole.comments.map(\.body) == ["Ship it"])
         let (threadResult, _) = try H.answer("reviewThreads", input: #"{"number":12}"#,
@@ -191,7 +202,8 @@ struct BitbucketPluginTests {
         ])
         let summary = try #require(listed["pullRequests"]?.array?.first.flatMap(PullRequest.init(contract:)))
         #expect(summary.state == .merged && summary.head == "fix/build")
-        #expect(listRuns.last?.args.suffix(6) == ["--context", "team", "--project", "APP", "--repo", "app"])
+        #expect(listRuns.last?.args == ["pr", "list", "--state", "ALL", "--limit", "100", "--json",
+                                        "--context", "team", "--project", "APP", "--repo", "app"])
         let (viewed, _) = try H.answer("pullRequest", input: #"{"number":9}"#, context: place, replies: [
             "auth status": ["stdout": dcAuth], "pr view": ["stdout": #"{"pull_request":\#(dcPR)}"#],
             "pr comments": ["stdout": #"{"comments":[]}"#],

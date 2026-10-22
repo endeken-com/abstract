@@ -174,7 +174,11 @@ const BitbucketHost = (() => {
   function BitbucketHostContext(remote) { return context(auth, remote); }
 
   async function list(run, where, context, requestedState, limit) {
-    const args = withContext(["pr", "list", "--state", requestedState, "--limit", String(limit || 100), "--json"], context);
+    // bkt asks Bitbucket Cloud for --limit pull requests in one page, and
+    // Cloud refuses pages over 50 with "Invalid pagelen".
+    const wanted = limit || 100;
+    const count = kind(auth, context.remote) === "cloud" ? Math.min(wanted, 50) : wanted;
+    const args = withContext(["pr", "list", "--state", requestedState, "--limit", String(count), "--json"], context);
     const out = await runOK(run, args, where);
     return (parsed(out).pull_requests || []).map((one) => pr(one, kind(auth, context.remote))).filter(Boolean);
   }
