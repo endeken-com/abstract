@@ -2,7 +2,7 @@
   "api": 2,
   "id": "sh.abstract.bitbucket",
   "name": "Bitbucket",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Pull requests, approvals, builds and merging for Bitbucket Cloud and Data Center. Uses your bkt sign-in and keeps no token of its own.",
   "entry": "index.html",
   "capabilities": ["cli"],
