@@ -10,6 +10,8 @@ import AbstractCore
 final class PluginService {
     let manager: PluginManager
     private(set) var installed: [InstalledPlugin] = []
+    private(set) var catalog: [PluginCatalog.Entry] = []
+    private(set) var catalogProblem: String?
     private(set) var orphans: [(name: String, problem: String)] = []
     /// Monotonic snapshot revision, shared by every open plugin view.
     private(set) var revision = 0
@@ -18,6 +20,9 @@ final class PluginService {
     private(set) var backgroundProblems: [String: String] = [:]
     /// The count each plugin shows on its sidebar row (ABS-111); none is 0.
     private(set) var badges: [String: Int] = [:]
+    /// Bumped when a project's tracker link is saved (ABS-143), so the
+    /// composer, headers and snapshots read it again.
+    private(set) var trackerLinksRevision = 0
     /// Called after every change to what's installed, enabled or granted,
     /// so background scripts follow.
     @ObservationIgnored var onChange: () -> Void = {}
@@ -38,6 +43,26 @@ final class PluginService {
     /// Plugin folders inside the app, offered beside "Install…".
     var bundledFolders: [URL] {
         PluginManager.bundledFolders(in: Bundle.main.resourceURL)
+    }
+
+    func loadCatalog() async {
+        do {
+            let channel = UpdateChannel(stored: UserDefaults.standard.string(forKey: UpdateChannel.defaultsKey))
+            catalog = try await PluginCatalog.fetch(channel: channel).plugins
+            catalogProblem = nil
+        } catch {
+            catalogProblem = error.localizedDescription
+        }
+    }
+
+    func inspectCatalog(_ entry: PluginCatalog.Entry) async throws
+        -> (folder: URL, inspection: PluginPackage.Inspection, cleanup: URL) {
+        let (zip, response) = try await URLSession.shared.download(from: entry.url)
+        guard (response as? HTTPURLResponse)?.statusCode == 200,
+              response.url?.scheme == "https",
+              let size = try zip.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+              size <= PluginPackage.defaultSizeLimit else { throw PluginCatalogError.unavailable }
+        return try manager.inspectCatalogZip(zip, entry: entry)
     }
 
     /// Offer Bitbucket's bundled code host once a Bitbucket remote appears.
@@ -65,7 +90,23 @@ final class PluginService {
         installed = manager.installed()
         orphans = manager.orphanedProblems()
         switches = manager.switches()
+        trackerLinks = [:]
         onChange()
+    }
+
+    func noteTrackerLinksChanged() {
+        trackerLinks = [:]
+        trackerLinksRevision += 1
+    }
+
+    /// Each tracker's project links, read once until one changes.
+    @ObservationIgnored private var trackerLinks: [String: [String: TrackerProjectLink]] = [:]
+
+    func trackerLinks(_ pluginId: String) -> [String: TrackerProjectLink] {
+        if let kept = trackerLinks[pluginId] { return kept }
+        let read = TrackerProjectLink.all(in: manager.storage(for: pluginId))
+        trackerLinks[pluginId] = read
+        return read
     }
 
     func nextRevision() -> Int {
@@ -82,7 +123,7 @@ final class PluginService {
     func install(from folder: URL, sourceKind: PluginSource, enable: Bool,
                  transcriptProjectKeys: [String] = []) throws -> PluginRecord {
         let record = try manager.install(from: folder, sourceKind: sourceKind)
-        if enable { manager.setEnabled(record.id, true, transcriptProjectKeys: transcriptProjectKeys) }
+        manager.setEnabled(record.id, enable, transcriptProjectKeys: transcriptProjectKeys)
         refresh()
         return record
     }

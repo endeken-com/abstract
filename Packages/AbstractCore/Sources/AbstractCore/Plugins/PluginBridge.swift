@@ -48,6 +48,10 @@ public struct PluginBridge: Sendable {
     /// Whether its manifest declares a code host (ABS-139): only then may
     /// its background script answer core's calls.
     public var isCodeHost = false
+    /// The project whose settings this page is a section of (ABS-143),
+    /// by its snapshot key and its id: only then may it read and save that
+    /// project's tracker link, kept under the id.
+    public var project: (key: String, id: String)?
     public private(set) var refusalCount = 0
     public private(set) var lastRefusal: String?
     private var recent: [Date] = []
@@ -112,6 +116,11 @@ public struct PluginBridge: Sendable {
         /// Hosts the script's tool is signed in to besides its manifest's
         /// (GitHub Enterprise, say), for as long as it runs.
         case codeHostHosts(id: String?, Set<String>)
+        /// A project's tracker link was saved (ABS-143): answer by `id` with
+        /// the value, and show the project's new tracker.
+        case projectLinkSaved(id: String?, projectKey: String, JSONValue)
+        case iconGet(id: String?, key: String)
+        case iconChoose(id: String?, key: String, anchor: PluginIconAnchor)
         case refused(id: String?, reason: String)
         /// The plugin flooded the bridge; the host tears its view down.
         case flooded
@@ -145,6 +154,16 @@ public struct PluginBridge: Sendable {
         guard let type = message["type"]?.string else { return refuse(id, "That message has no type.") }
         let payload = message["payload"]
         switch type {
+        case "icon.get", "icon.choose":
+            guard !isBackground else { return refuse(id, "Only a visible plugin screen can show an icon picker.") }
+            guard let key = payload?["key"]?.string, PluginIconFields.validKey(key) else {
+                return refuse(id, "That icon field key isn't valid.")
+            }
+            if type == "icon.get" { return .iconGet(id: id, key: key) }
+            guard let anchor = PluginIconAnchor(payload?["anchor"]) else {
+                return refuse(id, "The icon button isn't visible.")
+            }
+            return .iconChoose(id: id, key: key, anchor: anchor)
         case "getSnapshot":
             guard capabilities.contains(.chatsRead) || capabilities.contains(.projectsRead) else {
                 return refuse(id, "This plugin hasn't been granted reading your chats or projects.")
@@ -162,18 +181,43 @@ public struct PluginBridge: Sendable {
             guard capabilities.contains(.storageOwn) else {
                 return refuse(id, "This plugin hasn't been granted remembering its settings.")
             }
-            guard let key = payload?["key"]?.string else { return refuse(id, "That storage request has no key.") }
+            guard let key = payload?["key"]?.string, !key.hasPrefix(TrackerProjectLink.storagePrefix) else {
+                return refuse(id, "That storage request has no key.")
+            }
             let value = (try? storage.value(forKey: key)) ?? nil
             return .reply(id: id, .object(["key": .string(key), "value": value ?? .null]))
         case "storage.set":
             guard capabilities.contains(.storageOwn) else {
                 return refuse(id, "This plugin hasn't been granted remembering its settings.")
             }
-            guard let key = payload?["key"]?.string else { return refuse(id, "That storage request has no key.") }
+            // A project's tracker link is written only through projectLink.set.
+            guard let key = payload?["key"]?.string, !key.hasPrefix(TrackerProjectLink.storagePrefix) else {
+                return refuse(id, "That storage request has no key.")
+            }
             let value = payload?["value"]
             let saved = (try? storage.set(value == .null ? nil : value, forKey: key)) ?? false
             guard saved else { return refuse(id, "That would pass the plugin's storage limit.") }
             return .reply(id: id, .object(["key": .string(key), "saved": .bool(true)]))
+        case "projectLink.get", "projectLink.set":
+            // Kept in the plugin's own storage, written only by Abstract,
+            // so it needs no storage grant and survives turning it off.
+            guard let (projectKey, projectId) = project else {
+                return refuse(id, "Only a project's Issue tracker section can link it.")
+            }
+            if type == "projectLink.get" {
+                let link = TrackerProjectLink.read(storage, projectId: projectId)
+                return .reply(id: id, .object(["projectKey": .string(projectKey), "link": link?.jsonValue() ?? .null]))
+            }
+            let raw = payload?["link"]
+            let link = TrackerProjectLink(raw)
+            guard link != nil || raw == nil || raw == .null else {
+                return refuse(id, "A link names a team or a project, each with an id and a name.")
+            }
+            guard TrackerProjectLink.write(link, to: storage, projectId: projectId) else {
+                return refuse(id, "That would pass the plugin's storage limit.")
+            }
+            return .projectLinkSaved(id: id, projectKey: projectKey,
+                                     .object(["projectKey": .string(projectKey), "link": link?.jsonValue() ?? .null]))
         case "fetch":
             guard capabilities.contains(.network) else {
                 return refuse(id, "This plugin hasn't been granted reaching the web.")

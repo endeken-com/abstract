@@ -210,6 +210,8 @@ final class AgentHost: @unchecked Sendable {
                            profile: try? store.profiles().first { $0.id == session.profileId },
                            sources: store.setting(SkillLibrary.sourcesKey, as: [SkillSource].self) ?? [],
                            dataDirectory: dataDirectory)
+        // Its tracker links (ABS-143), as the app gives them.
+        settings.addIssueTrackers(for: session, plugins: PluginManager(store: store))
         if let note = SkillLibrary.unsupportedNote(provider: provider, skills: settings.skills) {
             engine.record(sessionId: sessionId, OutputLine(stream: .note, line: note))
         }

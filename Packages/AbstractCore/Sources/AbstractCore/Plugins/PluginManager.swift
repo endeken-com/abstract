@@ -4,11 +4,13 @@ import Foundation
 public enum PluginSource: String, Sendable, Hashable, Codable {
     case bundled
     case user
+    case catalog
 
     public var plainWords: String {
         switch self {
         case .bundled: "With Abstract"
         case .user: "Installed by you"
+        case .catalog: "From the Catalog"
         }
     }
 }
@@ -90,6 +92,7 @@ public struct InstalledPlugin: Sendable, Identifiable {
     /// A plain sentence when the plugin can't run (missing, changed, broken).
     public var problem: String?
     public var packageURL: URL
+    public var publisher: String? = nil
 
     public var id: String { record.id }
     /// Enabled and able to run: what gets a sidebar row and snapshots.
@@ -142,7 +145,9 @@ public final class PluginManager: Sendable {
     /// Every installed plugin, checked against what's on disk now. A package
     /// that changed since install is turned off until it's reviewed again;
     /// a missing or unreadable one is listed with its problem. Never throws.
-    public func installed() -> [InstalledPlugin] {
+    /// `saving` false only reads: `abstract`, beside the app, leaves the
+    /// records to the app.
+    public func installed(saving: Bool = true) -> [InstalledPlugin] {
         var records = records()
         var changed = false
         let out = records.indices.map { index -> InstalledPlugin in
@@ -160,15 +165,23 @@ public final class PluginManager: Sendable {
                     return InstalledPlugin(record: record, manifest: inspection.manifest,
                                            problem: "Its files don't match what was installed, so it's off.", packageURL: folder)
                 }
-                return InstalledPlugin(record: record, manifest: inspection.manifest, problem: nil, packageURL: folder)
+                let publisher = try PluginSignature.publisher(in: folder, hash: inspection.hash)
+                if record.source == .catalog && publisher == nil {
+                    return InstalledPlugin(record: record, manifest: inspection.manifest,
+                                           problem: PluginCatalogError.missingSignature.localizedDescription, packageURL: folder)
+                }
+                return InstalledPlugin(record: record, manifest: inspection.manifest, problem: nil,
+                                       packageURL: folder, publisher: publisher)
             } catch let error as PluginValidationError {
                 return InstalledPlugin(record: record, manifest: nil, problem: error.description, packageURL: folder)
+            } catch let error as PluginCatalogError {
+                return InstalledPlugin(record: record, manifest: nil, problem: error.localizedDescription, packageURL: folder)
             } catch {
                 return InstalledPlugin(record: record, manifest: nil,
                                        problem: "Its files couldn't be read, so it's off.", packageURL: folder)
             }
         }
-        if changed { save(records) }
+        if changed, saving { save(records) }
         return out
     }
 
@@ -208,12 +221,38 @@ public final class PluginManager: Sendable {
         return (picked, try PluginPackage.inspect(folder: picked, fileManager: fm), nil)
     }
 
+    /// A catalog download must match its index entry and carry Abstract's
+    /// signature before it reaches the review sheet.
+    public func inspectCatalogZip(_ zip: URL, entry: PluginCatalog.Entry,
+                                  fileManager fm: FileManager = .default) throws -> (folder: URL, inspection: PluginPackage.Inspection, cleanup: URL) {
+        guard let size = try zip.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+              size <= PluginPackage.defaultSizeLimit else { throw PluginCatalogError.invalidPackage }
+        try entry.verifyArchive(Data(contentsOf: zip))
+        let staging = fm.temporaryDirectory.appendingPathComponent("abstract-plugin-\(UUID().uuidString)")
+        do {
+            let folder = try PluginPackage.unzip(zip, into: staging, fileManager: fm)
+            let inspection = try PluginPackage.inspect(folder: folder, fileManager: fm)
+            guard inspection.manifest.id == entry.id,
+                  inspection.manifest.version == entry.version,
+                  inspection.hash == entry.hash else { throw PluginCatalogError.invalidPackage }
+            guard try PluginSignature.publisher(in: folder, hash: inspection.hash) == "Abstract" else {
+                throw PluginCatalogError.missingSignature
+            }
+            return (folder, inspection, staging)
+        } catch {
+            try? fm.removeItem(at: staging)
+            throw error
+        }
+    }
+
     /// Copies a validated package in, atomically. Installed is not enabled —
     /// except an update whose capabilities don't grow keeps its grant and
     /// its on/off state (ABS-84 §5).
     @discardableResult
     public func install(from source: URL, sourceKind: PluginSource, fileManager fm: FileManager = .default) throws -> PluginRecord {
         let inspection = try PluginPackage.inspect(folder: source, fileManager: fm)
+        let publisher = try PluginSignature.publisher(in: source, hash: inspection.hash)
+        if sourceKind == .catalog && publisher == nil { throw PluginCatalogError.missingSignature }
         let manifest = inspection.manifest
         var records = records()
         let existing = records.first { $0.id == manifest.id }
@@ -236,6 +275,9 @@ public final class PluginManager: Sendable {
             let landed = try PluginPackage.inspect(folder: staging, fileManager: fm)
             guard landed.hash == inspection.hash else {
                 throw PluginValidationError.invalidManifest("the copy didn't match what was reviewed")
+            }
+            guard try PluginSignature.publisher(in: staging, hash: landed.hash) == publisher else {
+                throw PluginCatalogError.invalidSignature
             }
             if fm.fileExists(atPath: destination.path) { try fm.removeItem(at: destination) }
             try fm.moveItem(at: staging, to: destination)
@@ -411,11 +453,25 @@ public final class PluginManager: Sendable {
                 changed = true
                 guard existing == nil, (try? install(from: folder, sourceKind: .bundled, fileManager: fm)) != nil else { continue }
                 setEnabled(manifest.id, true)
-            } else if let existing, existing.source == .bundled, existing.version != manifest.version {
-                if (try? install(from: folder, sourceKind: .bundled, fileManager: fm)) != nil { changed = true }
             }
         }
         if changed { try? store.setSetting(Self.defaultsKey, offered.sorted()) }
+        return changed
+    }
+
+    /// Brings each installed bundled plugin up to the version shipped with
+    /// this Abstract (ABS-143), keeping its grants and on/off state unless
+    /// the new one asks for more. Returns whether anything changed.
+    @discardableResult
+    public func updateBundled(from bundled: [URL], fileManager fm: FileManager = .default) -> Bool {
+        var changed = false
+        for folder in bundled {
+            guard let manifest = try? PluginPackage.inspect(folder: folder, fileManager: fm).manifest,
+                  let existing = records().first(where: { $0.id == manifest.id }),
+                  existing.source == .bundled, existing.version != manifest.version,
+                  (try? install(from: folder, sourceKind: .bundled, fileManager: fm)) != nil else { continue }
+            changed = true
+        }
         return changed
     }
 

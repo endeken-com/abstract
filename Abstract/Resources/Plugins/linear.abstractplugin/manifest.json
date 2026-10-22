@@ -2,7 +2,7 @@
   "api": 2,
   "id": "sh.abstract.linear",
   "name": "Linear",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Find Linear issues in the composer's issue search, by words, a key like ENG-123 or a link, and attach them to your messages. It connects with a personal Linear API key, kept in your keychain, or with the Linear CLI signed in on this Mac.",
   "entry": "index.html",
   "capabilities": ["network", "secrets", "storage.own", "cli"],
@@ -25,6 +25,7 @@
   "background": "background.js",
   "contributes": {
     "settingsPage": { "id": "settings", "title": "Linear Settings", "symbol": "gearshape" },
+    "projectSettings": { "id": "project", "title": "Linear for this project" },
     "issueTracker": {
       "title": "Linear",
       "icon": "icon.svg",

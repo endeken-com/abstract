@@ -975,6 +975,12 @@ private struct RailChatDetails: View {
                 row("Project") { Image(systemName: "folder") } content: {
                     value(model.project(session.projectId)?.name ?? "Standalone")
                 }
+                // The tracker projects its project links to (ABS-143).
+                ForEach(model.projectIssueTrackers(session.projectId).linked) { item in
+                    row(item.tracker.title) { TrackerGlyph(pluginId: item.tracker.pluginId, size: 12) } content: {
+                        value(item.link.title)
+                    }
+                }
             }
         }
         .padding(Space.md)

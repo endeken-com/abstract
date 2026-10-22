@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import WebKit
 import AbstractCore
@@ -69,6 +70,7 @@ struct PluginHostView: View {
     }
 }
 
+
 /// The web view and its bridge. Package files are served through
 /// `abstract-plugin://` only; every other navigation is refused, the data
 /// store doesn't persist, and every inbound message goes through
@@ -101,6 +103,7 @@ private struct PluginWebView: NSViewRepresentable {
         webView.navigationDelegate = coordinator
         webView.setValue(false, forKey: "drawsBackground")
         coordinator.webView = webView
+        coordinator.watchActivation(in: webView)
         coordinator.applyAppearance()
         let entry = manifest.entry.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? manifest.entry
         if let url = URL(string: "abstract-plugin://plugin/\(entry)") {
@@ -129,7 +132,7 @@ private struct PluginWebView: NSViewRepresentable {
     }
 
     @MainActor
-    final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
+    final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NSPopoverDelegate {
         private let model: AppModel
         private let plugin: InstalledPlugin
         private let manifest: PluginManifest
@@ -139,6 +142,12 @@ private struct PluginWebView: NSViewRepresentable {
         private(set) var connection: PluginConnection!
         private var loaded = false
         private var dead = false
+        var lastActivation = Date.distantPast
+        private var activationMonitor: Any?
+        private var iconPopover: NSPopover?
+        private var pendingIcon: (id: String?, key: String)?
+        private var iconUploadOpen = false
+        private var imageHandles: [String: (path: String, token: String)] = [:]
         var appearance: PluginAppearance
         weak var webView: WKWebView?
 
@@ -162,11 +171,140 @@ private struct PluginWebView: NSViewRepresentable {
             connection.onSnapshot = { [weak self] in
                 if self?.placement.chatId != nil { self?.sendContext() }
             }
+            connection.onIconGet = { [weak self] id, key in self?.sendIcon(id: id, key: key) }
+            connection.onIconChoose = { [weak self] id, key, anchor in self?.chooseIcon(id: id, key: key, anchor: anchor) }
         }
 
         func tearDown() {
             dead = true
+            if let activationMonitor { NSEvent.removeMonitor(activationMonitor) }
+            activationMonitor = nil
+            pendingIcon = nil
+            iconUploadOpen = false
+            iconPopover?.close()
+            iconPopover = nil
             connection.tearDown()
+        }
+
+        func watchActivation(in webView: WKWebView) {
+            activationMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .keyDown]) { [weak self, weak webView] event in
+                guard let self, let webView, let window = webView.window, event.window === window else { return event }
+                if event.type == .leftMouseDown {
+                    let point = webView.convert(event.locationInWindow, from: nil)
+                    if webView.bounds.contains(point) { self.lastActivation = Date() }
+                } else if let responder = event.window?.firstResponder as? NSView,
+                          responder === webView || responder.isDescendant(of: webView) {
+                    self.lastActivation = Date()
+                }
+                return event
+            }
+        }
+
+        private func sendIcon(id: String?, key: String) {
+            guard !dead else { return }
+            let value = model.store.pluginIcon(pluginId: plugin.id, key: key) ?? IconValue()
+            var fields: [String: JSONValue] = [
+                "key": .string(key),
+                "symbol": value.symbol.map(JSONValue.string) ?? .null,
+                "color": value.color.map(JSONValue.string) ?? .null,
+            ]
+            if let path = value.imagePath, ProjectIconStore.image(path) != nil {
+                if imageHandles[key]?.path != path { imageHandles[key] = (path, UUID().uuidString) }
+                fields["imageHandle"] = imageHandles[key].map { .string($0.token) } ?? .null
+            } else {
+                imageHandles[key] = nil
+                fields["imageHandle"] = .null
+            }
+            let tile = IconTile(value: value, name: key, context: .plugin, size: 40)
+                .environment(\.colorScheme, appearance.isDark ? .dark : .light)
+            let renderer = ImageRenderer(content: tile)
+            renderer.scale = 2
+            if let image = renderer.nsImage, let tiff = image.tiffRepresentation,
+               let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]),
+               png.count <= 64 * 1024 {
+                fields["previewDataURL"] = .string("data:image/png;base64,\(png.base64EncodedString())")
+            } else { fields["previewDataURL"] = .null }
+            connection.send(type: "reply", id: id, payload: .object(fields))
+        }
+
+        private func chooseIcon(id: String?, key: String, anchor: PluginIconAnchor) {
+            guard !dead, model.plugins.plugin(plugin.id)?.isUsable == true,
+                  let webView, pendingIcon == nil,
+                  Date().timeIntervalSince(lastActivation) <= 2 else {
+                connection.send(type: "error", id: id, payload: .object(["message": .string("Click the icon button to choose an icon.")]))
+                return
+            }
+            let old = model.store.pluginIcon(pluginId: plugin.id, key: key) ?? IconValue()
+            let bounds = webView.bounds
+            let x = min(max(CGFloat(anchor.x), 0), max(bounds.width - 1, 0))
+            let y = min(max(CGFloat(anchor.y), 0), max(bounds.height - 1, 0))
+            let width = min(CGFloat(anchor.width), max(bounds.width - x, 1))
+            let height = min(CGFloat(anchor.height), max(bounds.height - y, 1))
+            let rect = NSRect(x: x, y: webView.isFlipped ? y : bounds.height - y - height, width: width, height: height)
+            pendingIcon = (id, key)
+            let picker = IconPicker(value: old, name: key,
+                                    onChange: { [weak self] in self?.commitIcon($0, id: id, key: key) },
+                                    onUpload: { [weak self] in self?.importIcon($0, id: id, key: key) },
+                                    dismiss: {}, dismissBeforeUpload: false,
+                                    onUploadStart: { [weak self] in self?.iconUploadOpen = true },
+                                    onUploadCancel: { [weak self] in self?.cancelIconUpload() })
+            let popover = NSPopover()
+            popover.behavior = .transient
+            popover.contentViewController = NSHostingController(rootView: picker)
+            popover.delegate = self
+            iconPopover = popover
+            popover.show(relativeTo: rect, of: webView, preferredEdge: .maxY)
+        }
+
+        private func importIcon(_ source: URL, id: String?, key: String) {
+            iconUploadOpen = false
+            do {
+                let path = try ProjectIconStore.save(source, owner: .plugin(plugin.id))
+                var value = model.store.pluginIcon(pluginId: plugin.id, key: key) ?? IconValue()
+                value.imagePath = path
+                commitIcon(value, id: id, key: key, newPath: path)
+            } catch {
+                connection.send(type: "error", id: id, payload: .object(["message": .string(error.localizedDescription)]))
+                pendingIcon = nil
+                iconPopover?.close()
+                iconPopover = nil
+            }
+        }
+
+        private func cancelIconUpload() {
+            iconUploadOpen = false
+            guard let pendingIcon else { return }
+            self.pendingIcon = nil
+            sendIcon(id: pendingIcon.id, key: pendingIcon.key)
+            iconPopover?.close()
+            iconPopover = nil
+        }
+
+        private func commitIcon(_ value: IconValue, id: String?, key: String, newPath: String? = nil) {
+            guard !dead, pendingIcon?.key == key else { ProjectIconStore.discard(newPath); return }
+            let old = model.store.pluginIcon(pluginId: plugin.id, key: key)
+            do {
+                try model.store.savePluginIcon(value, pluginId: plugin.id, key: key)
+                if old?.imagePath != value.imagePath { ProjectIconStore.discard(old?.imagePath) }
+                pendingIcon = nil
+                sendIcon(id: id, key: key)
+                iconPopover?.close()
+                iconPopover = nil
+            } catch {
+                ProjectIconStore.discard(newPath)
+                connection.send(type: "error", id: id, payload: .object(["message": .string(error.localizedDescription)]))
+                pendingIcon = nil
+                iconPopover?.close()
+                iconPopover = nil
+            }
+        }
+
+        func popoverDidClose(_ notification: Notification) {
+            if iconUploadOpen { iconPopover = nil; return }
+            guard let pendingIcon else { iconPopover = nil; return }
+            self.pendingIcon = nil
+            sendIcon(id: pendingIcon.id, key: pendingIcon.key)
+            iconPopover = nil
         }
 
         /// The theme picked in Abstract, on the web view and in the page

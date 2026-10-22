@@ -25,8 +25,23 @@ public struct PluginSnapshot: Sendable, Hashable, Codable {
         public var name: String
         public var macId: String
         public var archived: Bool
-        public init(key: String, name: String, macId: String, archived: Bool) {
+        /// The trackers it links to (ABS-143), when it links any.
+        public var issueTrackers: [ProjectIssueTracker]?
+        public init(key: String, name: String, macId: String, archived: Bool,
+                    issueTrackers: [ProjectIssueTracker] = []) {
             self.key = key; self.name = name; self.macId = macId; self.archived = archived
+            self.issueTrackers = issueTrackers.isEmpty ? nil : issueTrackers
+        }
+    }
+
+    /// One tracker a project links to: "Jira" and "PROJ", or "Linear",
+    /// "Core" and its team "ENG".
+    public struct ProjectIssueTracker: Sendable, Hashable, Codable {
+        public var tracker: String
+        public var project: String
+        public var team: String?
+        public init(tracker: String, project: String, team: String? = nil) {
+            self.tracker = tracker; self.project = project; self.team = team
         }
     }
 
@@ -164,6 +179,7 @@ public enum PluginContext {
         if let placement {
             object["place"] = .string(placement.place.rawValue)
             object["contributionId"] = .string(placement.contributionId)
+            if let projectKey = placement.projectKey { object["projectKey"] = .string(projectKey) }
             if let chatId = placement.chatId {
                 object["chatId"] = .string(chatId)
                 if capabilities.contains(.chatsRead), let chat, chat.id == chatId {

@@ -10,6 +10,12 @@ public struct AgentProfile: Sendable, Hashable, Identifiable, Codable {
     public var name: String
     /// SF Symbol shown beside the name; nil = the default person.
     public var iconSymbol: String?
+    public var iconColor: String?
+    public var iconImagePath: String?
+    public var iconValue: IconValue {
+        get { IconValue(symbol: iconSymbol, color: iconColor, imagePath: iconImagePath) }
+        set { iconSymbol = newValue.symbol; iconColor = newValue.color; iconImagePath = newValue.imagePath }
+    }
     public var providerId: String
     /// Model name or alias; nil = the agent's configured default.
     public var model: String?
@@ -28,12 +34,14 @@ public struct AgentProfile: Sendable, Hashable, Identifiable, Codable {
 
     public init(
         id: String = UUID().uuidString, name: String, iconSymbol: String? = nil,
+        iconColor: String? = nil, iconImagePath: String? = nil,
         providerId: String = "claude", model: String? = nil, effort: String? = nil,
         permissionPolicy: PermissionPolicy = .ask, instructions: String = "",
         skills: [String] = [], mcpServers: [String] = [], sortOrder: Int = 0,
         createdAt: Date = Date()
     ) {
         self.id = id; self.name = name; self.iconSymbol = iconSymbol
+        self.iconColor = iconColor; self.iconImagePath = iconImagePath
         self.providerId = providerId; self.model = model; self.effort = effort
         self.permissionPolicy = permissionPolicy; self.instructions = instructions
         self.skills = skills; self.mcpServers = mcpServers
@@ -41,7 +49,7 @@ public struct AgentProfile: Sendable, Hashable, Identifiable, Codable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, iconSymbol, providerId, model, effort, permissionPolicy
+        case id, name, iconSymbol, iconColor, iconImagePath, providerId, model, effort, permissionPolicy
         case instructions, skills, mcpServers, sortOrder, createdAt
     }
 
@@ -52,6 +60,8 @@ public struct AgentProfile: Sendable, Hashable, Identifiable, Codable {
             id: try c.decode(String.self, forKey: .id),
             name: try c.decode(String.self, forKey: .name),
             iconSymbol: try c.decodeIfPresent(String.self, forKey: .iconSymbol),
+            iconColor: try c.decodeIfPresent(String.self, forKey: .iconColor),
+            iconImagePath: try c.decodeIfPresent(String.self, forKey: .iconImagePath),
             providerId: try c.decodeIfPresent(String.self, forKey: .providerId) ?? "claude",
             model: try c.decodeIfPresent(String.self, forKey: .model),
             effort: try c.decodeIfPresent(String.self, forKey: .effort),

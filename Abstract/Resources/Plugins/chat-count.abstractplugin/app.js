@@ -16,6 +16,22 @@ let lastChats = null;
 
 const countsEl = document.getElementById("counts");
 const chatsEl = document.getElementById("chats");
+const iconButton = document.getElementById("sample-icon");
+const iconImage = iconButton.querySelector("img");
+
+function showIcon(reply) {
+  if (!reply || !reply.previewDataURL) return;
+  iconImage.src = reply.previewDataURL;
+  iconImage.hidden = false;
+}
+
+iconButton.addEventListener("click", async () => {
+  const { x, y, width, height } = iconButton.getBoundingClientRect();
+  showIcon(await window.AbstractPlugin.send("icon.choose", {
+    key: "ChatCount", anchor: { x, y, width, height },
+  }));
+});
+window.AbstractPlugin.send("icon.get", { key: "ChatCount" }).then(showIcon);
 
 // Its one remembered setting, as a segmented control.
 const tabs = ui.tabs({

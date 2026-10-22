@@ -37,11 +37,11 @@ test('icon resolution follows the Mac sidebar', () => {
   // An older Mac sends no bytes: the symbol tile, never the Mac-only file path.
   assert.deepEqual(p.iconFor(uploaded, undefined), { kind: 'project', mark: { name: 'Alpha', symbol: 'cube', color: 'sage' } });
   assert.deepEqual(p.iconFor(uploaded, ''), { kind: 'project', mark: { name: 'Alpha', symbol: 'cube', color: 'sage' } });
-  // Bytes without an uploaded image chosen on the Mac are not used.
+  // The host strips its local path from the snapshot; the bytes alone are enough.
   assert.deepEqual(p.iconFor(project({ iconSymbol: 'bolt', iconColor: 'rose' }), png),
-    { kind: 'project', mark: { name: 'Alpha', symbol: 'bolt', color: 'rose' } });
-  // No custom choice at all: still the project's (default) tile, not the agent's logo.
-  assert.deepEqual(p.iconFor(project(), png), { kind: 'project', mark: { name: 'Alpha' } });
+    { kind: 'project', mark: { name: 'Alpha', symbol: 'bolt', color: 'rose', imageData: png } });
+  // No image bytes: still the project's (default) tile, not the agent's logo.
+  assert.deepEqual(p.iconFor(project()), { kind: 'project', mark: { name: 'Alpha' } });
   // A standalone chat keeps its agent's logo.
   assert.deepEqual(p.iconFor(null, png), { kind: 'agent' });
   assert.deepEqual(p.iconFor(undefined), { kind: 'agent' });

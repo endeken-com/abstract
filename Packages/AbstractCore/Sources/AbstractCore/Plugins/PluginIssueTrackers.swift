@@ -10,7 +10,9 @@ import Foundation
 public struct PluginIssueTrackerDeclaration: Sendable, Hashable, Codable {
     /// "Linear": the tracker's name in the composer and the agent's line.
     public var title: String
-    /// An SVG or PNG in the package, drawn in the text colour.
+    /// An SVG or PNG in the package. One that names no colour, or only
+    /// `currentColor`, takes the text colour; an SVG that names colours
+    /// keeps them, like Jira's blue mark (ABS-143).
     public var icon: String?
     /// What a key looks like, for the search field: "ENG-123".
     public var keyExample: String
@@ -43,6 +45,18 @@ public struct PluginIssueTrackerDeclaration: Sendable, Hashable, Codable {
             guard keyPattern.count <= Self.keyPatternLimit, (try? Regex(keyPattern)) != nil else {
                 throw PluginValidationError.invalidManifest("issueTracker's keyPattern must be a short regular expression")
             }
+        }
+    }
+
+    /// Whether an icon's file is drawn in the text colour: a PNG, or an
+    /// SVG that names no colour of its own. An SVG with a fill, stroke or
+    /// gradient stop in a colour (Jira's blue mark) is drawn as it is.
+    public static func iconIsTemplate(_ data: Data, path: String) -> Bool {
+        guard (path as NSString).pathExtension.lowercased() == "svg",
+              let text = String(data: data, encoding: .utf8) else { return true }
+        let colour = #/(?:fill|stroke|stop-color)\s*[=:]\s*["']?\s*([^"';\s>]+)/#.ignoresCase()
+        return !text.matches(of: colour).contains { match in
+            !["none", "currentcolor", "transparent", "inherit"].contains(match.1.lowercased())
         }
     }
 
@@ -135,6 +149,100 @@ public struct TrackerProject: Sendable, Hashable, Identifiable {
         var object: [String: JSONValue] = ["id": .string(id), "name": .string(name), "kind": .string(kind.rawValue)]
         if let key { object["key"] = .string(key) }
         return .object(object)
+    }
+}
+
+/// Which team and project of one tracker an Abstract project uses
+/// (ABS-143). Its tracker's plugin saves it from its section in Project
+/// Settings, in the plugin's own storage under the project's id, so
+/// turning the plugin off and on keeps it.
+public struct TrackerProjectLink: Sendable, Hashable, Codable {
+    /// A team or project, as `listProjects` named it.
+    public struct Target: Sendable, Hashable, Codable {
+        /// What a search is scoped by: "team:ENG", "project:PROJ".
+        public var id: String
+        public var name: String
+        /// "ENG", "PROJ": what the tracker writes in its keys.
+        public var key: String?
+
+        public init(id: String, name: String, key: String? = nil) {
+            self.id = id; self.name = name; self.key = key
+        }
+
+        public init(_ project: TrackerProject) {
+            self.init(id: project.id, name: project.name, key: project.key)
+        }
+
+        init?(_ value: JSONValue?) {
+            guard let project = TrackerProject(value.map { value -> JSONValue in
+                guard case .object(var object) = value else { return value }
+                object["kind"] = .string("project")
+                return .object(object)
+            }) else { return nil }
+            self.init(id: project.id, name: project.name, key: project.key)
+        }
+
+        /// What an agent or a label is given: its key, else its name.
+        public var label: String { key ?? name }
+
+        func jsonValue() -> JSONValue {
+            var object: [String: JSONValue] = ["id": .string(id), "name": .string(name)]
+            if let key { object["key"] = .string(key) }
+            return .object(object)
+        }
+    }
+
+    public var team: Target?
+    public var project: Target?
+
+    public init(team: Target? = nil, project: Target? = nil) {
+        self.team = team; self.project = project
+    }
+
+    /// From what a plugin saved: nil unless it names a team or a project.
+    public init?(_ value: JSONValue?) {
+        let team = Target(value?["team"]), project = Target(value?["project"])
+        guard team != nil || project != nil else { return nil }
+        self.init(team: team, project: project)
+    }
+
+    public func jsonValue() -> JSONValue {
+        var object: [String: JSONValue] = [:]
+        if let team { object["team"] = team.jsonValue() }
+        if let project { object["project"] = project.jsonValue() }
+        return .object(object)
+    }
+
+    /// The narrowest scope a search can use: the project, else the team.
+    public var scope: String { (project ?? team)?.id ?? "" }
+
+    /// How the project's header and hover card name it: "ENG · Core".
+    public var title: String {
+        [team?.name, project?.name].compactMap { $0 }.joined(separator: " · ")
+    }
+
+    /// Where a project's link to a tracker is kept in the tracker's storage.
+    /// Only Abstract writes these keys: the plugin's own `storage.set` can't.
+    public static let storagePrefix = "abstract.projectLink:"
+    public static func storageKey(projectId: String) -> String { storagePrefix + projectId }
+
+    /// Every project's link in one tracker's storage, by project id.
+    public static func all(in storage: PluginStorage) -> [String: TrackerProjectLink] {
+        var out: [String: TrackerProjectLink] = [:]
+        for (key, value) in (try? storage.values()) ?? [:] where key.hasPrefix(storagePrefix) {
+            if let link = TrackerProjectLink(value) { out[String(key.dropFirst(storagePrefix.count))] = link }
+        }
+        return out
+    }
+
+    public static func read(_ storage: PluginStorage, projectId: String) -> TrackerProjectLink? {
+        TrackerProjectLink((try? storage.value(forKey: storageKey(projectId: projectId))) ?? nil)
+    }
+
+    /// Saves it, or forgets it with nil. False when storage refused.
+    @discardableResult
+    public static func write(_ link: TrackerProjectLink?, to storage: PluginStorage, projectId: String) -> Bool {
+        (try? storage.set(link?.jsonValue(), forKey: storageKey(projectId: projectId))) ?? false
     }
 }
 
@@ -269,7 +377,9 @@ public enum PluginIssueTrackers {
         public var id: String { tracker.id }
     }
 
-    public static func search(_ query: String, trackers: [ResolvedIssueTracker],
+    /// `scopes` holds, by plugin id, the team or project a tracker's
+    /// search is limited to: the project's link, unless Search all is on.
+    public static func search(_ query: String, trackers: [ResolvedIssueTracker], scopes: [String: String] = [:],
                               ask: @Sendable @escaping (ResolvedIssueTracker, TrackerRequest) async -> TrackerAnswer) async -> [Group] {
         await withTaskGroup(of: (Int, Group).self) { group in
             for (index, tracker) in trackers.enumerated() {
@@ -278,7 +388,8 @@ public enum PluginIssueTrackers {
                         return (index, Group(tracker: tracker, issues: [], problem: access.problem
                                              ?? "\(tracker.title) isn't connected yet."))
                     }
-                    let answer = await ask(tracker, request(for: query, tracker: tracker.declaration))
+                    let answer = await ask(tracker, request(for: query, tracker: tracker.declaration,
+                                                            project: scopes[tracker.pluginId]))
                     if case .failed(let why) = answer { return (index, Group(tracker: tracker, issues: [], problem: why)) }
                     return (index, Group(tracker: tracker, issues: answer.issues))
                 }
@@ -334,4 +445,82 @@ public actor PluginTrackerCalls {
     }
 
     public var pending: Int { waiting.count }
+}
+
+/// One project's trackers (ABS-143): which are linked, which the
+/// composer shows and asks, and what agents and plugins are told.
+public struct ProjectIssueTrackers: Sendable, Hashable {
+    public struct Linked: Sendable, Hashable, Identifiable {
+        public var tracker: ResolvedIssueTracker
+        public var link: TrackerProjectLink
+        public var id: String { tracker.id }
+    }
+
+    /// The trackers that can run now, in name order.
+    public var available: [ResolvedIssueTracker]
+    /// Those of them this project links to, in the same order. A link
+    /// whose plugin is off isn't here, but stays saved.
+    public var linked: [Linked]
+
+    public init(available: [ResolvedIssueTracker], links: [String: TrackerProjectLink]) {
+        self.available = available
+        self.linked = available.compactMap { tracker in links[tracker.pluginId].map { Linked(tracker: tracker, link: $0) } }
+    }
+
+    /// A project's trackers as saved on this Mac: each usable tracker's
+    /// link, by plugin id and project id, read from its plugin's storage.
+    public init(projectId: String?, installed: [InstalledPlugin], links: (String) -> [String: TrackerProjectLink]) {
+        let available = PluginIssueTrackers.resolve(installed)
+        var found: [String: TrackerProjectLink] = [:]
+        if let projectId {
+            for tracker in available { found[tracker.pluginId] = links(tracker.pluginId)[projectId] }
+        }
+        self.init(available: available, links: found)
+    }
+
+    public init(projectId: String?, installed: [InstalledPlugin], storage: (String) -> PluginStorage) {
+        self.init(projectId: projectId, installed: installed) { TrackerProjectLink.all(in: storage($0)) }
+    }
+
+    /// The trackers the issue control shows and searches: the linked ones,
+    /// or every one when the project links none or Search all is on.
+    public func shown(searchAll: Bool = false) -> [ResolvedIssueTracker] {
+        linked.isEmpty || searchAll ? available : linked.map(\.tracker)
+    }
+
+    /// Each linked tracker's search scope, unless Search all is on.
+    public func scopes(searchAll: Bool = false) -> [String: String] {
+        searchAll ? [:] : Dictionary(uniqueKeysWithValues: linked.map { ($0.tracker.pluginId, $0.link.scope) })
+    }
+
+    /// Whether Search all would find more than the linked trackers do.
+    public var canSearchAll: Bool { !linked.isEmpty }
+
+    /// `ABSTRACT_LINEAR_TEAM`, `ABSTRACT_LINEAR_PROJECT`,
+    /// `ABSTRACT_JIRA_PROJECT`: the tracker's title in capitals, then what
+    /// it links, each as its key or else its name.
+    public var environment: [String: String] {
+        var out: [String: String] = [:]
+        for item in linked {
+            let name = Self.environmentName(item.tracker.title)
+            guard !name.isEmpty else { continue }
+            if let team = item.link.team { out["ABSTRACT_\(name)_TEAM"] = team.label }
+            if let project = item.link.project { out["ABSTRACT_\(name)_PROJECT"] = project.label }
+        }
+        return out
+    }
+
+    static func environmentName(_ title: String) -> String {
+        String(title.uppercased().map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : "_" })
+            .split(separator: "_", omittingEmptySubsequences: true).joined(separator: "_")
+    }
+
+    /// What the plugin snapshot says under `projects.read`.
+    public var snapshot: [PluginSnapshot.ProjectIssueTracker] {
+        linked.map { item in
+            PluginSnapshot.ProjectIssueTracker(tracker: item.tracker.title,
+                                               project: (item.link.project ?? item.link.team)?.label ?? "",
+                                               team: item.link.team?.label)
+        }
+    }
 }

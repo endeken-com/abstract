@@ -17,7 +17,7 @@ struct ProfilesSettingsPane: View {
                     Text("No profiles yet.").foregroundStyle(Color.btTextSecondary)
                 }
                 ForEach(model.profiles) { profile in
-                    SettingsListRow(symbol: profile.iconSymbol ?? "person.crop.circle",
+                    SettingsListRow(value: profile.iconValue, context: .profile,
                                     title: profile.name.isEmpty ? "Profile" : profile.name,
                                     detail: summary(profile),
                                     selected: selected?.id == profile.id) { selectedId = profile.id }
@@ -60,6 +60,9 @@ struct ProfilesSettingsPane: View {
         copy.name = "\(profile.name) copy"
         copy.sortOrder = (model.profiles.map(\.sortOrder).max() ?? -1) + 1
         copy.createdAt = Date()
+        if let path = profile.iconImagePath {
+            copy.iconImagePath = try? ProjectIconStore.save(URL(fileURLWithPath: path), owner: .profile)
+        }
         model.saveProfile(copy)
         return copy
     }
@@ -74,7 +77,8 @@ struct ProfilesSettingsPane: View {
 /// One row of a settings list: an icon, a name and a line under it; the
 /// chosen one is highlighted and its editor shows below the list.
 struct SettingsListRow: View {
-    let symbol: String
+    let value: IconValue
+    let context: IconContext
     let title: String
     let detail: String
     let selected: Bool
@@ -84,10 +88,7 @@ struct SettingsListRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: Space.md) {
-                Image(systemName: symbol)
-                    .font(.system(size: 14))
-                    .foregroundStyle(selected ? Color.btText : Color.btTextSecondary)
-                    .frame(width: 22)
+                IconTile(value: value, name: title, context: context, size: 24)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(title).font(.btBodyMedium).foregroundStyle(Color.btText)
                     Text(detail)
@@ -124,12 +125,6 @@ private struct ProfileSettingsSection: View {
     @FocusState private var instructionsFocused: Bool
     @State private var confirmingDelete = false
 
-    /// Icons on offer beside a profile's name.
-    private static let symbols = ["person.crop.circle", "hammer", "magnifyingglass",
-                                  "list.bullet.clipboard", "ladybug", "doc.text.magnifyingglass",
-                                  "wrench.and.screwdriver", "lightbulb", "paintpalette", "checkmark.seal",
-                                  "testtube.2", "text.book.closed", "shield.lefthalf.filled"]
-
     var body: some View {
         Section {
             LabeledContent("Name") {
@@ -140,16 +135,9 @@ private struct ProfileSettingsSection: View {
                     .frame(maxWidth: 360)
             }
             LabeledContent("Icon") {
-                Picker("Icon", selection: binding(\.iconSymbol)) {
-                    ForEach(Self.symbols, id: \.self) { symbol in
-                        Label(symbol, systemImage: symbol).tag(Optional(symbol))
-                    }
-                    if let custom = profile.iconSymbol, !Self.symbols.contains(custom) {
-                        Label(custom, systemImage: custom).tag(Optional(custom))
-                    }
-                }
-                .labelsHidden()
-                .frame(maxWidth: 360)
+                SharedIconButton(value: profile.iconValue, name: profile.name, context: .profile,
+                                 onChange: { model.setProfileIcon(profile.id, value: $0) },
+                                 onUpload: { model.importProfileIcon(profile.id, from: $0) })
             }
             LabeledContent("Agent") {
                 Picker("Agent", selection: binding(\.providerId, default: "claude")) {
@@ -240,9 +228,7 @@ private struct ProfileSettingsSection: View {
             }
         } header: {
             HStack(spacing: Space.sm) {
-                Image(systemName: profile.iconSymbol ?? "person.crop.circle")
-                    .font(.system(size: 16))
-                    .foregroundStyle(Color.btTextSecondary)
+                IconTile(value: profile.iconValue, name: profile.name, context: .profile, size: 26)
                 Text(profile.name.isEmpty ? "Profile" : profile.name).font(.btHeadline).foregroundStyle(Color.btText)
             }
             .padding(.top, Space.md)

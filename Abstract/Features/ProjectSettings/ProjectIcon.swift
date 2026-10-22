@@ -25,32 +25,54 @@ enum ProjectIconColor: String, CaseIterable, Identifiable {
     var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
 }
 
-/// Symbols that suit a project.
+/// Every icon editor offers the same symbols, including existing profile and workflow choices.
 enum ProjectIconSymbols {
     static let all = [
         "folder", "shippingbox", "cube", "square.stack.3d.up", "hammer",
         "wrench.and.screwdriver", "terminal", "chevron.left.forwardslash.chevron.right", "curlybraces", "server.rack",
         "cloud", "globe", "iphone", "macwindow", "gamecontroller",
         "paintbrush.pointed", "book.closed", "chart.bar", "leaf", "bolt",
+        "person.crop.circle", "magnifyingglass", "list.bullet.clipboard", "ladybug",
+        "doc.text.magnifyingglass", "lightbulb", "paintpalette", "checkmark.seal",
+        "testtube.2", "text.book.closed", "shield.lefthalf.filled", "sparkles",
+        Workflow.defaultSymbol,
     ]
 }
 
-/// A project's icon: its uploaded image, else its symbol or initial on its
-/// colour, else (with nothing chosen) the GitHub owner's avatar.
-struct ProjectIconView: View {
-    let project: Project
-    /// The GitHub owner of the project's origin, for the default.
-    var owner: String?
+enum IconContext {
+    case project(owner: String?)
+    case profile
+    case workflow
+    case plugin
+
+    var defaultSymbol: String? {
+        switch self {
+        case .profile: "person.crop.circle"
+        case .workflow: Workflow.defaultSymbol
+        case .project, .plugin: nil
+        }
+    }
+}
+
+/// One tile for the same saved value wherever its owner appears.
+struct IconTile: View {
+    let value: IconValue
+    let name: String
+    let context: IconContext
     var size: CGFloat = 30
+    var imageData: Data? = nil
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: (size * 0.26).rounded(), style: .continuous)
         Group {
-            if let path = project.iconImagePath, let image = ProjectIconStore.image(path) {
+            if let imageData, let image = NSImage(data: imageData) {
                 Image(nsImage: image).resizable().interpolation(.high).scaledToFill()
-            } else if project.iconSymbol != nil || project.iconColor != nil {
+            } else if let path = value.imagePath, let image = ProjectIconStore.image(path) {
+                Image(nsImage: image).resizable().interpolation(.high).scaledToFill()
+            } else if !value.isDefault {
                 tile
-            } else if let owner, let url = GitRemote.githubAvatarURL(owner: owner, size: 96) {
+            } else if case .project(let owner) = context,
+                      let owner, let url = GitRemote.githubAvatarURL(owner: owner, size: 96) {
                 AsyncImage(url: url) { phase in
                     if let image = phase.image { image.resizable().interpolation(.high).scaledToFill() } else { tile }
                 }
@@ -60,24 +82,35 @@ struct ProjectIconView: View {
         }
         .frame(width: size, height: size)
         .clipShape(shape)
-        .accessibilityHidden(true)
+        .accessibilityLabel("\(name) icon")
     }
 
-    private var tint: ProjectIconColor? { project.iconColor.flatMap(ProjectIconColor.init(rawValue:)) }
+    private var tint: ProjectIconColor? { value.color.flatMap(ProjectIconColor.init(rawValue:)) }
 
     private var tile: some View {
         ZStack {
             Rectangle().fill(tint?.color ?? Color.btInset)
             Group {
-                if let symbol = project.iconSymbol {
+                if let symbol = value.symbol ?? context.defaultSymbol {
                     Image(systemName: symbol).font(.system(size: size * 0.44, weight: .medium))
                 } else {
-                    Text(String(project.name.trimmingCharacters(in: .whitespaces).prefix(1)).uppercased())
+                    Text(String(name.trimmingCharacters(in: .whitespaces).prefix(1)).uppercased())
                         .font(BTFont.ui(size * 0.46, .semibold))
                 }
             }
             .foregroundStyle(tint == nil ? Color.btTextSecondary : Color.white.opacity(0.92))
         }
+    }
+}
+
+struct ProjectIconView: View {
+    let project: Project
+    var owner: String?
+    var size: CGFloat = 30
+
+    var body: some View {
+        IconTile(value: IconValue(symbol: project.iconSymbol, color: project.iconColor, imagePath: project.iconImagePath),
+                 name: project.name, context: .project(owner: owner), size: size)
     }
 }
 
@@ -99,16 +132,46 @@ struct ProjectIconButton: View {
         .onHover { hovering = $0 }
         .help("Change the icon")
         .popover(isPresented: $open, arrowEdge: .bottom) {
-            ProjectIconPicker(project: project, dismiss: { open = false })
+            IconPicker(value: IconValue(symbol: project.iconSymbol, color: project.iconColor, imagePath: project.iconImagePath),
+                       name: project.name, onChange: { value in
+                           model.setProjectIcon(project.id, symbol: value.symbol, color: value.color)
+                       }, onUpload: { model.importProjectIcon(project.id, from: $0) },
+                       dismiss: { open = false })
+        }
+    }
+}
+
+struct SharedIconButton: View {
+    let value: IconValue
+    let name: String
+    let context: IconContext
+    let onChange: (IconValue) -> Void
+    let onUpload: (URL) -> Void
+    @State private var open = false
+
+    var body: some View {
+        Button { open.toggle() } label: {
+            IconTile(value: value, name: name, context: context, size: 30)
+        }
+        .buttonStyle(.plain)
+        .help("Change the icon")
+        .popover(isPresented: $open, arrowEdge: .bottom) {
+            IconPicker(value: value, name: name, onChange: onChange,
+                       onUpload: onUpload, dismiss: { open = false })
         }
     }
 }
 
 /// Symbols, colours, an image of your own, or the default.
-struct ProjectIconPicker: View {
-    @Environment(AppModel.self) private var model
-    let project: Project
+struct IconPicker: View {
+    let value: IconValue
+    let name: String
+    let onChange: (IconValue) -> Void
+    let onUpload: (URL) -> Void
     let dismiss: () -> Void
+    var dismissBeforeUpload = true
+    var onUploadStart: () -> Void = {}
+    var onUploadCancel: () -> Void = {}
 
     private static let cell: CGFloat = 32
     private static let columns = Array(repeating: GridItem(.fixed(cell), spacing: 4), count: 5)
@@ -116,12 +179,13 @@ struct ProjectIconPicker: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Space.md) {
             LazyVGrid(columns: Self.columns, alignment: .leading, spacing: 4) {
-                ForEach(ProjectIconSymbols.all, id: \.self) { symbol in
-                    Button { model.setProjectIcon(project.id, symbol: symbol, color: project.iconColor) } label: {
+                ForEach(symbols, id: \.self) { symbol in
+                    Button { onChange(IconValue(symbol: symbol, color: value.color)) } label: {
                         Image(systemName: symbol)
                     }
-                    .buttonStyle(.icon(size: Self.cell, active: project.iconImagePath == nil && project.iconSymbol == symbol))
+                    .buttonStyle(.icon(size: Self.cell, active: value.imagePath == nil && value.symbol == symbol))
                     .help(symbol)
+                    .accessibilityLabel(symbol)
                 }
             }
 
@@ -139,9 +203,9 @@ struct ProjectIconPicker: View {
 
             VStack(spacing: 1) {
                 action("Upload Image…", action: upload)
-                if project.iconSymbol != nil || project.iconColor != nil || project.iconImagePath != nil {
+                if !value.isDefault {
                     action("Use Default") {
-                        model.resetProjectIcon(project.id)
+                        onChange(IconValue())
                         dismiss()
                     }
                 }
@@ -152,6 +216,11 @@ struct ProjectIconPicker: View {
         .padding(Space.md)
         .frame(width: 5 * Self.cell + 4 * 4 + 2 * Space.md)
         .background(Color.btSurfaceRaised)
+    }
+
+    private var symbols: [String] {
+        guard let selected = value.symbol, !ProjectIconSymbols.all.contains(selected) else { return ProjectIconSymbols.all }
+        return [selected] + ProjectIconSymbols.all
     }
 
     /// A menu-like row: text on a wash when hovered.
@@ -167,8 +236,8 @@ struct ProjectIconPicker: View {
     }
 
     private func swatch(_ tint: ProjectIconColor?) -> some View {
-        let selected = project.iconImagePath == nil && project.iconColor == tint?.rawValue
-        return Button { model.setProjectIcon(project.id, symbol: project.iconSymbol, color: tint?.rawValue) } label: {
+        let selected = value.imagePath == nil && value.color == tint?.rawValue
+        return Button { onChange(IconValue(symbol: value.symbol, color: tint?.rawValue)) } label: {
             Circle()
                 .fill(tint?.color ?? Color.btInset)
                 .frame(width: 16, height: 16)
@@ -194,10 +263,11 @@ struct ProjectIconPicker: View {
         panel.allowedContentTypes = [.image]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
-        panel.message = "Choose an image for \(project.name)"
+        panel.message = "Choose an image for \(name)"
         panel.prompt = "Use Image"
-        dismiss()
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        model.importProjectIcon(project.id, from: url)
+        onUploadStart()
+        if dismissBeforeUpload { dismiss() }
+        guard panel.runModal() == .OK, let url = panel.url else { onUploadCancel(); return }
+        onUpload(url)
     }
 }

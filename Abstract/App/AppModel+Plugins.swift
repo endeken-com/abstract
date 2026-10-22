@@ -18,7 +18,8 @@ extension AppModel {
 
         var projects = self.projects.map {
             PluginSnapshot.Project(key: PluginSnapshot.projectKey(macId: thisMac, projectId: $0.id),
-                                   name: $0.name, macId: thisMac, archived: $0.archivedAt != nil)
+                                   name: $0.name, macId: thisMac, archived: $0.archivedAt != nil,
+                                   issueTrackers: projectIssueTrackers($0.id).snapshot)
         }
         for device in remote.paired {
             for project in remote.links[device.id]?.snapshot?.projects ?? [] {
@@ -52,6 +53,8 @@ extension AppModel {
             hasher.combine(session.branch); hasher.combine(session.projectId)
         }
         hasher.combine(projects.map(\.id))
+        // A project's tracker link is part of its snapshot row (ABS-143).
+        hasher.combine(plugins.trackerLinksRevision)
         // A pull request's checks and review move without the count moving.
         for id in pullRequests.keys.sorted() {
             hasher.combine(id)
@@ -415,6 +418,9 @@ extension AppModel {
 
     func removePlugin(_ id: String) {
         plugins.remove(id)
+        if let paths = try? store.deletePluginIcons(pluginId: id) {
+            for path in paths { ProjectIconStore.discard(path) }
+        }
         leavePluginScreen(id)
     }
 

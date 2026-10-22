@@ -12,9 +12,9 @@ struct WorkflowStrip: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Space.sm) {
             HStack(spacing: 6) {
-                Image(systemName: Workflow.defaultSymbol)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Color.btTextTertiary)
+                IconTile(value: model.workflow(progress.workflow.id)?.iconValue ?? progress.workflow.icon ?? IconValue(),
+                         name: progress.workflow.name, context: .workflow, size: 18,
+                         imageData: remoteSnapshot?.workflowIcons?[progress.workflow.id])
                 Text(progress.workflow.name)
                     .font(.btChatToolMedium)
                     .foregroundStyle(Color.btTextSecondary)
@@ -39,7 +39,9 @@ struct WorkflowStrip: View {
                             .foregroundStyle(Color.btTextTertiary)
                             .frame(height: 22)
                     }
-                    StepChip(name: step.profileName, state: state(of: index))
+                    StepChip(name: step.profileName, state: state(of: index),
+                             icon: model.profile(step.step.profileId)?.iconValue ?? step.profile?.iconValue ?? IconValue(),
+                             imageData: remoteSnapshot?.profileIcons?[step.step.profileId])
                 }
             }
             if progress.state == .waiting, let next = progress.next {
@@ -73,6 +75,11 @@ struct WorkflowStrip: View {
         }
     }
 
+    private var remoteSnapshot: RemoteSnapshot? {
+        guard let peer = RemoteService.split(sessionId)?.device else { return nil }
+        return model.remote.links[peer]?.snapshot
+    }
+
     private func state(of index: Int) -> StepChip.State {
         if progress.state == .finished || index < progress.step { return .done }
         if index > progress.step { return .upcoming }
@@ -88,9 +95,12 @@ private struct StepChip: View {
     enum State { case done, current, upcoming, stopped }
     let name: String
     let state: State
+    let icon: IconValue
+    let imageData: Data?
 
     var body: some View {
         HStack(spacing: 4) {
+            IconTile(value: icon, name: name, context: .profile, size: 16, imageData: imageData)
             switch state {
             case .done:
                 Image(systemName: "checkmark").font(.system(size: 9, weight: .bold)).foregroundStyle(Color.btTextTertiary)

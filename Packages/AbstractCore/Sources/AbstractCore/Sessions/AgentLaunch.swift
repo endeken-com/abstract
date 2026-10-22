@@ -75,6 +75,9 @@ public struct LaunchSettings: Sendable {
     /// Where each chat's own launch files go (`ChatConfigFiles`); nil
     /// passes everything inline, and gives the agent no library skills.
     public var agentConfigRoot: String?
+    /// Variables the agent starts with: its project's tracker links
+    /// (ABS-143), like `ABSTRACT_JIRA_PROJECT`.
+    public var environment: [String: String] = [:]
 
     public init(providerOverrides: [String: ProviderOverride], outputStyle: OutputStyle, claudeProfile: String?,
                 standardClaudeProfile: String = NSHomeDirectory() + "/.claude", attachmentsDirectory: String,
@@ -120,6 +123,14 @@ public struct LaunchSettings: Sendable {
         skills = SkillLibrary.chatSkills(project: project?.assignedSkills ?? [], profile: profileSkills, available: available)
     }
 
+    /// Tells this launch's agent which tracker team and project
+    /// `session`'s project links to (ABS-143), as saved on this Mac.
+    public mutating func addIssueTrackers(for session: Session, plugins: PluginManager) {
+        let trackers = ProjectIssueTrackers(projectId: session.projectId, installed: plugins.installed(saving: false),
+                                            storage: plugins.storage(for:))
+        environment.merge(trackers.environment) { $1 }
+    }
+
     /// The default effort, when the model that will run takes it; else nil,
     /// the agent's own. A chat's own effort is passed as chosen.
     func defaultEffort(for provider: any ProviderDefinition, model: String?, home: String) -> String? {
@@ -161,6 +172,7 @@ public enum AgentLaunch {
                                 },
                                 skills: skills(for: session, provider: provider, settings: settings, home: home))
         var spec = resumeId.map { provider.buildResume(ctx, resumeId: $0) } ?? provider.buildLaunch(ctx)
+        spec.env.merge(settings.environment) { current, _ in current }
         if provider.id == "claude", let profile = settings.claudeProfile, profile != settings.standardClaudeProfile {
             spec.env["CLAUDE_CONFIG_DIR"] = profile
         }

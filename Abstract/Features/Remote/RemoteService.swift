@@ -400,8 +400,22 @@ final class RemoteService {
 
     func snapshot() -> RemoteSnapshot? {
         guard let model else { return nil }
-        return RemoteSnapshot(projects: model.projects.filter { $0.archivedAt == nil },
-                              sessions: model.sessions.filter { !$0.id.hasPrefix(Self.mirrorPrefix) },
+        let sharedProjects = model.projects.filter { $0.archivedAt == nil }
+        let sharedProfiles = model.profiles
+        return RemoteSnapshot(projects: sharedProjects.map { item in
+                                  var safe = item; safe.iconImagePath = nil; return safe
+                              },
+                              sessions: model.sessions.filter { !$0.id.hasPrefix(Self.mirrorPrefix) }.map { session in
+                                  var safe = session
+                                  if var progress = safe.workflow {
+                                      progress.workflow.icon?.imagePath = nil
+                                      for index in progress.workflow.steps.indices {
+                                          progress.workflow.steps[index].profile?.iconImagePath = nil
+                                      }
+                                      safe.workflow = progress
+                                  }
+                                  return safe
+                              },
                               providers: ProviderRegistry.all.map(\.id).filter { model.providerStatus[$0]?.available ?? false },
                               alive: Array(model.alive),
                               home: model.executor.homeDirectory, modelCatalogs: model.modelCatalogs,
@@ -446,8 +460,13 @@ final class RemoteService {
                               internetAddress: internetAddress,
                               backgroundTasks: model.alive.filter { model.runningBackgroundTasks($0) > 0 }.sorted(),
                               unmergedWork: model.branchStates.mapValues(\.hasUnmergedWork),
-                              projectIcons: projectIcons(model.projects.filter { $0.archivedAt == nil }),
-                              automationDevice: true, projectDefaultDevice: true, profiles: model.profiles,
+                              projectIcons: projectIcons(sharedProjects),
+                              profileIcons: profileIcons(sharedProfiles),
+                              workflowIcons: workflowIcons(model.workflows),
+                              automationDevice: true, projectDefaultDevice: true,
+                              profiles: sharedProfiles.map { item in
+                                  var safe = item; safe.iconImagePath = nil; return safe
+                              },
                               everythingPaused: model.pauseState.everythingPaused,
                               pausedProjectIds: model.pauseState.pausedProjectIds.sorted(),
                               pauseControl: true,
@@ -481,6 +500,28 @@ final class RemoteService {
                 projectIconCache[path] = (modified, data)
             }
             if let data { icons[project.id] = data }
+        }
+        return icons.isEmpty ? nil : icons
+    }
+
+    private func profileIcons(_ profiles: [AgentProfile]) -> [String: Data]? {
+        var icons: [String: Data] = [:]
+        for profile in profiles {
+            guard let path = profile.iconImagePath,
+                  let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+                  data.count <= RemoteSnapshot.maxProjectIconBytes else { continue }
+            icons[profile.id] = data
+        }
+        return icons.isEmpty ? nil : icons
+    }
+
+    private func workflowIcons(_ workflows: [Workflow]) -> [String: Data]? {
+        var icons: [String: Data] = [:]
+        for workflow in workflows {
+            guard let path = workflow.iconImagePath,
+                  let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+                  data.count <= RemoteSnapshot.maxProjectIconBytes else { continue }
+            icons[workflow.id] = data
         }
         return icons.isEmpty ? nil : icons
     }
@@ -1026,6 +1067,14 @@ final class HostedPeer {
             model.deleteAutomation(id)
             return .ok
         case .saveProfile(let profile):
+            var profile = profile
+            // A viewer never receives the host's path. Keep its image when
+            // editing other fields, and clear it when the symbol changes.
+            if let old = model.profile(profile.id), old.iconSymbol == profile.iconSymbol {
+                profile.iconImagePath = old.iconImagePath
+            } else {
+                profile.iconImagePath = nil
+            }
             model.saveProfile(profile)
             return .ok
         case .deleteProfile(let id):

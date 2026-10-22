@@ -34,6 +34,9 @@ public enum PluginContributions {
                 (.settings, contributes.settingsPage.map { [$0] } ?? []), (.home, contributes.homeWidgets),
                 (.review, contributes.reviewActions), (.pullRequest, contributes.pullRequestSwitches),
                 (.link, contributes.linkDecorators),
+                // A project's section is for linking it to the plugin's tracker.
+                (.projectSettings, contributes.issueTracker == nil || !plugin.record.grantedBackground
+                    ? [] : contributes.projectSettings.map { [$0] } ?? []),
             ]
             // An entry that needs a grant the plugin no longer holds stays
             // hidden until it's granted again (ABS-102).

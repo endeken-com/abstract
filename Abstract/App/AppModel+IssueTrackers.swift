@@ -14,10 +14,25 @@ extension AppModel {
         return await pluginBackground.askTracker(tracker.pluginId, request)
     }
 
-    /// Every tracker's results for what was typed, grouped by tracker.
-    func searchIssueTrackers(_ query: String) async -> [PluginIssueTrackers.Group] {
-        let trackers = issueTrackers
-        return await PluginIssueTrackers.search(query, trackers: trackers) { [weak self] tracker, request in
+    /// The trackers a project links to (ABS-143), as saved on this Mac,
+    /// among the ones that can run now.
+    func projectIssueTrackers(_ projectId: String?) -> ProjectIssueTrackers {
+        _ = plugins.trackerLinksRevision
+        return ProjectIssueTrackers(projectId: projectId, installed: plugins.installed, links: plugins.trackerLinks)
+    }
+
+    /// A project's tracker link changed: the composer, the headers and
+    /// plugins' snapshots follow.
+    func noteTrackerLinksChanged() { plugins.noteTrackerLinksChanged() }
+
+    /// Every tracker's results for what was typed, grouped by tracker:
+    /// the project's linked trackers within their link, or with
+    /// `searchAll` every tracker everywhere.
+    func searchIssueTrackers(_ query: String, projectId: String? = nil,
+                             searchAll: Bool = false) async -> [PluginIssueTrackers.Group] {
+        let project = projectIssueTrackers(projectId)
+        return await PluginIssueTrackers.search(query, trackers: project.shown(searchAll: searchAll),
+                                                scopes: project.scopes(searchAll: searchAll)) { [weak self] tracker, request in
             await self?.askTracker(tracker, request) ?? .failed("\(tracker.title) isn't running.")
         }
     }
@@ -102,9 +117,11 @@ extension AppModel {
     static let legacyLinearConnectedKey = "integrations.linear"
 }
 
-/// Trackers' icons, drawn in the text colour. Read from each plugin's
-/// package when plugins change, so a chip in an old chat finds its icon
-/// without asking the plugin anything.
+/// Trackers' icons. Read from each installed plugin's package when
+/// plugins change, so a chip in an old chat finds its icon without asking
+/// the plugin anything, even while it's off. A one-colour icon is drawn in
+/// the text colour; one with colours of its own, like Jira's, keeps them
+/// (ABS-143).
 @MainActor
 enum TrackerIcons {
     private static var images: [String: (version: String, image: NSImage)] = [:]
@@ -115,7 +132,7 @@ enum TrackerIcons {
 
     static func update(_ installed: [InstalledPlugin]) {
         var next: [String: (version: String, image: NSImage)] = [:]
-        for plugin in installed where plugin.isUsable {
+        for plugin in installed {
             guard let icon = plugin.manifest?.contributes.issueTracker?.icon else { continue }
             if let kept = images[plugin.id], kept.version == plugin.record.version {
                 next[plugin.id] = kept
@@ -123,7 +140,7 @@ enum TrackerIcons {
             }
             guard let data = PluginPackage.fileData(in: plugin.packageURL, relativePath: icon),
                   let image = NSImage(data: data) else { continue }
-            image.isTemplate = true
+            image.isTemplate = PluginIssueTrackerDeclaration.iconIsTemplate(data, path: icon)
             next[plugin.id] = (plugin.record.version, image)
         }
         images = next

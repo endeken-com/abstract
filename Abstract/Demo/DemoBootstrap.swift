@@ -74,6 +74,7 @@ final class DemoBootstrap {
         FindProbe.runIfRequested(model)
         FileSearchProbe.runIfRequested(model)
         ReviewFindProbe.runIfRequested(model)
+        IssueTrackerProbe.runIfRequested(model)
 
         let running = abstract.map { p in Task { await self.chat(model, p, "Add a command palette with fuzzy search", .autoEdits) } }
         _ = running
@@ -378,8 +379,13 @@ struct Snapshotter {
             await shot("\(t)-07-palette", settle: 0.6)
             model.isPaletteOpen = false
 
+            UserDefaults.standard.set("general", forKey: "settingsTab")
             model.isSettingsOpen = true
             await shot("\(t)-14-settings", settle: 0.8)
+            UserDefaults.standard.set("profiles", forKey: "settingsTab")
+            await shot("\(t)-29-icons-profiles", settle: 0.8)
+            UserDefaults.standard.set("workflows", forKey: "settingsTab")
+            await shot("\(t)-29-icons-workflows", settle: 0.8)
             if t == "graphite" {
                 // The usage pane reads the agents' real logs: the first read takes a while.
                 UserDefaults.standard.set("usage", forKey: "settingsTab")
@@ -399,6 +405,7 @@ struct Snapshotter {
                 }
                 UserDefaults.standard.set("general", forKey: "settingsTab")
             }
+            UserDefaults.standard.set("general", forKey: "settingsTab")
             model.isSettingsOpen = false
             if t == "graphite", let idle { await shootFonts(model, in: idle.id) }
 
@@ -567,7 +574,9 @@ struct Snapshotter {
         model.destination = .projectSettings(p.id)
         await shot("graphite-19-project-icon", settle: 1.0)
         if let current = model.project(p.id) {
-            let renderer = ImageRenderer(content: ProjectIconPicker(project: current, dismiss: {})
+            let renderer = ImageRenderer(content: IconPicker(
+                value: IconValue(symbol: current.iconSymbol, color: current.iconColor, imagePath: current.iconImagePath),
+                name: current.name, onChange: { _ in }, onUpload: { _ in }, dismiss: {})
                 .environment(model).environment(\.colorScheme, .dark))
             renderer.scale = 2
             if let tiff = renderer.nsImage?.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {

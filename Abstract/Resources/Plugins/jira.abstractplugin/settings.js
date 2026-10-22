@@ -4,7 +4,7 @@ const ui = window.AbstractUI;
 const h = ui.h;
 const settings = document.getElementById("settings");
 
-JiraTracker.access((args) => window.AbstractPlugin.cli.run(args)).then((connection) => {
+whenPlaced(() => JiraTracker.access((args) => window.AbstractPlugin.cli.run(args)).then((connection) => {
   settings.textContent = "";
   settings.append(h("section", { class: "ab-section" },
     h("h2", { class: "ab-section-title" }, "Jira connection"),
@@ -14,4 +14,4 @@ JiraTracker.access((args) => window.AbstractPlugin.cli.run(args)).then((connecti
 }).catch((error) => {
   settings.textContent = "";
   settings.append(h("p", { class: "status" }, String(error.message || error)));
-});
+}));

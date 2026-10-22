@@ -28,6 +28,9 @@ final class PluginConnection {
     var onBackground: (PluginBridge.Outcome) -> Void = { _ in }
     /// After each snapshot, for a screen placed beside a chat.
     var onSnapshot: () -> Void = {}
+    /// A visible host view owns the native icon picker and previews.
+    var onIconGet: (String?, String) -> Void = { _, _ in }
+    var onIconChoose: (String?, String, PluginIconAnchor) -> Void = { _, _, _ in }
     /// Whether a write command serving this code host call may run
     /// unasked: the person started the call (ABS-139). Only a background
     /// script answers calls.
@@ -51,6 +54,12 @@ final class PluginConnection {
         // A placed showing may act on the chat it sits beside: the
         // person opened it there (ABS-96).
         if let chatId = placement?.chatId { bridge.knownChatIds = [chatId] }
+        // A tracker's section in a project's settings links that project
+        // (ABS-143): the person opened those settings.
+        if placement?.place == .projectSettings, let key = placement?.projectKey,
+           let project = model.projects.first(where: { model.pluginProjectKey($0.id) == key }) {
+            bridge.project = (key, project.id)
+        }
     }
 
     func tearDown() { dead = true }
@@ -92,6 +101,10 @@ final class PluginConnection {
         let storage = model.plugins.manager.storage(for: plugin.id)
         let outcome = bridge.handle(text, storage: storage)
         switch outcome {
+        case .iconGet(let id, let key):
+            onIconGet(id, key)
+        case .iconChoose(let id, let key, let anchor):
+            onIconChoose(id, key, anchor)
         case .reply(let id, let value):
             send(type: "reply", id: id, payload: value)
         case .getSnapshot:
@@ -162,6 +175,9 @@ final class PluginConnection {
             runCLI(request, id: id)
         case .subscribe, .scheduleJob, .cancelJob, .jobDone, .toolResult, .linkResult, .codeHostResult, .codeHostHosts, .trackerResult:
             onBackground(outcome)
+        case .projectLinkSaved(let id, _, let value):
+            send(type: "reply", id: id, payload: value)
+            model.noteTrackerLinksChanged()
         case .refused(let id, let reason):
             model.plugins.noteError(plugin.id, reason)
             send(type: "error", id: id, payload: .object(["message": .string(reason)]))
@@ -428,7 +444,22 @@ enum PluginShim {
           // Answers the composer's issue search (ABS-141), for the tracker
           // its manifest declares: fn(operation, input) returns the result
           // of access, searchIssues, issue or listProjects, or throws.
-          handle(fn) { trackerHandler = fn; }
+          handle(fn) { trackerHandler = fn; },
+          // The team and project this project links to (ABS-143), read and
+          // saved from the plugin's section in its Project Settings:
+          // { team?, project? }, each { id, name, key? }, or null.
+          projectLink() {
+            return api.send("projectLink.get").then((reply) => {
+              if (reply && "link" in reply) return reply.link;
+              throw new Error((reply && reply.message) || "This project's link couldn't be read.");
+            });
+          },
+          setProjectLink(link) {
+            return api.send("projectLink.set", { link: link || null }).then((reply) => {
+              if (reply && "link" in reply) return reply.link;
+              throw new Error((reply && reply.message) || "This project's link couldn't be saved.");
+            });
+          }
         },
         jobs: {
           schedule(id, rrule, fn, timezone) {

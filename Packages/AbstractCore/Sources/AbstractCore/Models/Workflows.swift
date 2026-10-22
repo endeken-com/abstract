@@ -63,16 +63,40 @@ public struct Workflow: Sendable, Hashable, Identifiable, Codable {
     public var name: String
     /// SF Symbol shown beside the name; nil = the default.
     public var iconSymbol: String?
+    public var iconColor: String?
+    public var iconImagePath: String?
+    public var iconValue: IconValue {
+        get { IconValue(symbol: iconSymbol, color: iconColor, imagePath: iconImagePath) }
+        set { iconSymbol = newValue.symbol; iconColor = newValue.color; iconImagePath = newValue.imagePath }
+    }
     public var steps: [WorkflowStep]
     public var sortOrder: Int
     public var createdAt: Date
 
     public static let defaultSymbol = "point.3.connected.trianglepath.dotted"
 
-    public init(id: String = UUID().uuidString, name: String, iconSymbol: String? = nil, steps: [WorkflowStep] = [],
+    public init(id: String = UUID().uuidString, name: String, iconSymbol: String? = nil,
+                iconColor: String? = nil, iconImagePath: String? = nil, steps: [WorkflowStep] = [],
                 sortOrder: Int = 0, createdAt: Date = Date()) {
         self.id = id; self.name = name; self.iconSymbol = iconSymbol; self.steps = steps
+        self.iconColor = iconColor; self.iconImagePath = iconImagePath
         self.sortOrder = sortOrder; self.createdAt = createdAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, iconSymbol, iconColor, iconImagePath, steps, sortOrder, createdAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(id: try c.decode(String.self, forKey: .id),
+                  name: try c.decode(String.self, forKey: .name),
+                  iconSymbol: try c.decodeIfPresent(String.self, forKey: .iconSymbol),
+                  iconColor: try c.decodeIfPresent(String.self, forKey: .iconColor),
+                  iconImagePath: try c.decodeIfPresent(String.self, forKey: .iconImagePath),
+                  steps: try c.decodeIfPresent([WorkflowStep].self, forKey: .steps) ?? [],
+                  sortOrder: try c.decodeIfPresent(Int.self, forKey: .sortOrder) ?? 0,
+                  createdAt: try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date(timeIntervalSinceReferenceDate: 0))
     }
 
     /// What a chat running this workflow carries: its steps as they are
@@ -81,7 +105,7 @@ public struct Workflow: Sendable, Hashable, Identifiable, Codable {
     /// the copy kept here stands in when it's gone, or on another Mac.
     public func snapshot(profiles: [AgentProfile]) -> WorkflowSnapshot {
         let byId = Dictionary(profiles.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        return WorkflowSnapshot(id: id, name: name, steps: steps.map {
+        return WorkflowSnapshot(id: id, name: name, icon: iconValue, steps: steps.map {
             WorkflowSnapshot.Step(step: $0, profileName: byId[$0.profileId]?.name ?? "Deleted profile", profile: byId[$0.profileId])
         })
     }
@@ -119,10 +143,11 @@ public struct WorkflowSnapshot: Sendable, Hashable, Codable {
 
     public var id: String
     public var name: String
+    public var icon: IconValue?
     public var steps: [Step]
 
-    public init(id: String, name: String, steps: [Step]) {
-        self.id = id; self.name = name; self.steps = steps
+    public init(id: String, name: String, icon: IconValue? = nil, steps: [Step]) {
+        self.id = id; self.name = name; self.icon = icon; self.steps = steps
     }
 }
 

@@ -23,7 +23,7 @@ struct WorkflowsSettingsPane: View {
                     .padding(.vertical, Space.xs)
                 }
                 ForEach(model.workflows) { workflow in
-                    SettingsListRow(symbol: workflow.iconSymbol ?? Workflow.defaultSymbol,
+                    SettingsListRow(value: workflow.iconValue, context: .workflow,
                                     title: workflow.name.isEmpty ? "Workflow" : workflow.name,
                                     detail: summary(workflow),
                                     selected: selected?.id == workflow.id) { selectedId = workflow.id }
@@ -82,9 +82,6 @@ private struct WorkflowEditor: View {
     let onDelete: () -> Void
     @State private var confirmingDelete = false
 
-    private static let symbols = [Workflow.defaultSymbol, "paintpalette", "hammer", "checkmark.seal",
-                                  "list.bullet.clipboard", "shippingbox", "sparkles", "ladybug"]
-
     var body: some View {
         Section {
             LabeledContent("Name") {
@@ -95,21 +92,13 @@ private struct WorkflowEditor: View {
                     .frame(maxWidth: 360)
             }
             LabeledContent("Icon") {
-                Picker("Icon", selection: Binding(get: { workflow.iconSymbol ?? Workflow.defaultSymbol },
-                                                  set: { new in update { $0.iconSymbol = new } })) {
-                    ForEach(Self.symbols, id: \.self) { Label($0, systemImage: $0).tag($0) }
-                    if let custom = workflow.iconSymbol, !Self.symbols.contains(custom) {
-                        Label(custom, systemImage: custom).tag(custom)
-                    }
-                }
-                .labelsHidden()
-                .frame(maxWidth: 360)
+                SharedIconButton(value: workflow.iconValue, name: workflow.name, context: .workflow,
+                                 onChange: { model.setWorkflowIcon(workflow.id, value: $0) },
+                                 onUpload: { model.importWorkflowIcon(workflow.id, from: $0) })
             }
         } header: {
             HStack(spacing: Space.sm) {
-                Image(systemName: workflow.iconSymbol ?? Workflow.defaultSymbol)
-                    .font(.system(size: 16))
-                    .foregroundStyle(Color.btTextSecondary)
+                IconTile(value: workflow.iconValue, name: workflow.name, context: .workflow, size: 26)
                 Text(workflow.name.isEmpty ? "Workflow" : workflow.name).font(.btHeadline).foregroundStyle(Color.btText)
             }
             .padding(.top, Space.md)
@@ -203,7 +192,11 @@ private struct WorkflowStepRow: View {
                 HStack(spacing: Space.sm) {
                     Picker("Profile", selection: field(\.profileId)) {
                         ForEach(model.profiles) { profile in
-                            Label(profile.name, systemImage: profile.iconSymbol ?? "person.crop.circle").tag(profile.id)
+                            Label {
+                                Text(profile.name)
+                            } icon: {
+                                IconTile(value: profile.iconValue, name: profile.name, context: .profile, size: 18)
+                            }.tag(profile.id)
                         }
                         if model.profile(step.profileId) == nil {
                             Text("Deleted profile").tag(step.profileId)
