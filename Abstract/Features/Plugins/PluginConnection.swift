@@ -51,6 +51,12 @@ final class PluginConnection {
         // A placed showing may act on the chat it sits beside: the
         // person opened it there (ABS-96).
         if let chatId = placement?.chatId { bridge.knownChatIds = [chatId] }
+        // A tracker's section in a project's settings links that project
+        // (ABS-143): the person opened those settings.
+        if placement?.place == .projectSettings, let key = placement?.projectKey,
+           let project = model.projects.first(where: { model.pluginProjectKey($0.id) == key }) {
+            bridge.project = (key, project.id)
+        }
     }
 
     func tearDown() { dead = true }
@@ -162,6 +168,9 @@ final class PluginConnection {
             runCLI(request, id: id)
         case .subscribe, .scheduleJob, .cancelJob, .jobDone, .toolResult, .linkResult, .codeHostResult, .codeHostHosts, .trackerResult:
             onBackground(outcome)
+        case .projectLinkSaved(let id, _, let value):
+            send(type: "reply", id: id, payload: value)
+            model.noteTrackerLinksChanged()
         case .refused(let id, let reason):
             model.plugins.noteError(plugin.id, reason)
             send(type: "error", id: id, payload: .object(["message": .string(reason)]))
@@ -428,7 +437,22 @@ enum PluginShim {
           // Answers the composer's issue search (ABS-141), for the tracker
           // its manifest declares: fn(operation, input) returns the result
           // of access, searchIssues, issue or listProjects, or throws.
-          handle(fn) { trackerHandler = fn; }
+          handle(fn) { trackerHandler = fn; },
+          // The team and project this project links to (ABS-143), read and
+          // saved from the plugin's section in its Project Settings:
+          // { team?, project? }, each { id, name, key? }, or null.
+          projectLink() {
+            return api.send("projectLink.get").then((reply) => {
+              if (reply && "link" in reply) return reply.link;
+              throw new Error((reply && reply.message) || "This project's link couldn't be read.");
+            });
+          },
+          setProjectLink(link) {
+            return api.send("projectLink.set", { link: link || null }).then((reply) => {
+              if (reply && "link" in reply) return reply.link;
+              throw new Error((reply && reply.message) || "This project's link couldn't be saved.");
+            });
+          }
         },
         jobs: {
           schedule(id, rrule, fn, timezone) {

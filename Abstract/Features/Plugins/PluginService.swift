@@ -18,6 +18,9 @@ final class PluginService {
     private(set) var backgroundProblems: [String: String] = [:]
     /// The count each plugin shows on its sidebar row (ABS-111); none is 0.
     private(set) var badges: [String: Int] = [:]
+    /// Bumped when a project's tracker link is saved (ABS-143), so the
+    /// composer, headers and snapshots read it again.
+    private(set) var trackerLinksRevision = 0
     /// Called after every change to what's installed, enabled or granted,
     /// so background scripts follow.
     @ObservationIgnored var onChange: () -> Void = {}
@@ -26,6 +29,8 @@ final class PluginService {
         manager = PluginManager(store: store)
         // The GitHub plugin is on unless you turned it off (ABS-139).
         manager.installDefaults(from: PluginManager.bundledFolders(in: Bundle.main.resourceURL))
+        // Linear and Jira, say, follow the copies inside the app (ABS-143).
+        manager.updateBundled(from: PluginManager.bundledFolders(in: Bundle.main.resourceURL))
         refresh()
     }
 
@@ -65,7 +70,23 @@ final class PluginService {
         installed = manager.installed()
         orphans = manager.orphanedProblems()
         switches = manager.switches()
+        trackerLinks = [:]
         onChange()
+    }
+
+    func noteTrackerLinksChanged() {
+        trackerLinks = [:]
+        trackerLinksRevision += 1
+    }
+
+    /// Each tracker's project links, read once until one changes.
+    @ObservationIgnored private var trackerLinks: [String: [String: TrackerProjectLink]] = [:]
+
+    func trackerLinks(_ pluginId: String) -> [String: TrackerProjectLink] {
+        if let kept = trackerLinks[pluginId] { return kept }
+        let read = TrackerProjectLink.all(in: manager.storage(for: pluginId))
+        trackerLinks[pluginId] = read
+        return read
     }
 
     func nextRevision() -> Int {

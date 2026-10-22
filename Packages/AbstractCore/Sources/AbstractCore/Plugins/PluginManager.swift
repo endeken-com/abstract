@@ -142,7 +142,9 @@ public final class PluginManager: Sendable {
     /// Every installed plugin, checked against what's on disk now. A package
     /// that changed since install is turned off until it's reviewed again;
     /// a missing or unreadable one is listed with its problem. Never throws.
-    public func installed() -> [InstalledPlugin] {
+    /// `saving` false only reads: `abstract`, beside the app, leaves the
+    /// records to the app.
+    public func installed(saving: Bool = true) -> [InstalledPlugin] {
         var records = records()
         var changed = false
         let out = records.indices.map { index -> InstalledPlugin in
@@ -168,7 +170,7 @@ public final class PluginManager: Sendable {
                                        problem: "Its files couldn't be read, so it's off.", packageURL: folder)
             }
         }
-        if changed { save(records) }
+        if changed, saving { save(records) }
         return out
     }
 
@@ -416,6 +418,22 @@ public final class PluginManager: Sendable {
             }
         }
         if changed { try? store.setSetting(Self.defaultsKey, offered.sorted()) }
+        return changed
+    }
+
+    /// Brings each installed bundled plugin up to the version shipped with
+    /// this Abstract (ABS-143), keeping its grants and on/off state unless
+    /// the new one asks for more. Returns whether anything changed.
+    @discardableResult
+    public func updateBundled(from bundled: [URL], fileManager fm: FileManager = .default) -> Bool {
+        var changed = false
+        for folder in bundled {
+            guard let manifest = try? PluginPackage.inspect(folder: folder, fileManager: fm).manifest,
+                  let existing = records().first(where: { $0.id == manifest.id }),
+                  existing.source == .bundled, existing.version != manifest.version,
+                  (try? install(from: folder, sourceKind: .bundled, fileManager: fm)) != nil else { continue }
+            changed = true
+        }
         return changed
     }
 
