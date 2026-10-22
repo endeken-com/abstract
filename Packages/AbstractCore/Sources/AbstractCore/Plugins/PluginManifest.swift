@@ -149,6 +149,9 @@ public enum PluginPlace: String, Sendable, Hashable, Codable, CaseIterable {
     /// A status after links in chats that match its patterns (ABS-126).
     /// Its background script is asked for each one; nothing opens.
     case link
+    /// A section under Issue tracker in a project's settings (ABS-143),
+    /// for an issue tracker's link to that project.
+    case projectSettings
 
     /// The place in plain words, for the review screen.
     public var plainWords: String {
@@ -162,6 +165,7 @@ public enum PluginPlace: String, Sendable, Hashable, Codable, CaseIterable {
         case .review: "A command in a chat's Review"
         case .pullRequest: "A switch in a chat's Pull Request tab"
         case .link: "A status after links in your chats"
+        case .projectSettings: "A section under Issue tracker in each project's settings"
         }
     }
 }
@@ -173,8 +177,11 @@ public struct PluginPlacement: Sendable, Hashable, Codable {
     public var place: PluginPlace
     public var contributionId: String
     public var chatId: String?
-    public init(place: PluginPlace, contributionId: String, chatId: String? = nil) {
-        self.place = place; self.contributionId = contributionId; self.chatId = chatId
+    /// The project whose settings a `projectSettings` section sits in
+    /// (ABS-143): the user's own target, like `chatId`.
+    public var projectKey: String?
+    public init(place: PluginPlace, contributionId: String, chatId: String? = nil, projectKey: String? = nil) {
+        self.place = place; self.contributionId = contributionId; self.chatId = chatId; self.projectKey = projectKey
     }
 }
 
@@ -309,6 +316,9 @@ public struct PluginManifest: Sendable, Hashable, Codable {
         public var reviewActions: [Contribution]
         public var pullRequestSwitches: [Contribution]
         public var linkDecorators: [Contribution]
+        /// Its section in each project's settings (ABS-143): only an issue
+        /// tracker has one, to link the project to its team or project.
+        public var projectSettings: Contribution?
         /// The issue tracker its background script answers for (ABS-141).
         public var issueTracker: PluginIssueTrackerDeclaration?
         /// The code host it answers for (ABS-139): core asks it for the
@@ -320,7 +330,8 @@ public struct PluginManifest: Sendable, Hashable, Codable {
                     homeWidgets: [Contribution] = [], reviewActions: [Contribution] = [],
                     pullRequestSwitches: [Contribution] = [], linkDecorators: [Contribution] = [],
                     issueTracker: PluginIssueTrackerDeclaration? = nil,
-                    codeHost: CodeHostDeclaration? = nil) {
+                    codeHost: CodeHostDeclaration? = nil, projectSettings: Contribution? = nil) {
+            self.projectSettings = projectSettings
             self.views = views; self.chatPanelTabs = chatPanelTabs; self.chatMenuItems = chatMenuItems
             self.paletteCommands = paletteCommands; self.settingsPage = settingsPage; self.homeWidgets = homeWidgets
             self.reviewActions = reviewActions; self.pullRequestSwitches = pullRequestSwitches
@@ -340,6 +351,7 @@ public struct PluginManifest: Sendable, Hashable, Codable {
             reviewActions = try box.decodeIfPresent([Contribution].self, forKey: .reviewActions) ?? []
             pullRequestSwitches = try box.decodeIfPresent([Contribution].self, forKey: .pullRequestSwitches) ?? []
             linkDecorators = try box.decodeIfPresent([Contribution].self, forKey: .linkDecorators) ?? []
+            projectSettings = try box.decodeIfPresent(Contribution.self, forKey: .projectSettings)
             issueTracker = try box.decodeIfPresent(PluginIssueTrackerDeclaration.self, forKey: .issueTracker)
             codeHost = try box.decodeIfPresent(CodeHostDeclaration.self, forKey: .codeHost)
         }
@@ -417,6 +429,7 @@ public struct PluginManifest: Sendable, Hashable, Codable {
             (.palette, contributes.paletteCommands),
             (.settings, contributes.settingsPage.map { [$0] } ?? []), (.home, contributes.homeWidgets),
             (.review, contributes.reviewActions), (.pullRequest, contributes.pullRequestSwitches),
+            (.projectSettings, contributes.projectSettings.map { [$0] } ?? []),
         ]
         for (place, items) in places {
             sentences += items.map { sentence($0.title(agentName: "another agent"), place) }
@@ -525,6 +538,7 @@ public struct PluginManifest: Sendable, Hashable, Codable {
             ("reviewActions", contributes.reviewActions),
             ("pullRequestSwitches", contributes.pullRequestSwitches),
             ("linkDecorators", contributes.linkDecorators),
+            ("projectSettings", contributes.projectSettings.map { [$0] } ?? []),
         ]
         for (place, items) in places {
             guard items.count <= 8 else {
@@ -573,6 +587,9 @@ public struct PluginManifest: Sendable, Hashable, Codable {
                 throw PluginValidationError.invalidManifest("issueTracker needs a background script")
             }
             try tracker.validate()
+        }
+        guard contributes.projectSettings == nil || contributes.issueTracker != nil else {
+            throw PluginValidationError.invalidManifest("projectSettings is for an issueTracker's link to a project")
         }
         try validateTools()
         try validateCLI()

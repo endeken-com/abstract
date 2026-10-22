@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 import AbstractCore
 
 /// A project's settings as one quiet document: the header, then General,
-/// Branches & naming, New chats, Skills, Permissions, Tools (MCP), Location & checkout,
+/// Branches & naming, New chats, Skills, Permissions, Tools (MCP), Issue tracker, Location & checkout,
 /// Lifecycle scripts and the danger zone. Every change is stored at once; text is stored after a pause.
 struct ProjectSettingsView: View {
     @Environment(AppModel.self) private var model
@@ -24,6 +24,7 @@ struct ProjectSettingsView: View {
                     SkillsSection(project: project)
                     PermissionsSection(project: project)
                     ToolsSection(project: project)
+                    IssueTrackerSection(project: project)
                     LocationSection(project: project)
                     ScriptsSection(project: project)
                     DangerSection(project: project)
@@ -243,6 +244,7 @@ private func chooseFolder(message: String, prompt: String, startingAt path: Stri
 // MARK: - Header
 
 private struct ProjectHeader: View {
+    @Environment(AppModel.self) private var model
     let project: Project
     let owner: String?
 
@@ -254,6 +256,15 @@ private struct ProjectHeader: View {
                 .foregroundStyle(Color.btText)
                 .lineLimit(1)
                 .truncationMode(.tail)
+            // The tracker projects it links to (ABS-143).
+            ForEach(model.projectIssueTrackers(project.id).linked) { item in
+                HStack(spacing: 5) {
+                    TrackerGlyph(pluginId: item.tracker.pluginId, size: 13)
+                    Text(item.link.title).font(.btCallout).lineLimit(1)
+                }
+                .foregroundStyle(Color.btTextSecondary)
+                .help("Linked to \(item.link.title) in \(item.tracker.title)")
+            }
             Spacer(minLength: Space.lg)
             DeviceMenu(project: project)
         }

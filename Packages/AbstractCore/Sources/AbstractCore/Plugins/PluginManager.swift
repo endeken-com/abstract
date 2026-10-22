@@ -419,6 +419,22 @@ public final class PluginManager: Sendable {
         return changed
     }
 
+    /// Brings each installed bundled plugin up to the version shipped with
+    /// this Abstract (ABS-143), keeping its grants and on/off state unless
+    /// the new one asks for more. Returns whether anything changed.
+    @discardableResult
+    public func updateBundled(from bundled: [URL], fileManager fm: FileManager = .default) -> Bool {
+        var changed = false
+        for folder in bundled {
+            guard let manifest = try? PluginPackage.inspect(folder: folder, fileManager: fm).manifest,
+                  let existing = records().first(where: { $0.id == manifest.id }),
+                  existing.source == .bundled, existing.version != manifest.version,
+                  (try? install(from: folder, sourceKind: .bundled, fileManager: fm)) != nil else { continue }
+            changed = true
+        }
+        return changed
+    }
+
     /// Plugin folders bundled with the app, offered through the same
     /// install button as any other.
     public static func bundledFolders(in resources: URL?, fileManager fm: FileManager = .default) -> [URL] {

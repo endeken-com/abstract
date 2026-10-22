@@ -327,7 +327,9 @@ A plugin can answer the composer's issue search for a tracker (ABS-141). It decl
 }
 ```
 
-The icon is an SVG or PNG in the package, drawn in the text colour. A query that is
+The icon is an SVG or PNG in the package. One drawn in a single colour or in
+`currentColor` takes the text colour; an SVG with colours of its own (fills, strokes or
+gradient stops) keeps them, the way Jira's blue mark does. A query that is
 one key, whole, or an `https://` link is asked for as one issue; anything else is
 searched for. Abstract asks every tracker that's on and groups what they find by
 tracker.
@@ -348,13 +350,46 @@ and the start of its description as `excerpt`. The plugin is handed only what wa
 in the search. Abstract draws the results and the chip, and writes the line the agent
 reads, `<Tracker> Issue KEY: title`, so every tracker reads the same.
 
+### Linking a project
+
+A tracker can add a section to each project's settings, under **Issue tracker**
+(ABS-143), with `"projectSettings": { "id": "project", "title": "Linear for this project" }`
+in `contributes`. It opens the plugin's page with `context.place` set to
+`projectSettings` and `context.projectKey` to the project's key, and shows only while
+the plugin is on. The page reads and saves that project's link, kept in the plugin's own
+storage under the project, so turning the plugin off and on keeps it:
+
+```js
+const link = await AbstractPlugin.issueTracker.projectLink();   // { team?, project? } or null
+await AbstractPlugin.issueTracker.setProjectLink({
+  team: { id: "team:ENG", name: "Engineering", key: "ENG" },     // ids as listProjects gives them
+  project: { id: "project:…", name: "Core" },
+});                                                               // null forgets it
+```
+
+A linked project's composer shows only its linked trackers' marks and searches each
+within its link, passing the project's id (else the team's) as `project` to
+`searchIssues`; **Search all** in the picker asks every tracker everywhere. A project
+linked to none shows every tracker that's on. Plugins with `projects.read` see
+`projects[].issueTrackers: [{ tracker, project, team? }]`, and the project's agents start
+with `ABSTRACT_<TRACKER>_TEAM` and `ABSTRACT_<TRACKER>_PROJECT` (the tracker's title in
+capitals, each value a key or else a name): `ABSTRACT_LINEAR_TEAM=ENG`,
+`ABSTRACT_JIRA_PROJECT=PROJ`.
+
 **Linear**, bundled, does this one of two ways, picked on its settings page: a personal
 Linear API key entered under Settings › Plugins and sent only to api.linear.app, or the
 [Linear CLI](https://github.com/schpet/linear-cli) signed in on the Mac, through `cli`
 with read commands only (`auth whoami`, `auth list`, `issue query`, `issue view`,
 `team list`, `project list`) in the workspace picked there. Abstract never reads the
 CLI's token. Both give the same results. It's turned on by itself when Abstract
-finds a Linear key from before it was a plugin, or the CLI signed in.
+finds a Linear key from before it was a plugin, or the CLI signed in. A project links to
+a Linear team and, optionally, one of its projects.
+
+**Jira**, bundled and off until you turn it on, reads Jira Cloud through Atlassian's
+`acli`. A project links to one Jira project key, searched with `project = KEY`.
+
+Bundled plugins you've installed follow the copy inside Abstract when it changes,
+keeping their grants and on/off state unless the new one asks for more.
 
 ## Previewing a plugin
 

@@ -63,16 +63,35 @@ struct AttachmentGlyph: View {
     }
 }
 
-/// A tracker plugin's icon, or a plain ticket when it isn't on.
+/// A tracker plugin's icon, or a plain ticket when it isn't installed. A
+/// one-colour icon takes the text colour; Jira's keeps its blue (ABS-143).
 struct TrackerGlyph: View {
     let pluginId: String?
     var size: CGFloat = 13
 
     var body: some View {
         if let image = TrackerIcons.image(pluginId) {
-            Image(nsImage: image).renderingMode(.template).resizable().frame(width: size - 1, height: size - 1)
+            Image(nsImage: image).renderingMode(image.isTemplate ? .template : .original)
+                .resizable().aspectRatio(contentMode: .fit).frame(width: size - 1, height: size - 1)
         } else {
             Image(systemName: "ticket").font(.system(size: size * 0.8)).frame(width: size, height: size)
+        }
+    }
+}
+
+/// The marks of the trackers an issue control searches, side by side:
+/// one for a project linked to one tracker, both when it links both or
+/// links none and both are on (ABS-143).
+struct TrackerMarks: View {
+    let trackers: [ResolvedIssueTracker]
+    var size: CGFloat = 13
+
+    var body: some View {
+        let shown = trackers.prefix(2)
+        HStack(spacing: 2) {
+            ForEach(Array(shown)) { tracker in
+                TrackerGlyph(pluginId: tracker.pluginId, size: shown.count > 1 ? size - 2 : size)
+            }
         }
     }
 }
@@ -170,10 +189,11 @@ struct AttachmentButtons: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            let trackers = model.issueTrackers
+            let project = model.projectIssueTrackers(projectId ?? model.session(sessionId)?.projectId)
+            let trackers = project.shown()
             if !trackers.isEmpty {
-                button(.tracker, help: trackers.count == 1 ? "Link a \(trackers[0].title) issue" : "Link an issue") {
-                    TrackerGlyph(pluginId: trackers.count == 1 ? trackers[0].pluginId : nil, size: 13)
+                button(.tracker, help: Self.trackerHelp(project)) {
+                    TrackerMarks(trackers: trackers, size: 13)
                 }
             }
             if repoRoot != nil {
@@ -197,6 +217,19 @@ struct AttachmentButtons: View {
             supportsGitHubIssues = origin.flatMap(GitRemote.host) == "github.com"
                 || model.codeHost(remote: origin, context: CodeHostContext())?.pluginId == "sh.abstract.github"
         }
+    }
+
+    /// "Link a Linear issue from ENG · Core", or which trackers it searches.
+    static func trackerHelp(_ project: ProjectIssueTrackers) -> String {
+        if project.linked.count == 1, let only = project.linked.first {
+            return "Link a \(only.tracker.title) issue from \(only.link.title)"
+        }
+        if !project.linked.isEmpty {
+            return "Link an issue from " + project.linked.map { "\($0.link.title) in \($0.tracker.title)" }
+                .joined(separator: " or ")
+        }
+        let titles = project.shown().map(\.title)
+        return titles.count == 1 ? "Link a \(titles[0]) issue" : "Link a \(titles.joined(separator: " or ")) issue"
     }
 
     private func button<Label: View>(_ source: AttachSource, help: String, @ViewBuilder label: () -> Label) -> some View {
@@ -235,7 +268,7 @@ struct AttachUploadButton: View {
 }
 
 enum AttachSource: Hashable {
-    /// Every issue tracker plugin that's on (ABS-141).
+    /// The project's linked trackers, or every one that's on (ABS-141, ABS-143).
     case tracker, githubIssue, pullRequest
 
     func placeholder(_ trackers: [ResolvedIssueTracker]) -> String {
@@ -243,7 +276,7 @@ enum AttachSource: Hashable {
         case .tracker:
             trackers.count == 1
                 ? "Search \(trackers[0].title) issues, or paste \(trackers[0].declaration.keyExample)"
-                : "Search issues, or paste a key or link"
+                : "Search \(trackers.map(\.title).joined(separator: " and ")) issues, or paste a key or link"
         case .githubIssue: "Search issues, or #number"
         case .pullRequest: "Search pull requests, or #number"
         }
@@ -283,9 +316,9 @@ private struct AttachPicker: View {
         var state: String
         var stateTint: Color? = nil
         var attachment: PromptAttachment
-        /// The tracker it came from, named above its first result when
-        /// several trackers answer.
-        var section: String? = nil
+        /// The tracker it came from, named with its mark above its first
+        /// result when several trackers are searched.
+        var section: ResolvedIssueTracker? = nil
     }
 
     @State private var query = ""
@@ -297,14 +330,24 @@ private struct AttachPicker: View {
     @State private var trackerProblems: [String] = []
     /// The newest search; an older one still answering doesn't overwrite it.
     @State private var generation = 0
+    /// Every tracker, unscoped, instead of the project's links (ABS-143).
+    @State private var searchAll = false
     @FocusState private var focused: Bool
+
+    private var trackerProject: ProjectIssueTrackers {
+        model.projectIssueTrackers(projectId ?? model.session(sessionId)?.projectId)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
-                AttachmentGlyph(kind: source.kind, tracker: model.issueTrackers.count == 1 ? model.issueTrackers[0].pluginId : nil,
-                                size: 13).foregroundStyle(Color.btTextTertiary)
-                TextField(source.placeholder(model.issueTrackers), text: $query)
+                if source == .tracker {
+                    TrackerMarks(trackers: trackerProject.shown(searchAll: searchAll), size: 13)
+                        .foregroundStyle(Color.btTextTertiary)
+                } else {
+                    AttachmentGlyph(kind: source.kind, size: 13).foregroundStyle(Color.btTextTertiary)
+                }
+                TextField(source.placeholder(trackerProject.shown(searchAll: searchAll)), text: $query)
                     .textFieldStyle(.plain)
                     .font(BTFont.ui(13))
                     .focused($focused)
@@ -316,15 +359,45 @@ private struct AttachPicker: View {
             .padding(.horizontal, 12)
             .frame(height: 40)
             Hairline()
+            if source == .tracker { scope }
             content
         }
         .frame(width: 420)
         .onAppear { focused = true }
-        .task(id: query) {
+        .task(id: "\(searchAll)\u{0}\(query)") {
             // Typing settles before searching.
             if !query.isEmpty { try? await Task.sleep(for: .milliseconds(250)) }
             guard !Task.isCancelled else { return }
             await load()
+        }
+    }
+
+    /// Where the search looks: the project's linked tracker projects, with
+    /// Search all beside them, or, for a project not linked yet, every
+    /// tracker that's on and where to link one (ABS-143).
+    @ViewBuilder
+    private var scope: some View {
+        let project = trackerProject
+        if project.canSearchAll {
+            HStack(spacing: 8) {
+                Text(searchAll ? "Searching every project in " + project.available.map(\.title).joined(separator: " and ")
+                               : "Searching " + project.linked.map { "\($0.link.title) in \($0.tracker.title)" }
+                                   .joined(separator: " and "))
+                    .font(.btCallout).foregroundStyle(Color.btTextTertiary).lineLimit(1).truncationMode(.tail)
+                Spacer(minLength: 8)
+                Toggle("Search all", isOn: $searchAll).toggleStyle(.checkbox).font(.btCallout)
+                    .help("Search every project in every tracker, not only the ones this project links to")
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 30)
+            Hairline()
+        } else if project.available.count > 1 {
+            Text("This project isn't linked to \(project.available.map(\.title).joined(separator: " or ")) yet, so \(project.available.count == 2 ? "both are" : "all are") searched. Link it in Project Settings.")
+                .font(.btCallout).foregroundStyle(Color.btTextTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12).padding(.vertical, 8)
+            Hairline()
         }
     }
 
@@ -361,7 +434,10 @@ private struct AttachPicker: View {
                     LazyVStack(spacing: 0) {
                         ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                             if let section = item.section {
-                                Text(section)
+                                HStack(spacing: 6) {
+                                    TrackerGlyph(pluginId: section.pluginId, size: 11)
+                                    Text(section.title)
+                                }
                                     .font(BTFont.ui(11, .medium))
                                     .foregroundStyle(Color.btTextTertiary)
                                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -425,15 +501,17 @@ private struct AttachPicker: View {
         do {
             switch source {
             case .tracker:
-                let groups = await model.searchIssueTrackers(query)
+                let projectId = projectId ?? model.session(sessionId)?.projectId
+                let groups = await model.searchIssueTrackers(query, projectId: projectId, searchAll: searchAll)
                 guard mine == generation, !Task.isCancelled else { return }
-                let named = groups.filter { !$0.issues.isEmpty }.count > 1
+                // Each result says its tracker whenever more than one is searched.
+                let named = groups.count > 1
                 items = groups.flatMap { group in
                     group.issues.enumerated().map { index, issue in
                         Item(id: "\(group.tracker.pluginId):\(issue.key)", reference: issue.key, title: issue.title,
                              state: issue.state ?? "",
                              attachment: issue.attachment(trackerId: group.tracker.pluginId, trackerName: group.tracker.title),
-                             section: named && index == 0 ? group.tracker.title : nil)
+                             section: named && index == 0 ? group.tracker : nil)
                     }
                 }
                 trackerProblems = groups.compactMap(\.problem)

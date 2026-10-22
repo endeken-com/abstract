@@ -65,8 +65,10 @@ function render() {
   }
 }
 
-render();
-load().catch((error) => {
-  settingsEl.textContent = "";
-  settingsEl.append(h("p", { class: "status problem" }, String((error && error.message) || error)));
+whenPlaced(() => {
+  render();
+  load().catch((error) => {
+    settingsEl.textContent = "";
+    settingsEl.append(h("p", { class: "status problem" }, String((error && error.message) || error)));
+  });
 });

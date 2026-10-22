@@ -2,7 +2,7 @@
   "api": 2,
   "id": "sh.abstract.jira",
   "name": "Jira",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Find Jira Cloud issues by key, link or words and attach them to chats. Uses Atlassian's acli sign-in on this Mac.",
   "entry": "index.html",
   "capabilities": ["cli"],
@@ -19,6 +19,7 @@
   "background": "background.js",
   "contributes": {
     "settingsPage": { "id": "settings", "title": "Jira Settings", "symbol": "gearshape" },
+    "projectSettings": { "id": "project", "title": "Jira for this project" },
     "issueTracker": {
       "title": "Jira",
       "icon": "icon.svg",

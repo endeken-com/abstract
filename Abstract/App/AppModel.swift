@@ -1062,6 +1062,7 @@ final class AppModel {
         settings.pluginToolsCommand = pluginToolsCommand(for: session)
         settings.addSkills(for: session, project: project(session.projectId), profile: profile(session.profileId),
                            sources: skillSources, dataDirectory: dataDirectory)
+        settings.environment.merge(projectIssueTrackers(session.projectId).environment) { $1 }
         if !resume, let note = SkillLibrary.unsupportedNote(provider: provider, skills: settings.skills) {
             engine.record(sessionId: session.id, OutputLine(stream: .note, line: note))
         }
