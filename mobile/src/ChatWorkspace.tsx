@@ -345,7 +345,6 @@ export function ChatWorkspace({ route, navigation }: any) {
   const [previewingMarkdown, setPreviewingMarkdown] = useState(false);
   const [composerFocused, setComposerFocused] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
-  const [opening, setOpening] = useState(true);
   const [attachments, setAttachments] = useState<PickedAttachment[]>([]);
   const [menu, setMenu] = useState<'manage' | null>(null);
   const [slashChoosing, setSlashChoosing] = useState<SlashChoiceKind | null>(null);
@@ -417,7 +416,8 @@ export function ChatWorkspace({ route, navigation }: any) {
   const scheduleFollow = React.useCallback(() => {
     cancelFollow();
     if (!follow.current.shouldFollow) return;
-    const reachEnd = () => { if (follow.current.shouldFollow) scroll.current?.scrollToEnd({ animated: false }); };
+    // FlatList's scrollToEnd estimates unmeasured rows and skips the padding under the composer; the native one uses the real content size.
+    const reachEnd = () => { if (follow.current.shouldFollow) (scroll.current?.getNativeScrollRef() as ScrollView | null)?.scrollToEnd({ animated: false }); };
     reachEnd();
     followFrames.current.push(requestAnimationFrame(reachEnd));
     followTimers.current.push(setTimeout(reachEnd, 100), setTimeout(reachEnd, 300));
@@ -441,15 +441,8 @@ export function ChatWorkspace({ route, navigation }: any) {
     follow.current.jump();
     mayLoadOlder.current = false;
     setAtBottom(true);
-    setOpening(true);
     scheduleFollow();
   }, [id, scheduleFollow]);
-  // Rows keep measuring after a chat opens; anchoring holds the end in view until they settle.
-  useEffect(() => {
-    if (!opening || syncing) return;
-    const timer = setTimeout(() => { setOpening(false); scheduleFollow(); }, 600);
-    return () => clearTimeout(timer);
-  }, [opening, syncing, scheduleFollow]);
   useEffect(() => {
     if (!chat) return;
     const chatRoot = chat.worktreePath || mac.snapshot?.projects.find(x => x.id === chat.projectId)?.rootPath || '';
@@ -672,10 +665,10 @@ export function ChatWorkspace({ route, navigation }: any) {
     scheduleFollow();
   };
   // Native visible-row preservation fights scrollToEnd as streamed rows change height.
-  // Keep it only while a chat opens, or while someone reads earlier messages or loads history.
+  // Keep it only while someone is reading earlier messages or loading history.
   return <SafeAreaView edges={['left', 'right']} style={s.root}>
     {pauseRow && <View style={s.pauseBanner}><Glyph name="pause.circle.fill" size={16} color="#E8B34A" /><Text style={s.pauseBannerText}>{pauseRow.text}</Text><Pressable accessibilityRole="button" accessibilityLabel={pauseRow.button} accessibilityState={{ disabled: !pauseRow.canAct }} disabled={!pauseRow.canAct} onPress={() => mac.request(pauseRow.request.name, pauseRow.request.args).catch(error => Alert.alert('Abstract', String(error.message || error)))} style={[s.pauseBannerButton, !pauseRow.canAct && { opacity: 0.45 }]}><Text style={s.pauseBannerButtonText}>{pauseRow.button}</Text></Pressable></View>}
-    <SwipeForward onSwipe={() => navigation.navigate('Review', { hostId, sessionId: id })} onBack={() => navigation.goBack()}><BlurTargetView ref={blurTarget} style={{ flex: 1 }}><FlatList ref={scroll} style={s.transcript} contentInsetAdjustmentBehavior="automatic" contentContainerStyle={[s.transcriptContent, { paddingBottom: bottomPanelHeight + keyboardOffset + 20 }]} data={transcriptRows} keyExtractor={transcriptKey} renderItem={renderTranscriptItem} initialNumToRender={14} maxToRenderPerBatch={12} windowSize={7} updateCellsBatchingPeriod={30} maintainVisibleContentPosition={atBottom && !opening ? undefined : { minIndexForVisible: 1 }} ListHeaderComponent={hasOlder || loadingHistory ? <Pressable accessibilityRole="button" accessibilityLabel="Load older messages" disabled={loadingHistory} onPress={loadEarlier} style={{ alignItems: 'center', paddingVertical: 10 }}>{loadingHistory ? <ActivityIndicator size="small" color={muted} /> : <Text style={s.thinkingLabel}>Load older messages</Text>}</Pressable> : null} ListFooterComponent={transcriptFooter} onContentSizeChange={onTranscriptSize} onLayout={scheduleFollow} onScroll={onTranscriptScroll} onScrollBeginDrag={onTranscriptDrag} onScrollEndDrag={event => updateScroll(event, true)} onMomentumScrollBegin={() => follow.current.beginGesture()} onMomentumScrollEnd={event => updateScroll(event, true)} scrollEventThrottle={16} keyboardShouldPersistTaps="handled" />{!atBottom && <Pressable accessibilityLabel="Jump to latest" style={[s.jump, { bottom: bottomPanelHeight + keyboardOffset + 12 }]} onPress={jumpToLatest}><Glyph name="arrow.down" size={14} color={ink} /></Pressable>}</BlurTargetView></SwipeForward>
+    <SwipeForward onSwipe={() => navigation.navigate('Review', { hostId, sessionId: id })} onBack={() => navigation.goBack()}><BlurTargetView ref={blurTarget} style={{ flex: 1 }}><FlatList ref={scroll} style={s.transcript} contentInsetAdjustmentBehavior="automatic" contentContainerStyle={[s.transcriptContent, { paddingBottom: bottomPanelHeight + keyboardOffset + 20 }]} data={transcriptRows} keyExtractor={transcriptKey} renderItem={renderTranscriptItem} initialNumToRender={14} maxToRenderPerBatch={12} windowSize={7} updateCellsBatchingPeriod={30} maintainVisibleContentPosition={atBottom ? undefined : { minIndexForVisible: 1 }} ListHeaderComponent={hasOlder || loadingHistory ? <Pressable accessibilityRole="button" accessibilityLabel="Load older messages" disabled={loadingHistory} onPress={loadEarlier} style={{ alignItems: 'center', paddingVertical: 10 }}>{loadingHistory ? <ActivityIndicator size="small" color={muted} /> : <Text style={s.thinkingLabel}>Load older messages</Text>}</Pressable> : null} ListFooterComponent={transcriptFooter} onContentSizeChange={onTranscriptSize} onLayout={scheduleFollow} onScroll={onTranscriptScroll} onScrollBeginDrag={onTranscriptDrag} onScrollEndDrag={event => updateScroll(event, true)} onMomentumScrollBegin={() => follow.current.beginGesture()} onMomentumScrollEnd={event => updateScroll(event, true)} scrollEventThrottle={16} keyboardShouldPersistTaps="handled" />{!atBottom && <Pressable accessibilityLabel="Jump to latest" style={[s.jump, { bottom: bottomPanelHeight + keyboardOffset + 12 }]} onPress={jumpToLatest}><Glyph name="arrow.down" size={14} color={ink} /></Pressable>}</BlurTargetView></SwipeForward>
     <ProgressiveBlur edge="bottom" blurTarget={blurTarget} style={[s.bottomBlur, { bottom: keyboardOffset, height: bottomPanelHeight + 24 }]} />
     <View style={[s.bottomPanel, { bottom: keyboardOffset }]} onLayout={event => {
       const measuredHeight = event?.nativeEvent?.layout?.height;
