@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { AccessibilityInfo, Animated, LayoutAnimation, Platform, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import { SymbolView } from 'expo-symbols';
-import { MenuView } from '@react-native-menu/menu';
+import { CompactMenu as MenuView } from './CompactMenu';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ProviderLogo } from './ProviderLogo';
 import { ProjectIcon } from './ProjectIcon';

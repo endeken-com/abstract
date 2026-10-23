@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { BlurTargetView } from 'expo-blur';
 import { AccessibilityInfo, ActivityIndicator, Alert, Animated, FlatList, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { SymbolView } from 'expo-symbols';
-import { MenuView } from '@react-native-menu/menu';
+import { CompactMenu as MenuView } from './CompactMenu';
 import * as Haptics from 'expo-haptics';
 import Markdown from 'react-native-markdown-display';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
