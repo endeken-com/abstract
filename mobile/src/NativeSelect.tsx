@@ -1,6 +1,7 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { MenuView, type MenuAction } from '@react-native-menu/menu';
+import type { MenuAction } from '@react-native-menu/menu';
+import { CompactMenu as MenuView } from './CompactMenu';
 import { SymbolView } from 'expo-symbols';
 
 type Choice = { id: string; title: string; selected?: boolean; image?: string };

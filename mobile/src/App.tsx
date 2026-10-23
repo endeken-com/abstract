@@ -8,7 +8,7 @@ import * as Haptics from 'expo-haptics';
 import { useFonts } from 'expo-font';
 import { SymbolView } from 'expo-symbols';
 import Svg, { Path } from 'react-native-svg';
-import { MenuView } from '@react-native-menu/menu';
+import { CompactMenu as MenuView } from './CompactMenu';
 import { BlurTargetView } from 'expo-blur';
 import { useHeaderHeight } from '@react-navigation/elements';
 import { remote, type RemoteClient } from './remote';

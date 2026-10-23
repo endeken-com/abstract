@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useHeaderHeight } from '@react-navigation/elements';
-import { MenuView } from '@react-native-menu/menu';
+import { CompactMenu as MenuView } from './CompactMenu';
 import { SymbolView } from 'expo-symbols';
 import * as Haptics from 'expo-haptics';
 import { KeyboardAwareScrollView } from './KeyboardAwareScrollView';
