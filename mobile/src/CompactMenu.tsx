@@ -2,6 +2,7 @@ import React, { useRef, useState } from 'react';
 import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { MenuView as SystemMenuView, type MenuAction, type MenuComponentProps } from '@react-native-menu/menu';
 import { SymbolView } from 'expo-symbols';
+import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type Anchor = { x: number; y: number; width: number; height: number };
@@ -21,6 +22,7 @@ export function CompactMenu({ actions, children, style, title, onPressAction, on
   const open = () => trigger.current?.measureInWindow((x, y, width, height) => {
     setPath([]);
     setAnchor({ x, y, width, height });
+    Haptics.selectionAsync().catch(() => {});
     onOpenMenu?.();
   });
   const close = () => { setAnchor(null); setPath([]); onCloseMenu?.(); };
@@ -45,9 +47,10 @@ export function CompactMenu({ actions, children, style, title, onPressAction, on
     below >= estimatedHeight || below >= above ? anchor.y + anchor.height + 5 : anchor.y - estimatedHeight - 5)) : 0;
   const menuLeft = anchor ? Math.max(14, Math.min(screenWidth - menuWidth - 14,
     anchor.x + anchor.width / 2 > screenWidth / 2 ? anchor.x + anchor.width - menuWidth : anchor.x)) : 0;
+  const childLabel = React.isValidElement(children) ? (children.props as { accessibilityLabel?: string }).accessibilityLabel : undefined;
 
   return <View style={style} collapsable={false}>
-    <Pressable ref={trigger} accessibilityRole="button" hitSlop={hitSlop} testID={testID} onPress={open} style={fillsWidth ? styles.fill : undefined}>{children}</Pressable>
+    <Pressable ref={trigger} accessibilityRole="button" accessibilityLabel={childLabel || title || 'Menu'} hitSlop={hitSlop} testID={testID} onPress={open} style={fillsWidth ? styles.fill : undefined}>{children}</Pressable>
     <Modal visible={!!anchor} transparent animationType="fade" presentationStyle="overFullScreen" onRequestClose={close}>
       <View style={styles.overlay} accessibilityViewIsModal>
         <Pressable style={StyleSheet.absoluteFill} accessibilityLabel="Close menu" onPress={close} />
