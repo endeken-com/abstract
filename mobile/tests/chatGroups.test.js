@@ -17,6 +17,7 @@ const stubs = {
   'expo-symbols': { SymbolView: 'SymbolView' },
   'react-native-svg': { __esModule: true, default: 'Svg', Path: 'Path' },
   '@react-native-menu/menu': { MenuView: 'MenuView' },
+  './CompactMenu': { CompactMenu: 'MenuView' },
   '@react-native-async-storage/async-storage': { __esModule: true, default: { getItem: async () => null, setItem: async () => {} } },
   './ProviderLogo': { ProviderLogo: 'ProviderLogo' },
 };
