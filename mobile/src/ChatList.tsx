@@ -151,7 +151,8 @@ export function ChatRow({ chat, group, showProject, showMac = false, now, select
   const unreachable = chat.macState === 'unreachable';
   const dimmed = chat.session.archivedAt != null || unreachable;
   const quiet = !selected && !unreachable && chat.session.pinnedAt == null && statusOf(chat) === 'done';
-  const stacked = useWindowDimensions().fontScale >= stackedScale;
+  const { fontScale } = useWindowDimensions();
+  const stacked = fontScale >= stackedScale;
   return <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={rowLabel(chat, line, now)} accessibilityHint="Opens the chat"
     accessibilityState={{ selected: !!selected }} android_ripple={{ color: pressedRipple }}
     style={({ pressed }) => [styles.row, selected && styles.rowSelected, pressed && Platform.OS === 'ios' && styles.rowPressed]}>
@@ -164,7 +165,7 @@ export function ChatRow({ chat, group, showProject, showMac = false, now, select
         </View>
         {unreachable
           ? <Text numberOfLines={1} style={styles.part}>{chat.mac} isn't reachable{chat.lastSeenAt ? ` · last seen ${lastSeen(chat.lastSeenAt, now)}` : ''}</Text>
-          : !lineIsEmpty(line) && <SecondLine line={line} stacked={stacked} />}
+          : !lineIsEmpty(line) && <SecondLine line={line} stacked={stacked} symbolScale={Math.min(Math.max(fontScale, 1), 2)} />}
       </View>
     </View>
   </Pressable>;
@@ -207,26 +208,28 @@ function WorkingBadge() {
 
 // The metadata under a title. Identity (why it needs you, project, Mac) leads on
 // the left and gives way first; the pull request, its checks and review keep
-// their full words on the right. At accessibility text sizes each takes its own line.
-export function SecondLine({ line, stacked = false }: { line: ChatLine; stacked?: boolean }) {
+// their full words on the right. At accessibility text sizes each takes its own
+// line, and the symbols grow with the text.
+export function SecondLine({ line, stacked = false, symbolScale = 1 }: { line: ChatLine; stacked?: boolean; symbolScale?: number }) {
+  const z = (size: number) => Math.round(size * symbolScale);
   const identity: React.ReactNode[] = [];
   if (line.attention) identity.push(<Text key="attention" numberOfLines={1} style={[styles.part, styles.attention, line.attention === 'Failed' && { color: removed }]}>{line.attention}</Text>);
   if (line.stall) identity.push(<Text key="stall" numberOfLines={1} style={[styles.part, { color: warning, flexShrink: 0 }]}>{line.stall}</Text>);
   if (line.project) identity.push(<Text key="project" numberOfLines={1} style={[styles.part, styles.projectName]}>{line.project}</Text>);
   if (line.mac) identity.push(<View key="mac" style={styles.macPart}>
-    <SymbolView name={{ ios: 'laptopcomputer', android: 'laptop_mac', web: 'laptop_mac' } as any} size={10} tintColor={tertiary} style={{ width: 13, height: 10 }} />
+    <SymbolView name={{ ios: 'laptopcomputer', android: 'laptop_mac', web: 'laptop_mac' } as any} size={z(10)} tintColor={tertiary} style={{ width: z(13), height: z(10) }} />
     <Text numberOfLines={1} style={[styles.part, styles.macName]}>{line.mac}</Text>
   </View>);
   const pr = line.pullRequest && <View key="pr" style={styles.prPart}>
-    <PullRequestIcon pr={line.pullRequest} size={11} />
+    <PullRequestIcon pr={line.pullRequest} size={z(11)} />
     <Text numberOfLines={1} style={[styles.part, styles.prNumber]}>{`#${line.pullRequest.number}`}</Text>
     {line.checks && <View style={styles.checks}>
-      <SymbolView name={checkSymbols[line.checks] as any} size={9} weight="semibold" tintColor={checkColors[line.checks]} style={{ width: 10, height: 10 }} />
-      <Text numberOfLines={1} style={[styles.part, { color: checkColors[line.checks] }]}>{line.checks}</Text>
+      <SymbolView name={checkSymbols[line.checks] as any} size={z(9)} weight="semibold" tintColor={checkColors[line.checks]} style={{ width: z(10), height: z(10) }} />
+      <Text numberOfLines={1} style={[styles.part, styles.checkWord, { color: checkColors[line.checks] }]}>{line.checks}</Text>
     </View>}
   </View>;
   const review = line.changesRequested && <View key="review" style={styles.reviewPart}>
-    <SymbolView name={{ ios: 'text.bubble', android: 'rate_review', web: 'rate_review' } as any} size={10} tintColor={muted} style={{ width: 12, height: 10 }} />
+    <SymbolView name={{ ios: 'text.bubble', android: 'rate_review', web: 'rate_review' } as any} size={z(10)} tintColor={muted} style={{ width: z(12), height: z(10) }} />
     <Text numberOfLines={1} style={[styles.part, styles.reviewStatus]}>changes requested</Text>
   </View>;
   const withDots = (parts: React.ReactNode[]) => parts.flatMap((part, i) => i ? [<Text key={`dot${i}`} style={styles.dot}>·</Text>, part] : [part]);
@@ -267,9 +270,11 @@ const styles = StyleSheet.create({
   identity: { flexDirection: 'row', alignItems: 'center', gap: 5, flexShrink: 1, minWidth: 0, overflow: 'hidden' },
   trailing: { marginLeft: 'auto', paddingLeft: 8, flexShrink: 0 },
   trailingRow: { justifyContent: 'flex-end' },
-  prPart: { flexDirection: 'row', alignItems: 'center', gap: 3, flexShrink: 0 },
+  // Only the largest text on the narrowest phone ever cuts these; beside identity the column keeps its width.
+  prPart: { flexDirection: 'row', alignItems: 'center', gap: 3, flexShrink: 1, minWidth: 0 },
   prNumber: { fontVariant: ['tabular-nums'] },
-  checks: { flexDirection: 'row', alignItems: 'center', gap: 2, marginLeft: 4 },
+  checks: { flexDirection: 'row', alignItems: 'center', gap: 2, marginLeft: 4, flexShrink: 1, minWidth: 0 },
+  checkWord: { flexShrink: 1 },
   macPart: { flexDirection: 'row', alignItems: 'center', gap: 2, flexShrink: 1, minWidth: 13 },
   part: { color: tertiary, fontFamily: 'Inter', fontSize: 12.5 },
   attention: { color: ink, fontWeight: '600', flexShrink: 0 },
