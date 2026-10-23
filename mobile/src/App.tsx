@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import React, { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { AccessibilityInfo, ActivityIndicator, Alert, AppState, FlatList, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View, type ScrollViewProps } from 'react-native';
 import { CommonActions, NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -699,10 +699,22 @@ function PullRequestScreen({ route, navigation }: any) {
 }
 function AutomationsScreen({ navigation }: any) {
   const macs = useRemote().macs();
-  return <HeaderScrollView style={styles.page} contentContainerStyle={styles.content}><Text style={styles.title}>Automations</Text>{!macs.length && <Text style={styles.lead}>Pair a Mac to schedule automations on it.</Text>}
-    {macs.map(mac => { const automations = mac.snapshot?.automations || []; return <View key={mac.id} style={mac.state === 'unreachable' && styles.unreachable}><Section title={mac.name}>{mac.state !== 'online' && <Text style={styles.hint}>{macStatus(mac)}</Text>}<Button title="New automation" onPress={() => navigation.navigate('Automation', { hostId: mac.id })} />
-      {automations.map(a => <Row key={a.id} title={a.name} subtitle={`${a.enabled ? 'Enabled' : 'Paused'} · ${a.providerId}${automationProfileName(a, mac.snapshot?.profiles) ? ` · ${automationProfileName(a, mac.snapshot?.profiles)}` : ''} · ${a.nextRunAt ? displayDate(a.nextRunAt) : 'Manual'}${a.deviceId ? ` · on ${macs.find(m => m.id === a.deviceId)?.name || 'a paired Mac'}` : ''}`} onPress={() => navigation.navigate('Automation', { hostId: mac.id, id: a.id })} />)}{!automations.length && <Empty text="No automations on this Mac." />}
-    </Section></View>; })}
+  return <HeaderScrollView style={styles.page} contentContainerStyle={styles.mobileListContent}>
+    {!macs.length && <Text style={styles.mobileEmpty}>Pair a Mac to schedule automations.</Text>}
+    {macs.map(mac => { const automations = mac.snapshot?.automations || []; return <View key={mac.id} style={styles.mobileGroup}>
+      <View style={styles.mobileGroupHeader}>
+        <View style={styles.mobileGroupHeading}><Text numberOfLines={1} style={styles.mobileGroupTitle}>{mac.name}</Text>{mac.state !== 'online' && <Text style={styles.mobileGroupStatus}>{macStatus(mac)}</Text>}</View>
+        <Pressable accessibilityRole="button" accessibilityLabel={`New automation on ${mac.name}`} onPress={() => navigation.navigate('Automation', { hostId: mac.id })} style={({ pressed }) => [styles.mobileAdd, pressed && styles.headerActionPressed]}>
+          <Icon name="plus" size={14} color={ink} /><Text style={styles.mobileAddText}>New</Text>
+        </Pressable>
+      </View>
+      {automations.map(a => <Pressable key={a.id} accessibilityRole="button" onPress={() => navigation.navigate('Automation', { hostId: mac.id, id: a.id })} style={({ pressed }) => [styles.mobileItem, pressed && styles.mobileItemPressed]}>
+        <View style={styles.mobileItemIcon}><SymbolView name={{ ios: 'clock.arrow.circlepath', android: 'schedule' }} size={18} tintColor={a.enabled ? ink : tertiary} /></View>
+        <View style={styles.mobileItemBody}><Text numberOfLines={1} style={styles.mobileItemTitle}>{a.name}</Text><Text numberOfLines={2} style={styles.mobileItemDetail}>{`${a.enabled ? 'Enabled' : 'Paused'} · ${a.providerId}${automationProfileName(a, mac.snapshot?.profiles) ? ` · ${automationProfileName(a, mac.snapshot?.profiles)}` : ''} · ${a.nextRunAt ? displayDate(a.nextRunAt) : 'Manual'}${a.deviceId ? ` · ${macs.find(m => m.id === a.deviceId)?.name || 'a paired Mac'}` : ''}`}</Text></View>
+        <Icon name="chevron" size={12} color={tertiary} />
+      </Pressable>)}
+      {!automations.length && <Text style={styles.mobileGroupEmpty}>No automations yet</Text>}
+    </View>; })}
   </HeaderScrollView>;
 }
 function AutomationScreen({ route, navigation }: any) {
@@ -794,14 +806,21 @@ function ProfilesScreen({ route, navigation }: any) {
     await state.request('saveProfile', { _0: profile });
     navigation.navigate('Profile', { hostId, id: profile.id, profile });
   });
-  return <HeaderScrollView style={styles.page} contentContainerStyle={styles.content}><Text style={styles.title}>Agent profiles</Text>
-    <Text style={styles.lead}>{remote.mac(hostId)?.name || ''}</Text>
-    {!supported && <Empty text="Update Abstract on this Mac to see its profiles here." />}
-    {supported && <>
-      <Text style={styles.hint}>A profile is a saved setup — agent, model, effort, permissions and instructions — that new chats and automations fill in for you. Editing one changes later chats, never a chat already running.</Text>
-      <Button title="Add profile" onPress={add} />
-      <Section title="Profiles">{profiles.map(profile => <Row key={profile.id} title={profile.name || 'Profile'} subtitle={`${profile.providerId}${profile.model ? ` · ${profile.model}` : ''}${profile.effort ? ` · ${profile.effort}` : ''}`} iconNode={<ProfileIcon profile={profile} imageData={state.snapshot?.profileIcons?.[profile.id]} size={20} />} onPress={() => navigation.navigate('Profile', { hostId, id: profile.id })} />)}{!profiles.length && <Empty text="No profiles on this Mac." />}</Section>
-    </>}
+  useLayoutEffect(() => {
+    navigation.setOptions({ headerRight: () => supported ? <HeaderAction label="Add profile" icon="plus" onPress={add} /> : null });
+  }, [navigation, hostId, supported, state.snapshot?.profiles]);
+  return <HeaderScrollView style={styles.page} contentContainerStyle={styles.mobileListContent}>
+    <View style={styles.mobileGroup}>
+      <View style={styles.mobileGroupHeader}><Text numberOfLines={1} style={styles.mobileGroupTitle}>{remote.mac(hostId)?.name || 'Profiles'}</Text><Text style={styles.mobileGroupCount}>{profiles.length}</Text></View>
+      {!supported && <Text style={styles.mobileGroupEmpty}>Update Abstract on this Mac to see its profiles here.</Text>}
+      {supported && profiles.map(profile => <Pressable key={profile.id} accessibilityRole="button" onPress={() => navigation.navigate('Profile', { hostId, id: profile.id })} style={({ pressed }) => [styles.mobileItem, pressed && styles.mobileItemPressed]}>
+        <View style={styles.mobileItemIcon}><ProfileIcon profile={profile} imageData={state.snapshot?.profileIcons?.[profile.id]} size={20} /></View>
+        <View style={styles.mobileItemBody}><Text numberOfLines={1} style={styles.mobileItemTitle}>{profile.name || 'Profile'}</Text><Text numberOfLines={1} style={styles.mobileItemDetail}>{`${profile.providerId}${profile.model ? ` · ${profile.model}` : ''}${profile.effort ? ` · ${profile.effort}` : ''}`}</Text></View>
+        <Icon name="chevron" size={12} color={tertiary} />
+      </Pressable>)}
+      {supported && !profiles.length && <Text style={styles.mobileGroupEmpty}>No profiles yet. Tap + to add one.</Text>}
+    </View>
+    {supported && <Text style={styles.mobileFootnote}>Profiles set up new chats and automations. Edits affect future chats.</Text>}
   </HeaderScrollView>;
 }
 function ProfileScreen({ route, navigation }: any) {
@@ -929,6 +948,24 @@ const styles = StyleSheet.create({
   launcherRecentMeta: { color: tertiary, fontFamily: 'Inter', fontSize: 11, maxWidth: 110 },
   headerAction: { width: 42, height: 44, alignItems: 'center', justifyContent: 'center' }, headerActionPressed: { opacity: 0.45 }, headerActions: { flexDirection: 'row', alignItems: 'center' },
   page: { flex: 1, backgroundColor: bg }, content: { padding: 18, gap: 16, paddingBottom: 32 }, title: { color: ink, fontFamily: 'Inter', fontSize: 25, fontWeight: '600' }, lead: { color: muted, fontFamily: 'Inter', fontSize: 14, lineHeight: 21 }, section: { backgroundColor: panel, borderRadius: 8, padding: 14, gap: 9, borderWidth: StyleSheet.hairlineWidth, borderColor: border }, sectionTitle: { color: muted, fontFamily: 'Inter', fontSize: 13.5, fontWeight: '600' }, label: { color: muted, fontFamily: 'Inter', fontSize: 12, fontWeight: '600', marginTop: 8 }, value: { color: ink, fontFamily: 'Inter', fontSize: 15 }, row: { minHeight: 56, paddingVertical: 11, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border, flexDirection: 'row', alignItems: 'center', gap: 10 }, rowTitle: { color: ink, fontFamily: 'Inter', fontSize: 15.5, fontWeight: '500' }, subtitle: { color: muted, fontFamily: 'Inter', fontSize: 12.5, marginTop: 4 }, subtitleRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4 }, subtitleText: { marginTop: 0, flexShrink: 1 }, trailing: { color: tertiary, fontFamily: 'Inter', fontSize: 11 }, button: { backgroundColor: accent, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 11, alignSelf: 'flex-start', marginRight: 5, marginBottom: 5 }, buttonText: { color: bg, fontFamily: 'Inter', fontSize: 14, fontWeight: '600' }, secondary: { backgroundColor: inset }, danger: { backgroundColor: '#9B3F43' }, input: { backgroundColor: inset, color: ink, borderRadius: 7, borderWidth: StyleSheet.hairlineWidth, borderColor: border, paddingHorizontal: 12, paddingVertical: 10, fontFamily: 'Inter', fontSize: 15, minHeight: 48 }, multiline: { minHeight: 120, textAlignVertical: 'top' }, actions: { flexDirection: 'row', flexWrap: 'wrap', marginVertical: 5 }, choices: { flexDirection: 'row', flexWrap: 'wrap' }, empty: { color: muted, fontFamily: 'Inter', fontSize: 14, lineHeight: 21 }, error: { color: '#EF6461' }, callout: { backgroundColor: raised, borderRadius: 8, borderColor: border, borderWidth: StyleSheet.hairlineWidth, padding: 15 }, code: { color: ink, fontFamily: 'JetBrainsMonoMedium', fontSize: 32, letterSpacing: 3 }, bubble: { backgroundColor: raised, padding: 13, borderRadius: 8, marginBottom: 8 }, bubbleLabel: { color: muted, fontFamily: 'Inter', fontSize: 11, marginBottom: 5 }, body: { color: ink, fontFamily: 'Inter', fontSize: 14.5, lineHeight: 22 }, mono: { color: ink, fontSize: 11, fontFamily: 'JetBrainsMono', lineHeight: 17 }, hint: { color: tertiary, fontFamily: 'Inter', fontSize: 11 }, composer: { backgroundColor: panel, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: border, padding: 10, flexDirection: 'row', alignItems: 'flex-end' }, codeScroll: { padding: 16 }, codeText: { color: ink, fontFamily: 'JetBrainsMono', fontSize: 11, textAlignVertical: 'top', minHeight: 500 },
+  mobileListContent: { paddingTop: 8, paddingBottom: 36 },
+  mobileGroup: { marginBottom: 18 },
+  mobileGroupHeader: { minHeight: 46, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  mobileGroupHeading: { flex: 1, minWidth: 0 },
+  mobileGroupTitle: { color: muted, fontFamily: 'Inter', fontSize: 13, fontWeight: '600', flexShrink: 1 },
+  mobileGroupStatus: { color: tertiary, fontFamily: 'Inter', fontSize: 11, marginTop: 2 },
+  mobileGroupCount: { color: tertiary, fontFamily: 'Inter', fontSize: 12 },
+  mobileAdd: { minHeight: 44, minWidth: 58, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 5 },
+  mobileAddText: { color: ink, fontFamily: 'Inter', fontSize: 13, fontWeight: '600' },
+  mobileItem: { minHeight: 68, marginHorizontal: 16, paddingHorizontal: 4, flexDirection: 'row', alignItems: 'center', gap: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border },
+  mobileItemPressed: { backgroundColor: raised, borderRadius: 8 },
+  mobileItemIcon: { width: 34, height: 34, borderRadius: 9, backgroundColor: raised, alignItems: 'center', justifyContent: 'center' },
+  mobileItemBody: { flex: 1, minWidth: 0, paddingVertical: 10 },
+  mobileItemTitle: { color: ink, fontFamily: 'Inter', fontSize: 15, fontWeight: '500' },
+  mobileItemDetail: { color: muted, fontFamily: 'Inter', fontSize: 12, lineHeight: 17, marginTop: 3 },
+  mobileGroupEmpty: { color: tertiary, fontFamily: 'Inter', fontSize: 13, paddingHorizontal: 20, paddingVertical: 16 },
+  mobileEmpty: { color: muted, fontFamily: 'Inter', fontSize: 14, paddingHorizontal: 20, paddingVertical: 20 },
+  mobileFootnote: { color: tertiary, fontFamily: 'Inter', fontSize: 12, lineHeight: 18, paddingHorizontal: 20, marginTop: 3 },
   rail: { flex: 1, backgroundColor: sidebar }, railContent: { paddingTop: 10, paddingBottom: 24 }, railDetail: { color: tertiary, fontFamily: 'Inter', fontSize: 12 }, railHost: { marginTop: 18, marginHorizontal: 14, height: 48, paddingHorizontal: 5, flexDirection: 'row', alignItems: 'center', gap: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: border }, railHostTitle: { color: muted, fontFamily: 'Inter', fontSize: 12, fontWeight: '600', flex: 1 }, railGroup: { paddingTop: 12 }, railGroupHeader: { paddingHorizontal: 18, height: 38, flexDirection: 'row', alignItems: 'center', gap: 6 }, railGroupTitle: { color: muted, fontFamily: 'Inter', fontSize: 14, fontWeight: '600', flex: 1 }, railMacStatus: { color: tertiary, fontFamily: 'Inter', fontSize: 12, marginHorizontal: 19, marginTop: -6, marginBottom: 4 }, unreachable: { opacity: 0.45 }, pauseBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(232,179,74,0.12)', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border, paddingHorizontal: 14, paddingVertical: 8 }, pauseBannerText: { color: ink, fontFamily: 'Inter', fontSize: 13, lineHeight: 18, flex: 1 }, pauseBannerButton: { paddingHorizontal: 8, paddingVertical: 4 }, pauseBannerButtonDisabled: { opacity: 0.45 }, pauseBannerButtonText: { color: ink, fontFamily: 'Inter', fontSize: 13, fontWeight: '600' }, pausedLabel: { color: '#E8B34A', fontFamily: 'Inter', fontSize: 11, fontWeight: '600' }, railPause: { marginHorizontal: 14 }, railEmpty: { color: muted, fontFamily: 'Inter', fontSize: 12, lineHeight: 18, margin: 18 }, railFooter: { minHeight: 60, paddingHorizontal: 18, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: border, flexDirection: 'row', alignItems: 'center', gap: 10 }, railFooterPressed: { backgroundColor: raised }, railFooterTitle: { color: ink, fontFamily: 'Inter', fontSize: 15, flex: 1 }, connectionDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#4CC38A' },
   paneToolbar: { height: 45, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border, backgroundColor: bg },
   paneIconButton: { width: 42, height: 42, alignItems: 'center', justifyContent: 'center' },
