@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Animated, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { MenuView as SystemMenuView, type MenuAction, type MenuComponentProps } from '@react-native-menu/menu';
 import { Host, Rectangle } from '@expo/ui/swift-ui';
-import { frame, glassEffect } from '@expo/ui/swift-ui/modifiers';
+import { foregroundStyle, frame, glassEffect } from '@expo/ui/swift-ui/modifiers';
 import { BlurView } from 'expo-blur';
 import { SymbolView } from 'expo-symbols';
 import * as Haptics from 'expo-haptics';
@@ -117,7 +117,7 @@ export function CompactMenu({ actions, children, style, title, onPressAction, on
           transform: [{ scale: appear.interpolate({ inputRange: [0, 1], outputRange: [0.86, 1] }) }],
         }]}>
           {liquidGlass
-            ? <Host style={StyleSheet.absoluteFill} colorScheme="dark"><Rectangle modifiers={[frame({ maxWidth: Infinity, maxHeight: Infinity }), glassEffect({ glass: { variant: 'regular' }, shape: 'roundedRectangle', cornerRadius: radius })]} /></Host>
+            ? <Host style={StyleSheet.absoluteFill} colorScheme="dark" ignoreSafeArea="all"><Rectangle modifiers={[foregroundStyle('clear'), frame({ maxWidth: Infinity, maxHeight: Infinity }), glassEffect({ glass: { variant: 'regular' }, shape: 'roundedRectangle', cornerRadius: radius })]} /></Host>
             : <BlurView intensity={100} tint="systemMaterialDark" style={StyleSheet.absoluteFill} />}
           <ScrollView keyboardShouldPersistTaps="always" bounces={false} scrollEnabled={size!.height > place.height} showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>{rows}</ScrollView>
         </Animated.View> : null}
@@ -137,7 +137,7 @@ const styles = StyleSheet.create({
   fill: { flex: 1, minWidth: 0 },
   overlay: { flex: 1 },
   measure: { position: 'absolute', top: 0, left: 0, opacity: 0, padding: 6 },
-  menu: { position: 'absolute', borderRadius: radius, borderCurve: 'continuous', overflow: liquidGlass ? 'visible' : 'hidden', shadowColor: '#000', shadowOpacity: liquidGlass ? 0 : 0.3, shadowRadius: 24, shadowOffset: { width: 0, height: 10 } },
+  menu: { position: 'absolute', borderRadius: radius, borderCurve: 'continuous', overflow: 'hidden', shadowColor: '#000', shadowOpacity: liquidGlass ? 0 : 0.3, shadowRadius: 24, shadowOffset: { width: 0, height: 10 } },
   content: { padding: 6 },
   heading: { minHeight: 32, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8 },
   headingText: { flexShrink: 1, color: colors.secondary, fontSize: 13, fontWeight: '600' },
