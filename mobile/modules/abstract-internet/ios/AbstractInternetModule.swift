@@ -47,6 +47,14 @@ private actor InternetHandles {
     }
 }
 
+/// The navigation controller showing the top screen, looking through presented and child controllers.
+private func topStack(_ controller: UIViewController?) -> UINavigationController? {
+    guard let controller else { return nil }
+    if let presented = controller.presentedViewController, let stack = topStack(presented) { return stack }
+    for child in controller.children.reversed() { if let stack = topStack(child) { return stack } }
+    return controller as? UINavigationController
+}
+
 public final class AbstractInternetModule: Module {
     private let handles = InternetHandles()
     public func definition() -> ModuleDefinition {
@@ -56,6 +64,17 @@ public final class AbstractInternetModule: Module {
             guard gethostname(&name, name.count) == 0 else { return UIDevice.current.name }
             return String(cString: name)
         }
+        // Screens closed from JavaScript slide away as a snapshot that lands slightly off;
+        // popping natively, as a back swipe does, slides the live screen.
+        AsyncFunction("popToRoot") { () -> Bool in
+            let window = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+                .flatMap(\.windows).first(where: \.isKeyWindow)
+            guard let stack = topStack(window?.rootViewController) else { return false }
+            if stack.transitionCoordinator != nil { return true }
+            guard stack.viewControllers.count > 1 else { return false }
+            stack.popToRootViewController(animated: true)
+            return true
+        }.runOnQueue(.main)
         AsyncFunction("connect") { (key: String, host: String, handle: String) in
             try await self.handles.connect(key: key, host: host, handle: handle)
         }

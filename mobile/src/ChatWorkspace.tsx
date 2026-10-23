@@ -15,6 +15,7 @@ import { attachmentPayload, pickAttachments, type PickedAttachment } from './att
 import { chatTimeline, type ChatItem } from './chatTimeline';
 import { sendPhoneDraft, visiblePhoneMessages, type PendingPhoneMessage } from './chatSending';
 import { TranscriptFollow } from './transcriptFollow';
+import { popToRootNatively } from './nativeStack';
 import { composerInputHeights } from './composerLayout';
 import { PullRequestIcon } from './PullRequestIcon';
 import { ContextPill } from './ContextPill';
@@ -452,7 +453,7 @@ export function ChatWorkspace({ route, navigation }: any) {
       headerStyle: { backgroundColor: 'transparent' },
       headerBackground: () => <ProgressiveBlur edge="top" blurTarget={blurTarget} />,
       headerTitle: () => <ScrollingTitle title={chat.name} provider={chat.providerId} subtitle={chat.profileId && chat.profileName ? chat.profileName : null} width={Math.max(72, Math.min(192, windowWidth - 245))} />,
-      headerLeft: () => <ToolbarAction label="Open sidebar" onPress={() => navigation.popTo('Sidebar', { selectedChat: id })}><Glyph name="menu" size={19} color={ink} /></ToolbarAction>,
+      headerLeft: () => <ToolbarAction label="Open sidebar" onPress={() => popToRootNatively().then(done => { if (!done) navigation.popTo('Sidebar', { selectedChat: id }); })}><Glyph name="menu" size={19} color={ink} /></ToolbarAction>,
       headerRight: () => <View style={chrome.nativeActions}>
         <ToolbarAction label="Review changes" onPress={() => navigation.navigate('Review', { hostId, sessionId: id })}><Glyph name="review" size={17} color={muted} /></ToolbarAction>
         <ToolbarAction label="Files" onPress={() => navigation.navigate('Files', { hostId, root: chatRoot, sessionId: id })}><Glyph name="files" size={18} /></ToolbarAction>
