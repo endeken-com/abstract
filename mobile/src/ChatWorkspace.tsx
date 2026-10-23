@@ -360,6 +360,7 @@ export function ChatWorkspace({ route, navigation }: any) {
   const followFrames = useRef<Array<number>>([]);
   const followTimers = useRef<Array<ReturnType<typeof setTimeout>>>([]);
   const mayLoadOlder = useRef(false);
+  const onScreen = useRef(true);
   const lines = mac.lines[id] || [];
   const hasOlder = mac.hasOlder(id);
   const loadingHistory = mac.loadingHistory.has(id);
@@ -415,14 +416,27 @@ export function ChatWorkspace({ route, navigation }: any) {
   }, []);
   const scheduleFollow = React.useCallback(() => {
     cancelFollow();
-    if (!follow.current.shouldFollow) return;
+    if (!follow.current.shouldFollow || !onScreen.current) return;
     // FlatList's scrollToEnd estimates unmeasured rows and skips the padding under the composer; the native one uses the real content size.
-    const reachEnd = () => { if (follow.current.shouldFollow) (scroll.current?.getNativeScrollRef() as ScrollView | null)?.scrollToEnd({ animated: false }); };
+    const reachEnd = () => { if (follow.current.shouldFollow && onScreen.current) (scroll.current?.getNativeScrollRef() as ScrollView | null)?.scrollToEnd({ animated: false }); };
     reachEnd();
     followFrames.current.push(requestAnimationFrame(reachEnd));
     followTimers.current.push(setTimeout(reachEnd, 100), setTimeout(reachEnd, 300));
   }, [cancelFollow]);
   useEffect(() => cancelFollow, [cancelFollow]);
+  // A chat sliding away keeps its place: the keyboard and composer settling must not scroll it.
+  useEffect(() => {
+    const leave = () => { onScreen.current = false; cancelFollow(); };
+    const back = () => { onScreen.current = true; scheduleFollow(); };
+    const listeners = [
+      navigation.addListener('beforeRemove', leave),
+      navigation.addListener('blur', leave),
+      navigation.addListener('transitionStart', (event: any) => { if (event.data?.closing) leave(); }),
+      navigation.addListener('gestureCancel', back),
+      navigation.addListener('focus', back),
+    ];
+    return () => listeners.forEach(remove => remove());
+  }, [navigation, cancelFollow, scheduleFollow]);
   useEffect(() => { scheduleFollow(); }, [keyboardHeight, bottomPanelHeight, attachments.length, scheduleFollow]);
   const updateScroll = React.useCallback((event: any, ended = false) => {
     const { contentOffset, layoutMeasurement, contentSize } = event.nativeEvent;
