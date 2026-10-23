@@ -212,6 +212,7 @@ test('a row reads aloud the same status, identity, pull request and age it shows
 // Check the rendered row styles with Yoga, the layout engine used by iOS and Android.
 // Each Text measures as one line of 7-point characters at the selected text scale; Yoga rounds to whole points.
 async function metadataLayout(line, width, scale, stacked = false) {
+  const symbolScale = Math.min(Math.max(scale, 1), 2);
   const { loadYoga } = await import('yoga-layout/load');
   const Yoga = await loadYoga();
   const make = element => {
@@ -247,7 +248,7 @@ async function metadataLayout(line, width, scale, stacked = false) {
     children.forEach((child, i) => boxes(node.getChild(i), child, x + l.left, out, clipped || element.key === 'identity'));
     return out;
   };
-  const elements = SecondLine({ line, stacked }).props.children;
+  const elements = SecondLine({ line, stacked, symbolScale }).props.children;
   const layouts = elements.map(element => {
     const row = make(element);
     row.calculateLayout(width, undefined, Yoga.DIRECTION_LTR);
