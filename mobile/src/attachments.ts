@@ -1,5 +1,6 @@
 import * as DocumentPicker from 'expo-document-picker';
 import { File } from 'expo-file-system';
+import * as ImagePicker from 'expo-image-picker';
 import { uuid } from './secure';
 
 export type PickedAttachment = {
@@ -20,9 +21,21 @@ const maxUploadBytes = 8 << 20;
 export async function pickAttachments(existing: PickedAttachment[]): Promise<PickedAttachment[]> {
   const result = await DocumentPicker.getDocumentAsync({ multiple: true, copyToCacheDirectory: true });
   if (result.canceled) return existing;
+  return append(existing, result.assets.map(asset => ({ uri: asset.uri, name: asset.name, size: asset.size })));
+}
+
+// Compatible mode hands back JPEG rather than HEIC, so the agent can read it.
+export async function pickPhotos(existing: PickedAttachment[]): Promise<PickedAttachment[]> {
+  const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsMultipleSelection: true,
+    preferredAssetRepresentationMode: ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible });
+  if (result.canceled) return existing;
+  return append(existing, result.assets.map(asset => ({ uri: asset.uri, name: asset.fileName, size: asset.fileSize })));
+}
+
+async function append(existing: PickedAttachment[], picked: { uri: string; name?: string | null; size?: number }[]) {
   const added: PickedAttachment[] = [];
   let total = existing.reduce((sum, item) => sum + item.size, 0);
-  for (const asset of result.assets) {
+  for (const asset of picked) {
     const file = new File(asset.uri);
     const size = asset.size ?? file.size;
     total += size;
