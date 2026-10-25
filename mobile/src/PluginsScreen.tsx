@@ -63,7 +63,7 @@ function PluginRow({ mac, hostId, plugin, choices, online, navigation }: {
 
     {reviewing && <View style={styles.review}>
       <Text style={styles.reviewTitle}>Turn on {plugin.name}?</Text>
-      {plugin.source === 'user' && <Text style={styles.note}>It isn't signed. It runs in a locked-down page with no network or file access, and it can only see and do what's listed here.</Text>}
+      {plugin.source === 'user' && <Text style={styles.note}>It isn't signed. Its page cannot directly reach the network or files. The Mac checks each request against its grants.</Text>}
       <Text style={styles.reviewHead}>It will be able to:</Text>
       {plugin.requestedCapabilities.length === 0
         ? <Text style={styles.note}>Nothing beyond showing its own screen.</Text>

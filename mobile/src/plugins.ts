@@ -7,10 +7,21 @@ export const capabilityWords: Record<string, string> = {
   'chats.read': "See your chats' titles, agents and progress",
   'chats.open': 'Open a chat when you click it',
   'storage.own': 'Remember its own settings on the Mac',
+  network: 'Reach the web addresses it lists',
+  secrets: 'Use the secrets you give it, without seeing them',
   'usage.read': 'See what your chats used and cost',
   'turns.read': 'See when your agents worked',
   'transcripts.read': "Read your chats' messages in the projects you pick",
   'automations.read': 'See your automations and when they last ran',
+  'chats.create': 'Start chats in your projects',
+  'chats.message': 'Send messages to your chats',
+  'chats.control': 'Stop and resume your agents',
+  'permissions.answer': "See and answer your agents' questions and permission requests",
+  'automations.run': 'Run your automations',
+  'review.comment': "Add comments to your chats' Review, for you to send or delete",
+  'pullRequests.read': "Read your chats' pull requests: their checks, reviews and comments",
+  'agent.tools': 'Give your agents tools it runs, subject to each project’s settings',
+  cli: 'Run the command-line tool it names, with only the commands it lists',
 };
 
 export function capabilityLine(capability: string, transcriptProjects: string[]): string {
