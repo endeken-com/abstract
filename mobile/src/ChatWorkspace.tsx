@@ -11,7 +11,7 @@ import { ProgressiveBlur } from './ProgressiveBlur';
 import { ScrollingTitle } from './ScrollingTitle';
 import { remote, type RemoteClient } from './remote';
 import { uuid } from './secure';
-import { attachmentPayload, pickAttachments, type PickedAttachment } from './attachments';
+import { attachmentPayload, pickAttachments, pickPhotos, type PickedAttachment } from './attachments';
 import { chatTimeline, type ChatItem } from './chatTimeline';
 import { sendPhoneDraft, visiblePhoneMessages, type PendingPhoneMessage } from './chatSending';
 import { TranscriptFollow } from './transcriptFollow';
@@ -646,8 +646,10 @@ export function ChatWorkspace({ route, navigation }: any) {
   const resolveConnection = () => notice?.action === 'settings' ? navigation.navigate('Settings') : remote.reconnect(hostId).catch(() => {});
   const online = mac.status === 'online';
   const pickFiles = () => pickAttachments(attachments).then(setAttachments).catch(e => Alert.alert('Attachment', String(e)));
+  const pickFromLibrary = () => pickPhotos(attachments).then(setAttachments).catch(e => Alert.alert('Attachment', String(e)));
   const addActions = [
     { id: 'attach', title: 'Attach files', image: Platform.OS === 'ios' ? 'paperclip' : undefined, attributes: editingQueued ? { disabled: true } : undefined },
+    { id: 'photos', title: 'Photo library', image: Platform.OS === 'ios' ? 'photo.on.rectangle' : undefined, attributes: editingQueued ? { disabled: true } : undefined },
     ...(root ? [{ id: 'issue', title: 'Link a GitHub issue', image: Platform.OS === 'ios' ? 'smallcircle.filled.circle' : undefined }, { id: 'linkPr', title: 'Link a pull request', image: Platform.OS === 'ios' ? 'arrow.triangle.pull' : undefined }] : []),
   ];
   const sendable = !!message.trim() || attachments.length > 0 || !!editingQueued || (primary === 'stop' && !editingQueued) || (primary === 'send' && queue.length > 0);
@@ -705,9 +707,9 @@ export function ChatWorkspace({ route, navigation }: any) {
           {previewingMarkdown ? <ScrollView accessibilityLabel="Markdown preview" style={[s.composerInput, { minHeight: composerMinHeight, maxHeight: composerMaxHeight }]}><Markdown style={markdownStyles} rules={codeRules}>{message}</Markdown></ScrollView> : <TextInput accessibilityLabel="Message" value={message} editable={!sending} onChangeText={value => { setMessage(value); setSendError(null); setSlashChoosing(null); }} multiline scrollEnabled style={[s.composerInput, { minHeight: composerMinHeight, maxHeight: composerMaxHeight }]} onFocus={() => setComposerFocused(true)} onBlur={() => setComposerFocused(false)} placeholder={online ? 'Type / for commands' : 'Write now, send when connected'} placeholderTextColor={tertiary} textAlignVertical="top" />}
         </View>
         <View style={composerStyles.actions}>
-          {sending || addActions.length === 1
+          {sending
             ? <Pressable accessibilityRole="button" accessibilityLabel="Attach files" accessibilityState={{ disabled: sending || !!editingQueued }} disabled={sending || !!editingQueued} onPress={pickFiles} android_ripple={{ color: 'rgba(255,255,255,0.12)', borderless: true }} style={({ pressed }) => [composerStyles.iconButton, (sending || !!editingQueued) && { opacity: 0.4 }, pressed && Platform.OS === 'ios' && { opacity: 0.5 }]}><Glyph name="attach" size={20} color={muted} /></Pressable>
-            : <MenuView title="Add to message" actions={addActions} onPressAction={({ nativeEvent }) => nativeEvent.event === 'attach' ? pickFiles() : openLinks(nativeEvent.event as LinkKind)}><View accessible accessibilityRole="button" accessibilityLabel="Add files, issues or pull requests" style={composerStyles.iconButton}><Glyph name="attach" size={20} color={muted} /></View></MenuView>}
+            : <MenuView title="Add to message" actions={addActions} onPressAction={({ nativeEvent }) => nativeEvent.event === 'attach' ? pickFiles() : nativeEvent.event === 'photos' ? pickFromLibrary() : openLinks(nativeEvent.event as LinkKind)}><View accessible accessibilityRole="button" accessibilityLabel={root ? 'Add files, photos, issues or pull requests' : 'Add files or photos'} style={composerStyles.iconButton}><Glyph name="attach" size={20} color={muted} /></View></MenuView>}
           <ComposerSettingsMenu settings={settings} provider={chat.providerId} summary={settingsSummary} onChoose={chooseSetting} />
           {!!message && <Pressable accessibilityRole="button" accessibilityLabel={previewingMarkdown ? 'Edit Markdown' : 'Preview Markdown'} onPress={() => setPreviewingMarkdown(!previewingMarkdown)} style={({ pressed }) => [composerStyles.textButton, pressed && { opacity: 0.5 }]}><Text maxFontSizeMultiplier={1.4} style={composerStyles.textButtonLabel}>{previewingMarkdown ? 'Edit' : 'Preview'}</Text></Pressable>}
           <Pressable accessibilityRole="button" accessibilityLabel={sendLabel} accessibilityState={{ disabled: sendDisabled, busy: sending }} disabled={sendDisabled} onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {}); if (primary === 'stop' && !editingQueued) act('stop'); else send(); }} style={composerStyles.sendTarget}>

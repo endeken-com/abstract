@@ -51,6 +51,8 @@
     </array>
     <key>NSLocalNetworkUsageDescription</key>
     <string>Abstract finds your Macs on the local network so you can pair and manage chats.</string>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>Abstract attaches the photos you choose to your message.</string>
     <key>RCTNewArchEnabled</key>
     <true/>
     <key>UILaunchStoryboardName</key>

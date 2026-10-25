@@ -22,6 +22,7 @@ module.exports = {
       softwareKeyboardLayoutMode: 'resize',
       permissions: ['INTERNET', 'ACCESS_NETWORK_STATE', 'ACCESS_WIFI_STATE', 'CHANGE_WIFI_MULTICAST_STATE', 'NEARBY_WIFI_DEVICES']
     },
-    plugins: ['./plugins/withLocalNetwork', './plugins/withInternet', 'expo-font']
+    plugins: ['./plugins/withLocalNetwork', './plugins/withInternet', 'expo-font',
+      ['expo-image-picker', { photosPermission: 'Abstract attaches the photos you choose to your message.', cameraPermission: false, microphonePermission: false }]]
   }
 };
