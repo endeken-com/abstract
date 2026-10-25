@@ -35,6 +35,7 @@ import { MODE_CHOICES, currentPlan, effectivePlan, isReadOnlyMode, nonPlanPermis
 import { swiftDate, type PendingPermission, type PermissionDecision, type PermissionRuleKind, type PlanState, type QueuedMessage, type Session, type Stall } from './types';
 import { chatPauseRow } from './pause';
 import { composerActions, queuedMessages, settledByQueue } from './messageQueue';
+import { contributionsFor } from './plugins';
 
 const ink = '#ECECEF', muted = '#A4A4AD', tertiary = '#75757E', canvas = '#1E1E21', panel = '#252529', raised = '#2B2B30', border = 'rgba(255,255,255,0.075)', warning = '#D2D2D8';
 const editStyles = StyleSheet.create({
@@ -462,12 +463,21 @@ export function ChatWorkspace({ route, navigation }: any) {
         <ToolbarAction label="Files" onPress={() => navigation.navigate('Files', { hostId, root: chatRoot, sessionId: id })}><Glyph name="files" size={18} /></ToolbarAction>
         <ToolbarAction label="Pull request" onPress={() => navigation.navigate('PullRequest', { hostId, sessionId: id })}><PullRequestIcon pr={pr} size={17} color={muted} /></ToolbarAction>
         <MenuView actions={[
+          ...contributionsFor(mac.snapshot?.plugins || [], 'chatMenu').map(({ contribution }, index) => ({
+            id: `plugin:${index}`, title: contribution.title,
+            image: Platform.OS === 'ios' ? (contribution.symbol || 'puzzlepiece.extension') : undefined,
+          })),
           { id: 'terminal', title: 'Terminal', image: Platform.OS === 'ios' ? 'terminal' : undefined },
           { id: 'rename', title: 'Rename chat', image: Platform.OS === 'ios' ? 'pencil' : undefined },
           { id: 'resume', title: 'Resume agent', image: Platform.OS === 'ios' ? 'arrow.clockwise' : undefined },
           { id: 'archive', title: chat.archivedAt ? 'Unarchive chat' : 'Archive chat', image: Platform.OS === 'ios' ? 'archivebox' : undefined },
           { id: 'delete', title: 'Delete chat', attributes: { destructive: true }, image: Platform.OS === 'ios' ? 'trash' : undefined },
         ]} onPressAction={({ nativeEvent }) => {
+          if (nativeEvent.event.startsWith('plugin:')) {
+            const found = contributionsFor(mac.snapshot?.plugins || [], 'chatMenu')[Number(nativeEvent.event.slice(7))];
+            if (found) navigation.navigate('Plugin', { hostId, pluginId: found.plugin.id, title: found.contribution.title, place: 'chatMenu', contributionId: found.contribution.id, chatId: id, invoke: true });
+            return;
+          }
           switch (nativeEvent.event) {
             case 'terminal': navigation.navigate('Terminal', { hostId, root: chatRoot, sessionId: id }); break;
             case 'rename': if (Platform.OS === 'ios') Alert.prompt('Rename chat', '', name => name.trim() && request('rename', { name: name.trim() }), 'plain-text', chat.name); else { setRename(chat.name); setMenu('manage'); } break;
@@ -478,7 +488,7 @@ export function ChatWorkspace({ route, navigation }: any) {
         }}><View style={chrome.toolbarButton} accessibilityLabel="More chat actions"><Glyph name="manage" size={20} /></View></MenuView>
       </View>,
     });
-  }, [navigation, id, windowWidth, chat?.name, chat?.providerId, chat?.profileId, chat?.profileName, chat?.archivedAt, chat?.worktreePath, pr?.state, pr?.isDraft]);
+  }, [navigation, id, windowWidth, chat?.name, chat?.providerId, chat?.profileId, chat?.profileName, chat?.archivedAt, chat?.worktreePath, pr?.state, pr?.isDraft, mac.snapshot?.plugins]);
   useEffect(() => {
     if (mac.status !== 'online') { setSyncing(false); return; }
     let active = true;
@@ -685,6 +695,9 @@ export function ChatWorkspace({ route, navigation }: any) {
         <ContextPill context={context} onPress={chat.projectId ? () => navigation.navigate('Worktrees', { hostId, projectId: chat.projectId }) : undefined} />
         {isReadOnlyMode(chat.permissionPolicy) && <View style={s.prContext} accessibilityLabel={`Mode: ${policyLabel}`}><Glyph name={chat.permissionPolicy === 'plan' ? 'list.bullet.clipboard' : 'questionmark.bubble'} size={13} color={ink} /><Text style={s.prContextLabel}>{chat.permissionPolicy === 'plan' ? 'Plan mode' : policyLabel}</Text></View>}
         {pr && <Pressable accessibilityRole="button" accessibilityLabel={`Pull request #${pr.number}`} onPress={() => navigation.navigate('PullRequest', { hostId, sessionId: id })} style={s.prContext}><PullRequestIcon pr={pr} size={14} /><Text style={s.prContextLabel}>#{pr.number}</Text></Pressable>}
+        {contributionsFor(mac.snapshot?.plugins || [], 'chatPanel').map(({ plugin, contribution }) => <Pressable key={`${plugin.id}:${contribution.id}`} accessibilityRole="button" accessibilityLabel={contribution.title} onPress={() => { Haptics.selectionAsync().catch(() => {}); navigation.navigate('Plugin', { hostId, pluginId: plugin.id, title: contribution.title, place: 'chatPanel', contributionId: contribution.id, chatId: id }); }} style={s.changesPill}>
+          <Glyph name={contribution.symbol || 'puzzlepiece.extension'} size={13} color={ink} /><Text style={s.changesPillLabel}>{contribution.title}</Text>
+        </Pressable>)}
         {diff.files > 0 && <Pressable accessibilityRole="button" accessibilityLabel={`Review ${diff.files} changed ${diff.files === 1 ? 'file' : 'files'}`} onPress={() => { Haptics.selectionAsync().catch(() => {}); navigation.navigate('Review', { hostId, sessionId: id }); }} style={s.changesPill}>
           <Glyph name="review" size={13} color={ink} /><Text style={s.changesPillLabel}>{diff.files} {diff.files === 1 ? 'file' : 'files'}</Text>{diff.added > 0 && <Text style={s.changesAdded}>+{diff.added}</Text>}{diff.removed > 0 && <Text style={s.changesRemoved}>−{diff.removed}</Text>}
         </Pressable>}

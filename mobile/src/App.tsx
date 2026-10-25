@@ -31,6 +31,9 @@ import { SyntaxCode, highlightDiffLines, highlightLines } from './SyntaxCode';
 import { askAuthor, relativePath, type AskAuthorRequest } from './askAuthor';
 import { TerminalView } from './TerminalView';
 import { SettingsScreen } from './SettingsScreen';
+import { PluginsScreen } from './PluginsScreen';
+import { PluginScreen, PluginView } from './PluginView';
+import { macContributions } from './plugins';
 import { uuid } from './secure';
 import { attachmentPayload, pickAttachments, type PickedAttachment } from './attachments';
 import { deleteRuleArgs, ruleDetail, rulesForProject } from './permissionRules';
@@ -47,7 +50,7 @@ const bg = '#1E1E21', sidebar = '#19191C', panel = '#252529', raised = '#2B2B30'
 const accent = ink, border = 'rgba(255,255,255,0.075)';
 const Stack = createNativeStackNavigator();
 
-type IconName = 'menu' | 'back' | 'plus' | 'compose' | 'more' | 'clock' | 'worktree' | 'pull' | 'board' | 'devices' | 'folder' | 'chat' | 'review' | 'files' | 'terminal' | 'settings' | 'chevron' | 'close' | 'refresh' | 'check' | 'failed' | 'pending' | 'skipped' | 'filter';
+type IconName = 'menu' | 'back' | 'plus' | 'compose' | 'more' | 'clock' | 'worktree' | 'pull' | 'board' | 'devices' | 'folder' | 'chat' | 'review' | 'files' | 'terminal' | 'settings' | 'chevron' | 'close' | 'refresh' | 'check' | 'failed' | 'pending' | 'skipped' | 'filter' | 'plugin';
 const symbols: Record<IconName, { ios: string; android: string; web: string }> = {
   menu: { ios: 'sidebar.left', android: 'menu', web: 'menu' },
   back: { ios: 'chevron.left', android: 'arrow_back', web: 'arrow_back' },
@@ -72,7 +75,8 @@ const symbols: Record<IconName, { ios: string; android: string; web: string }> =
   failed: { ios: 'xmark', android: 'close', web: 'close' },
   pending: { ios: 'clock', android: 'schedule', web: 'schedule' },
   skipped: { ios: 'minus', android: 'remove', web: 'remove' },
-  filter: { ios: 'line.3.horizontal.decrease', android: 'filter_list', web: 'filter_list' }
+  filter: { ios: 'line.3.horizontal.decrease', android: 'filter_list', web: 'filter_list' },
+  plugin: { ios: 'puzzlepiece.extension', android: 'extension', web: 'extension' }
 };
 function Icon({ name, size = 19, color = muted }: { name: IconName; size?: number; color?: string }) {
   return <SymbolView name={symbols[name] as any} size={size} tintColor={color} style={{ width: size, height: size }} />;
@@ -178,8 +182,9 @@ function MoreDestinations({ navigate }: { navigate: (name: string) => void }) {
     { id: 'Worktrees', title: 'Worktrees', image: ios ? symbols.worktree.ios : undefined },
     { id: 'PullRequests', title: 'Pull Requests', subtitle: prs ? `${prs} open` : undefined, image: ios ? symbols.pull.ios : undefined },
     { id: 'Kanban', title: 'Kanban', image: ios ? symbols.board.ios : undefined },
+    { id: 'Plugins', title: 'Plugins', image: ios ? symbols.plugin.ios : undefined },
   ]} onPressAction={({ nativeEvent }) => navigate(nativeEvent.event)}>
-    <View accessible accessibilityRole="button" accessibilityLabel="More" accessibilityHint="Automations, worktrees, pull requests and Kanban" style={styles.headerAction}><Icon name="more" size={20} color={ink} /></View>
+    <View accessible accessibilityRole="button" accessibilityLabel="More" accessibilityHint="Automations, worktrees, pull requests, Kanban and plugins" style={styles.headerAction}><Icon name="more" size={20} color={ink} /></View>
   </MenuView>;
 }
 function WorkspaceRail({ navigate, selectedChat }: { navigate: (name: string, params?: Record<string, unknown>) => void; selectedChat?: { hostId?: string; sessionId?: string } | null }) {
@@ -474,6 +479,10 @@ function NewChatScreen({ route, navigation }: any) {
       <View style={styles.launcherFooter}><Pressable accessibilityRole="button" accessibilityState={{ disabled: !canStart }} disabled={!canStart} onPress={() => run(submit)} style={[styles.launcherStart, !canStart && styles.launcherStartDisabled]}><Text style={styles.launcherStartText}>{busy ? 'Starting…' : 'Start'}</Text><Icon name="chevron" size={13} color={bg} /></Pressable></View>
     </View>
     {recent.length > 0 && <View style={styles.launcherRecent}><Text style={styles.launcherRecentLabel}>Recent</Text>{recent.map(({ mac, chat }) => <Pressable key={itemKey(mac.id, chat.id)} onPress={() => navigation.navigate('Chat', { hostId: mac.id, sessionId: chat.id })} style={styles.launcherRecentRow}><ProviderLogo provider={chat.providerId} size={15} /><Text numberOfLines={1} style={styles.launcherRecentName}>{chat.name}</Text><Text numberOfLines={1} style={styles.launcherRecentMeta}>{`${mac.snapshot?.projects.find(x => x.id === chat.projectId)?.name || 'Standalone'}${macs.length > 1 ? ` · ${mac.name}` : ''}`}</Text></Pressable>)}</View>}
+    {macContributions(macs.filter(mac => mac.state === 'online'), 'home').map(({ mac, plugin, contribution }) => <View key={`${mac.id}:${plugin.id}:${contribution.id}`} style={[styles.launcherRecent, { marginTop: 28 }]}>
+      <Text style={styles.launcherRecentLabel}>{contribution.title}</Text>
+      <View style={{ borderRadius: 10, overflow: 'hidden' }}><PluginView navigation={navigation} height={220} route={{ hostId: mac.id, pluginId: plugin.id, title: contribution.title, place: 'home', contributionId: contribution.id }} /></View>
+    </View>)}
   </HeaderScrollView>;
 }
 function WorktreesScreen({ route, navigation }: any) {
@@ -915,6 +924,8 @@ export default function App() {
         <Stack.Screen name="Automation" component={AutomationScreen} />
         <Stack.Screen name="Profiles" component={ProfilesScreen} options={{ title: 'Agent profiles' }} />
         <Stack.Screen name="Profile" component={ProfileScreen} options={{ title: 'Profile' }} />
+        <Stack.Screen name="Plugins" component={PluginsScreen} options={{ title: 'Plugins' }} />
+        <Stack.Screen name="Plugin" component={PluginScreen} />
       </Stack.Navigator>
     </NavigationContainer></SidebarReturnContext.Provider></SafeAreaProvider>;
 }

@@ -123,6 +123,20 @@ public enum RemoteRequest: Codable, Sendable {
     case editQueued(sessionId: String, id: String, text: String)
     case removeQueued(sessionId: String, id: String)
 
+    // Plugins installed on the host. Enabling is the grant, as on the Mac:
+    // the manifest's whole capability list, or nothing. A nil project list
+    // keeps the last transcript pick.
+    case setPluginEnabled(pluginId: String, enabled: Bool, transcriptProjectKeys: [String]?)
+    /// Which projects' messages a `transcripts.read` grant may read.
+    case setPluginTranscriptProjects(pluginId: String, keys: [String])
+    /// A usable plugin's package files, so the controller can show its screen.
+    case pluginPackage(pluginId: String)
+    /// The context and snapshot envelopes for one showing of a plugin.
+    case pluginContext(pluginId: String, place: String, contributionId: String, chatId: String?)
+    /// One bridge message from a showing of a plugin, as JSON text. The
+    /// answer carries the host envelopes to deliver back to it.
+    case pluginMessage(pluginId: String, text: String, place: String, contributionId: String, chatId: String?)
+
     // The host's worktrees, so a chat there reviews, browses and edits here
     // as it would on the host. Only inside its projects and worktrees; only
     // git, gh and revund run.
@@ -221,6 +235,109 @@ public enum RemoteResponse: Codable, Sendable {
     case automationRuns([AutomationRun])
     case review([RemoteReviewFile])
     case askAuthor(RemoteAskAuthor)
+    case pluginPackage(RemotePluginPackage)
+    /// Host-to-plugin envelopes (JSON text), and a chat the plugin asked to
+    /// open, for the controller to show on its own screen.
+    case pluginMessages(messages: [String], openChatId: String?)
+}
+
+/// One plugin installed on the host, as a paired device sees it.
+public struct RemotePlugin: Codable, Sendable, Hashable {
+    public var id: String
+    public var name: String
+    public var version: String
+    public var description: String?
+    /// `bundled` or `user`.
+    public var source: String
+    public var enabled: Bool
+    /// Enabled and able to run.
+    public var usable: Bool
+    /// A plain sentence when the plugin can't run.
+    public var problem: String?
+    public var lastError: String?
+    /// Capability names the manifest asks for.
+    public var requestedCapabilities: [String]
+    /// Capability names granted at review; empty until enabled.
+    public var grantedCapabilities: [String]
+    /// Project keys whose messages a `transcripts.read` grant may read.
+    public var transcriptProjectKeys: [String]
+    /// The plugin's own screen, when it has one.
+    public var viewId: String?
+    public var viewTitle: String?
+    public var contributions: [RemotePluginContribution]
+    /// Where it appears, one plain sentence each, for the review screen.
+    public var appearances: [String]
+
+    public init(_ installed: InstalledPlugin) {
+        let record = installed.record
+        let manifest = installed.manifest
+        id = record.id; name = record.name; version = record.version
+        description = manifest?.description
+        source = record.source.rawValue
+        enabled = record.enabled; usable = installed.isUsable
+        problem = installed.problem; lastError = record.lastError
+        requestedCapabilities = manifest?.capabilities ?? record.grantedCapabilities.map(\.rawValue).sorted()
+        grantedCapabilities = record.grantedCapabilities.map(\.rawValue).sorted()
+        transcriptProjectKeys = record.transcriptProjectKeys
+        viewId = manifest?.view?.id; viewTitle = manifest?.view?.title
+        contributions = manifest.map { manifest in
+            PluginContributions.resolve([installed]).map(RemotePluginContribution.init)
+                + (installed.isUsable ? [] : Self.unresolved(manifest))
+        } ?? []
+        appearances = manifest?.appearanceSentences ?? []
+    }
+
+    /// A plugin that can't run contributes nowhere, but its review screen
+    /// still names the places it would appear.
+    private static func unresolved(_ manifest: PluginManifest) -> [RemotePluginContribution] {
+        let contributes = manifest.contributes
+        var out = contributes.views.map {
+            RemotePluginContribution(place: PluginPlace.main.rawValue, id: $0.id, title: $0.title, symbol: $0.symbol)
+        }
+        let places: [(PluginPlace, [PluginManifest.Contribution])] = [
+            (.chatPanel, contributes.chatPanelTabs), (.chatMenu, contributes.chatMenuItems),
+            (.palette, contributes.paletteCommands),
+            (.settings, contributes.settingsPage.map { [$0] } ?? []), (.home, contributes.homeWidgets),
+        ]
+        for (place, items) in places {
+            out += items.map { RemotePluginContribution(place: place.rawValue, id: $0.id, title: $0.title, symbol: $0.symbol) }
+        }
+        return out
+    }
+}
+
+public struct RemotePluginContribution: Codable, Sendable, Hashable {
+    /// A `PluginPlace` raw value: main, chatPanel, chatMenu, palette, settings, home.
+    public var place: String
+    public var id: String
+    public var title: String
+    public var symbol: String?
+
+    public init(place: String, id: String, title: String, symbol: String?) {
+        self.place = place; self.id = id; self.title = title; self.symbol = symbol
+    }
+
+    public init(_ resolved: ResolvedPluginContribution) {
+        self.init(place: resolved.place.rawValue, id: resolved.contribution.id,
+                  title: resolved.contribution.title, symbol: resolved.contribution.symbol)
+    }
+}
+
+/// A project a `transcripts.read` grant can be scoped to, by its plugin key.
+public struct RemotePluginProject: Codable, Sendable, Hashable {
+    public var key: String
+    public var name: String
+    public init(key: String, name: String) { self.key = key; self.name = name }
+}
+
+/// A plugin's package files, by path relative to its root.
+public struct RemotePluginPackage: Codable, Sendable, Hashable {
+    public var entry: String
+    public var files: [String: Data]
+    public init(entry: String, files: [String: Data]) { self.entry = entry; self.files = files }
+
+    /// The largest package sent whole; larger ones stay on the Mac.
+    public static let maxBytes = 8 << 20
 }
 
 /// Who to ask about some lines, and what the asking starts with: the
@@ -348,6 +465,12 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
     /// A host that runs chats' workflows and takes `continueWorkflow` and
     /// `stopWorkflow`. Optional for older peers.
     public var workflows: Bool?
+    /// Plugins installed on the host. Optional for older peers.
+    public var plugins: [RemotePlugin]?
+    /// Projects a plugin's transcripts.read grant can be scoped to.
+    public var pluginProjects: [RemotePluginProject]?
+    /// A host that answers the plugin requests, even with none installed.
+    public var pluginsSupported: Bool?
 
     /// The largest uploaded icon a snapshot carries; larger ones are left out.
     public static let maxProjectIconBytes = 512 << 10
@@ -368,7 +491,9 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
                 codeHistory: Bool? = nil, plans: [String: RemotePlan]? = nil, planApproval: Bool? = nil,
                 permissionRules: [String: [PermissionRule]]? = nil,
                 queuedMessages: [String: [QueuedMessage]]? = nil, messageQueue: Bool? = nil, steerAgents: [String]? = nil,
-                workflows: Bool? = nil) {
+                workflows: Bool? = nil,
+                plugins: [RemotePlugin]? = nil, pluginProjects: [RemotePluginProject]? = nil,
+                pluginsSupported: Bool? = nil) {
         self.projects = projects; self.sessions = sessions; self.providers = providers; self.alive = alive
         self.home = home; self.modelCatalogs = modelCatalogs; self.defaultModelNames = defaultModelNames
         self.pullRequests = pullRequests
@@ -398,6 +523,9 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
         self.messageQueue = messageQueue
         self.steerAgents = steerAgents
         self.workflows = workflows
+        self.plugins = plugins
+        self.pluginProjects = pluginProjects
+        self.pluginsSupported = pluginsSupported
     }
 }
 

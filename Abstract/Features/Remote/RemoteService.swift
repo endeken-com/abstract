@@ -480,7 +480,12 @@ final class RemoteService {
                               queuedMessages: model.queues.filter { !$0.key.hasPrefix(Self.mirrorPrefix) },
                               messageQueue: true,
                               steerAgents: ProviderRegistry.all.filter { $0.followUpMode == .stdin }.map(\.id),
-                              workflows: true)
+                              workflows: true,
+                              plugins: model.plugins.installed.map(RemotePlugin.init),
+                              pluginProjects: model.pluginProjectChoices().map {
+                                  RemotePluginProject(key: $0.key, name: $0.name)
+                              },
+                              pluginsSupported: true)
     }
 
     /// Each project's uploaded icon as bytes, so a viewing Mac can show it
@@ -832,6 +837,8 @@ final class HostedPeer {
     var processes: [Int: RunningProcess] = [:]
     var watchers: [Int: WorktreeWatcher] = [:]
     var terminals: [Int: HostTerminal] = [:]
+    /// Plugin bridges for screens this device is showing, by plugin id.
+    var pluginBridges: [String: PluginBridge] = [:]
     private var subscriptions: Set<String> = []
     private var lastSnapshot: RemoteSnapshot?
     private let outbox = AsyncStream<RemoteMessage>.makeStream()
@@ -1201,6 +1208,120 @@ final class HostedPeer {
         case .closeTerminal(let terminal):
             terminals.removeValue(forKey: terminal)?.close()
             return .ok
+        case let .setPluginEnabled(pluginId, enabled, transcriptProjectKeys):
+            guard let plugin = model.plugins.plugin(pluginId) else { return .failed("Plugin not found.") }
+            if enabled, let problem = plugin.problem { return .failed(problem) }
+            if enabled, plugin.manifest == nil { return .failed("Its files couldn't be read, so it's off.") }
+            if let transcriptProjectKeys {
+                let allowed = Set(model.pluginProjectChoices().map(\.key))
+                guard transcriptProjectKeys.allSatisfy(allowed.contains) else {
+                    return .failed("One of those projects isn't on this Mac.")
+                }
+            }
+            model.setPluginEnabled(pluginId, enabled, transcriptProjectKeys: transcriptProjectKeys)
+            if enabled { model.plugins.noteError(pluginId, nil) } else { pluginBridges[pluginId] = nil }
+            return .ok
+        case let .setPluginTranscriptProjects(pluginId, keys):
+            guard model.plugins.plugin(pluginId) != nil else { return .failed("Plugin not found.") }
+            let allowed = Set(model.pluginProjectChoices().map(\.key))
+            guard keys.allSatisfy(allowed.contains) else { return .failed("One of those projects isn't on this Mac.") }
+            model.plugins.setTranscriptProjectKeys(pluginId, keys)
+            return .ok
+        case let .pluginPackage(pluginId):
+            guard let plugin = model.plugins.plugin(pluginId), plugin.isUsable, let manifest = plugin.manifest
+            else { return .failed("That plugin is off.") }
+            do {
+                let files = try PluginPackage.packageFiles(in: plugin.packageURL,
+                                                           sizeLimit: RemotePluginPackage.maxBytes)
+                guard files[manifest.entry] != nil else { return .failed("Its files couldn't be read, so it's off.") }
+                return .pluginPackage(RemotePluginPackage(entry: manifest.entry, files: files))
+            } catch PluginValidationError.tooLarge {
+                return .failed("That plugin is too large to show on a phone. Open it on this Mac.")
+            } catch { return .failed("Its files couldn't be read, so it's off.") }
+        case let .pluginContext(pluginId, place, contributionId, chatId):
+            guard let envelopes = pluginEnvelopes(pluginId: pluginId, place: place,
+                                                  contributionId: contributionId, chatId: chatId, model: model)
+            else { return .failed("That plugin is off.") }
+            return .pluginMessages(messages: envelopes, openChatId: nil)
+        case let .pluginMessage(pluginId, text, place, contributionId, chatId):
+            return await pluginMessage(pluginId: pluginId, text: text, place: place,
+                                       contributionId: contributionId, chatId: chatId, model: model)
+        }
+    }
+
+    /// Where a showing sits, or nil for a place this host doesn't know.
+    private func pluginPlacement(_ place: String, _ contributionId: String, _ chatId: String?) -> PluginPlacement? {
+        guard let place = PluginPlace(rawValue: place), !contributionId.isEmpty else { return nil }
+        return PluginPlacement(place: place, contributionId: contributionId, chatId: chatId)
+    }
+
+    /// The context and snapshot envelopes for one showing, the way the Mac's
+    /// own plugin screen receives them.
+    private func pluginEnvelopes(pluginId: String, place: String, contributionId: String,
+                                 chatId: String?, model: AppModel) -> [String]? {
+        guard let plugin = model.plugins.plugin(pluginId), plugin.isUsable, let manifest = plugin.manifest,
+              let placement = pluginPlacement(place, contributionId, chatId) else { return nil }
+        let caps = plugin.record.grantedCapabilities
+        let chat = placement.chatId.flatMap { model.pluginChatRow(chatId: $0, capabilities: caps) }
+        let context = PluginContext.jsonValue(theme: model.pluginTheme(), locale: Locale.current.identifier,
+                                              pluginId: manifest.id, pluginVersion: manifest.version,
+                                              capabilities: caps, placement: placement, chat: chat)
+        let snapshot = model.pluginSnapshot(capabilities: caps, revision: model.plugins.nextRevision())
+        pluginBridges[pluginId, default: PluginBridge(capabilities: caps)].knownChatIds =
+            Set(snapshot.chats?.map(\.id) ?? [])
+        return [PluginBridge.encode(type: "context", payload: context),
+                PluginBridge.encode(type: "snapshot", payload: snapshot.jsonValue())]
+    }
+
+    /// One bridge message from a plugin showing on a paired device. Every
+    /// message goes through the same `PluginBridge` the Mac's screen uses;
+    /// `openChat` comes back for the device to show, not opened here.
+    private func pluginMessage(pluginId: String, text: String, place: String, contributionId: String,
+                               chatId: String?, model: AppModel) async -> RemoteResponse {
+        guard let plugin = model.plugins.plugin(pluginId), plugin.isUsable else { return .failed("That plugin is off.") }
+        if text.contains("\"__error\"") {
+            model.plugins.noteError(pluginId, "It stopped working.")
+            return .failed("It stopped working.")
+        }
+        var bridge = pluginBridges[pluginId] ?? PluginBridge(capabilities: plugin.record.grantedCapabilities)
+        bridge.capabilities = plugin.record.grantedCapabilities
+        let storage = model.plugins.manager.storage(for: pluginId)
+        let outcome = bridge.handle(text, storage: storage)
+        pluginBridges[pluginId] = bridge
+        func messages(_ envelopes: [String], openChatId: String? = nil) -> RemoteResponse {
+            .pluginMessages(messages: envelopes, openChatId: openChatId)
+        }
+        func reply(_ id: String?, _ payload: JSONValue) -> RemoteResponse {
+            messages([PluginBridge.encode(type: "reply", id: id, payload: payload)])
+        }
+        switch outcome {
+        case .reply(let id, let value):
+            return reply(id, value)
+        case .getSnapshot:
+            guard let envelopes = pluginEnvelopes(pluginId: pluginId, place: place,
+                                                  contributionId: contributionId, chatId: chatId, model: model)
+            else { return .failed("That plugin is off.") }
+            return messages(Array(envelopes.suffix(1)))
+        case .openChat(let id, let chat):
+            return messages([PluginBridge.encode(type: "reply", id: id,
+                                                 payload: .object(["opened": .bool(true)]))], openChatId: chat)
+        case .getUsage(let id, let view, let page, let chat):
+            return reply(id, await model.pluginUsage(view: view, page: page, chatId: chat))
+        case .getTurns(let id, let page, let chat):
+            return reply(id, model.pluginTurns(page: page, chatId: chat))
+        case .getTranscript(let id, let page, let chat):
+            let keys = model.plugins.plugin(pluginId)?.record.transcriptProjectKeys ?? []
+            return reply(id, model.pluginTranscript(page: page, chatId: chat, allowedProjectKeys: keys))
+        case .getAutomations(let id, let page):
+            return reply(id, model.pluginAutomations(page: page))
+        case .refused(let id, let reason):
+            model.plugins.noteError(pluginId, reason)
+            return messages([PluginBridge.encode(type: "error", id: id,
+                                                 payload: .object(["message": .string(reason)]))])
+        case .flooded:
+            pluginBridges[pluginId] = nil
+            model.plugins.noteError(pluginId, "It sent too many messages, so it was stopped.")
+            return .failed("It sent too many messages, so it was stopped.")
         }
     }
 

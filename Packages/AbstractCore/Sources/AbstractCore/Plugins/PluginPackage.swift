@@ -82,6 +82,23 @@ public enum PluginPackage {
         return out
     }
 
+    /// Every file in a package, by path relative to its root, for sending
+    /// the package to a paired device. Refused past `sizeLimit` whole.
+    public static func packageFiles(in folder: URL, sizeLimit: Int,
+                                    fileManager fm: FileManager = .default) throws -> [String: Data] {
+        var out: [String: Data] = [:]
+        var total = 0
+        for relative in try relativeFiles(in: folder, fileManager: fm).sorted() {
+            guard let data = fileData(in: folder, relativePath: relative, fileManager: fm) else {
+                throw PluginValidationError.invalidManifest("unreadable file \(relative)")
+            }
+            total += data.count
+            guard total <= sizeLimit else { throw PluginValidationError.tooLarge }
+            out[relative] = data
+        }
+        return out
+    }
+
     /// One package file for the host's scheme handler. Nil for anything
     /// outside the package, missing, or not a regular file.
     public static func fileData(in folder: URL, relativePath: String,

@@ -52,7 +52,7 @@ struct PluginsSettingsPane: View {
             } header: {
                 Text("Installed")
             } footer: {
-                SettingsCaption("Plugins run on this Mac. They don't run on your phone. A plugin sees only what you granted it below, and turning it off takes that away and removes its screen, tabs, menu items and commands.")
+                SettingsCaption("Plugins are installed on this Mac, and paired phones can turn them on or off and open their screens. A plugin sees only what you granted it below, and turning it off takes that away and removes its screen, tabs, menu items and commands.")
             }
 
             Section {
