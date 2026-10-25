@@ -1263,7 +1263,7 @@ final class HostedPeer {
               let placement = pluginPlacement(place, contributionId, chatId) else { return nil }
         let caps = plugin.record.grantedCapabilities
         let chat = placement.chatId.flatMap { model.pluginChatRow(chatId: $0, capabilities: caps) }
-        let context = PluginContext.jsonValue(theme: model.pluginTheme(), locale: Locale.current.identifier,
+        let context = PluginContext.jsonValue(appearance: model.pluginAppearance(), locale: Locale.current.identifier,
                                               pluginId: manifest.id, pluginVersion: manifest.version,
                                               capabilities: caps, placement: placement, chat: chat)
         let snapshot = model.pluginSnapshot(capabilities: caps, revision: model.plugins.nextRevision())
@@ -1299,7 +1299,7 @@ final class HostedPeer {
         func reply(_ id: String?, _ payload: JSONValue) -> RemoteResponse {
             messages([PluginBridge.encode(type: "reply", id: id, payload: payload)])
         }
-        func error(_ id: String?, _ reason: String) -> RemoteResponse {
+        func errorResponse(_ id: String?, _ reason: String) -> RemoteResponse {
             messages([PluginBridge.encode(type: "error", id: id,
                                           payload: .object(["message": .string(reason)]))])
         }
@@ -1330,7 +1330,7 @@ final class HostedPeer {
                 return reply(id, value.jsonValue())
             } catch {
                 model.plugins.noteNetworkActivity()
-                return error(id, String(describing: error))
+                return errorResponse(id, String(describing: error))
             }
         case .getPullRequest(let id, let chat):
             return reply(id, model.pluginPullRequest(chatId: chat))
@@ -1354,17 +1354,17 @@ final class HostedPeer {
             return reply(id, value)
         case .action(let id, _), .askAction(let id, _), .runCLI(let id, _),
              .actionRateLimited(let id):
-            return error(id, "That plugin action is available on the Mac.")
+            return errorResponse(id, "That plugin action is available on the Mac.")
         case .iconGet(let id, _), .iconChoose(let id, _, _):
-            return error(id, "The icon picker is available on the Mac.")
+            return errorResponse(id, "The icon picker is available on the Mac.")
         case .subscribe(let id, _), .scheduleJob(let id, _, _, _), .cancelJob(let id, _),
              .codeHostHosts(let id, _):
-            return error(id, "That plugin feature is available on the Mac.")
+            return errorResponse(id, "That plugin feature is available on the Mac.")
         case .jobDone, .toolResult, .linkResult, .trackerResult, .codeHostResult:
-            return error(nil, "That plugin feature is available on the Mac.")
+            return errorResponse(nil, "That plugin feature is available on the Mac.")
         case .refused(let id, let reason):
             model.plugins.noteError(pluginId, reason)
-            return error(id, reason)
+            return errorResponse(id, reason)
         case .flooded:
             pluginBridges[pluginId] = nil
             model.plugins.noteError(pluginId, "It sent too many messages, so it was stopped.")
