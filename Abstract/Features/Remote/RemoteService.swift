@@ -1268,7 +1268,8 @@ final class HostedPeer {
                                               capabilities: caps, placement: placement, chat: chat)
         let snapshot = model.pluginSnapshot(capabilities: caps, revision: model.plugins.nextRevision())
         pluginBridges[pluginId, default: PluginBridge(capabilities: caps)].knownChatIds =
-            Set(snapshot.chats?.map(\.id) ?? [])
+            Set(snapshot.chats?.map(\.id) ?? []).union(placement.chatId.map { [$0] } ?? [])
+        pluginBridges[pluginId]?.knownProjectKeys = Set(snapshot.projects?.map(\.key) ?? [])
         return [PluginBridge.encode(type: "context", payload: context),
                 PluginBridge.encode(type: "snapshot", payload: snapshot.jsonValue())]
     }
@@ -1285,6 +1286,10 @@ final class HostedPeer {
         }
         var bridge = pluginBridges[pluginId] ?? PluginBridge(capabilities: plugin.record.grantedCapabilities)
         bridge.capabilities = plugin.record.grantedCapabilities
+        bridge.allowedHosts = Set(plugin.record.grantedNetworkHosts.map { $0.lowercased() })
+        bridge.secretNames = Set(plugin.record.grantedSecretNames)
+        bridge.alwaysAllowedActions = plugin.record.alwaysAllowedActions
+        bridge.cli = nil // A phone showing cannot approve or run a Mac command.
         let storage = model.plugins.manager.storage(for: pluginId)
         let outcome = bridge.handle(text, storage: storage)
         pluginBridges[pluginId] = bridge
@@ -1293,6 +1298,10 @@ final class HostedPeer {
         }
         func reply(_ id: String?, _ payload: JSONValue) -> RemoteResponse {
             messages([PluginBridge.encode(type: "reply", id: id, payload: payload)])
+        }
+        func error(_ id: String?, _ reason: String) -> RemoteResponse {
+            messages([PluginBridge.encode(type: "error", id: id,
+                                          payload: .object(["message": .string(reason)]))])
         }
         switch outcome {
         case .reply(let id, let value):
@@ -1314,10 +1323,48 @@ final class HostedPeer {
             return reply(id, model.pluginTranscript(page: page, chatId: chat, allowedProjectKeys: keys))
         case .getAutomations(let id, let page):
             return reply(id, model.pluginAutomations(page: page))
+        case .fetch(let id, let request):
+            do {
+                let value = try await model.plugins.fetchService(for: plugin).perform(request)
+                model.plugins.noteNetworkActivity()
+                return reply(id, value.jsonValue())
+            } catch {
+                model.plugins.noteNetworkActivity()
+                return error(id, String(describing: error))
+            }
+        case .getPullRequest(let id, let chat):
+            return reply(id, model.pluginPullRequest(chatId: chat))
+        case .getPermissions(let id):
+            let visible = Set(model.pluginSnapshot(capabilities: plugin.record.grantedCapabilities,
+                                                   revision: 0).chats?.map(\.id) ?? [])
+            let pending = PluginPermissions.visible(model.pluginPendingRequests(), chatIds: visible)
+            for chat in Set(pending.map(\.chatId)) { pluginBridges[pluginId]?.know(chatId: chat) }
+            return reply(id, PluginPermissions.list(pending))
+        case .badge(let id, let count):
+            model.plugins.setBadge(pluginId, count)
+            return reply(id, .object(["count": .number(Double(count))]))
+        case .addReviewComments(let id, let chat, let author, let comments):
+            let added = model.addPluginReviewComments(chat, author: author, comments)
+            return reply(id, .object(["added": .number(Double(added))]))
+        case .notice(let id, let text):
+            model.flash("\(plugin.manifest?.name ?? pluginId): \(text)")
+            return reply(id, .object(["shown": .bool(true)]))
+        case .projectLinkSaved(let id, _, let value):
+            model.noteTrackerLinksChanged()
+            return reply(id, value)
+        case .action(let id, _), .askAction(let id, _), .runCLI(let id, _),
+             .actionRateLimited(let id):
+            return error(id, "That plugin action is available on the Mac.")
+        case .iconGet(let id, _), .iconChoose(let id, _, _):
+            return error(id, "The icon picker is available on the Mac.")
+        case .subscribe(let id, _), .scheduleJob(let id, _, _, _), .cancelJob(let id, _),
+             .codeHostHosts(let id, _):
+            return error(id, "That plugin feature is available on the Mac.")
+        case .jobDone, .toolResult, .linkResult, .trackerResult, .codeHostResult:
+            return error(nil, "That plugin feature is available on the Mac.")
         case .refused(let id, let reason):
             model.plugins.noteError(pluginId, reason)
-            return messages([PluginBridge.encode(type: "error", id: id,
-                                                 payload: .object(["message": .string(reason)]))])
+            return error(id, reason)
         case .flooded:
             pluginBridges[pluginId] = nil
             model.plugins.noteError(pluginId, "It sent too many messages, so it was stopped.")
