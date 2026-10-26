@@ -9,8 +9,10 @@ import Foundation
 /// stdin as a stream-json user turn, and so is every follow-up.
 public struct ClaudeProvider: ProviderDefinition {
     public var id: String { "claude" }
-    /// Its background tasks have a list in the app; `/mode` does what its `/permissions` does.
-    public var commands: ProviderCommands { ProviderCommands(extra: [.tasks], replaces: ["permissions": .mode]) }
+    /// Its background tasks have a list in the app; `/mode` does what its
+    /// `/permissions` does; `/compact` is the app's, with progress.
+    public var commands: ProviderCommands { ProviderCommands(extra: [.tasks, .compact], replaces: ["permissions": .mode]) }
+    public var compaction: Compaction? { .inStream(prompt: "/compact") }
     public var name: String { "Claude Code" }
     public var logoAsset: String { "ProviderClaude" }
     public var binary: String { "claude" }
@@ -308,6 +310,25 @@ final class ClaudeParser: OutputParser {
     /// The CLI said the turn under way was interrupted; its `result` follows.
     private var interrupted = false
 
+    /// A `compact_boundary` whose summary turn hasn't arrived yet.
+    private var boundary: (trigger: CompactionTrigger?, result: CompactionResult, durationMs: Int?)?
+
+    /// The compaction the last boundary described, with `summary`.
+    private func finishCompaction(summary: String? = nil) -> [AgentEvent] {
+        guard var pending = boundary else { return [] }
+        boundary = nil
+        pending.result.summary = summary
+        return [.compaction(.finished(pending.result, trigger: pending.trigger, durationMs: pending.durationMs))]
+    }
+
+    /// The summary Claude Code resumes from, minus its fixed opening.
+    static func compactSummary(_ text: String) -> String? {
+        var body = Substring(text)
+        if body.hasPrefix("This session is being continued"), let r = body.range(of: "Summary:\n") { body = body[r.upperBound...] }
+        let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
     func feed(_ line: String, stream: OutputStreamKind) -> [AgentEvent] {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty { return [] }
@@ -320,8 +341,9 @@ final class ClaudeParser: OutputParser {
     }
 
     func onExit(code: Int32?) -> [AgentEvent] {
-        if code == 0 { return [.status(.finished, detail: nil)] }
-        return [
+        let pending = finishCompaction()
+        if code == 0 { return pending + [.status(.finished, detail: nil)] }
+        return pending + [
             .error("claude exited with code \(code.map { String($0) } ?? "null")"),
             .status(.errored, detail: nil),
         ]
@@ -386,14 +408,25 @@ final class ClaudeParser: OutputParser {
             return events
         case "task_started", "task_progress", "task_updated", "task_notification":
             return ClaudeWire.task(obj).map { [.task($0)] } ?? []
+        // Claude Code 2.1.282: `status` says `compacting` as it starts; the
+        // boundary follows with what it did, then the summary as a synthetic turn.
+        case "status":
+            return obj["status"]?.string == "compacting" ? [.compaction(.started(nil))] : []
+        case "compact_boundary":
+            let meta = obj["compact_metadata"]
+            boundary = (trigger: meta?["trigger"]?.string.flatMap(CompactionTrigger.init(rawValue:)),
+                        result: CompactionResult(tokensBefore: ClaudeWire.int(meta?["pre_tokens"]),
+                                                 tokensAfter: ClaudeWire.int(meta?["post_tokens"])),
+                        durationMs: ClaudeWire.int(meta?["duration_ms"]))
+            return []
         // A failed request it is sending again; `error_status` is null when
         // no answer came back at all.
         case "api_retry":
             guard let attempt = ClaudeWire.int(obj["attempt"]) else { return [] }
             return [.notice(.retrying(attempt: attempt, maxAttempts: ClaudeWire.int(obj["max_retries"]),
                                       httpStatus: ClaudeWire.int(obj["error_status"])))]
-        // Every other system frame is the CLI's own bookkeeping (status,
-        // hooks, thinking_tokens, task_summary, background_tasks_changed,
+        // Every other system frame is the CLI's own bookkeeping (hooks,
+        // thinking_tokens, task_summary, background_tasks_changed,
         // permission_denied…). New ones appear between releases; none of
         // them belong in the conversation.
         default:
@@ -518,6 +551,9 @@ final class ClaudeParser: OutputParser {
 
     private func onUser(_ obj: JSONValue) -> [AgentEvent]? {
         guard let message = obj["message"], message.object != nil else { return [] }
+        if boundary != nil, obj["isSynthetic"]?.bool == true {
+            return finishCompaction(summary: Self.compactSummary(ClaudeWire.flatten(message["content"])))
+        }
         let edit = ClaudeWire.editPreview(toolUseResult: obj["tool_use_result"])
         let fileChanges = ClaudeWire.bashEditDiff(toolUseResult: obj["tool_use_result"])
         var events: [AgentEvent] = []
@@ -555,7 +591,7 @@ final class ClaudeParser: OutputParser {
         // comes first so the usage after it folds in.
         let stopped = interrupted || obj["terminal_reason"]?.string?.hasPrefix("aborted") == true
         interrupted = false
-        var events: [AgentEvent] = stopped ? [TurnStop.rule] : []
+        var events: [AgentEvent] = finishCompaction() + (stopped ? [TurnStop.rule] : [])
         events += [
             .usage(
                 UsageTotals(

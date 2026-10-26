@@ -37,7 +37,7 @@ public struct AgentCommandList: Sendable, Hashable {
 
 /// Abstract's own chat actions, offered in the composer's `/` menu.
 public enum AppCommand: String, CaseIterable, Sendable, Hashable {
-    case agent, model, effort, mode, stop, diff, rename, attach, tasks
+    case agent, model, effort, mode, stop, diff, rename, attach, tasks, compact
 
     public var name: String { rawValue }
 
@@ -52,6 +52,7 @@ public enum AppCommand: String, CaseIterable, Sendable, Hashable {
         case .rename: "Rename this chat"
         case .attach: "Attach files or a folder"
         case .tasks: "Show background tasks"
+        case .compact: "Free up context by summarizing the conversation"
         }
     }
 
@@ -59,11 +60,13 @@ public enum AppCommand: String, CaseIterable, Sendable, Hashable {
     public static let everywhere: [AppCommand] = [.agent, .model, .effort, .mode, .stop, .diff, .rename, .attach]
 
     /// Those that make no sense right now: Stop while the agent is idle,
-    /// Rename for a chat on another Mac (its row can't rename).
-    public static func unavailable(working: Bool, remote: Bool) -> Set<AppCommand> {
+    /// Rename for a chat on another Mac (its row can't rename), Compact
+    /// mid-turn, there, or before the agent has a conversation to compact.
+    public static func unavailable(working: Bool, remote: Bool, hasConversation: Bool = true) -> Set<AppCommand> {
         var out: Set<AppCommand> = []
         if !working { out.insert(.stop) }
         if remote { out.insert(.rename) }
+        if working || remote || !hasConversation { out.insert(.compact) }
         return out
     }
 }

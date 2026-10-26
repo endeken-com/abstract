@@ -1,0 +1,6 @@
+{"type":"system","subtype":"status","status":"compacting","session_id":"11111111-2222-3333-4444-555555555555"}
+{"type":"system","subtype":"status","status":null,"session_id":"11111111-2222-3333-4444-555555555555"}
+{"type":"system","subtype":"compact_boundary","session_id":"11111111-2222-3333-4444-555555555555","compact_metadata":{"trigger":"manual","pre_tokens":23126,"post_tokens":3819,"cumulative_dropped_tokens":19307,"duration_ms":18056}}
+{"type":"user","message":{"role":"user","content":"This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.\n\nSummary:\n1. Primary Request and Intent:\n   The user asked for a one-word reply."},"isSynthetic":true,"session_id":"11111111-2222-3333-4444-555555555555"}
+{"type":"user","message":{"role":"user","content":"<local-command-stdout>Compacted </local-command-stdout>"},"session_id":"11111111-2222-3333-4444-555555555555"}
+{"type":"result","subtype":"success","is_error":false,"duration_ms":18200,"num_turns":0,"result":"","total_cost_usd":0,"usage":{"input_tokens":0,"output_tokens":0},"session_id":"11111111-2222-3333-4444-555555555555"}

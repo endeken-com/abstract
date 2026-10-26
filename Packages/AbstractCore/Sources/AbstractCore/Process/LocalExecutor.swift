@@ -328,7 +328,7 @@ final class LocalProcess: RunningProcess, Sendable {
             switch kind {
             case .stdout: body(&stdout)
             // A process only writes stdout and stderr; the others are Abstract's own.
-            case .stderr, .user, .handoff, .note, .launch: body(&stderr)
+            case .stderr, .user, .handoff, .note, .launch, .compaction: body(&stderr)
             }
         }
     }

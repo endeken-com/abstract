@@ -112,14 +112,16 @@ final class AppModel {
     private(set) var alive: Set<String> = []
     /// New chats still being set up, or whose setup failed; see AppModel+Setup.
     var setups: [String: ChatSetup] = [:]
-    /// Chats mid-turn. An idle chat's agent is alive too, awaiting a follow-up,
-    /// but stopping it loses nothing.
+    /// Chats mid-turn, or compacting beside their agent. An idle chat's agent
+    /// is alive too, awaiting a follow-up, but stopping it loses nothing.
     var workingSessionIds: [String] {
         alive.filter { id in session(id).map { $0.status.isActive && $0.status != .idle } ?? false }
+            + compactions.keys.filter { !alive.contains($0) }
     }
     /// When each session's current turn started, for the "working for 12s"
     /// label, as this app saw it. The chat's log says too: see `turnStarts`.
     private(set) var turnStartedAt: [String: Date] = [:]
+    func markTurnStarted(_ id: String) { turnStartedAt[id] = Date() }
     /// When each chat's current turn started: from its log where it says
     /// (after a relaunch, for chats `abstract` runs), else when it was sent here.
     var turnStarts: [String: Date] {
@@ -156,6 +158,18 @@ final class AppModel {
     /// Chats passing to another agent: the outgoing one's summary turn is
     /// running, and its exit is not an ending.
     private(set) var handingOff: Set<String> = []
+    /// Chats whose agent is compacting its context; a message waits for it.
+    private(set) var compacting: Set<String> = []
+    /// A side channel's compaction, cancelled by Stop.
+    @ObservationIgnored var compactions: [String: Task<Void, Never>] = [:]
+    /// The status and detail to restore once a compaction ends, captured
+    /// before it's overwritten with "Compacting…".
+    @ObservationIgnored var compactionReturnStatus: [String: (SessionStatus, String?)] = [:]
+    func beginCompacting(_ id: String) { compacting.insert(id) }
+    func endCompacting(_ id: String) { compacting.remove(id); compactions[id] = nil; compactionReturnStatus[id] = nil }
+    /// Chats whose current turn is a `/compact` you asked for: its end is no
+    /// finished work to announce or review.
+    @ObservationIgnored var manualCompactionTurns: Set<String> = []
     /// Chats you pressed Stop in, until the turn or the process ends: neither
     /// is a failure. The token tells this press's fallback from a later one's.
     private(set) var stopRequests: [String: UUID] = [:]
@@ -1106,6 +1120,7 @@ final class AppModel {
         guard let session = session(sessionId), let provider = ProviderRegistry.provider(session.providerId) else { return }
         // Its agent starts once it's set up, with the chat's first message.
         if setups[sessionId] != nil { throw AbstractError.message("“\(session.name)” is still being set up; its agent starts after.") }
+        if compacting.contains(sessionId) { throw AbstractError.message("Still compacting; send again in a moment.") }
         eventChains[sessionId] = chain.isEmpty ? nil : chain
         // Mid-turn it waits, and goes as the next turn.
         if turnInProgress(sessionId) {
@@ -1543,6 +1558,7 @@ final class AppModel {
     /// the next message; any other ends its process. Either way the turn
     /// reads as stopped, not failed.
     func stop(_ sessionId: String) {
+        if let task = compactions[sessionId] { task.cancel(); return }
         if let (device, host) = RemoteService.split(sessionId) {
             remoteAction(sessionId, .stop(sessionId: host)) { self.remoteNotices[device]?.stopRequested(host) }
             return
@@ -1568,7 +1584,10 @@ final class AppModel {
     /// Ends the chat's agent and its background tasks, as archiving or
     /// removing its worktree needs. Still a stop you asked for.
     func stopAgent(_ sessionId: String) {
-        if sessionId.hasPrefix(RemoteService.mirrorPrefix) || setups[sessionId]?.active == true { stop(sessionId); return }
+        if compactions[sessionId] != nil || sessionId.hasPrefix(RemoteService.mirrorPrefix) || setups[sessionId]?.active == true {
+            stop(sessionId)
+            return
+        }
         if stopCLIAgent(sessionId) { return }
         guard engine.isAlive(sessionId) else { return }
         stopRequests[sessionId] = UUID()
@@ -1629,6 +1648,12 @@ final class AppModel {
     func resume(_ sessionId: String) {
         if let (_, host) = RemoteService.split(sessionId) { remoteAction(sessionId, .resume(sessionId: host)); return }
         if isDrivenFromCLI(sessionId) { flash(Self.drivenFromCLI.localizedDescription, isError: true); return }
+        // A side channel compacting the same conversation isn't `alive`, but a
+        // resumed agent would race it.
+        if compacting.contains(sessionId) {
+            flash(AbstractError.message("Still compacting; send again in a moment.").localizedDescription, isError: true)
+            return
+        }
         guard let session = session(sessionId) else { return }
         // Not set up yet: set it up, then its agent starts.
         if setups[sessionId] != nil { runSetup(sessionId); return }
@@ -1747,6 +1772,12 @@ final class AppModel {
             remote.forward(sessionId: sessionId, seq: seq, line: line)
         case let .exit(sessionId, code):
             alive.remove(sessionId)
+            let manualCompaction = manualCompactionTurns.remove(sessionId) != nil
+            // An in-stream compaction whose process died without a status: freed
+            // here so the chat never stays stuck; what actually happened to it is
+            // logged below, from the same `onExit` the rest of this exit reads.
+            let wasCompacting = compacting.contains(sessionId) && compactions[sessionId] == nil
+            if wasCompacting { endCompacting(sessionId) }
             // A turn that ended here sends the queue last, so the next
             // process isn't published as gone (defers run in reverse).
             var ended: (status: SessionStatus, stopped: Bool)?
@@ -1786,19 +1817,49 @@ final class AppModel {
                 return
             }
             if let stream = streams[sessionId] {
-                for e in stream.onExit(code: code) { apply(e, to: sessionId) }
+                let exitEvents = stream.onExit(code: code)
+                if wasCompacting {
+                    closeCompactionOnExit(exitEvents, sessionId: sessionId)
+                } else {
+                    for e in exitEvents { apply(e, to: sessionId) }
+                }
             }
             remote.forwardExit(sessionId: sessionId, code: code)
             if let s = session(sessionId), s.status.isActive {
                 setStatus(sessionId, code == 0 ? .finished : .errored, detail: code == 0 ? nil : "Exited with code \(code.map(String.init) ?? "?")")
                 // An agent that runs a process per turn (Codex) ends its turn by exiting.
-                if code == 0, ProviderRegistry.provider(s.providerId)?.followUpMode != .stdin {
+                if code == 0, !manualCompaction, ProviderRegistry.provider(s.providerId)?.followUpMode != .stdin {
                     RevundService.shared.turnEnded(sessionId, model: self)
                     nameAutomationRun(sessionId)
                 }
             }
             permissions[sessionId] = nil
             if let status = session(sessionId)?.status { ended = (status, false) }
+        }
+    }
+
+    /// Closes an in-stream compaction whose process just exited, from the same
+    /// exit events the rest of the exit handling reads: Claude may have finished
+    /// (a compaction boundary flushed with no summary turn after it) rather than
+    /// failed, and either way this must be the only place that closes it — a
+    /// second, independent guess (e.g. from the exit's own `.error`) would double
+    /// up or contradict what's recorded here.
+    private func closeCompactionOnExit(_ exitEvents: [AgentEvent], sessionId: String) {
+        let finished = exitEvents.compactMap { event -> CompactionMarker? in
+            guard case let .compaction(.finished(result, trigger, durationMs)) = event else { return nil }
+            return .finished(result, trigger: trigger, durationMs: durationMs)
+        }.first
+        let marker = finished ?? .failed(CompactionState.stoppedEarly)
+        // Recorded, then marked already-seen: its own async echo off `engine.events`
+        // must not re-apply it, since it's applied here, in order with the rest.
+        let seq = engine.record(sessionId: sessionId, marker.line)
+        seenSeq[sessionId] = max(seenSeq[sessionId] ?? 0, seq)
+        // Mirrors get lines from the `.line` handler, which skips this one.
+        remote.forward(sessionId: sessionId, seq: seq, line: marker.line)
+        apply(marker.event, to: sessionId)
+        for e in exitEvents {
+            if case .compaction = e { continue }
+            apply(e, to: sessionId)
         }
     }
 
@@ -1821,13 +1882,16 @@ final class AppModel {
                 replaceSession(s)
             }
         case let .status(status, detail):
+            if status != .running, compactions[sessionId] == nil { endCompacting(sessionId) }
             setStatus(sessionId, status, detail: detail)
             if status == .idle || status == .finished { capturePlan(sessionId) }
+            // A `/compact` you asked for ending did no work: nothing to announce or review.
+            let manualCompaction = status != .running && manualCompactionTurns.remove(sessionId) != nil
             if status == .idle, stopRequests.removeValue(forKey: sessionId) != nil {
                 // A turn you stopped: nothing to tell you, review or answer.
                 permissions[sessionId] = nil
                 turnEnded(sessionId, status, stopped: true)
-            } else if status == .idle {
+            } else if status == .idle, !manualCompaction {
                 // Still at work in the background, or about to take your
                 // queued messages: not done yet.
                 if runningBackgroundTasks(sessionId) == 0, queues[sessionId] == nil { notify(sessionId, .finished) }
@@ -1878,6 +1942,9 @@ final class AppModel {
             let s = session(sessionId)
             try? store.record(UsageRecord(sessionId: sessionId, projectId: s?.projectId, providerId: s?.providerId ?? "unknown",
                                           usage: totals, costUsd: cost ?? 0, durationMs: duration ?? 0, turns: turns ?? 1))
+        case .compaction(.finished), .compaction(.failed):
+            // Claude's own report ends an in-stream compaction; a side channel ends its own.
+            if compactions[sessionId] == nil { endCompacting(sessionId) }
         default:
             break
         }
@@ -1939,6 +2006,10 @@ final class AppModel {
         // Each agent's part of the log is read by its own parser.
         let stream = ChatStream(providerId: ChatStream.firstProvider(in: lines, current: s.handoffFrom ?? s.providerId))
         feed(sessionId).reset(stream.replay(lines))
+        // Abstract quit mid-compaction: that one will never report back.
+        if !compacting.contains(sessionId), !isAlive(sessionId), feed(sessionId).timeline.hasRunningCompaction {
+            engine.record(sessionId: sessionId, CompactionMarker.failed("Abstract closed before compacting finished.").line)
+        }
         seedPlan(sessionId)
         seenSeq[sessionId] = max(seenSeq[sessionId] ?? 0, replay.last?.seq ?? 0)
         streams[sessionId] = streams[sessionId] ?? stream

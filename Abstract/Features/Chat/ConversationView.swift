@@ -124,6 +124,8 @@ enum TranscriptRows {
         case let .handoff(_, from, to, summary, _):
             return (["Handed over from \(ProviderRegistry.name(from)) to \(ProviderRegistry.name(to))"] + [summary].compactMap { $0 })
                 .joined(separator: "\n")
+        case let .compaction(_, trigger, state):
+            return CompactionRow.caption(trigger: trigger, state: state)
         default: return ""
         }
     }
@@ -139,7 +141,7 @@ enum TranscriptRows {
         // Tool activity reads as one tight stack, a run of calls as lines.
         case (.tools, .tools) where below.continues: return 2
         case (.tools, .tools), (.thinking, .thinking), (.tools, .thinking), (.thinking, .tools): return 6
-        case (.turn, _), (_, .turn): return 16
+        case (.turn, _), (_, .turn), (.compaction, _), (_, .compaction): return 16
         default: return 14
         }
     }
@@ -194,6 +196,8 @@ struct BlockView: View, Equatable {
             if UserDefaults.standard.bool(forKey: "showRawAgentOutput") { RawLinesView(lines: lines) }
         case let .handoff(_, from, to, summary, source):
             HandoffRow(from: from, to: to, summary: summary, source: source)
+        case let .compaction(_, trigger, state):
+            CompactionRow(trigger: trigger, state: state)
         }
     }
 }
@@ -311,6 +315,89 @@ private struct HandoffRow: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// Where the agent's context was compacted: a quiet rule while it runs, then
+/// what it did, opening onto the summary it resumes from.
+private struct CompactionRow: View {
+    @Environment(\.transcriptExpansion) private var expansion
+    @Environment(\.transcriptRow) private var row
+    let trigger: CompactionTrigger
+    let state: CompactionState
+    @State private var local = false
+
+    var body: some View {
+        let open = ExpansionSwitch(key: "compaction:\(row?.id ?? 0)", expansion: expansion, row: row)
+        let isOpen = open.value(local: local) ?? false
+        let summary: String? = if case let .done(result, _) = state { result.summary } else { nil }
+        let failed: Bool = if case .failed = state { true } else { false }
+        VStack(alignment: .leading, spacing: Space.sm) {
+            Button {
+                if !open.set(!isOpen) { local.toggle() }
+            } label: {
+                HStack(spacing: Space.md) {
+                    Hairline()
+                    HStack(spacing: 6) {
+                        Image(systemName: failed ? "exclamationmark.triangle" : "rectangle.compress.vertical")
+                            .font(.system(size: 10, weight: .medium))
+                        Text(Self.caption(trigger: trigger, state: state)).monospacedDigit().lineLimit(1)
+                        if summary != nil {
+                            Image(systemName: isOpen ? "chevron.down" : "chevron.right").font(.system(size: 9, weight: .semibold))
+                        }
+                    }
+                    .fixedSize()
+                    Hairline()
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .font(.btChatCaption)
+            .foregroundStyle(failed ? Color.btRemoved : Color.btTextTertiary)
+            .disabled(summary == nil)
+            if isOpen, let summary {
+                SelectableText(TextClip.block(summary)).font(.btChatBody).foregroundStyle(Color.btTextSecondary).lineSpacing(2)
+                    .btLeadingRule(Color.btTextTertiary.opacity(0.4))
+            }
+        }
+        .padding(.vertical, Space.xs)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        // On the outer view, not the (sometimes disabled) button: a disabled
+        // control suppresses its own tooltip on macOS.
+        .help(Self.details(state))
+    }
+
+    /// "Compacted · 23k → 3.8k tokens · 18s", leaving out what the agent didn't say.
+    /// The failure reason is clipped; the tooltip carries it in full.
+    static func caption(trigger: CompactionTrigger, state: CompactionState) -> String {
+        switch state {
+        case .running:
+            return "Compacting conversation…"
+        case let .failed(message):
+            return "Couldn't compact: \(TextClip.line(message, max: 120))"
+        case let .done(result, durationMs):
+            let tokens: String? = switch (result.tokensBefore, result.tokensAfter) {
+            case let (before?, after?): "\(RelativeTime.tokens(before)) → \(RelativeTime.tokens(after)) tokens"
+            case let (before?, nil): "\(RelativeTime.tokens(before)) tokens"
+            default: nil
+            }
+            return ([trigger == .auto ? "Auto-compacted" : "Compacted", tokens, durationMs.map { RelativeTime.duration($0) }] as [String?])
+                .compactMap { $0 }.joined(separator: " · ")
+        }
+    }
+
+    /// The tooltip: the context window for a finished compaction, or the
+    /// failure reason in full, since the caption above clips it.
+    private static func details(_ state: CompactionState) -> String {
+        switch state {
+        case let .done(result, _):
+            guard let window = result.contextWindow else { return "" }
+            return "Of a \(RelativeTime.tokens(window))-token context window"
+        case let .failed(message):
+            return message
+        case .running:
+            return ""
+        }
     }
 }
 
@@ -730,9 +817,11 @@ private struct WorkingIndicator: View {
     }
 
     /// The tool row already says what's running, so this only says the turn
-    /// is still going.
+    /// is still going, or that the agent is compacting.
     private var label: String {
-        switch last {
+        if session.statusDetail == AppModel.compactingDetail { return "Compacting…" }
+        if case .compaction(.started)? = last { return "Compacting…" }
+        return switch last {
         case .toolResult?, .thinking?: "Thinking…"
         default: "Working…"
         }
