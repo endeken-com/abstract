@@ -121,6 +121,12 @@ enum TranscriptRows {
         case let .turn(_, info): return TurnSummary.label(info)
         case let .error(_, message): return message
         case let .notice(_, notice): return notice.message(agent: "The agent")
+        case let .gitOperation(_, operation):
+            switch operation {
+            case let .commit(sha, _, branch): return "Committed \(AskAuthor.short(sha))" + (branch.map { " on \($0)" } ?? "")
+            case let .push(branch): return "Pushed" + (branch.map { " \($0)" } ?? "")
+            case .pullRequest: return ""
+            }
         case let .handoff(_, from, to, summary, _):
             return (["Handed over from \(ProviderRegistry.name(from)) to \(ProviderRegistry.name(to))"] + [summary].compactMap { $0 })
                 .joined(separator: "\n")
@@ -188,6 +194,8 @@ struct BlockView: View, Equatable {
             .btLeadingRule(Color.btRemoved)
         case let .notice(_, notice):
             NoticeRow(sessionId: sessionId, notice: notice)
+        case let .gitOperation(_, operation):
+            GitOperationRow(operation: operation, sessionId: sessionId, title: TranscriptRows.plainText(block))
         case let .raw(_, lines):
             // Frames no parser understood are debugging material, not
             // conversation. Settings › General can bring them back.
@@ -195,6 +203,28 @@ struct BlockView: View, Equatable {
         case let .handoff(_, from, to, summary, source):
             HandoffRow(from: from, to: to, summary: summary, source: source)
         }
+    }
+}
+
+private struct GitOperationRow: View {
+    @Environment(AppModel.self) private var model
+    let operation: GitOperation
+    let sessionId: String
+    let title: String
+
+    var body: some View {
+        Button {
+            switch operation {
+            case let .commit(sha, _, _): model.openCommitInReview(sha, in: sessionId)
+            case .push: model.openDiffTab(in: sessionId)
+            case .pullRequest: break
+            }
+        } label: {
+            Label(title, systemImage: "point.topleft.down.to.point.bottomright.curvepath")
+                .font(.btChatCaption)
+                .foregroundStyle(Color.btTextSecondary)
+        }
+        .buttonStyle(.plain)
     }
 }
 

@@ -20,6 +20,22 @@ import AbstractCore
         return lines.flatMap { parser.feed($0, stream: .stdout) }
     }
 
+    @Test func recordedGitOperationsBecomeEvents() throws {
+        let url = try #require(Bundle.module.url(forResource: "claude-git-operations", withExtension: "jsonl", subdirectory: "Fixtures"))
+        let parser = provider.makeParser()
+        let operations = try String(contentsOf: url, encoding: .utf8).split(separator: "\n")
+            .flatMap { parser.feed(String($0), stream: .stdout) }
+            .compactMap { event -> GitOperation? in
+                if case let .gitOperation(operation) = event { operation } else { nil }
+            }
+        #expect(operations == [
+            .commit(sha: "a1b2c3d", kind: "committed", branch: "feature/work"),
+            .push(branch: "feature/work"),
+            .pullRequest(number: 42, url: URL(string: "https://github.com/example/app/pull/42"), action: "created"),
+            .pullRequest(number: 42, url: URL(string: "https://github.com/example/app/pull/42"), action: "merged"),
+        ])
+    }
+
     // MARK: - launch
 
     @Test func launchNeverPutsThePromptInArgvAndSendsItOnStdin() {

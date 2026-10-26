@@ -53,6 +53,7 @@ public final class ChatStream {
     /// and rebuild it from the same input and output lines during replay.
     private var codexTurn = 0
     private var codexPromptWaiting = false
+    private var commandTools: [String: String] = [:]
 
     /// Between a `summarize` marker and the handoff that follows it.
     public private(set) var isSummarizing = false
@@ -72,6 +73,7 @@ public final class ChatStream {
     public func restart(providerId: String) {
         self.providerId = providerId
         parser = makeParser(providerId)
+        commandTools.removeAll()
     }
 
     /// Lines the parser wants written to the live agent's stdin, drained.
@@ -120,8 +122,37 @@ public final class ChatStream {
         case .stdout, .stderr:
             let events = parser?.feed(line.line, stream: line.stream) ?? [.raw(line: line.line, stream: line.stream)]
             let scoped = providerId == "codex" ? scopeCodex(events) : events
-            return isSummarizing ? summarizing(scoped) : scoped
+            let classified = classifyCommands(scoped, rawLine: line.line)
+            return isSummarizing ? summarizing(classified) : classified
         }
+    }
+
+    private func classifyCommands(_ events: [AgentEvent], rawLine: String) -> [AgentEvent] {
+        guard providerId != "claude" else { return events }
+        var result: [AgentEvent] = []
+        for event in events {
+            result.append(event)
+            switch event {
+            case let .toolUse(id, name, input, _):
+                if ["bash", "shell", "command_execution", "command"].contains(name.lowercased()),
+                   let command = input["command"]?.string ?? input["cmd"]?.string {
+                    commandTools[id] = command
+                }
+            case let .toolResult(id, output, isError, _):
+                // OpenCode can first report a running tool with incomplete
+                // input; its completed part then carries the full command.
+                let completedInput = providerId == "opencode"
+                    ? (try? JSONDecoder().decode(JSONValue.self, from: Data(rawLine.utf8)))?["part"]?["state"]?["input"]?["command"]?.string
+                    : nil
+                if let command = completedInput ?? commandTools.removeValue(forKey: id) {
+                    commandTools[id] = nil
+                    result += GitOperation.fallback(command: command, output: output, succeeded: !isError)
+                        .map(AgentEvent.gitOperation)
+                }
+            default: break
+            }
+        }
+        return result
     }
 
     private func scopeCodex(_ events: [AgentEvent]) -> [AgentEvent] {
@@ -231,7 +262,7 @@ public enum HandoffTranscript {
                 agent = name(to)
                 speaker = nil
                 out += "\n---\n\n_Handed over from \(name(from)) to \(agent)._\n"
-            case .thinking, .system, .turn, .notice, .raw:
+            case .thinking, .system, .turn, .notice, .raw, .gitOperation:
                 continue
             }
         }

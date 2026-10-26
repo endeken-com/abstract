@@ -333,6 +333,8 @@ public enum AgentEvent: Sendable, Hashable {
     case toolFileChanges(toolUseId: String, changes: ToolFileChanges)
     /// Pictures a tool's result carried, as when Claude reads an image.
     case toolImages(toolUseId: String, images: [ToolImage])
+    /// A git or pull request operation reported by the agent's command tool.
+    case gitOperation(GitOperation)
     case permissionRequest(requestId: String, toolName: String, input: JSONValue)
     case turnEnd(durationMs: Int?, costUsd: Double?, usage: UsageTotals?, summary: String?)
     case usage(UsageTotals, costUsd: Double?, durationMs: Int?, turns: Int?)

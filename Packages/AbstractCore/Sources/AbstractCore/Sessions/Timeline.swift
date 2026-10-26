@@ -120,6 +120,7 @@ public enum TimelineBlock: Sendable, Identifiable, Hashable {
     /// A retry, a usage limit or a warning, on one line.
     case notice(id: Int, AgentNotice)
     case raw(id: Int, lines: [OutputLine])
+    case gitOperation(id: Int, GitOperation)
     /// The chat passed to another agent here.
     case handoff(id: Int, from: String, to: String, summary: String?, source: HandoffSource?)
 
@@ -127,7 +128,7 @@ public enum TimelineBlock: Sendable, Identifiable, Hashable {
         switch self {
         case .user(let id, _), .assistant(let id, _, _, _), .thinking(let id, _), .tools(let id, _),
              .system(let id, _, _), .turn(let id, _), .error(let id, _), .notice(let id, _), .raw(let id, _),
-             .handoff(let id, _, _, _, _): id
+             .handoff(let id, _, _, _, _), .gitOperation(let id, _): id
         }
     }
 }
@@ -228,6 +229,11 @@ extension Timeline {
                     out[out.count - 1] = .raw(id: groupId, lines: lines + [OutputLine(stream: stream, line: line)])
                 } else {
                     out.append(.raw(id: entry.id, lines: [OutputLine(stream: stream, line: line)]))
+                }
+            case let .gitOperation(operation):
+                switch operation {
+                case .commit, .push: out.append(.gitOperation(id: entry.id, operation))
+                case .pullRequest: break
                 }
             case let .handoff(from, to, summary, source):
                 out.append(.handoff(id: entry.id, from: from, to: to, summary: summary, source: source))
