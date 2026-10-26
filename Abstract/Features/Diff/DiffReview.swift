@@ -15,6 +15,12 @@ nonisolated struct NumberedLine: Sendable, Hashable {
     let text: String
 }
 
+/// A row of one file's diff, unique across the files, so the review can scroll to it.
+nonisolated struct DiffRowID: Hashable, Sendable {
+    let path: String
+    let index: Int
+}
+
 /// A row in the diff list. Unified layouts use `.hunk` and `.line`; split
 /// layouts use `.hunk` and `.pair`.
 nonisolated struct DiffRowItem: Identifiable, Sendable {
@@ -23,7 +29,7 @@ nonisolated struct DiffRowItem: Identifiable, Sendable {
         case line(NumberedLine)
         case pair(NumberedLine?, NumberedLine?)
     }
-    let id: Int
+    let id: DiffRowID
     let content: Content
 }
 
@@ -80,8 +86,8 @@ nonisolated struct ReviewFile: Identifiable, Sendable {
             let body = hunk.raw.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false).dropFirst().first ?? ""
             hunks.append(ReviewHunk(index: hunk.index, range: range, section: section,
                                     fingerprint: diff.path + "\u{0}" + body))
-            unified.append(DiffRowItem(id: unified.count, content: .hunk(position)))
-            split.append(DiffRowItem(id: split.count, content: .hunk(position)))
+            unified.append(DiffRowItem(id: DiffRowID(path: diff.path, index: unified.count), content: .hunk(position)))
+            split.append(DiffRowItem(id: DiffRowID(path: diff.path, index: split.count), content: .hunk(position)))
 
             var old = hunk.oldStart
             var new = hunk.newStart
@@ -91,7 +97,7 @@ nonisolated struct ReviewFile: Identifiable, Sendable {
 
             func flushRuns() {
                 for i in 0..<max(removedRun.count, addedRun.count) {
-                    split.append(DiffRowItem(id: split.count, content: .pair(
+                    split.append(DiffRowItem(id: DiffRowID(path: diff.path, index: split.count), content: .pair(
                         i < removedRun.count ? removedRun[i] : nil,
                         i < addedRun.count ? addedRun[i] : nil)))
                 }
@@ -107,15 +113,15 @@ nonisolated struct ReviewFile: Identifiable, Sendable {
                     let n = NumberedLine(kind: .context, old: String(old), new: String(new), text: text)
                     maxNumber = max(maxNumber, old, new)
                     old += 1; new += 1
-                    unified.append(DiffRowItem(id: unified.count, content: .line(n)))
+                    unified.append(DiffRowItem(id: DiffRowID(path: diff.path, index: unified.count), content: .line(n)))
                     flushRuns()
-                    split.append(DiffRowItem(id: split.count, content: .pair(n, n)))
+                    split.append(DiffRowItem(id: DiffRowID(path: diff.path, index: split.count), content: .pair(n, n)))
                     last = .context
                 case .removed:
                     let n = NumberedLine(kind: .removed, old: String(old), new: "", text: text)
                     maxNumber = max(maxNumber, old)
                     old += 1
-                    unified.append(DiffRowItem(id: unified.count, content: .line(n)))
+                    unified.append(DiffRowItem(id: DiffRowID(path: diff.path, index: unified.count), content: .line(n)))
                     if !addedRun.isEmpty { flushRuns() }
                     removedRun.append(n)
                     last = .removed
@@ -123,14 +129,14 @@ nonisolated struct ReviewFile: Identifiable, Sendable {
                     let n = NumberedLine(kind: .added, old: "", new: String(new), text: text)
                     maxNumber = max(maxNumber, new)
                     new += 1
-                    unified.append(DiffRowItem(id: unified.count, content: .line(n)))
+                    unified.append(DiffRowItem(id: DiffRowID(path: diff.path, index: unified.count), content: .line(n)))
                     addedRun.append(n)
                     last = .added
                 case .noNewline:
                     let n = NumberedLine(kind: .note, old: "", new: "", text: "No newline at end of file")
-                    unified.append(DiffRowItem(id: unified.count, content: .line(n)))
+                    unified.append(DiffRowItem(id: DiffRowID(path: diff.path, index: unified.count), content: .line(n)))
                     flushRuns()
-                    split.append(DiffRowItem(id: split.count, content: .pair(
+                    split.append(DiffRowItem(id: DiffRowID(path: diff.path, index: split.count), content: .pair(
                         last == .added ? nil : n, last == .removed ? nil : n)))
                 }
             }
@@ -154,11 +160,7 @@ nonisolated struct ReviewFile: Identifiable, Sendable {
     }
 
     /// Tabs become four spaces and a stray CR disappears, so columns line up.
-    static func display(_ content: String) -> String {
-        var text = content
-        if text.hasSuffix("\r") { text.removeLast() }
-        return text.contains("\t") ? text.replacingOccurrences(of: "\t", with: "    ") : text
-    }
+    static func display(_ content: String) -> String { Diff.display(content) }
 
     /// Approximate monospaced width: East Asian wide characters take two cells.
     static func columns(_ text: String) -> Int {
@@ -183,7 +185,10 @@ struct ReviewGroup: Identifiable {
 
 /// Everything a review needs from the app, resolved once per action.
 struct DiffContext: Sendable {
+    /// For what you do: accept, discard.
     let executor: any Executor
+    /// For keeping the review up to date: inside the background git budget.
+    let reader: any Executor
     let sessionId: String
     let worktree: String
     let root: String
@@ -191,6 +196,8 @@ struct DiffContext: Sendable {
     let exclude: [String]
     /// The ref the chat's branch was made from.
     let baseRef: String?
+    /// Why nothing can be accepted from here, when it can't.
+    var acceptBlocked: String? = nil
 }
 
 enum DiffAvailability {
@@ -212,8 +219,10 @@ extension AppModel {
         // A chat on another Mac: its worktree is there; the link says if it's gone.
         let remote = sessionId.hasPrefix(RemoteService.mirrorPrefix)
         guard remote || FileManager.default.fileExists(atPath: worktree) else { return .worktreeMissing(worktree) }
-        return .ready(DiffContext(executor: executor(for: sessionId), sessionId: sessionId, worktree: worktree, root: project.rootPath,
-                                  projectName: project.name, exclude: project.nestedRepos, baseRef: session.baseRef))
+        return .ready(DiffContext(executor: executor(for: sessionId), reader: reader(for: sessionId), sessionId: sessionId,
+                                  worktree: worktree, root: project.rootPath,
+                                  projectName: project.name, exclude: project.nestedRepos, baseRef: session.baseRef,
+                                  acceptBlocked: RemoteService.split(sessionId).flatMap { self.remote.inputRefusal($0.device) }))
     }
 }
 
@@ -259,12 +268,16 @@ final class DiffReview {
     /// A mode picked by hand holds while the worktree stays as dirty (or as
     /// clean) as it was when picked; then the review picks again.
     @ObservationIgnored private var pickedWhileDirty: Bool?
+    /// Nothing loaded for this repository yet: the review picks its mode afresh.
+    @ObservationIgnored private var picksAfresh = true
 
     private(set) var phase: Phase = .loading
     private(set) var files: [ReviewFile] = []
     private(set) var groups: [ReviewGroup] = []
     var selectedPath: String?
     private(set) var isRefreshing = false
+    /// The load in flight, if any.
+    @ObservationIgnored private var loadingGeneration: Int?
     /// The key of the accept/reject in flight; actions are serialized so git
     /// never races itself on the index.
     private(set) var workingOn: String?
@@ -300,12 +313,18 @@ final class DiffReview {
     /// its commits, when it has none), and `path` in it once it's loaded.
     func select(_ repo: String, _ context: DiffContext, focus path: String? = nil) async {
         guard repo != selectedRepo else {
-            if let path { focus(path) }
+            if let path {
+                // A load for this repository may already be in flight (the
+                // onChange reload's own `select`): let it focus the path when
+                // it finishes rather than focusing into a list not loaded yet.
+                if files.contains(where: { $0.path == path }) { focus(path) } else { focusAfterLoad = path }
+            }
             return
         }
         selectedRepo = repo
         mode = .uncommitted
         pickedWhileDirty = nil
+        picksAfresh = true
         expansion = [:]
         focusAfterLoad = path
         await load(context)
@@ -330,8 +349,28 @@ final class DiffReview {
         if let file = files.first(where: { $0.path == path }), !isExpanded(file) { toggle(file) }
     }
 
+    /// ⌘F in the Review tab: it searches every file shown, open or not.
+    let find = ReviewFind()
+    /// The match find last went to, for the diff to scroll to; the token repeats it.
+    private(set) var findTarget: DiffMatch?
+    private(set) var findToken = 0
+
+    init() {
+        find.reveal = { [unowned self] match in
+            // Its file opens, and draws even when it's long enough to wait for "Show Diff".
+            expansion[match.path] = true
+            revealedLargeFiles.insert(match.path)
+            findTarget = match
+            findToken += 1
+        }
+    }
+
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var orderedPaths: [String] = []
+    /// The worktree as it looked when the review last read it in full.
+    @ObservationIgnored private var lastLook: WorktreeSnapshot?
+    /// Background refreshes: one at a time, at most one a second.
+    @ObservationIgnored private let refreshes = ReloadQueue()
 
     var selectedFile: ReviewFile? {
         guard let selectedPath else { return nil }
@@ -347,19 +386,56 @@ final class DiffReview {
     /// `git diff -w`: changes that only move whitespace don't show.
     var ignoreWhitespace = false
 
-    func load(_ context: DiffContext) async {
+    /// Refresh as files change: `reload` soon, merged with every other
+    /// change until it starts.
+    func refreshSoon(_ reload: @escaping @MainActor () async -> Void) { refreshes.soon(reload) }
+
+    /// Refresh now, or right after the refresh running.
+    func refreshNow(_ reload: @escaping @MainActor () async -> Void) async { await refreshes.now(reload) }
+
+    /// A look at the worktree, and a full read only if it changed since the last one.
+    func refresh(_ context: DiffContext) async {
+        guard phase == .loaded else { return await load(context) }
+        let look = await WorktreeSnapshot.take(context.reader, worktree: context.worktree)
+        if let look, look == lastLook { return }
+        await load(context, quietly: true, look: look)
+    }
+
+    /// Read the changes in full. `quietly`, the spinner shows only once it
+    /// takes more than a second.
+    func load(_ context: DiffContext, quietly: Bool = false) async {
+        await load(context, quietly: quietly, look: await WorktreeSnapshot.take(context.reader, worktree: context.worktree))
+    }
+
+    private func load(_ context: DiffContext, quietly: Bool, look: WorktreeSnapshot?) async {
         generation += 1
         let current = generation
-        accepted = AcceptedLedger.bySession[context.sessionId] ?? []
-        if phase == .loaded { isRefreshing = true } else { phase = .loading }
-        defer { if current == generation { isRefreshing = false } }
-        let exec = context.executor
+        update(\.accepted, AcceptedLedger.bySession[context.sessionId] ?? [])
+        if phase != .loaded {
+            phase = .loading
+        } else if !quietly {
+            isRefreshing = true
+        } else {
+            Task {
+                try? await Task.sleep(for: .seconds(1))
+                if current == generation, loadingGeneration == current { isRefreshing = true }
+            }
+        }
+        loadingGeneration = current
+        defer {
+            if current == generation {
+                loadingGeneration = nil
+                update(\.isRefreshing, false)
+            }
+        }
+        let exec = context.reader
         let repoList = await Submodules.list(exec, worktree: context.worktree)
         // A submodule that's gone (removed, or no longer checked out) gives way to the worktree's own.
         if !repoList.contains(where: { $0.path == selectedRepo }) {
             selectedRepo = ""
             mode = .uncommitted
             pickedWhileDirty = nil
+            picksAfresh = true
         }
         let repo = repoList.first { $0.path == selectedRepo } ?? ChatRepo(path: "")
         // A submodule is measured from its own base branch, as its own pull request would be.
@@ -367,38 +443,43 @@ final class DiffReview {
                                            preferredBase: repo.isSubmodule ? nil : context.baseRef)
         let changed = repoList.count > 1 ? await Submodules.changedPaths(exec, worktree: context.worktree) : nil
         guard current == generation else { return }
-        self.repoList = repoList
+        update(\.repoList, repoList)
         let submodulePaths = Set(repoList.filter(\.isSubmodule).map(\.path))
         var marks = Set((changed ?? []).filter(submodulePaths.contains))
         if (changed ?? []).contains(where: { !submodulePaths.contains($0) }) || (repo.path.isEmpty && state.dirty) { marks.insert("") }
-        changedRepos = marks
-        dirty = state.dirty
-        base = state.base
-        commits = state.commits
-        // Uncommitted work while there is some, the branch's commits once it's all committed.
+        update(\.changedRepos, marks)
+        update(\.dirty, state.dirty)
+        update(\.base, state.base)
+        update(\.commits, state.commits)
+        // Uncommitted work while there is some, the branch's commits once it's
+        // all committed; a list in view stays until it's empty.
         if case .commit = mode {} else if pickedWhileDirty != dirty {
             pickedWhileDirty = nil
-            mode = dirty || base == nil ? .uncommitted : .committed
+            let committed = RepoReview.followsCommitted(showingCommitted: picksAfresh ? nil : mode == .committed, dirty: dirty,
+                                                        hasBase: base != nil, hasCommits: !commits.isEmpty)
+            update(\.mode, committed ? .committed : .uncommitted)
         }
-        let compare: DiffCompare = switch mode {
-        case .uncommitted: .uncommitted
-        case .committed: base.map { .committed(base: $0) } ?? .uncommitted
-        case .commit(let c): .commit(sha: c.sha, repo: c.repo)
-        }
+        picksAfresh = false
         do {
             let changes = try await RepoReview.changes(exec, worktree: context.worktree, repo: repo, repos: repoList,
                                                        exclude: context.exclude, compare: compare, ignoreWhitespace: ignoreWhitespace)
-            let prepared = await ReviewFile.prepare(changes.files)
+            // Files whose diff didn't change keep their rows, so only the changed ones redraw.
+            let kept = RepoReview.unchanged(changes.files, previous: files, diff: \.diff)
+            let fresh = await ReviewFile.prepare(changes.files.filter { kept[$0.path] == nil })
             guard current == generation else { return }
-            pointers = changes.pointers
-            apply(prepared)
+            let byPath = Dictionary(fresh.map { ($0.path, $0) }, uniquingKeysWith: { a, _ in a })
+            let prepared = changes.files.compactMap { kept[$0.path] ?? byPath[$0.path] }
+            update(\.pointers, changes.pointers)
+            if fresh.isEmpty, prepared.map(\.path) == files.map(\.path) {} else { apply(prepared) }
             let nothing = prepared.isEmpty && changes.pointers.isEmpty
-            otherModeHasChanges = switch mode {
+            let other = switch mode {
             case .uncommitted: nothing && !commits.isEmpty
             case .committed: nothing && dirty
             case .commit: false
             }
-            phase = .loaded
+            update(\.otherModeHasChanges, other)
+            update(\.phase, .loaded)
+            lastLook = look
             if let path = focusAfterLoad {
                 focusAfterLoad = nil
                 if files.contains(where: { $0.path == path }) { focus(path) }
@@ -413,8 +494,13 @@ final class DiffReview {
         }
     }
 
+    /// Only what changed, so views of the rest don't redraw.
+    private func update<Value: Equatable>(_ keyPath: ReferenceWritableKeyPath<DiffReview, Value>, _ value: Value) {
+        if self[keyPath: keyPath] != value { self[keyPath: keyPath] = value }
+    }
+
     private func apply(_ prepared: [ReviewFile]) {
-        let previousIndex = selectedPath.flatMap { orderedPaths.firstIndex(of: $0) }
+        let before = orderedPaths
         let grouped = Dictionary(grouping: prepared, by: \.directory)
         groups = grouped.keys.sorted { a, b in
             // Top-level files first, then directories alphabetically.
@@ -424,12 +510,8 @@ final class DiffReview {
         }
         files = prepared
         orderedPaths = groups.flatMap { $0.files.map(\.path) }
-        if let selectedPath, orderedPaths.contains(selectedPath) { return }
-        if let previousIndex, !orderedPaths.isEmpty {
-            selectedPath = orderedPaths[min(previousIndex, orderedPaths.count - 1)]
-        } else {
-            selectedPath = orderedPaths.first
-        }
+        update(\.selectedPath, RepoReview.selection(selectedPath, before: before, after: orderedPaths))
+        find.filesChanged(orderedFiles.map(\.diff))
     }
 
     func moveSelection(_ delta: Int) {
@@ -441,6 +523,7 @@ final class DiffReview {
     /// Show `mode`; it holds until the worktree's dirty state changes.
     func show(_ mode: ReviewMode, _ context: DiffContext) async {
         self.mode = mode
+        picksAfresh = false
         pickedWhileDirty = dirty
         expansion = [:]
         await load(context)
@@ -479,7 +562,7 @@ final class DiffReview {
     /// Apply a whole file onto the project's main working tree.
     func acceptFile(_ file: ReviewFile, _ context: DiffContext, model: AppModel) async {
         await perform("file:\(file.path)", context, model: model) {
-            let outcome = try await Self.accept(file, context)
+            let outcome = try await Self.accept(file, context, compare: self.compare)
             self.markAccepted(file.hunks.map(\.fingerprint) + [file.fileFingerprint], session: context.sessionId)
             return "Applied \(file.name) to \(context.projectName)" + Self.note(outcome)
         }
@@ -510,7 +593,7 @@ final class DiffReview {
         var failures: [String] = []
         for file in pending {
             do {
-                try await Self.accept(file, context)
+                try await Self.accept(file, context, compare: compare)
                 markAccepted(file.hunks.map(\.fingerprint) + [file.fileFingerprint], session: context.sessionId)
             } catch {
                 failures.append("\(file.path): \(Self.explain(error).0)")
@@ -525,6 +608,15 @@ final class DiffReview {
             model.flash("\(failures.count) file\(failures.count == 1 ? "" : "s") couldn't be accepted", isError: true)
         }
         await load(context)
+    }
+
+    /// What the files shown compare.
+    var compare: DiffCompare {
+        switch mode {
+        case .uncommitted: .uncommitted
+        case .committed: base.map { .committed(base: $0) } ?? .uncommitted
+        case .commit(let c): .commit(sha: c.sha, repo: c.repo)
+        }
     }
 
     func isWorking(on key: String) -> Bool { workingOn == key || workingOn == "all" }
@@ -561,19 +653,14 @@ final class DiffReview {
     // MARK: Git
 
     @discardableResult
-    private static func accept(_ file: ReviewFile, _ context: DiffContext) async throws -> Diff.AcceptOutcome {
+    private static func accept(_ file: ReviewFile, _ context: DiffContext, compare: DiffCompare) async throws -> Diff.AcceptOutcome {
+        if let blocked = context.acceptBlocked { throw AbstractError.message(blocked) }
         let repo = file.diff.repo
-        let root = repoDirectory(context.root, repo)
         // Applied from an empty submodule folder, git would patch the parent instead.
-        if !repo.isEmpty, !(await Submodules.isCheckedOut(context.executor, directory: root)) {
+        if !repo.isEmpty, !(await Submodules.isCheckedOut(context.executor, directory: repoDirectory(context.root, repo))) {
             throw AbstractError.message("\(repo) isn't checked out in \(context.projectName). Run `git submodule update --init` there.")
         }
-        if file.diff.isBinary {
-            try copyBinary(file, from: context.worktree, to: context.root)
-            return .applied
-        }
-        let patch = Diff.buildPatch(file.diff, hunks: [])
-        return try await Diff.accept(context.executor, root: root, patch: patch)
+        return try await Diff.accept(context.executor, file: file.diff, worktree: context.worktree, root: context.root, compare: compare)
     }
 
     /// Plain words for the rare cases where git had to merge.
@@ -582,26 +669,6 @@ final class DiffReview {
         case .applied: ""
         case .mergedAndStaged: " (merged three ways and staged)"
         case .conflicts: " with conflicts; resolve the markers in your editor"
-        }
-    }
-
-    private static func copyBinary(_ file: ReviewFile, from worktree: String, to root: String) throws {
-        let fm = FileManager.default
-        let target = URL(fileURLWithPath: join(root, file.path))
-        do {
-            if file.diff.status == .renamed, let old = file.diff.oldPath {
-                let oldURL = URL(fileURLWithPath: join(root, old))
-                if fm.fileExists(atPath: oldURL.path) { try fm.removeItem(at: oldURL) }
-            }
-            if file.diff.status == .deleted {
-                if fm.fileExists(atPath: target.path) { try fm.removeItem(at: target) }
-                return
-            }
-            try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
-            if fm.fileExists(atPath: target.path) { try fm.removeItem(at: target) }
-            try fm.copyItem(at: URL(fileURLWithPath: join(worktree, file.path)), to: target)
-        } catch {
-            throw AbstractError.message("Couldn't copy \(file.path): \(error.localizedDescription)")
         }
     }
 

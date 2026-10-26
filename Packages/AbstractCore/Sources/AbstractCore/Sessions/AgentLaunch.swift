@@ -21,6 +21,29 @@ public struct AgentDefaults: Codable, Hashable, Sendable {
     }
 }
 
+/// What serves a chat's code-history tool (ABS-61), when its project
+/// gives agents that history: this Mac's `abstract` command, and the
+/// instruction as a file for agents that read instructions from files.
+public struct CodeHistorySettings: Sendable, Hashable {
+    public var command: String
+    public var instructionFile: String?
+
+    public init(command: String, instructionFile: String? = nil) {
+        self.command = command; self.instructionFile = instructionFile
+    }
+
+    /// Writes the instruction into `directory` (once per launch is fine:
+    /// the text never changes) and names the file. Nil if it can't.
+    public static func instructionFile(in directory: String) -> String? {
+        let path = directory + "/code-history-instruction.md"
+        do {
+            try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+            try (CodeHistory.instruction + "\n").write(toFile: path, atomically: true, encoding: .utf8)
+            return path
+        } catch { return nil }
+    }
+}
+
 /// The settings every agent launch reads, wherever it starts: the app, or
 /// `abstract` with the app closed.
 public struct LaunchSettings: Sendable {
@@ -36,13 +59,35 @@ public struct LaunchSettings: Sendable {
     public var agentDefaults: [String: AgentDefaults]
     /// By agent id: the models last discovered, which say what efforts each takes.
     public var modelCatalogs: [String: ModelCatalog]
+    /// The code-history tool for this launch's chat, when its project
+    /// gives agents that history; nil leaves the agent without it.
+    public var codeHistory: CodeHistorySettings?
+    /// The command that serves explicit branch naming for automation runs.
+    public var branchCommand: String?
+    /// The `abstract` command that serves this launch's plugin tools
+    /// (ABS-97), when a plugin offers any; nil leaves the agent without.
+    public var pluginToolsCommand: String?
+    /// The MCP servers of the launch's project (ABS-123); each agent gets
+    /// the ones chosen for it.
+    public var toolServers: [ProjectToolServer]
+    /// The library skills this launch's chat gets (ABS-122).
+    public var skills: [LibrarySkill]
+    /// Where each chat's own launch files go (`ChatConfigFiles`); nil
+    /// passes everything inline, and gives the agent no library skills.
+    public var agentConfigRoot: String?
+    /// Variables the agent starts with: its project's tracker links
+    /// (ABS-143), like `ABSTRACT_JIRA_PROJECT`.
+    public var environment: [String: String] = [:]
 
     public init(providerOverrides: [String: ProviderOverride], outputStyle: OutputStyle, claudeProfile: String?,
                 standardClaudeProfile: String = NSHomeDirectory() + "/.claude", attachmentsDirectory: String,
-                agentDefaults: [String: AgentDefaults] = [:], modelCatalogs: [String: ModelCatalog] = [:]) {
+                agentDefaults: [String: AgentDefaults] = [:], modelCatalogs: [String: ModelCatalog] = [:],
+                codeHistory: CodeHistorySettings? = nil, toolServers: [ProjectToolServer] = [], skills: [LibrarySkill] = [],
+                agentConfigRoot: String? = nil) {
         self.providerOverrides = providerOverrides; self.outputStyle = outputStyle; self.claudeProfile = claudeProfile
         self.standardClaudeProfile = standardClaudeProfile; self.attachmentsDirectory = attachmentsDirectory
-        self.agentDefaults = agentDefaults; self.modelCatalogs = modelCatalogs
+        self.agentDefaults = agentDefaults; self.modelCatalogs = modelCatalogs; self.codeHistory = codeHistory
+        self.toolServers = toolServers; self.skills = skills; self.agentConfigRoot = agentConfigRoot
     }
 
     /// As the app last saved them, for a launch that doesn't go through the app.
@@ -52,7 +97,38 @@ public struct LaunchSettings: Sendable {
                   claudeProfile: store.setting("claudeProfile", as: String.self),
                   attachmentsDirectory: dataDirectory.appendingPathComponent("attachments").path,
                   agentDefaults: store.setting("agentDefaults", as: [String: AgentDefaults].self) ?? [:],
-                  modelCatalogs: store.setting("modelCatalogs", as: [String: ModelCatalog].self) ?? [:])
+                  modelCatalogs: store.setting("modelCatalogs", as: [String: ModelCatalog].self) ?? [:],
+                  agentConfigRoot: dataDirectory.appendingPathComponent("agent-config").path)
+    }
+
+    /// What `provider` gets of the project's MCP servers in `session`:
+    /// only its own project's, only those chosen for it, and never one
+    /// named like one of Abstract's own servers or an earlier one.
+    func toolServers(for session: Session, provider: any ProviderDefinition) -> [MCPServerLaunch] {
+        guard let projectId = session.projectId else { return [] }
+        var taken: Set<String> = [CodeHistory.serverName, PluginTools.serverName, BranchMCPServer.serverName]
+        return toolServers.filter { $0.projectId == projectId }.compactMap { server in
+            guard !server.name.isEmpty, ProjectToolServer.cleanName(server.name) == server.name,
+                  taken.insert(server.name).inserted else { return nil }
+            return server.launch(for: provider)
+        }
+    }
+
+    /// Gives this launch `session`'s library skills (ABS-122): the ones
+    /// its project gets, then the ones the profile it started from adds.
+    public mutating func addSkills(for session: Session, project: Project?, profile: AgentProfile?,
+                                   sources: [SkillSource], dataDirectory: String) {
+        let profileSkills = profile?.id == session.profileId ? profile?.skills ?? [] : []
+        let available = SkillLibrary.skills(sources: sources, library: SkillLibrary.folder(dataDirectory: dataDirectory))
+        skills = SkillLibrary.chatSkills(project: project?.assignedSkills ?? [], profile: profileSkills, available: available)
+    }
+
+    /// Tells this launch's agent which tracker team and project
+    /// `session`'s project links to (ABS-143), as saved on this Mac.
+    public mutating func addIssueTrackers(for session: Session, plugins: PluginManager) {
+        let trackers = ProjectIssueTrackers(projectId: session.projectId, installed: plugins.installed(saving: false),
+                                            storage: plugins.storage(for:))
+        environment.merge(trackers.environment) { $1 }
     }
 
     /// The default effort, when the model that will run takes it; else nil,
@@ -79,11 +155,36 @@ public enum AgentLaunch {
                                 model: session.model ?? settings.agentDefaults[provider.id]?.model,
                                 effort: session.effort ?? settings.defaultEffort(for: provider, model: session.model, home: home),
                                 outputStyle: settings.outputStyle, images: images,
-                                readableDirs: [settings.attachmentsDirectory])
+                                readableDirs: [settings.attachmentsDirectory],
+                                historyTool: settings.codeHistory.map {
+                                    HistoryToolLaunch(command: $0.command, chatId: session.id, instructionFile: $0.instructionFile)
+                                },
+                                branchTool: settings.branchCommand.map { BranchToolLaunch(command: $0, chatId: session.id) },
+                                instructions: [session.profileInstructions,
+                                               settings.branchCommand == nil ? nil : BranchMCPServer.instruction]
+                                    .compactMap { $0 }.joined(separator: "\n\n"),
+                                pluginTools: settings.pluginToolsCommand.map {
+                                    PluginToolsLaunch(command: $0, chatId: session.id)
+                                },
+                                toolServers: settings.toolServers(for: session, provider: provider),
+                                configDirectory: settings.agentConfigRoot.map {
+                                    ChatConfigFiles.directory(root: $0, chatId: session.id)
+                                },
+                                skills: skills(for: session, provider: provider, settings: settings, home: home))
         var spec = resumeId.map { provider.buildResume(ctx, resumeId: $0) } ?? provider.buildLaunch(ctx)
+        spec.env.merge(settings.environment) { current, _ in current }
         if provider.id == "claude", let profile = settings.claudeProfile, profile != settings.standardClaudeProfile {
             spec.env["CLAUDE_CONFIG_DIR"] = profile
         }
         return spec
+    }
+
+    /// The chat's skills laid out for its agent, in the chat's own folder.
+    /// nil when it gets none, or its agent can't take them (the app says so).
+    static func skills(for session: Session, provider: any ProviderDefinition, settings: LaunchSettings,
+                       home: String) -> SkillsLaunch? {
+        guard let delivery = provider.skillDelivery, let root = settings.agentConfigRoot else { return nil }
+        return try? ChatConfigFiles.prepareSkills(settings.skills, delivery: delivery,
+                                                  in: ChatConfigFiles.directory(root: root, chatId: session.id), home: home)
     }
 }

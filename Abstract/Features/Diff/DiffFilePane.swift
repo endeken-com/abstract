@@ -6,6 +6,7 @@ import AbstractCore
 /// while its lines scroll by) and opens or closes the file's diff. Lines are
 /// syntax coloured, and any line takes a comment for the agent.
 struct DiffFileSections: View {
+    @Environment(AppModel.self) private var model
     let review: DiffReview
     let context: DiffContext
     let layout: DiffLayout
@@ -13,6 +14,8 @@ struct DiffFileSections: View {
     let onDiscard: (ReviewFile) -> Void
     @State private var highlights = DiffHighlights()
     @State private var drafting = CommentDrafting()
+    /// Where each shown file's changes came from, in Committed and single-commit view.
+    @State private var provenance: [String: [TurnRecord]] = [:]
 
     var body: some View {
         let metrics = DiffMetrics(files: review.files, width: width, layout: layout)
@@ -24,7 +27,7 @@ struct DiffFileSections: View {
                         VStack(alignment: .leading, spacing: 0) {
                             ForEach(review.pointers) { pointer in
                                 PointerRow(pointer: pointer, canOpen: review.repoList.contains { $0.path == pointer.repo.path }) {
-                                    Task { await review.select(pointer.repo.path, context) }
+                                    model.showRepo(pointer.repo.path, in: review, context)
                                 }
                             }
                         }
@@ -34,10 +37,11 @@ struct DiffFileSections: View {
                         Section {
                             if review.isExpanded(file) {
                                 DiffFileBody(review: review, file: file, layout: layout, context: context,
-                                             metrics: metrics, highlights: highlights)
+                                             metrics: metrics, highlights: highlights, ask: askContext(file))
                             }
                         } header: {
-                            DiffFileHeader(review: review, file: file, context: context, onDiscard: { onDiscard(file) })
+                            DiffFileHeader(review: review, file: file, context: context,
+                                           provenance: provenance[file.path] ?? [], onDiscard: { onDiscard(file) })
                         }
                         .id(file.path)
                     }
@@ -47,11 +51,77 @@ struct DiffFileSections: View {
                 .textSelection(.enabled)
             }
             .environment(\.commentDrafting, drafting)
+            .environment(\.diffFind, review.find.rowFind)
+            .task(id: provenanceKey) { await loadProvenance() }
             // "Show in Changes" from a tool row or the Files pane.
             .onChange(of: review.focusToken) {
                 guard let path = review.focusPath else { return }
                 withAnimation(.snappy(duration: 0.25)) { proxy.scrollTo(path, anchor: .top) }
             }
+            // ⌘G and Return in the find bar: the match's line, once its file has opened.
+            .onChange(of: review.findToken) {
+                guard let match = review.findTarget, let file = review.files.first(where: { $0.path == match.path }),
+                      let row = file.row(of: match, split: layout == .split) else { return }
+                Task { @MainActor in
+                    await Task.yield()
+                    proxy.scrollTo(row, anchor: .center)
+                }
+            }
+        }
+    }
+
+    /// What asking about a line of `file` looks up: its repository, its
+    /// path there, and the revision the review shows it at.
+    private func askContext(_ file: ReviewFile) -> AskLineContext {
+        AskLineContext(repo: DiffReview.repoDirectory(context.worktree, file.diff.repo),
+                       path: file.diff.repoPath, revision: review.mode.askRevision,
+                       projectId: model.session(context.sessionId)?.projectId, exec: context.reader)
+    }
+
+    private var provenanceKey: String {
+        review.mode.label + "|" + review.commits.map(\.sha).joined(separator: ",") + "|" + review.files.map(\.path).joined(separator: ",")
+    }
+
+    private func loadProvenance() async {
+        let shas: [String]
+        switch review.mode {
+        case .uncommitted: provenance = [:]; return
+        case .committed: shas = review.commits.map(\.sha)
+        case .commit(let c): shas = [c.sha]
+        }
+        guard !shas.isEmpty else { provenance = [:]; return }
+        let repo = DiffReview.repoDirectory(context.worktree, review.selectedRepo)
+        let origins = await model.commitOrigins(shas, projectId: model.session(context.sessionId)?.projectId,
+                                                exec: context.reader, repo: repo)
+        guard !Task.isCancelled else { return }
+        let byFile = AskAuthor.fileTurns(origins: origins)
+        provenance = Dictionary(uniqueKeysWithValues: review.files.compactMap { file in
+            (byFile[file.path] ?? byFile[file.diff.repoPath]).map { (file.path, $0) }
+        })
+    }
+}
+
+/// Where a line shown in Review sits, for asking the chat that wrote it.
+struct AskLineContext {
+    let repo: String
+    let path: String
+    let revision: String?
+    let projectId: String?
+    let exec: any Executor
+
+    func key(_ line: Int) -> AskAuthorKey {
+        AskAuthorKey(repo: repo, path: path, lines: line...line, revision: revision)
+    }
+}
+
+extension ReviewMode {
+    /// The revision a shown new-side line is blamed at; nil blames the
+    /// file as it is in the worktree now.
+    var askRevision: String? {
+        switch self {
+        case .uncommitted: nil
+        case .committed: "HEAD"
+        case .commit(let c): c.sha
         }
     }
 }
@@ -64,6 +134,8 @@ private struct DiffFileHeader: View {
     let review: DiffReview
     let file: ReviewFile
     let context: DiffContext
+    /// The turns that changed this file, in Committed and single-commit view.
+    var provenance: [TurnRecord] = []
     let onDiscard: () -> Void
     @State private var hovering = false
 
@@ -73,6 +145,7 @@ private struct DiffFileHeader: View {
         let working = review.isWorking(on: "file:\(file.path)")
         let expanded = review.isExpanded(file)
         let comments = model.comments(context.sessionId).count { $0.ref.path == file.path }
+        VStack(alignment: .leading, spacing: 0) {
         Button { withAnimation(.snappy(duration: 0.2)) { review.toggle(file) } } label: {
             HStack(spacing: Space.sm) {
                 Image(systemName: "chevron.right")
@@ -118,11 +191,29 @@ private struct DiffFileHeader: View {
             if !remote { Button("Reveal in Finder") { reveal() } }
             Divider()
             Button("Apply to \(context.projectName)") { Task { await review.acceptFile(file, context, model: model) } }
-                .disabled(review.isAccepted(file) || review.isWorking)
+                .disabled(review.isAccepted(file) || review.isWorking || context.acceptBlocked != nil)
+            if let blocked = context.acceptBlocked { Text(blocked) }
             if review.mode == .uncommitted {
                 Button("Discard Changes…", role: .destructive, action: onDiscard)
                     .disabled(review.isWorking)
             }
+        }
+        if !provenance.isEmpty {
+            HStack(spacing: Space.sm) {
+                ForEach(Array(zip(provenance, AskAuthor.changedIn(provenance))), id: \.0.id) { turn, label in
+                    Button(label) { model.openTurn(turn) }
+                        .buttonStyle(.plain)
+                        .font(.btCaption)
+                        .foregroundStyle(Color.btTextSecondary)
+                        .lineLimit(1)
+                        .help("Open \(turn.chatName)")
+                }
+            }
+            .padding(.leading, Space.md + 10 + Space.sm)
+            .padding(.trailing, Space.md)
+            .padding(.bottom, 5)
+            .background(Color.btCanvas)
+        }
         }
     }
 
@@ -164,6 +255,7 @@ private struct DiffFileBody: View {
     let context: DiffContext
     let metrics: DiffMetrics
     let highlights: DiffHighlights
+    let ask: AskLineContext
 
     /// Past this many rows a file waits for a click before it renders.
     private static let largeFileRows = 6_000
@@ -182,14 +274,15 @@ private struct DiffFileBody: View {
                     DiffHunkHeader(hunk: file.hunks[position], isFirst: position == 0)
                 case .line(let line):
                     DiffUnifiedLine(file: file, line: line, metrics: metrics, sessionId: context.sessionId,
-                                    code: highlights.line(file, line), source: review.mode.source)
+                                    code: highlights.line(file, line), source: review.mode.source, ask: ask)
                 case .pair(let left, let right):
                     DiffSplitLine(file: file, left: left, right: right, metrics: metrics, sessionId: context.sessionId,
-                                  highlights: highlights, source: review.mode.source)
+                                  highlights: highlights, source: review.mode.source, ask: ask)
                 }
             }
             Color.clear.frame(height: Space.md)
-                .task(id: file.id) { await highlights.load(file) }
+                // Coloured again in a new theme: SwiftUI keeps the colours it drew text in.
+                .task(id: [file.id, ThemeState.shared.choice.rawValue]) { await highlights.load(file) }
         }
     }
 
@@ -276,6 +369,7 @@ extension NumberedLine {
 /// number for a removed line, the new one otherwise), the line washed green
 /// or red, no +/− marks. Hovering the gutter offers a comment.
 private struct DiffUnifiedLine: View {
+    @Environment(AppModel.self) private var model
     @Environment(\.commentDrafting) private var drafting
     let file: ReviewFile
     let line: NumberedLine
@@ -283,6 +377,7 @@ private struct DiffUnifiedLine: View {
     let sessionId: String
     let code: AttributedString?
     let source: String
+    let ask: AskLineContext
     @State private var hovering = false
 
     var body: some View {
@@ -300,13 +395,20 @@ private struct DiffUnifiedLine: View {
                             AddCommentButton { drafting?.ref = ref }.offset(x: 4)
                         }
                     }
-                DiffLineText(line: line, code: code)
+                DiffLineText(file: file, line: line, code: code)
                     .padding(.leading, 8)
             }
             .frame(minHeight: DiffMetrics.rowHeight, alignment: .topLeading)
             .background(DiffStyle.wash(line.kind))
             .contentShape(Rectangle())
-            .onHover { hovering = $0 }
+            .onHover { hovering = $0; if hovering, let ref, ref.side == .new { model.prepareAsk(ask.key(ref.line), projectId: ask.projectId, exec: ask.exec) } }
+            .contextMenu {
+                if let ref, ref.side == .new {
+                    Button(model.askTargets[ask.key(ref.line)]?.menuTitle ?? "Ask the chat that wrote this…") {
+                        Task { await model.askAbout(ask.key(ref.line), code: [line.text], projectId: ask.projectId, exec: ask.exec) }
+                    }
+                }
+            }
             if let ref {
                 LineCommentThread(sessionId: sessionId, ref: ref, code: line.text,
                                   context: { file.context(for: ref) }, source: source)
@@ -326,15 +428,16 @@ private struct DiffSplitLine: View {
     let sessionId: String
     let highlights: DiffHighlights
     let source: String
+    let ask: AskLineContext
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 0) {
                 DiffSplitCell(file: file, line: left, number: left?.old ?? "", metrics: metrics,
-                              code: left.flatMap { highlights.line(file, $0) })
+                              code: left.flatMap { highlights.line(file, $0) }, ask: ask)
                 Rectangle().fill(Color.btBorder).frame(width: 0.5).frame(maxHeight: .infinity)
                 DiffSplitCell(file: file, line: right, number: right?.new ?? "", metrics: metrics,
-                              code: right.flatMap { highlights.line(file, $0) })
+                              code: right.flatMap { highlights.line(file, $0) }, ask: ask)
             }
             // Both halves take the taller one's height, so washes line up.
             .fixedSize(horizontal: false, vertical: true)
@@ -352,12 +455,14 @@ private struct DiffSplitLine: View {
 }
 
 private struct DiffSplitCell: View {
+    @Environment(AppModel.self) private var model
     @Environment(\.commentDrafting) private var drafting
     let file: ReviewFile
     let line: NumberedLine?
     let number: String
     let metrics: DiffMetrics
     let code: AttributedString?
+    let ask: AskLineContext
     @State private var hovering = false
 
     var body: some View {
@@ -373,7 +478,7 @@ private struct DiffSplitCell: View {
                             AddCommentButton { drafting?.ref = ref }.offset(x: 4)
                         }
                     }
-                DiffLineText(line: line, code: code).padding(.leading, 8)
+                DiffLineText(file: file, line: line, code: code).padding(.leading, 8)
             }
         }
         .frame(width: metrics.half, alignment: .topLeading)
@@ -383,13 +488,22 @@ private struct DiffSplitCell: View {
         }
         .background(line.map { DiffStyle.wash($0.kind) } ?? Color.btHover)
         .contentShape(Rectangle())
-        .onHover { hovering = $0 }
+        .onHover { hovering = $0; if hovering, let ref = line?.ref(in: file), ref.side == .new { model.prepareAsk(ask.key(ref.line), projectId: ask.projectId, exec: ask.exec) } }
+        .contextMenu {
+            if let line, let ref = line.ref(in: file), ref.side == .new {
+                Button(model.askTargets[ask.key(ref.line)]?.menuTitle ?? "Ask the chat that wrote this…") {
+                    Task { await model.askAbout(ask.key(ref.line), code: [line.text], projectId: ask.projectId, exec: ask.exec) }
+                }
+            }
+        }
     }
 }
 
 /// A line's content, wrapping inside the pane; its colour says whether it was added or removed. Syntax colour
 /// arrives a moment after the line; unchanged lines sit a step back.
 private struct DiffLineText: View {
+    @Environment(\.diffFind) private var find
+    let file: ReviewFile
     let line: NumberedLine
     let code: AttributedString?
 
@@ -402,7 +516,8 @@ private struct DiffLineText: View {
                 .padding(.leading, DiffMetrics.markerWidth)
                 .frame(height: DiffMetrics.rowHeight)
         } else {
-            Text(code ?? AttributedString(line.text))
+            let text = code ?? AttributedString(line.text)
+            Text(find?.mark(text, line: line, in: file) ?? text)
                 .font(.btMono)
                 .foregroundStyle(line.kind == .context ? Color.btTextSecondary : Color.btText)
                 .opacity(line.kind == .context && code != nil ? 0.78 : 1)
@@ -457,7 +572,7 @@ final class DiffHighlights {
     }
 
     func load(_ file: ReviewFile) async {
-        let signature = file.hunks.map(\.fingerprint)
+        let signature = file.hunks.map(\.fingerprint) + [ThemeState.shared.current.rawValue]
         guard byFile[file.path]?.signature != signature, !loading.contains(file.path),
               file.lineCount <= 20_000, let language = CodeHighlighter.language(for: file.path) else { return }
         loading.insert(file.path)

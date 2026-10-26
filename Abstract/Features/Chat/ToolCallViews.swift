@@ -52,8 +52,10 @@ enum ToolSegment: Identifiable {
         }
         for call in calls {
             let kind = ToolKind(call.name)
-            // A command left running in the background stands on its own row.
-            if folds, kind == .explore || kind == .command, !asking.contains(call.id), !ToolPresentation.startsInBackground(call) {
+            // A command left running in the background, and an image with its
+            // thumbnail, stand on their own rows.
+            if folds, kind == .explore || kind == .command, !asking.contains(call.id), !ToolPresentation.startsInBackground(call),
+               !ToolThumbnail.shows(call), call.fileChanges == nil {
                 if kind != runKind { flush() }
                 runKind = kind
                 run.append(call)
@@ -87,8 +89,8 @@ enum ToolKind: Equatable {
 
     init(_ name: String) {
         switch name.lowercased() {
-        case "read", "grep", "glob", "ls", "notebookread", "toolsearch", "websearch", "web_search", "webfetch": self = .explore
-        case "edit", "multiedit", "write", "notebookedit", "applypatch", "apply_patch", "file_change": self = .edit
+        case "read", "read_file", "grep", "glob", "search", "ls", "notebookread", "toolsearch", "websearch", "web_search", "webfetch", "web_fetch": self = .explore
+        case "edit", "edit_file", "multiedit", "write", "write_file", "notebookedit", "applypatch", "apply_patch", "file_change": self = .edit
         case "bash", "shell", "command_execution", "bashoutput": self = .command
         case "todowrite", "todolist", "todo_list": self = .todo
         case "exitplanmode": self = .plan
@@ -142,9 +144,12 @@ struct ToolCallView: View {
     var approval: PendingPermission? = nil
     @Environment(\.transcriptExpansion) private var expansion
     @Environment(\.transcriptRow) private var row
+    @Environment(\.transcriptFind) private var find
     @State private var open: Bool?
     @State private var hovering = false
     @State private var answered = false
+    /// "Always allow/deny in this project…" being written, and which way.
+    @State private var ruleDecision: PermissionDecision?
 
     private var kind: ToolKind { ToolKind(call.name) }
     private var outcome: ToolOutcome { ToolOutcome(call) }
@@ -176,7 +181,8 @@ struct ToolCallView: View {
         // Asked in the reply box's place; the row keeps what you answered.
         case .question: return !asking
         case .todo: return call.id == latestTodoCallId || asking
-        case .command: return asking && ToolPresentation.command(call).map { $0.contains("\n") || $0.count > 80 } == true
+        case .command: return call.fileChanges != nil ||
+            (asking && ToolPresentation.command(call).map { $0.contains("\n") || $0.count > 80 } == true)
         default: return false
         }
     }
@@ -184,6 +190,14 @@ struct ToolCallView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
+            if !asking, let note = model.ruleNote(for: call, in: sessionId) {
+                Text(note)
+                    .font(.btChatCaption)
+                    .foregroundStyle(Color.btTextTertiary)
+                    .textSelection(.enabled)
+                    .padding(.bottom, Space.xs)
+            }
+            if ToolThumbnail.shows(call) { ToolThumbnail(sessionId: sessionId, call: call) }
             if isOpen {
                 details
                     .padding(.top, 4)
@@ -200,6 +214,15 @@ struct ToolCallView: View {
             }
         }
         .contextMenu { menu }
+        .sheet(isPresented: Binding(get: { ruleDecision != nil }, set: { if !$0 { ruleDecision = nil } })) {
+            if let decision = ruleDecision, let projectId = model.session(sessionId)?.projectId {
+                PermissionRuleSheet(projectId: projectId, seed: PermissionRuleSeed(call: call, decision: decision,
+                                                                                   root: model.session(sessionId)?.worktreePath)) {
+                    ruleDecision = nil
+                    answer(decision == .allow)
+                }
+            }
+        }
     }
 
     private var header: some View {
@@ -209,15 +232,20 @@ struct ToolCallView: View {
                         if !openSwitch.set(next) { withAnimation(.snappy(duration: 0.2)) { open = next } }
                     } label: {
                 HStack(spacing: 6) {
-                    ToolIcon(symbol: ToolPresentation.symbol(call.name), open: isOpen, hovering: hovering && !asking, failed: outcome.isFailure,
+                    // A command reading a skill reads as using it (ABS-122),
+                    // never while it waits for an answer: that shows what runs.
+                    let skill = asking ? nil : SkillUse.name(tool: call.name, input: call.input)
+                    let name = skill == nil ? call.name : "skill"
+                    ToolIcon(symbol: ToolPresentation.symbol(name), open: isOpen, hovering: hovering && !asking, failed: outcome.isFailure,
                              file: kind == .edit ? ToolPresentation.path(call) : nil)
-                    let verb = asking ? ToolPresentation.ask(call.name) : ToolPresentation.verb(call.name, pending: working)
+                    let verb = asking ? ToolPresentation.ask(name) : ToolPresentation.verb(name, pending: working)
                     HStack(spacing: 6) {
                         Text(verb)
                             .font(.btChatToolMedium)
                             .foregroundStyle(asking || hovering ? Color.btText : Color.btTextSecondary)
                             .fixedSize()
-                        ToolTargetView(target: ToolPresentation.target(call, root: model.session(sessionId)?.worktreePath), strong: asking || hovering)
+                        ToolTargetView(target: skill.map { .text($0) } ?? ToolPresentation.target(call, root: model.session(sessionId)?.worktreePath),
+                                       strong: asking || hovering)
                     }
                     // A call at work shimmers instead of spinning, as in Paseo.
                     .modifier(Shimmer(active: working && !asking && approval == nil, length: verb.count + 24))
@@ -259,6 +287,12 @@ struct ToolCallView: View {
             }
         }
         .frame(minHeight: asking ? 30 : 26)
+        // ⌘F's match in the title: the whole line, which shows only part of a long command.
+        .background {
+            if find?.current(in: "title:\(call.id)") != nil {
+                RoundedRectangle(cornerRadius: 5, style: .continuous).fill(Color.btFindCurrent).padding(.horizontal, -4)
+            }
+        }
         .opacity(isAnswered && call.result == nil ? 0.6 : 1)
     }
 
@@ -294,7 +328,7 @@ struct ToolCallView: View {
             TodoChecklist(items: ToolPresentation.todos(call.input))
         case .plan:
             if let plan = call.input["plan"]?.string {
-                AgentProse(markdown: plan).btLeadingRule()
+                AgentProse(markdown: plan, findField: "out:\(call.id)").btLeadingRule()
             } else {
                 InputFields(input: call.input)
             }
@@ -304,7 +338,10 @@ struct ToolCallView: View {
                 if task?.isBackgrounded == true {
                     if let report = backgroundReport { Text(report).font(.btChatCallout).foregroundStyle(Color.btTextSecondary).textSelection(.enabled) }
                 } else if let result = call.result, !result.output.isEmpty {
-                    OutputText(text: result.output, isError: result.isError, key: "out:\(call.id)")
+                    OutputText(text: result.output, isError: result.isError, key: "out:\(call.id)", findField: "out:\(call.id)")
+                }
+                if let changes = call.fileChanges {
+                    CommandFileChangesView(sessionId: sessionId, callId: call.id, changes: changes)
                 }
             }
         case .question:
@@ -315,13 +352,15 @@ struct ToolCallView: View {
                 if task?.isBackgrounded == true {
                     if let report = backgroundReport { AgentProse(markdown: report) }
                 } else if let result = call.result, !result.output.isEmpty {
-                    AgentProse(markdown: result.output)
+                    AgentProse(markdown: result.output, findField: "out:\(call.id)")
                 }
             }
         case .explore, .other:
             VStack(alignment: .leading, spacing: Space.sm) {
                 if kind == .other { InputFields(input: call.input) }
-                if let result = call.result, !result.output.isEmpty { OutputText(text: result.output, isError: result.isError, key: "out:\(call.id)") }
+                if let result = call.result, !result.output.isEmpty {
+                    OutputText(text: result.output, isError: result.isError, key: "out:\(call.id)", findField: "out:\(call.id)")
+                }
             }
         }
     }
@@ -332,6 +371,10 @@ struct ToolCallView: View {
             Button("Always Continue for \(ToolPresentation.displayName(call.name)) in This Chat") {
                 model.autoContinue(call.name, in: sessionId)
                 answer(true)
+            }
+            if model.session(sessionId)?.projectId != nil {
+                Button("Always Allow in This Project…") { ruleDecision = .allow }
+                Button("Always Deny in This Project…") { ruleDecision = .deny }
             }
             Divider()
         }
@@ -354,6 +397,51 @@ struct ToolCallView: View {
     private func copy(_ text: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
+    }
+}
+
+/// Diffs and paths a shell command changed, as reported by the agent.
+private struct CommandFileChangesView: View {
+    @Environment(AppModel.self) private var model
+    let sessionId: String
+    let callId: String
+    let changes: ToolFileChanges
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Space.sm) {
+            ForEach(Array(changes.previews.enumerated()), id: \.offset) { index, edit in
+                VStack(alignment: .leading, spacing: 4) {
+                    filePath(edit.filePath, additions: edit.additions, deletions: edit.deletions)
+                    EditDiff(edit: edit, key: "diff:\(callId):\(index)")
+                }
+            }
+            let remaining = max(changes.moreFiles, changes.remainingPaths.count)
+            if remaining > 0 {
+                Text("+\(remaining) more file\(remaining == 1 ? "" : "s")")
+                    .font(.btChatCaption).foregroundStyle(Color.btTextTertiary)
+                ForEach(Array(changes.remainingPaths.enumerated()), id: \.offset) { _, path in
+                    filePath(path)
+                }
+            }
+            if changes.incomplete {
+                Text("This file list may be incomplete.")
+                    .font(.btChatCaption).foregroundStyle(Color.btTextTertiary)
+            }
+        }
+    }
+
+    private func filePath(_ path: String, additions: Int? = nil, deletions: Int? = nil) -> some View {
+        let relative = ToolPresentation.relative(path, root: model.session(sessionId)?.worktreePath)
+        return HStack(spacing: Space.sm) {
+            Text(relative).font(.btChatMonoSmall).foregroundStyle(Color.btTextSecondary).textSelection(.enabled)
+            if let additions, let deletions {
+                DiffCounts(additions: additions, deletions: deletions, hideZeros: true)
+            }
+        }
+        .contextMenu {
+            Button("Show in Changes") { model.showChanges(relative, in: sessionId) }
+            Button("Open in Files") { model.openFile(relative, in: sessionId) }
+        }
     }
 }
 
@@ -662,16 +750,19 @@ struct CodeText: View {
 private struct OutputText: View {
     @Environment(\.transcriptExpansion) private var expansion
     @Environment(\.transcriptRow) private var row
+    @Environment(\.transcriptFind) private var find
     let text: String
     let isError: Bool
     var key: String? = nil
+    var findField: String? = nil
     @State private var local = false
     private var expanded: Bool { key.flatMap { ExpansionSwitch(key: $0, expansion: expansion, row: row).value(local: local) } ?? local }
     var body: some View {
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
         VStack(alignment: .leading, spacing: 4) {
             TextLines(text: TextClip.block(expanded || lines.count <= 14 ? text : lines.prefix(14).joined(separator: "\n")),
-                      font: .btChatMono, color: isError ? Color.btRemoved : Color.btTextSecondary, spacing: 2.5)
+                      font: .btChatMono, color: isError ? Color.btRemoved : Color.btTextSecondary, spacing: 2.5,
+                      find: findField.flatMap { field in find.map { ($0.query, $0.current(in: field)) } })
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .btLeadingRule(isError ? Color.btRemoved : Color.btBorderStrong)
             if lines.count > 14 {
@@ -712,13 +803,14 @@ extension EnvironmentValues {
 
 enum ToolPresentation {
     static func symbol(_ name: String) -> String {
-        switch name.lowercased() {
-        case "read", "notebookread": "doc.text"
-        case "write": "doc.badge.plus"
-        case "edit", "multiedit", "notebookedit", "applypatch", "apply_patch", "file_change": "pencil"
+        if PluginTools.toolName(inStreamName: name) != nil { return "puzzlepiece.extension" }
+        return switch name.lowercased() {
+        case "read", "read_file", "notebookread": "doc.text"
+        case "write", "write_file": "doc.badge.plus"
+        case "edit", "edit_file", "multiedit", "notebookedit", "applypatch", "apply_patch", "file_change": "pencil"
         case "bash", "shell", "command_execution", "bashoutput": "terminal"
         case "grep", "glob", "search", "ls", "toolsearch": "magnifyingglass"
-        case "webfetch", "websearch", "web_search": "globe"
+        case "webfetch", "web_fetch", "websearch", "web_search": "globe"
         case "todowrite", "todolist", "todo_list": "checklist"
         case "exitplanmode": "list.bullet.clipboard"
         case "task", "agent": "person.2"
@@ -730,15 +822,26 @@ enum ToolPresentation {
 
     /// Past tense once done, present while running: "Edited", "Editing".
     static func verb(_ name: String, pending: Bool = false) -> String {
+        // Abstract's own code-history tools, under any agent's spelling.
+        if let tool = CodeHistory.tool(inStreamName: name) {
+            return switch (tool, pending) {
+            case (CodeHistory.historyTool, true): "Looking up history of"
+            case (CodeHistory.historyTool, false): "Looked up history of"
+            case (_, true): "Reading more of an earlier chat"
+            case (_, false): "Read more of an earlier chat"
+            }
+        }
+        // A plugin's tool (ABS-97): the row names the plugin after the verb.
+        if PluginTools.toolName(inStreamName: name) != nil { return pending ? "Using" : "Used" }
         if pending {
             switch name.lowercased() {
-            case "read", "notebookread": return "Reading"
-            case "write": return "Creating"
-            case "edit", "multiedit", "notebookedit", "applypatch", "apply_patch", "file_change": return "Editing"
+            case "read", "read_file", "notebookread": return "Reading"
+            case "write", "write_file": return "Creating"
+            case "edit", "edit_file", "multiedit", "notebookedit", "applypatch", "apply_patch", "file_change": return "Editing"
             case "bash", "shell", "command_execution": return "Running"
-            case "grep", "websearch", "web_search", "toolsearch": return "Searching"
+            case "grep", "search", "websearch", "web_search", "toolsearch": return "Searching"
             case "glob", "ls": return "Listing"
-            case "webfetch": return "Fetching"
+            case "webfetch", "web_fetch": return "Fetching"
             case "task", "agent": return "Delegating"
             case "todowrite", "todolist", "todo_list": return "Updating plan"
             case "exitplanmode": return "Proposed a plan"
@@ -748,15 +851,15 @@ enum ToolPresentation {
             }
         }
         return switch name.lowercased() {
-        case "read", "notebookread": "Read"
-        case "write": "Created"
-        case "edit", "multiedit", "notebookedit", "applypatch", "apply_patch", "file_change": "Edited"
+        case "read", "read_file", "notebookread": "Read"
+        case "write", "write_file": "Created"
+        case "edit", "edit_file", "multiedit", "notebookedit", "applypatch", "apply_patch", "file_change": "Edited"
         case "bash", "shell", "command_execution": "Ran"
         case "bashoutput": "Checked output"
-        case "grep": "Searched"
+        case "grep", "search": "Searched"
         case "glob", "ls": "Listed"
         case "toolsearch": "Looked up tools"
-        case "webfetch": "Fetched"
+        case "webfetch", "web_fetch": "Fetched"
         case "websearch", "web_search": "Searched the web"
         case "task", "agent": "Delegated"
         case "todowrite", "todolist", "todo_list": "Updated plan"
@@ -769,13 +872,14 @@ enum ToolPresentation {
 
     /// A plain request for an approval row: "Edit", "Run", "Create".
     static func ask(_ name: String) -> String {
-        switch name.lowercased() {
-        case "edit", "multiedit", "notebookedit": "Edit"
-        case "write": "Create"
+        if PluginTools.toolName(inStreamName: name) != nil { return "Use" }
+        return switch name.lowercased() {
+        case "edit", "edit_file", "multiedit", "notebookedit": "Edit"
+        case "write", "write_file": "Create"
         case "bash", "shell": "Run"
-        case "webfetch": "Open"
-        case "websearch": "Search the web for"
-        case "read": "Read"
+        case "webfetch", "web_fetch": "Open"
+        case "websearch", "web_search": "Search the web for"
+        case "read", "read_file": "Read"
         case "exitplanmode": "Start on this plan"
         case "skill": "Use skill"
         case "askuserquestion": "Needs your input"
@@ -795,7 +899,9 @@ enum ToolPresentation {
 
     static func path(_ call: ToolCall) -> String? {
         guard let o = call.input.object else { return nil }
-        return o["file_path"]?.string ?? o["notebook_path"]?.string ?? (ToolKind(call.name) == .command ? nil : o["path"]?.string)
+        return o["file_path"]?.string ?? o["filePath"]?.string ?? o["notebook_path"]?.string
+            ?? (ToolKind(call.name) == .command ? nil : o["path"]?.string)
+            ?? call.edit.flatMap { $0.filePath.isEmpty ? nil : $0.filePath }
     }
 
     static func relative(_ path: String, root: String?) -> String {
@@ -830,6 +936,7 @@ enum ToolPresentation {
 
     static func target(_ call: ToolCall, root: String? = nil) -> ToolTarget? {
         let o = call.input.object ?? [:]
+        if let plugin = PluginToolLabels.shared.label(call.name) { return .text(plugin) }
         switch ToolKind(call.name) {
         case .command:
             return command(call).map { .command($0.split(separator: "\n").first.map(String.init) ?? $0) }
@@ -845,11 +952,17 @@ enum ToolPresentation {
         }
         if let path = path(call) {
             let rel = relative(path, root: root)
-            let name = (rel as NSString).lastPathComponent
+            var name = (rel as NSString).lastPathComponent
+            if name.isEmpty { name = rel }
+            // A history lookup names its lines too: "Diff.swift lines 220–245".
+            if CodeHistory.tool(inStreamName: call.name) == CodeHistory.historyTool,
+               let lines = o["lines"]?.string.flatMap(CodeHistoryService.lineRange) {
+                name += lines.lowerBound == lines.upperBound ? " line \(lines.lowerBound)" : " lines \(lines.lowerBound)–\(lines.upperBound)"
+            }
             let folder = (rel as NSString).deletingLastPathComponent
-            return .path(name: name.isEmpty ? rel : name, folder: folder == "/" ? nil : folder)
+            return .path(name: name, folder: folder == "/" ? nil : folder)
         }
-        if call.name.lowercased() == "skill", let skill = o["skill"]?.string { return .text(skill) }
+        if call.name.lowercased() == "skill", let skill = SkillUse.name(tool: call.name, input: call.input) { return .text(skill) }
         for key in ["pattern", "query", "url", "description", "path", "command"] {
             if let v = o[key]?.string, !v.isEmpty { return .text(key == "path" ? relative(v, root: root) : v) }
         }
@@ -862,10 +975,10 @@ enum ToolPresentation {
         var files = Set<String>(), searches = 0, web = 0, pages = 0, other = 0
         for call in calls {
             switch call.name.lowercased() {
-            case "read", "notebookread": files.insert(path(call) ?? call.id)
-            case "grep", "glob", "ls", "toolsearch": searches += 1
+            case "read", "read_file", "notebookread": files.insert(path(call) ?? call.id)
+            case "grep", "glob", "search", "ls", "toolsearch": searches += 1
             case "websearch", "web_search": web += 1
-            case "webfetch": pages += 1
+            case "webfetch", "web_fetch": pages += 1
             default: other += 1
             }
         }
@@ -948,10 +1061,19 @@ struct TextLines: View {
     let font: Font
     let color: Color
     var spacing: CGFloat = 2
+    /// What ⌘F is finding, and the appearance of it you're on, to mark them.
+    var find: (query: String, current: Int?)? = nil
 
     var body: some View {
-        SelectableLines(text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init), spacing: spacing)
-            .font(font)
-            .foregroundStyle(color)
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        Group {
+            if let find {
+                SelectableLines(FindMarks.mark(lines: lines, query: find.query, current: find.current), spacing: spacing)
+            } else {
+                SelectableLines(lines, spacing: spacing)
+            }
+        }
+        .font(font)
+        .foregroundStyle(color)
     }
 }

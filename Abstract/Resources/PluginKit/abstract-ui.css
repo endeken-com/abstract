@@ -1,0 +1,899 @@
+/*
+ * Abstract's plugin kit (ABS-134). Every plugin can link it:
+ *
+ *   <link rel="stylesheet" href="/_abstract/abstract-ui.css">
+ *
+ * The host sets the --abstract-* colours before the page's own CSS, from
+ * the theme picked in Abstract (Graphite, Paper or Ink), and keeps them
+ * current. This file names them for components and adds Abstract's type
+ * scale, spacing, radii and motion. The components are documented, with
+ * screenshots, in docs/plugins.md.
+ */
+
+/* The names resolve again under any element with its own theme, so a
+   part of a page can be drawn in another one. */
+:root,
+[data-abstract-theme] {
+  /* Surfaces, back to front. */
+  --ab-canvas: var(--abstract-canvas, Canvas);
+  --ab-sidebar: var(--abstract-sidebar, Canvas);
+  --ab-surface: var(--abstract-surface, Canvas);
+  --ab-raised: var(--abstract-surfaceRaised, Canvas);
+  --ab-inset: var(--abstract-inset, Canvas);
+  --ab-code: var(--abstract-code, Canvas);
+  /* Interaction washes. */
+  --ab-hover: var(--abstract-hover, rgba(127, 127, 127, 0.08));
+  --ab-selection: var(--abstract-selection, rgba(127, 127, 127, 0.14));
+  /* Fields. */
+  --ab-field: var(--abstract-field, Field);
+  --ab-field-border: var(--abstract-fieldBorder, GrayText);
+  --ab-field-border-focus: var(--abstract-fieldBorderFocused, CanvasText);
+  /* Hairlines. */
+  --ab-border: var(--abstract-border, rgba(127, 127, 127, 0.2));
+  --ab-border-strong: var(--abstract-borderStrong, rgba(127, 127, 127, 0.3));
+  /* Text. */
+  --ab-text: var(--abstract-text, CanvasText);
+  --ab-text-2: var(--abstract-textSecondary, GrayText);
+  --ab-text-3: var(--abstract-textTertiary, GrayText);
+  /* Emphasis and meaning. */
+  --ab-accent: var(--abstract-accent, CanvasText);
+  --ab-on-accent: var(--abstract-onAccent, Canvas);
+  --ab-attention: var(--abstract-attention, CanvasText);
+  --ab-added: var(--abstract-added, green);
+  --ab-removed: var(--abstract-removed, red);
+  --ab-added-wash: var(--abstract-addedWash, transparent);
+  --ab-removed-wash: var(--abstract-removedWash, transparent);
+  --ab-pr-open: var(--abstract-pullRequestOpen, green);
+  --ab-pr-draft: var(--abstract-pullRequestDraft, gray);
+  --ab-pr-merged: var(--abstract-pullRequestMerged, purple);
+  --ab-pr-closed: var(--abstract-pullRequestClosed, red);
+  --ab-pr-open-ink: var(--abstract-pullRequestOpenInk, green);
+  --ab-pr-draft-ink: var(--abstract-pullRequestDraftInk, gray);
+  --ab-pr-merged-ink: var(--abstract-pullRequestMergedInk, purple);
+  --ab-pr-closed-ink: var(--abstract-pullRequestClosedInk, red);
+
+  /* Type: macOS UI runs at 13px. */
+  --ab-font: var(--abstract-font, -apple-system, BlinkMacSystemFont, sans-serif);
+  --ab-mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --ab-text-xs: 11px;
+  --ab-text-sm: 12px;
+  --ab-text-md: 13px;
+  --ab-text-lg: 15px;
+  --ab-text-xl: 20px;
+
+  /* Space and shape, as the app's Space and Radius. */
+  --ab-space-xxs: 2px;
+  --ab-space-xs: 4px;
+  --ab-space-sm: 8px;
+  --ab-space-md: 12px;
+  --ab-space-lg: 16px;
+  --ab-space-xl: 24px;
+  --ab-space-xxl: 32px;
+  --ab-radius-xs: 4px;
+  --ab-radius-sm: 6px;
+  --ab-radius-md: 8px;
+  --ab-radius-lg: 12px;
+  --ab-row-height: 30px;
+
+  /* Motion: quick, and never on its own when motion is reduced. */
+  --ab-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ab-fast: 110ms;
+  --ab-medium: 180ms;
+
+  --ab-shadow-popover: 0 10px 30px rgba(0, 0, 0, 0.22), 0 2px 6px rgba(0, 0, 0, 0.12);
+  --ab-focus-ring: 0 0 0 2px var(--ab-canvas), 0 0 0 3.5px var(--ab-field-border-focus);
+}
+
+/* ---------- Base ---------- */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+html {
+  background: var(--ab-canvas);
+  -webkit-font-smoothing: antialiased;
+}
+body {
+  margin: 0;
+  background: var(--ab-canvas);
+  color: var(--ab-text);
+  font-family: var(--ab-font);
+  font-size: var(--ab-text-md);
+  line-height: 1.4;
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: default;
+}
+input,
+textarea,
+pre,
+code,
+.ab-selectable {
+  -webkit-user-select: text;
+  user-select: text;
+}
+[hidden] {
+  display: none !important;
+}
+:focus {
+  outline: none;
+}
+:focus-visible {
+  box-shadow: var(--ab-focus-ring);
+  border-radius: var(--ab-radius-sm);
+}
+::selection {
+  background: var(--ab-selection);
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--ab-border-strong);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+code,
+pre,
+.ab-mono {
+  font-family: var(--ab-mono);
+  font-size: var(--ab-text-sm);
+}
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+/* ---------- Text ---------- */
+
+.ab-title {
+  font-size: var(--ab-text-xl);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.ab-headline {
+  font-size: var(--ab-text-lg);
+  font-weight: 600;
+}
+.ab-label {
+  font-size: var(--ab-text-xs);
+  font-weight: 600;
+  color: var(--ab-text-3);
+  letter-spacing: 0.02em;
+}
+.ab-secondary {
+  color: var(--ab-text-2);
+}
+.ab-tertiary {
+  color: var(--ab-text-3);
+}
+.ab-small {
+  font-size: var(--ab-text-sm);
+}
+.ab-truncate {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* ---------- Page and header ---------- */
+
+.ab-page {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+.ab-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: var(--ab-space-md);
+  min-height: 48px;
+  padding: var(--ab-space-sm) var(--ab-space-lg);
+  background: var(--ab-canvas);
+  border-bottom: 1px solid var(--ab-border);
+}
+.ab-header .ab-header-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--ab-space-sm);
+  min-width: 0;
+}
+.ab-header h1 {
+  font-size: var(--ab-text-md);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.ab-spacer {
+  flex: 1;
+}
+.ab-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--ab-space-xs);
+  padding: var(--ab-space-sm) var(--ab-space-lg);
+  border-bottom: 1px solid var(--ab-border);
+}
+.ab-content {
+  padding: var(--ab-space-lg);
+}
+.ab-section + .ab-section {
+  margin-top: var(--ab-space-xl);
+}
+.ab-section-title {
+  display: flex;
+  align-items: center;
+  gap: var(--ab-space-sm);
+  margin: 0 0 var(--ab-space-sm);
+  font-size: var(--ab-text-sm);
+  font-weight: 600;
+  color: var(--ab-text-2);
+}
+
+/* ---------- Buttons ---------- */
+
+.ab-button {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--ab-border-strong);
+  border-radius: var(--ab-radius-sm);
+  background: var(--ab-raised);
+  color: var(--ab-text);
+  font: inherit;
+  font-size: var(--ab-text-sm);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: default;
+  transition: background var(--ab-fast) var(--ab-ease), border-color var(--ab-fast) var(--ab-ease),
+    opacity var(--ab-fast) var(--ab-ease), transform var(--ab-fast) var(--ab-ease);
+}
+.ab-button:hover:not(:disabled) {
+  background: linear-gradient(var(--ab-hover), var(--ab-hover)), var(--ab-raised);
+}
+.ab-button:active:not(:disabled) {
+  transform: translateY(0.5px);
+  background: linear-gradient(var(--ab-selection), var(--ab-selection)), var(--ab-raised);
+}
+.ab-button:disabled {
+  opacity: 0.45;
+}
+.ab-button.ab-primary {
+  border-color: var(--ab-accent);
+  background: var(--ab-accent);
+  color: var(--ab-on-accent);
+}
+.ab-button.ab-primary:hover:not(:disabled) {
+  background: var(--ab-accent);
+  opacity: 0.88;
+}
+.ab-button.ab-ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--ab-text-2);
+}
+.ab-button.ab-ghost:hover:not(:disabled) {
+  background: var(--ab-hover);
+  color: var(--ab-text);
+}
+.ab-button.ab-danger {
+  color: var(--ab-removed);
+}
+.ab-button.ab-small {
+  height: 22px;
+  padding: 0 8px;
+  font-size: var(--ab-text-xs);
+}
+.ab-button.ab-picked {
+  border-color: var(--ab-field-border-focus);
+  background: var(--ab-selection);
+}
+.ab-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.ab-kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border: 1px solid var(--ab-border-strong);
+  border-radius: var(--ab-radius-xs);
+  color: var(--ab-text-3);
+  font-family: var(--ab-font);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+/* ---------- Inputs and search ---------- */
+
+.ab-input,
+.ab-search input {
+  appearance: none;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--ab-field-border);
+  border-radius: var(--ab-radius-sm);
+  background: var(--ab-field);
+  color: var(--ab-text);
+  font: inherit;
+  font-size: var(--ab-text-sm);
+  transition: border-color var(--ab-fast) var(--ab-ease);
+}
+textarea.ab-input {
+  height: auto;
+  min-height: 64px;
+  padding: 6px 8px;
+  resize: vertical;
+}
+.ab-input::placeholder,
+.ab-search input::placeholder {
+  color: var(--ab-text-3);
+}
+.ab-input:focus,
+.ab-search input:focus {
+  border-color: var(--ab-field-border-focus);
+  box-shadow: none;
+}
+.ab-field {
+  display: grid;
+  gap: 5px;
+}
+.ab-field > span {
+  font-size: var(--ab-text-sm);
+  font-weight: 500;
+}
+.ab-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 160px;
+}
+.ab-search::before {
+  content: "";
+  position: absolute;
+  left: 8px;
+  width: 12px;
+  height: 12px;
+  background: var(--ab-text-3);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='6.8' cy='6.8' r='4.8' fill='none' stroke='black' stroke-width='1.6'/%3E%3Cpath d='M10.4 10.4 14 14' stroke='black' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+  pointer-events: none;
+}
+.ab-search input {
+  width: 100%;
+  padding-left: 26px;
+  padding-right: 28px;
+}
+.ab-search input::-webkit-search-cancel-button {
+  display: none;
+}
+.ab-search .ab-kbd {
+  position: absolute;
+  right: 6px;
+  pointer-events: none;
+}
+.ab-search input:focus + .ab-kbd,
+.ab-search input:not(:placeholder-shown) + .ab-kbd {
+  opacity: 0;
+}
+
+/* ---------- Tabs and segmented controls ---------- */
+
+.ab-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.ab-tab {
+  appearance: none;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--ab-radius-sm);
+  background: transparent;
+  color: var(--ab-text-3);
+  font: inherit;
+  font-size: var(--ab-text-sm);
+  font-weight: 500;
+  white-space: nowrap;
+  transition: background var(--ab-fast) var(--ab-ease), color var(--ab-fast) var(--ab-ease);
+}
+.ab-tab:hover {
+  color: var(--ab-text-2);
+  background: var(--ab-hover);
+}
+.ab-tab[aria-selected="true"] {
+  color: var(--ab-text);
+  background: var(--ab-selection);
+}
+.ab-tab .ab-count {
+  color: var(--ab-text-3);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+/* Underlined tabs, for a page's own views under its header. */
+.ab-tabs.ab-underline {
+  gap: var(--ab-space-md);
+}
+.ab-tabs.ab-underline .ab-tab {
+  height: 34px;
+  padding: 0 2px;
+  border-radius: 0;
+  background: transparent;
+}
+.ab-tabs.ab-underline .ab-tab::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--ab-text);
+  transform: scaleX(0);
+  transition: transform var(--ab-medium) var(--ab-ease);
+}
+.ab-tabs.ab-underline .ab-tab[aria-selected="true"]::after {
+  transform: scaleX(1);
+}
+.ab-segmented {
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  border-radius: var(--ab-radius-sm);
+  background: var(--ab-inset);
+}
+.ab-segmented .ab-tab {
+  height: 22px;
+  padding: 0 9px;
+  border-radius: var(--ab-radius-xs);
+}
+.ab-segmented .ab-tab:hover {
+  background: transparent;
+}
+.ab-segmented .ab-tab[aria-selected="true"] {
+  background: var(--ab-raised);
+  box-shadow: 0 0 0 1px var(--ab-border), 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+.ab-tabpanel {
+  animation: ab-fade-in var(--ab-medium) var(--ab-ease);
+}
+
+/* ---------- Lists and rows ---------- */
+
+.ab-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.ab-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ab-space-sm);
+  min-height: var(--ab-row-height);
+  padding: 4px var(--ab-space-sm);
+  border-radius: var(--ab-radius-sm);
+  color: var(--ab-text);
+  transition: background var(--ab-fast) var(--ab-ease);
+}
+.ab-list.ab-flush .ab-row {
+  border-radius: 0;
+  padding-left: var(--ab-space-lg);
+  padding-right: var(--ab-space-lg);
+  border-bottom: 1px solid var(--ab-border);
+}
+.ab-row.ab-interactive:hover {
+  background: var(--ab-hover);
+}
+.ab-row[aria-selected="true"],
+.ab-row.ab-selected {
+  background: var(--ab-selection);
+}
+.ab-row:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--ab-field-border-focus);
+}
+.ab-row .ab-row-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
+.ab-row .ab-row-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--ab-space-sm);
+  color: var(--ab-text-3);
+  font-size: var(--ab-text-sm);
+  white-space: nowrap;
+}
+.ab-group-header {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: var(--ab-space-sm);
+  height: 32px;
+  padding: 0 var(--ab-space-lg);
+  background: linear-gradient(var(--ab-hover), var(--ab-hover)), var(--ab-canvas);
+  border-bottom: 1px solid var(--ab-border);
+  font-size: var(--ab-text-sm);
+  font-weight: 600;
+}
+.ab-group-header .ab-count {
+  color: var(--ab-text-3);
+  font-weight: 400;
+}
+
+/* ---------- Chips and badges ---------- */
+
+.ab-chip {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 9px;
+  border: 1px dashed var(--ab-border-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ab-text-2);
+  font: inherit;
+  font-size: var(--ab-text-sm);
+  white-space: nowrap;
+  transition: background var(--ab-fast) var(--ab-ease), color var(--ab-fast) var(--ab-ease),
+    border-color var(--ab-fast) var(--ab-ease);
+}
+.ab-chip:hover {
+  background: var(--ab-hover);
+  color: var(--ab-text);
+}
+.ab-chip[aria-pressed="true"],
+.ab-chip.ab-active {
+  border-style: solid;
+  border-color: var(--ab-border-strong);
+  background: var(--ab-selection);
+  color: var(--ab-text);
+}
+.ab-chip .ab-chip-value {
+  color: var(--ab-text);
+  font-weight: 500;
+}
+.ab-chip .ab-chip-remove {
+  margin-right: -4px;
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: var(--ab-text-3);
+}
+.ab-chip .ab-chip-remove:hover {
+  background: var(--ab-hover);
+  color: var(--ab-text);
+}
+.ab-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: var(--ab-radius-xs);
+  background: var(--ab-inset);
+  color: var(--ab-text-2);
+  font-size: var(--ab-text-xs);
+  font-weight: 500;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.ab-badge.ab-outline {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--ab-border-strong);
+}
+.ab-badge.ab-pr-open {
+  background: color-mix(in srgb, var(--ab-pr-open) 16%, transparent);
+  color: var(--ab-pr-open-ink);
+}
+.ab-badge.ab-pr-draft {
+  background: color-mix(in srgb, var(--ab-pr-draft) 18%, transparent);
+  color: var(--ab-pr-draft-ink);
+}
+.ab-badge.ab-pr-merged {
+  background: color-mix(in srgb, var(--ab-pr-merged) 16%, transparent);
+  color: var(--ab-pr-merged-ink);
+}
+.ab-badge.ab-pr-closed {
+  background: color-mix(in srgb, var(--ab-pr-closed) 16%, transparent);
+  color: var(--ab-pr-closed-ink);
+}
+.ab-badge.ab-passed {
+  background: var(--ab-added-wash);
+  color: var(--ab-added);
+}
+.ab-badge.ab-failing {
+  background: var(--ab-removed-wash);
+  color: var(--ab-removed);
+}
+.ab-badge.ab-running {
+  color: var(--ab-text-2);
+}
+.ab-badge .ab-glyph {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.ab-badge.ab-running .ab-glyph {
+  animation: ab-breathe 1.6s ease-in-out infinite;
+}
+
+/* Status: a small diamond, as the sidebar draws it. A working agent's breathes. */
+.ab-status {
+  flex: none;
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin: 0 2px;
+  border-radius: 1.6px;
+  transform: rotate(45deg);
+  background: var(--ab-text-3);
+}
+.ab-status.ab-needsYou {
+  background: var(--ab-attention);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ab-attention) 18%, transparent);
+}
+.ab-status.ab-working {
+  background: var(--ab-accent);
+  animation: ab-breathe 1.8s ease-in-out infinite;
+}
+.ab-status.ab-readyToReview {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--ab-text-2);
+}
+.ab-status.ab-done {
+  background: var(--ab-text-3);
+  opacity: 0.7;
+}
+
+/* ---------- Cards ---------- */
+
+.ab-card {
+  display: block;
+  padding: 10px 12px;
+  border: 1px solid var(--ab-border);
+  border-radius: var(--ab-radius-md);
+  background: var(--ab-surface);
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.04);
+  transition: background var(--ab-fast) var(--ab-ease), border-color var(--ab-fast) var(--ab-ease),
+    box-shadow var(--ab-fast) var(--ab-ease);
+}
+.ab-card.ab-interactive:hover {
+  border-color: var(--ab-border-strong);
+  background: linear-gradient(var(--ab-hover), var(--ab-hover)), var(--ab-surface);
+}
+.ab-card[aria-selected="true"],
+.ab-card.ab-selected {
+  border-color: var(--ab-field-border-focus);
+  background: linear-gradient(var(--ab-selection), var(--ab-selection)), var(--ab-surface);
+}
+
+/* ---------- Notices, empty states, loading ---------- */
+
+.ab-notice {
+  display: flex;
+  gap: var(--ab-space-sm);
+  align-items: flex-start;
+  padding: 8px 10px;
+  border: 1px solid var(--ab-border);
+  border-radius: var(--ab-radius-md);
+  background: var(--ab-inset);
+  color: var(--ab-text-2);
+  font-size: var(--ab-text-sm);
+}
+.ab-notice.ab-error {
+  border-color: color-mix(in srgb, var(--ab-removed) 40%, transparent);
+  background: var(--ab-removed-wash);
+  color: var(--ab-text);
+}
+.ab-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 48px var(--ab-space-xl);
+  text-align: center;
+  color: var(--ab-text-2);
+  animation: ab-fade-in var(--ab-medium) var(--ab-ease);
+}
+.ab-empty .ab-empty-mark {
+  width: 28px;
+  height: 28px;
+  margin-bottom: 6px;
+  border: 1.5px solid var(--ab-text-3);
+  border-radius: 7px;
+  transform: rotate(45deg) scale(0.75);
+  opacity: 0.8;
+}
+.ab-empty .ab-empty-title {
+  color: var(--ab-text);
+  font-size: var(--ab-text-md);
+  font-weight: 600;
+}
+.ab-empty .ab-empty-message {
+  max-width: 340px;
+  font-size: var(--ab-text-sm);
+  line-height: 1.5;
+}
+.ab-skeleton {
+  display: block;
+  height: 10px;
+  border-radius: var(--ab-radius-xs);
+  background: linear-gradient(90deg, var(--ab-hover) 0%, var(--ab-selection) 50%, var(--ab-hover) 100%);
+  background-size: 200% 100%;
+  animation: ab-shimmer 1.4s linear infinite;
+}
+.ab-skeleton-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ab-space-sm);
+  height: var(--ab-row-height);
+  padding: 0 var(--ab-space-sm);
+}
+
+/* ---------- Popovers and menus ---------- */
+
+.ab-popover {
+  position: absolute;
+  z-index: 50;
+  min-width: 200px;
+  max-height: 320px;
+  overflow: auto;
+  padding: 4px;
+  border: 1px solid var(--ab-border-strong);
+  border-radius: var(--ab-radius-md);
+  background: var(--ab-raised);
+  box-shadow: var(--ab-shadow-popover);
+  animation: ab-pop-in var(--ab-fast) var(--ab-ease);
+}
+.ab-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--ab-space-sm);
+  height: 26px;
+  padding: 0 8px;
+  border-radius: var(--ab-radius-xs);
+  font-size: var(--ab-text-sm);
+  white-space: nowrap;
+}
+.ab-menu-item:hover,
+.ab-menu-item.ab-selected {
+  background: var(--ab-hover);
+}
+.ab-check {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--ab-border-strong);
+  border-radius: 4px;
+  background: var(--ab-field);
+  transition: background var(--ab-fast) var(--ab-ease);
+}
+[aria-checked="true"] > .ab-check {
+  border-color: var(--ab-accent);
+  background: var(--ab-accent)
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath d='M3.5 7.2 6 9.6l4.6-5' fill='none' stroke='white' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+    center / 12px no-repeat;
+}
+/* The accent is light in the dark themes, so the tick is dark there. */
+[data-abstract-theme="graphite"] [aria-checked="true"] > .ab-check,
+[data-abstract-theme="ink"] [aria-checked="true"] > .ab-check {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath d='M3.5 7.2 6 9.6l4.6-5' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+/* A choice drawn as a card: radio or checkbox inside. */
+.ab-choice {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border: 1px solid var(--ab-border);
+  border-radius: var(--ab-radius-md);
+  background: var(--ab-surface);
+  transition: border-color var(--ab-fast) var(--ab-ease), background var(--ab-fast) var(--ab-ease);
+}
+.ab-choice:hover {
+  border-color: var(--ab-border-strong);
+}
+.ab-choice:has(input:checked) {
+  border-color: var(--ab-field-border-focus);
+  background: linear-gradient(var(--ab-selection), var(--ab-selection)), var(--ab-surface);
+}
+.ab-choice input {
+  margin: 2px 0 0;
+  accent-color: var(--ab-accent);
+}
+.ab-choice .ab-choice-text {
+  display: grid;
+  gap: 2px;
+}
+.ab-choice .ab-choice-text span {
+  color: var(--ab-text-2);
+  font-size: var(--ab-text-sm);
+}
+
+/* ---------- Motion ---------- */
+
+/* Entrances move, and never start invisible: a page whose animations are
+   held (a window in the background) still shows everything. */
+@keyframes ab-fade-in {
+  from {
+    transform: translateY(3px);
+  }
+  to {
+    transform: none;
+  }
+}
+@keyframes ab-pop-in {
+  from {
+    transform: translateY(-3px) scale(0.98);
+  }
+  to {
+    transform: none;
+  }
+}
+@keyframes ab-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+@keyframes ab-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
+}

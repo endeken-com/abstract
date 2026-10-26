@@ -7,7 +7,8 @@ import GRDB
 /// GRDB's default format (`yyyy-MM-dd HH:mm:ss.SSS`, UTC), so they round-trip
 /// at millisecond precision.
 public final class Store: Sendable {
-    private let writer: any DatabaseWriter
+    let writer: any DatabaseWriter
+    public let databasePath: String?
 
     /// Opens (or creates) the database at `path` in WAL mode and runs migrations.
     public convenience init(path: String) throws {
@@ -15,11 +16,12 @@ public final class Store: Sendable {
         try FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         // DatabasePool always uses WAL.
-        try self.init(writer: DatabasePool(path: url.path, configuration: Self.configuration))
+        try self.init(writer: DatabasePool(path: url.path, configuration: Self.configuration), databasePath: url.path)
     }
 
-    private init(writer: any DatabaseWriter) throws {
+    private init(writer: any DatabaseWriter, databasePath: String? = nil) throws {
         self.writer = writer
+        self.databasePath = databasePath
         try Self.migrator.migrate(writer)
     }
 
@@ -163,6 +165,14 @@ public final class Store: Sendable {
         try writer.write { db in try SessionRow(session).save(db) }
     }
 
+    /// A running CLI host may update status while its agent names the branch.
+    /// Change only that field so neither writer restores stale chat state.
+    public func updateSessionBranch(_ id: String, to branch: String) throws {
+        try writer.write { db in
+            try db.execute(sql: "UPDATE sessions SET branch = ? WHERE id = ?", arguments: [branch, id])
+        }
+    }
+
     /// Adds a new chat unless an unarchived chat in its project already has
     /// its name, checked in the same transaction so two callers racing for
     /// one name can't both win. Returns false when the name is taken.
@@ -226,6 +236,48 @@ public final class Store: Sendable {
                 arguments: StatementArguments([SessionStatus.errored.rawValue, "Interrupted when Abstract quit"] + active + kept))
             changed += db.changesCount
             return changed
+        }
+    }
+
+    // MARK: - Permission rules
+
+    /// A project's remembered permission answers, oldest first.
+    public func permissionRules(projectId: String) throws -> [PermissionRule] {
+        try writer.read { db in
+            try PermissionRuleRow.fetchAll(
+                db, sql: "SELECT * FROM permission_rules WHERE project_id = ? ORDER BY created_at, rowid",
+                arguments: [projectId]).map(\.value)
+        }
+    }
+
+    public func save(_ rule: PermissionRule) throws {
+        try writer.write { db in try PermissionRuleRow(rule).save(db) }
+    }
+
+    public func deletePermissionRule(_ id: String) throws {
+        try writer.write { db in
+            try db.execute(sql: "DELETE FROM permission_rules WHERE id = ?", arguments: [id])
+        }
+    }
+
+    // MARK: - Project tool servers
+
+    /// A project's MCP servers (ABS-123), oldest first.
+    public func toolServers(projectId: String) throws -> [ProjectToolServer] {
+        try writer.read { db in
+            try ToolServerRow.fetchAll(
+                db, sql: "SELECT * FROM project_tool_servers WHERE project_id = ? ORDER BY created_at, rowid",
+                arguments: [projectId]).map(\.value)
+        }
+    }
+
+    public func save(_ server: ProjectToolServer) throws {
+        try writer.write { db in try ToolServerRow(server).save(db) }
+    }
+
+    public func deleteToolServer(_ id: String) throws {
+        try writer.write { db in
+            try db.execute(sql: "DELETE FROM project_tool_servers WHERE id = ?", arguments: [id])
         }
     }
 
@@ -355,6 +407,73 @@ public final class Store: Sendable {
 
     public func save(_ run: AutomationRun) throws {
         try writer.write { db in try RunRow(run).save(db) }
+    }
+
+    /// Test support: the trigger column as stored.
+    func rawTrigger(runId id: String) throws -> String? {
+        try writer.read { db in try String.fetchOne(db, sql: "SELECT \"trigger\" FROM automation_runs WHERE id = ?", arguments: [id]) }
+    }
+
+    // MARK: - Profiles
+
+    public func profiles() throws -> [AgentProfile] {
+        try writer.read { db in
+            try ProfileRow.fetchAll(db, sql: "SELECT * FROM profiles ORDER BY sort_order, created_at").map(\.value)
+        }
+    }
+
+    public func profile(_ id: String) throws -> AgentProfile? {
+        try writer.read { db in
+            try ProfileRow.fetchOne(db, sql: "SELECT * FROM profiles WHERE id = ?", arguments: [id])?.value
+        }
+    }
+
+    public func save(_ profile: AgentProfile) throws {
+        try writer.write { db in try ProfileRow(profile).save(db) }
+    }
+
+    /// Chats and automations that named it keep what they started with;
+    /// an automation whose profile is gone runs on its own settings.
+    public func deleteProfile(_ id: String) throws {
+        try writer.write { db in
+            try db.execute(sql: "DELETE FROM profiles WHERE id = ?", arguments: [id])
+        }
+    }
+
+    /// The starter profiles, the first time profiles are asked for.
+    /// Once seeded they are plain profiles: deleting every one stays deleted.
+    public func seedStarterProfilesIfNeeded() throws {
+        guard setting("profilesSeeded", as: Bool.self) != true else { return }
+        if try profiles().isEmpty {
+            for profile in AgentProfile.starters { try save(profile) }
+        }
+        try setSetting("profilesSeeded", true)
+    }
+
+    // MARK: - Workflows
+
+    public func workflows() throws -> [Workflow] {
+        try writer.read { db in
+            try WorkflowRow.fetchAll(db, sql: "SELECT * FROM workflows ORDER BY sort_order, created_at").map(\.value)
+        }
+    }
+
+    public func workflow(_ id: String) throws -> Workflow? {
+        try writer.read { db in
+            try WorkflowRow.fetchOne(db, sql: "SELECT * FROM workflows WHERE id = ?", arguments: [id])?.value
+        }
+    }
+
+    public func save(_ workflow: Workflow) throws {
+        try writer.write { db in try WorkflowRow(workflow).save(db) }
+    }
+
+    /// Chats running it keep their copy; automations that follow it fail
+    /// their runs until they're given another.
+    public func deleteWorkflow(_ id: String) throws {
+        try writer.write { db in
+            try db.execute(sql: "DELETE FROM workflows WHERE id = ?", arguments: [id])
+        }
     }
 
     // MARK: - Schema
@@ -513,6 +632,223 @@ public final class Store: Sendable {
         migrator.registerMigration("v8-pinned") { db in
             try db.execute(sql: "ALTER TABLE sessions ADD COLUMN pinned_at DATETIME")
         }
+        // Where each chat's name came from: an existing chat's counts as its
+        // prompt's, so its pull request can still name it.
+        migrator.registerMigration("v9-name-source") { db in
+            try db.execute(sql: "ALTER TABLE sessions ADD COLUMN name_source TEXT NOT NULL DEFAULT 'request'")
+        }
+        // What each turn changed and why, and the commits and notes that lead
+        // back to it. No reference to `sessions`: a deleted chat's turns stay.
+        migrator.registerMigration("v10-turn-records") { db in
+            try db.execute(sql: """
+                CREATE TABLE turn_records (
+                  id           TEXT PRIMARY KEY NOT NULL,
+                  project_id   TEXT,
+                  session_id   TEXT NOT NULL,
+                  chat_name    TEXT NOT NULL,
+                  provider_id  TEXT NOT NULL,
+                  number       INTEGER NOT NULL,
+                  started_at   DATETIME,
+                  ended_at     DATETIME,
+                  request      TEXT,
+                  corrections  TEXT NOT NULL DEFAULT '[]',
+                  summary      TEXT,
+                  files        TEXT NOT NULL DEFAULT '[]',
+                  uncommitted  TEXT NOT NULL DEFAULT '[]',
+                  head_before  TEXT,
+                  head_after   TEXT,
+                  branch       TEXT,
+                  pull_request INTEGER,
+                  ticket       TEXT,
+                  log_start    INTEGER NOT NULL DEFAULT 0,
+                  log_end      INTEGER NOT NULL DEFAULT 0,
+                  UNIQUE (session_id, number)
+                );
+                CREATE INDEX turn_records_branch ON turn_records(project_id, branch);
+                CREATE INDEX turn_records_pull_request ON turn_records(project_id, pull_request);
+
+                CREATE TABLE turn_commits (
+                  sha      TEXT NOT NULL,
+                  turn_id  TEXT NOT NULL REFERENCES turn_records(id) ON DELETE CASCADE,
+                  link     TEXT NOT NULL,
+                  patch_id TEXT,
+                  PRIMARY KEY (sha, turn_id)
+                );
+                CREATE INDEX turn_commits_turn ON turn_commits(turn_id);
+                CREATE INDEX turn_commits_patch ON turn_commits(patch_id);
+
+                CREATE TABLE code_notes (
+                  id         TEXT PRIMARY KEY NOT NULL,
+                  session_id TEXT NOT NULL,
+                  turn_id    TEXT REFERENCES turn_records(id) ON DELETE SET NULL,
+                  kind       TEXT NOT NULL,
+                  path       TEXT NOT NULL,
+                  line       INTEGER,
+                  commit_sha TEXT,
+                  body       TEXT NOT NULL,
+                  author     TEXT,
+                  created_at DATETIME NOT NULL
+                );
+                CREATE INDEX code_notes_session ON code_notes(session_id, turn_id);
+                CREATE INDEX code_notes_turn ON code_notes(turn_id);
+                """)
+        }
+        // The paired Mac a project's new chats start on; nil = this Mac.
+        migrator.registerMigration("v11-default-device") { db in
+            try db.execute(sql: "ALTER TABLE projects ADD COLUMN default_device_id TEXT")
+        }
+        // The paired Mac an automation's runs start on; nil = this Mac.
+        migrator.registerMigration("v12-automation-device") { db in
+            try db.execute(sql: "ALTER TABLE automations ADD COLUMN device_id TEXT")
+        }
+        // What each turn settled, in one line, and whether a project's
+        // agents may read that history (ABS-61); existing projects may.
+        migrator.registerMigration("v13-code-history") { db in
+            // Earlier nightlies shipped this as v12-code-history. Its
+            // identifier changed when automation-device was merged, but
+            // those databases already have both columns and their data.
+            let legacy = try String.fetchOne(db, sql: "SELECT identifier FROM grdb_migrations WHERE identifier = ?",
+                                             arguments: ["v12-code-history"])
+            guard legacy == nil else { return }
+            try db.execute(sql: "ALTER TABLE turn_records ADD COLUMN decision TEXT")
+            try db.execute(sql: "ALTER TABLE projects ADD COLUMN agent_history INTEGER")
+        }
+        // Remembered permission answers, per project.
+        migrator.registerMigration("v14-permission-rules") { db in
+            try db.execute(sql: """
+                CREATE TABLE permission_rules (
+                  id         TEXT PRIMARY KEY NOT NULL,
+                  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                  kind       TEXT NOT NULL,
+                  pattern    TEXT NOT NULL,
+                  decision   TEXT NOT NULL,
+                  expires_at DATETIME,
+                  created_at DATETIME NOT NULL
+                );
+                CREATE INDEX permission_rules_project ON permission_rules(project_id);
+                """)
+        }
+        // Agent profiles (ABS-101): the profiles themselves, the profile
+        // a chat started from (kept as it was then), the one an automation
+        // runs from, and which ones a project offers (empty here = the
+        // column is NULL, every profile shows).
+        migrator.registerMigration("v15-profiles") { db in
+            try db.execute(sql: """
+                CREATE TABLE profiles (
+                  id                TEXT PRIMARY KEY NOT NULL,
+                  name              TEXT NOT NULL,
+                  icon_symbol       TEXT,
+                  provider_id       TEXT NOT NULL DEFAULT 'claude',
+                  model             TEXT,
+                  effort            TEXT,
+                  permission_policy TEXT NOT NULL DEFAULT 'ask',
+                  instructions      TEXT NOT NULL DEFAULT '',
+                  skills            TEXT NOT NULL DEFAULT '[]',
+                  mcp_servers       TEXT NOT NULL DEFAULT '[]',
+                  sort_order        INTEGER NOT NULL DEFAULT 0,
+                  created_at        DATETIME NOT NULL
+                );
+                """)
+            try db.execute(sql: "ALTER TABLE sessions ADD COLUMN profile_id TEXT")
+            try db.execute(sql: "ALTER TABLE sessions ADD COLUMN profile_name TEXT")
+            try db.execute(sql: "ALTER TABLE sessions ADD COLUMN profile_instructions TEXT")
+            try db.execute(sql: "ALTER TABLE automations ADD COLUMN profile_id TEXT")
+            try db.execute(sql: "ALTER TABLE projects ADD COLUMN profile_ids TEXT")
+        }
+        // What a run does while the last is still going, what missed runs
+        // do (the catch_up switch becomes "run once"), and skipping when
+        // the project hasn't changed. catch_up stays, kept in step, so a
+        // build from before this still reads the database.
+        migrator.registerMigration("v16-automation-scheduling") { db in
+            try db.execute(sql: "ALTER TABLE automations ADD COLUMN concurrency TEXT")
+            try db.execute(sql: "ALTER TABLE automations ADD COLUMN missed_runs TEXT")
+            try db.execute(sql: "ALTER TABLE automations ADD COLUMN only_when_changed BOOLEAN NOT NULL DEFAULT 0")
+            try db.execute(sql: "ALTER TABLE automation_runs ADD COLUMN reason TEXT")
+            try db.execute(sql: "ALTER TABLE automation_runs ADD COLUMN base_commit TEXT")
+            try db.execute(sql: """
+                UPDATE automations SET
+                  concurrency = CASE WHEN workspace_mode = 'pinned' THEN 'skip_if_active' ELSE 'start_another' END,
+                  missed_runs = CASE WHEN catch_up THEN 'run_once' ELSE 'skip' END
+                """)
+        }
+        // A reviewer chat reads another chat's worktree (ABS-112).
+        migrator.registerMigration("v17-reviewer-chats") { db in
+            try db.execute(sql: "ALTER TABLE sessions ADD COLUMN reviews_session_id TEXT")
+        }
+        // Each project's setting for each plugin tool (ABS-97).
+        migrator.registerMigration("v18-plugin-tools") { db in
+            try db.execute(sql: "ALTER TABLE projects ADD COLUMN plugin_tools TEXT")
+        }
+        // The MCP servers a project gives its chats' agents (ABS-123).
+        migrator.registerMigration("v19-project-tool-servers") { db in
+            try db.execute(sql: """
+                CREATE TABLE project_tool_servers (
+                  id          TEXT PRIMARY KEY NOT NULL,
+                  project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                  name        TEXT NOT NULL,
+                  connection  TEXT NOT NULL,
+                  agents      TEXT NOT NULL DEFAULT '[]',
+                  notes       TEXT NOT NULL DEFAULT '',
+                  tools       TEXT NOT NULL DEFAULT '[]',
+                  access      TEXT NOT NULL DEFAULT '{}',
+                  listed_at   DATETIME,
+                  list_error  TEXT,
+                  created_at  DATETIME NOT NULL
+                );
+                CREATE INDEX project_tool_servers_project ON project_tool_servers(project_id);
+                """)
+        }
+        // The library skills a project's chats get (ABS-122).
+        migrator.registerMigration("v20-project-skills") { db in
+            try db.execute(sql: "ALTER TABLE projects ADD COLUMN skill_ids TEXT")
+        }
+        // Workflows: profiles taking turns on a chat, the one a chat runs
+        // and where it is, the one an automation's runs follow, and the
+        // events that start automations. A run an event started keeps
+        // 'manual' as its trigger, which builds from before this read.
+        migrator.registerMigration("v21-workflows") { db in
+            try db.execute(sql: """
+                CREATE TABLE workflows (
+                  id          TEXT PRIMARY KEY NOT NULL,
+                  name        TEXT NOT NULL,
+                  icon_symbol TEXT,
+                  steps       TEXT NOT NULL DEFAULT '[]',
+                  sort_order  INTEGER NOT NULL DEFAULT 0,
+                  created_at  DATETIME NOT NULL
+                );
+                """)
+            try db.execute(sql: "ALTER TABLE sessions ADD COLUMN workflow TEXT")
+            try db.execute(sql: "ALTER TABLE automations ADD COLUMN workflow_id TEXT")
+            try db.execute(sql: "ALTER TABLE automations ADD COLUMN events TEXT NOT NULL DEFAULT '[]'")
+            try db.execute(sql: "ALTER TABLE automations ADD COLUMN event_target TEXT")
+            try db.execute(sql: "ALTER TABLE automation_runs ADD COLUMN event TEXT")
+            try db.execute(sql: "ALTER TABLE automation_runs ADD COLUMN source_session_id TEXT")
+        }
+        // Linear moved into a plugin (ABS-141): a chat's first message
+        // names its Linear issues as tracker issues of the Linear plugin.
+        migrator.registerMigration("v22-tracker-attachments") { db in
+            try db.execute(sql: """
+                UPDATE sessions SET prompt = REPLACE(prompt, '<attachment kind="linearIssue" label=',
+                  '<attachment kind="trackerIssue" tracker="sh.abstract.linear" label=')
+                WHERE prompt LIKE '%<attachment kind="linearIssue" %'
+                """)
+        }
+        migrator.registerMigration("v23-shared-icons") { db in
+            for table in ["profiles", "workflows"] {
+                try db.execute(sql: "ALTER TABLE \(table) ADD COLUMN icon_color TEXT")
+                try db.execute(sql: "ALTER TABLE \(table) ADD COLUMN icon_image_path TEXT")
+            }
+            try db.execute(sql: """
+                CREATE TABLE plugin_icon_fields (
+                  plugin_id TEXT NOT NULL,
+                  field_key TEXT NOT NULL,
+                  icon_symbol TEXT,
+                  icon_color TEXT,
+                  icon_image_path TEXT,
+                  PRIMARY KEY (plugin_id, field_key)
+                )
+                """)
+        }
         return migrator
     }
 }
@@ -539,6 +875,12 @@ private func jsonText(_ list: [String]) throws -> String {
     String(decoding: try JSONEncoder().encode(list), as: UTF8.self)
 }
 
+private func jsonText(_ modes: [String: PluginToolMode]) throws -> String {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = .sortedKeys
+    return String(decoding: try encoder.encode(modes), as: UTF8.self)
+}
+
 private struct ProjectRow: FetchableRecord, PersistableRecord {
     static let databaseTableName = "projects"
     let value: Project
@@ -546,7 +888,7 @@ private struct ProjectRow: FetchableRecord, PersistableRecord {
     init(_ value: Project) { self.value = value }
 
     init(row: Row) throws {
-        value = Project(
+        var project = Project(
             id: try row.decode(forColumn: "id"),
             name: try row.decode(forColumn: "name"),
             rootPath: try row.decode(forColumn: "root_path"),
@@ -566,7 +908,19 @@ private struct ProjectRow: FetchableRecord, PersistableRecord {
             sparseCheckout: try row.stringList("sparse_checkout"),
             setupScript: try row.decode(forColumn: "setup_script"),
             teardownScript: try row.decode(forColumn: "teardown_script"),
-            runScript: try row.decode(forColumn: "run_script"))
+            runScript: try row.decode(forColumn: "run_script"),
+            defaultDeviceId: try row.decode(forColumn: "default_device_id"),
+            agentHistory: try row.decode(forColumn: "agent_history"))
+        if let picked: String = try row.decode(forColumn: "profile_ids") {
+            project.profileIds = (try? JSONDecoder().decode([String].self, from: Data(picked.utf8))) ?? []
+        }
+        if let tools: String = try row.decode(forColumn: "plugin_tools") {
+            project.pluginTools = try? JSONDecoder().decode([String: PluginToolMode].self, from: Data(tools.utf8))
+        }
+        if let skills: String = try row.decode(forColumn: "skill_ids") {
+            project.skillIds = (try? JSONDecoder().decode([String].self, from: Data(skills.utf8))) ?? []
+        }
+        value = project
     }
 
     func encode(to container: inout PersistenceContainer) throws {
@@ -590,6 +944,11 @@ private struct ProjectRow: FetchableRecord, PersistableRecord {
         container["setup_script"] = value.setupScript
         container["teardown_script"] = value.teardownScript
         container["run_script"] = value.runScript
+        container["default_device_id"] = value.defaultDeviceId
+        container["agent_history"] = value.agentHistory
+        container["profile_ids"] = try value.profileIds.map { try jsonText($0) }
+        container["plugin_tools"] = try value.pluginTools.map { try jsonText($0) }
+        container["skill_ids"] = try value.skillIds.map { try jsonText($0) }
     }
 }
 
@@ -619,8 +978,16 @@ private struct SessionRow: FetchableRecord, PersistableRecord {
             archivedAt: try row.decode(forColumn: "archived_at"),
             model: try row.decode(forColumn: "model"),
             effort: try row.decode(forColumn: "effort"))
+        value.profileId = try row.decode(forColumn: "profile_id")
+        value.profileName = try row.decode(forColumn: "profile_name")
+        value.profileInstructions = try row.decode(forColumn: "profile_instructions")
         value.handoffFrom = try row.decode(forColumn: "handoff_from")
         value.pinnedAt = try row.decode(forColumn: "pinned_at")
+        value.reviewsSessionId = try row.decode(forColumn: "reviews_session_id")
+        value.nameSource = ChatNameSource(rawValue: try row.decode(forColumn: "name_source")) ?? .request
+        if let workflow: String = try row.decode(forColumn: "workflow") {
+            value.workflow = try? JSONDecoder().decode(WorkflowProgress.self, from: Data(workflow.utf8))
+        }
         let seats: String = try row.decode(forColumn: "provider_sessions")
         value.providerSessions = (try? JSONDecoder().decode([String: ProviderSeat].self, from: Data(seats.utf8))) ?? [:]
         self.value = value
@@ -648,6 +1015,12 @@ private struct SessionRow: FetchableRecord, PersistableRecord {
         container["last_event_at"] = value.lastEventAt
         container["archived_at"] = value.archivedAt
         container["pinned_at"] = value.pinnedAt
+        container["profile_id"] = value.profileId
+        container["profile_name"] = value.profileName
+        container["profile_instructions"] = value.profileInstructions
+        container["reviews_session_id"] = value.reviewsSessionId
+        container["name_source"] = value.nameSource.rawValue
+        container["workflow"] = try value.workflow.map { String(decoding: try JSONEncoder().encode($0), as: UTF8.self) }
     }
 }
 
@@ -658,7 +1031,7 @@ private struct AutomationRow: FetchableRecord, PersistableRecord {
     init(_ value: Automation) { self.value = value }
 
     init(row: Row) throws {
-        value = Automation(
+        var automation = Automation(
             id: try row.decode(forColumn: "id"),
             name: try row.decode(forColumn: "name"),
             prompt: try row.decode(forColumn: "prompt"),
@@ -675,7 +1048,17 @@ private struct AutomationRow: FetchableRecord, PersistableRecord {
             createdAt: try row.decode(forColumn: "created_at"),
             updatedAt: try row.decode(forColumn: "updated_at"),
             model: try row.decode(forColumn: "model"),
-            effort: try row.decode(forColumn: "effort"))
+            effort: try row.decode(forColumn: "effort"),
+            deviceId: try row.decode(forColumn: "device_id"),
+            concurrency: (try row.decode(forColumn: "concurrency") as String?).flatMap(AutomationConcurrency.init(rawValue:)),
+            missedRuns: (try row.decode(forColumn: "missed_runs") as String?).flatMap(AutomationMissedRuns.init(rawValue:)),
+            onlyWhenChanged: try row.decode(forColumn: "only_when_changed"))
+        automation.profileId = try row.decode(forColumn: "profile_id")
+        automation.workflowId = try row.decode(forColumn: "workflow_id")
+        automation.events = try row.stringList("events").compactMap(AutomationEvent.init(rawValue:))
+        automation.eventTarget = (try row.decode(forColumn: "event_target") as String?)
+            .flatMap(AutomationEventTarget.init(rawValue:)) ?? .triggeringChat
+        value = automation
     }
 
     func encode(to container: inout PersistenceContainer) throws {
@@ -697,6 +1080,14 @@ private struct AutomationRow: FetchableRecord, PersistableRecord {
         container["permission_policy"] = value.permissionPolicy.rawValue
         container["model"] = value.model
         container["effort"] = value.effort
+        container["device_id"] = value.deviceId
+        container["concurrency"] = value.concurrency.rawValue
+        container["missed_runs"] = value.missedRuns.rawValue
+        container["only_when_changed"] = value.onlyWhenChanged
+        container["profile_id"] = value.profileId
+        container["workflow_id"] = value.workflowId
+        container["events"] = try jsonText(value.events.map(\.rawValue))
+        container["event_target"] = value.eventTarget.rawValue
         container["catch_up"] = value.catchUp
         container["enabled"] = value.enabled
         container["next_run_at"] = value.nextRunAt
@@ -750,6 +1141,48 @@ private enum TriggerJSON {
     }
 }
 
+private struct ProfileRow: FetchableRecord, PersistableRecord {
+    static let databaseTableName = "profiles"
+    let value: AgentProfile
+
+    init(_ value: AgentProfile) { self.value = value }
+
+    init(row: Row) throws {
+        value = AgentProfile(
+            id: try row.decode(forColumn: "id"),
+            name: try row.decode(forColumn: "name"),
+            iconSymbol: try row.decode(forColumn: "icon_symbol"),
+            iconColor: try row.decode(forColumn: "icon_color"),
+            iconImagePath: try row.decode(forColumn: "icon_image_path"),
+            providerId: try row.decode(forColumn: "provider_id"),
+            model: try row.decode(forColumn: "model"),
+            effort: try row.decode(forColumn: "effort"),
+            permissionPolicy: try row.rawEnum("permission_policy"),
+            instructions: try row.decode(forColumn: "instructions"),
+            skills: try row.stringList("skills"),
+            mcpServers: try row.stringList("mcp_servers"),
+            sortOrder: try row.decode(forColumn: "sort_order"),
+            createdAt: try row.decode(forColumn: "created_at"))
+    }
+
+    func encode(to container: inout PersistenceContainer) throws {
+        container["id"] = value.id
+        container["name"] = value.name
+        container["icon_symbol"] = value.iconSymbol
+        container["icon_color"] = value.iconColor
+        container["icon_image_path"] = value.iconImagePath
+        container["provider_id"] = value.providerId
+        container["model"] = value.model
+        container["effort"] = value.effort
+        container["permission_policy"] = value.permissionPolicy.rawValue
+        container["instructions"] = value.instructions
+        container["skills"] = try jsonText(value.skills)
+        container["mcp_servers"] = try jsonText(value.mcpServers)
+        container["sort_order"] = value.sortOrder
+        container["created_at"] = value.createdAt
+    }
+}
+
 private struct RunRow: FetchableRecord, PersistableRecord {
     static let databaseTableName = "automation_runs"
     let value: AutomationRun
@@ -757,24 +1190,106 @@ private struct RunRow: FetchableRecord, PersistableRecord {
     init(_ value: AutomationRun) { self.value = value }
 
     init(row: Row) throws {
+        let event = (try row.decode(forColumn: "event") as String?).flatMap(AutomationEvent.init(rawValue:))
         value = AutomationRun(
             id: try row.decode(forColumn: "id"),
             automationId: try row.decode(forColumn: "automation_id"),
             firedAt: try row.decode(forColumn: "fired_at"),
-            trigger: try row.rawEnum("trigger"),
+            trigger: event == nil ? try row.rawEnum("trigger") : .event,
             status: try row.rawEnum("status"),
             sessionId: try row.decode(forColumn: "session_id"),
-            error: try row.decode(forColumn: "error"))
+            error: try row.decode(forColumn: "error"),
+            reason: try row.decode(forColumn: "reason"),
+            baseCommit: try row.decode(forColumn: "base_commit"),
+            event: event,
+            sourceSessionId: try row.decode(forColumn: "source_session_id"))
     }
 
     func encode(to container: inout PersistenceContainer) throws {
         container["id"] = value.id
         container["automation_id"] = value.automationId
         container["fired_at"] = value.firedAt
-        container["trigger"] = value.trigger.rawValue
+        // Older builds know no event trigger; the event column says which.
+        container["trigger"] = value.trigger == .event ? RunTrigger.manual.rawValue : value.trigger.rawValue
+        container["event"] = value.event?.rawValue
+        container["source_session_id"] = value.sourceSessionId
         container["status"] = value.status.rawValue
         container["session_id"] = value.sessionId
         container["error"] = value.error
+        container["reason"] = value.reason
+        container["base_commit"] = value.baseCommit
+    }
+}
+
+private struct PermissionRuleRow: FetchableRecord, PersistableRecord {
+    static let databaseTableName = "permission_rules"
+    let value: PermissionRule
+
+    init(_ value: PermissionRule) { self.value = value }
+
+    init(row: Row) throws {
+        value = PermissionRule(
+            id: try row.decode(forColumn: "id"),
+            projectId: try row.decode(forColumn: "project_id"),
+            kind: try row.rawEnum("kind"),
+            pattern: try row.decode(forColumn: "pattern"),
+            decision: try row.rawEnum("decision"),
+            expiresAt: try row.decode(forColumn: "expires_at"),
+            createdAt: try row.decode(forColumn: "created_at"))
+    }
+
+    func encode(to container: inout PersistenceContainer) throws {
+        container["id"] = value.id
+        container["project_id"] = value.projectId
+        container["kind"] = value.kind.rawValue
+        container["pattern"] = value.pattern
+        container["decision"] = value.decision.rawValue
+        container["expires_at"] = value.expiresAt
+        container["created_at"] = value.createdAt
+    }
+}
+
+private struct ToolServerRow: FetchableRecord, PersistableRecord {
+    static let databaseTableName = "project_tool_servers"
+    let value: ProjectToolServer
+
+    init(_ value: ProjectToolServer) { self.value = value }
+
+    init(row: Row) throws {
+        let decoder = JSONDecoder()
+        func json<T: Decodable>(_ column: String, _ type: T.Type) throws -> T {
+            let text: String = try row.decode(forColumn: column)
+            return try decoder.decode(T.self, from: Data(text.utf8))
+        }
+        value = ProjectToolServer(
+            id: try row.decode(forColumn: "id"),
+            projectId: try row.decode(forColumn: "project_id"),
+            name: try row.decode(forColumn: "name"),
+            connection: try json("connection", ProjectToolServer.Connection.self),
+            agents: try row.stringList("agents"),
+            notes: try row.decode(forColumn: "notes"),
+            tools: (try? json("tools", [ProjectToolServer.Tool].self)) ?? [],
+            access: (try? json("access", [String: ToolAccess].self)) ?? [:],
+            listedAt: try row.decode(forColumn: "listed_at"),
+            listError: try row.decode(forColumn: "list_error"),
+            createdAt: try row.decode(forColumn: "created_at"))
+    }
+
+    func encode(to container: inout PersistenceContainer) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        func json<T: Encodable>(_ value: T) throws -> String { String(decoding: try encoder.encode(value), as: UTF8.self) }
+        container["id"] = value.id
+        container["project_id"] = value.projectId
+        container["name"] = value.name
+        container["connection"] = try json(value.connection)
+        container["agents"] = try jsonText(value.agents)
+        container["notes"] = value.notes
+        container["tools"] = try json(value.tools)
+        container["access"] = try json(value.access)
+        container["listed_at"] = value.listedAt
+        container["list_error"] = value.listError
+        container["created_at"] = value.createdAt
     }
 }
 
@@ -796,5 +1311,36 @@ private struct UsageRow: PersistableRecord {
         container["cost_usd"] = value.costUsd
         container["duration_ms"] = value.durationMs
         container["turns"] = value.turns
+    }
+}
+
+private struct WorkflowRow: FetchableRecord, PersistableRecord {
+    static let databaseTableName = "workflows"
+    let value: Workflow
+
+    init(_ value: Workflow) { self.value = value }
+
+    init(row: Row) throws {
+        let steps: String = try row.decode(forColumn: "steps")
+        value = Workflow(
+            id: try row.decode(forColumn: "id"),
+            name: try row.decode(forColumn: "name"),
+            iconSymbol: try row.decode(forColumn: "icon_symbol"),
+            iconColor: try row.decode(forColumn: "icon_color"),
+            iconImagePath: try row.decode(forColumn: "icon_image_path"),
+            steps: (try? JSONDecoder().decode([WorkflowStep].self, from: Data(steps.utf8))) ?? [],
+            sortOrder: try row.decode(forColumn: "sort_order"),
+            createdAt: try row.decode(forColumn: "created_at"))
+    }
+
+    func encode(to container: inout PersistenceContainer) throws {
+        container["id"] = value.id
+        container["name"] = value.name
+        container["icon_symbol"] = value.iconSymbol
+        container["icon_color"] = value.iconColor
+        container["icon_image_path"] = value.iconImagePath
+        container["steps"] = String(decoding: try JSONEncoder().encode(value.steps), as: UTF8.self)
+        container["sort_order"] = value.sortOrder
+        container["created_at"] = value.createdAt
     }
 }

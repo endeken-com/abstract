@@ -59,7 +59,7 @@ struct ChatStreamTests {
         let stream = ChatStream(providerId: "codex")
         #expect(ChatStream.firstProvider(in: [Lines.out(Lines.codexReply)], current: "codex") == "codex")
         let events = stream.feed(Lines.out(Lines.codexReply))
-        #expect(events.contains(.text(role: .assistant, text: "Codex carried on.", blockId: "item_0", partial: false)))
+        #expect(events.contains(.text(role: .assistant, text: "Codex carried on.", blockId: "codex:0:item_0", partial: false)))
     }
 
     @Test func theFirstSegmentBelongsToTheAgentHandedOverFrom() {
@@ -109,6 +109,57 @@ struct ChatStreamTests {
         stream.restart(providerId: "codex")
         #expect(stream.providerId == "codex")
         #expect(!stream.feed(Lines.out(Lines.codexReply)).isEmpty)
+    }
+
+    @Test func codexReusedItemIdsKeepRepliesAndToolResultsInTheirOwnTurns() {
+        let lines: [OutputLine] = [
+            Lines.user("First request"),
+            Lines.out(#"{"type":"turn.started"}"#),
+            Lines.out(#"{"type":"item.updated","item":{"id":"item_2","type":"reasoning","text":"First thought"}}"#),
+            Lines.out(#"{"type":"item.completed","item":{"id":"item_2","type":"reasoning","text":"First thought"}}"#),
+            Lines.out(#"{"type":"item.started","item":{"id":"item_1","type":"command_execution","command":"check first"}}"#),
+            Lines.out(#"{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"check first","aggregated_output":"first result","exit_code":0}}"#),
+            Lines.out(#"{"type":"item.updated","item":{"id":"item_0","type":"agent_message","text":"First draft"}}"#),
+            Lines.out(#"{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"First reply"}}"#),
+            Lines.out(#"{"type":"turn.completed"}"#),
+            Lines.user("Second request"),
+            Lines.out(#"{"type":"turn.started"}"#),
+            Lines.out(#"{"type":"item.completed","item":{"id":"item_2","type":"reasoning","text":"Second thought"}}"#),
+            Lines.out(#"{"type":"item.started","item":{"id":"item_1","type":"command_execution","command":"check second"}}"#),
+            Lines.out(#"{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"check second","aggregated_output":"second result","exit_code":1}}"#),
+            Lines.out(#"{"type":"item.updated","item":{"id":"item_0","type":"agent_message","text":"Second draft"}}"#),
+            Lines.out(#"{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Second reply"}}"#),
+            Lines.out(#"{"type":"turn.completed"}"#),
+        ]
+
+        let liveStream = ChatStream(providerId: "codex")
+        var live = Timeline()
+        for line in lines {
+            let events = liveStream.feed(line)
+            live.append(contentsOf: events)
+            if line.stream == .user { liveStream.restart(providerId: "codex") }
+        }
+        let replay = ChatStream.timeline(lines, currentProvider: "codex")
+        #expect(live.entries.map(\.event) == replay.entries.map(\.event))
+
+        let ordered = replay.blocks.compactMap { block -> String? in
+            switch block {
+            case let .user(_, text): return "user: \(text)"
+            case let .thinking(_, text): return "thinking: \(text)"
+            case let .tools(_, calls): return "tool: \(calls[0].input["command"]?.string ?? "")"
+            case let .assistant(_, text, _, _): return "reply: \(text)"
+            default: return nil
+            }
+        }
+        #expect(ordered == ["user: First request", "thinking: First thought", "tool: check first", "reply: First reply",
+                            "user: Second request", "thinking: Second thought", "tool: check second", "reply: Second reply"])
+        let calls = replay.blocks.flatMap { block -> [ToolCall] in
+            if case let .tools(_, calls) = block { return calls }
+            return []
+        }
+        #expect(calls.map(\.id) == ["codex:1:item_1", "codex:2:item_1"])
+        #expect(calls.map(\.result?.output) == ["first result", "second result"])
+        #expect(calls.map(\.result?.isError) == [false, true])
     }
 }
 

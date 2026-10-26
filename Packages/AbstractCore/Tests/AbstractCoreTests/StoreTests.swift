@@ -118,6 +118,16 @@ import Testing
         #expect(try store.session("s1")?.pinnedAt == nil)
     }
 
+    @Test func reviewerChatKeepsTheChatItReviews() throws {
+        var session = Self.session("s2", projectId: nil)
+        session.reviewsSessionId = "s1"
+        try store.save(session)
+        #expect(try store.session("s2")?.reviewsSessionId == "s1")
+        // Older chats, and older Macs' snapshots, review nothing.
+        let decoded = try JSONDecoder().decode(Session.self, from: JSONEncoder().encode(Self.session("s3", projectId: nil)))
+        #expect(decoded.reviewsSessionId == nil)
+    }
+
     @Test func sessionWithoutProjectIsAllowed() throws {
         let session = Self.session("s1", projectId: nil)
         try store.save(session)

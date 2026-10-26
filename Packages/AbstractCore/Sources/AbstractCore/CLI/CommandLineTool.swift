@@ -9,6 +9,11 @@ import Synchronization
 ///     abstract agent find       --session <id>
 ///     abstract agent send       --session <id> --agent <id> --text-file <path|->
 ///     abstract agent respawn    --session <id> --agent claude --prompt-file <path|->
+///     abstract history          <file>[:<line>[-<line>]] [--project <p>]
+///     abstract branch name      <exact-name>  (from an automation chat's worktree)
+///     abstract mcp              --chat <id>   (the code-history tools, over stdio)
+///     abstract mcp              --chat <id> --plugins   (the chat's plugin tools, over stdio)
+///     abstract mcp              --chat <id> --branch    (the chat's branch-name tool, over stdio)
 ///
 /// `--project` takes a project's id, root path or name. Every command prints
 /// one JSON value on stdout and nothing else; a failure prints
@@ -30,6 +35,32 @@ public enum CommandLineTool {
     public static func main(_ arguments: [String]) async -> Int32 {
         let args = Array(arguments.dropFirst())
         if args.first == AgentHost.command { AgentHost.main(Array(args.dropFirst())) }
+        // The MCP server speaks JSON-RPC on stdio until the agent closes
+        // it; it is not one of the one-JSON-value commands.
+        if args.first == "mcp" {
+            if args.contains("--branch") {
+                guard let chat = option("chat", in: Array(args.dropFirst())), !chat.isEmpty else {
+                    FileHandle.standardError.write(Data("abstract mcp: no chat to name a branch for.\n".utf8))
+                    return 1
+                }
+                await BranchMCPServer(chatId: chat).run()
+                return 0
+            }
+            if args.contains("--plugins") {
+                guard let chat = option("chat", in: Array(args.dropFirst())), !chat.isEmpty else {
+                    FileHandle.standardError.write(Data("abstract mcp: no chat to serve plugin tools for.\n".utf8))
+                    return 1
+                }
+                await PluginMCPServer(source: LinkedPluginTools(chatId: chat)).run()
+                return 0
+            }
+            guard let chat = option("chat", in: Array(args.dropFirst())), let server = HistoryMCPServer.open(chatId: chat) else {
+                FileHandle.standardError.write(Data("abstract mcp: no chat to serve history for.\n".utf8))
+                return 1
+            }
+            await server.run()
+            return 0
+        }
         do {
             emit(try await run(args))
             return 0
@@ -46,14 +77,37 @@ public enum CommandLineTool {
         Usage: abstract session list --project <p> [--include-archived] | \
         session create --project <p> --name <n> --branch <b> --agent <agent> --prompt-file <path|-> | \
         agent find --session <id> | agent send --session <id> --agent <id> --text-file <path|-> | \
-        agent respawn --session <id> --agent <agent> --prompt-file <path|->
+        agent respawn --session <id> --agent <agent> --prompt-file <path|-> | \
+        branch name <exact-name> | \
+        history <file>[:<line>[-<line>]] [--project <p>] | mcp --chat <id> [--plugins|--branch]
         """
 
+    /// `--name value` or `--name=value` among `tokens`; nil when absent.
+    static func option(_ name: String, in tokens: [String]) -> String? {
+        var index = 0
+        while index < tokens.count {
+            let token = tokens[index]
+            if token == "--\(name)", index + 1 < tokens.count { return tokens[index + 1] }
+            if token.hasPrefix("--\(name)=") { return String(token.dropFirst(name.count + 3)) }
+            index += 1
+        }
+        return nil
+    }
+
     private static func run(_ args: [String]) async throws -> any Encodable {
+        if args.first == "history" {
+            guard args.count >= 2 else {
+                throw CLIError(.invalidArguments, "Name a file: abstract history <file>[:<line>[-<line>]] [--project <p>].")
+            }
+            return try await Commands.open().history(args[1], project: option("project", in: Array(args.dropFirst(2))))
+        }
         guard args.count >= 2 else { throw CLIError(.invalidArguments, usage) }
         let rest = Array(args.dropFirst(2))
         let stdin = { FileHandle.standardInput.readDataToEndOfFile() }
         switch (args[0], args[1]) {
+        case ("branch", "name"):
+            guard rest.count == 1 else { throw CLIError(.invalidArguments, "Use abstract branch name <exact-name>.") }
+            return try await Commands.open().nameRunBranch(rest[0], in: FileManager.default.currentDirectoryPath)
         case ("session", "list"):
             let a = try CLIArguments(rest, options: ["project"], switches: ["include-archived"])
             return try Commands.open().list(project: a.value("project"), includeArchived: a.isSet("include-archived"))
@@ -108,6 +162,119 @@ struct Commands {
         let executable = Bundle.main.executablePath ?? CommandLine.arguments[0]
         return Commands(store: store, storePath: path, locks: SessionLock.defaultDirectory(),
                         executable: URL(fileURLWithPath: executable).resolvingSymlinksInPath().path)
+    }
+
+    // MARK: history
+
+    /// The current worktree identifies the automation chat. A chat id from
+    /// another worktree cannot be used to rename its branch.
+    func nameRunBranch(_ name: String, in cwd: String, chatId: String? = nil) async throws -> BranchNameJSON {
+        let here = Self.canonical(cwd)
+        guard let session = try store.sessions().filter({ candidate in
+            guard candidate.archivedAt == nil, candidate.reviewsSessionId == nil,
+                  let path = candidate.worktreePath.map(Self.canonical) else { return false }
+            return (here == path || here.hasPrefix(path + "/")) && (chatId == nil || candidate.id == chatId)
+        }).max(by: { $0.createdAt < $1.createdAt }), let worktree = session.worktreePath, let branch = session.branch,
+              let automationId = session.automationId,
+              try store.automation(automationId)?.workspaceMode == .newWorktree,
+              let projectId = session.projectId, let project = try store.project(projectId) else {
+            throw CLIError(.invalidArguments, "Run this from the fresh worktree of an automation chat.")
+        }
+        let top = try? await executor.run("git", ["rev-parse", "--show-toplevel"], cwd: cwd)
+        guard let top, top.ok, Self.canonical(GitText.trimmed(top.stdout)) == Self.canonical(worktree) else {
+            throw CLIError(.invalidArguments, "Run this from this automation chat's worktree.")
+        }
+        if let reply = try AppLink.rename(sessionId: session.id, worktree: Self.canonical(worktree), name: name, storePath: storePath) {
+            guard let renamed = reply.branch else {
+                throw CLIError(.invalidArguments, reply.message ?? "Abstract could not rename this branch.")
+            }
+            return BranchNameJSON(branch: renamed)
+        }
+        // The app is closed. Check publication and PR state before updating
+        // its store; an unknown host is a reason to leave the branch alone.
+        let origin = await Git.originURL(executor, root: worktree)
+        let renamed = await AutomationRunNaming.renameBranch(executor, worktree: worktree, from: branch,
+                            name: name, prefix: project.branchPrefix ?? store.setting("branchPrefix", as: String.self)
+                                ?? WorktreeNaming.defaultBranchPrefix) { old in
+            guard let origin else { return false }
+            guard (GitRemote.host(origin) ?? "").contains("github") else { return true }
+            guard let result = try? await executor.run("gh", ["pr", "list", "--state", "all", "--head", old,
+                                                         "--json", "number"], cwd: worktree), result.ok else { return true }
+            return result.stdout.trimmingCharacters(in: .whitespacesAndNewlines) != "[]"
+        }
+        let result: AutomationRunNaming.BranchRename
+        do { result = try renamed.get() }
+        catch { throw CLIError(.invalidArguments, error.localizedDescription) }
+        guard result.head == result.name else {
+            throw CLIError(.worktreeFailed, "A concurrent git operation changed HEAD. The chat's recorded branch was not changed.")
+        }
+        try store.updateSessionBranch(session.id, to: result.name)
+        StoreChanges.post(storePath: storePath)
+        let note = "Branch renamed to `\(result.name)`"
+        if let agent = AgentJSON(sessionId: session.id, locks: locks), agent.driver == "cli" {
+            _ = try? HostSocket.request(HostRequest(op: "note", agentId: agent.id, text: note),
+                                        sessionId: session.id, in: locks)
+        } else {
+            let logs = URL(fileURLWithPath: storePath).deletingLastPathComponent().appendingPathComponent("sessions")
+            SessionEngine(executor: executor, logDirectory: logs).record(sessionId: session.id,
+                                                                            OutputLine(stream: .note, line: note))
+        }
+        return BranchNameJSON(branch: result.name)
+    }
+
+    /// The earlier turns behind a file or some lines of it, the same
+    /// entries an agent's `code_history` tool returns, as JSON. The
+    /// project is the one named, else the one whose repository (or a
+    /// chat's worktree) the command runs in.
+    func history(_ target: String, project named: String?) async throws -> [HistoryEntry] {
+        let (path, lines) = Self.historyTarget(target)
+        let cwd = FileManager.default.currentDirectoryPath
+        let project: Project
+        var repo: String
+        if let named {
+            project = try resolveProject(named)
+            repo = project.rootPath
+        } else if let found = try projectCovering(cwd) {
+            project = found.project
+            repo = found.repo
+        } else {
+            throw CLIError(.projectNotFound, "No project covers “\(cwd)”. Run inside a project, or name one with --project.")
+        }
+        // A worktree of this project blames there, where the file is as read.
+        if named != nil, let found = try? projectCovering(cwd), found.project.id == project.id { repo = found.repo }
+        let service = CodeHistoryService(store: store, projectId: project.id, askingSessionId: nil, repo: repo)
+        guard service.relativePath(path) != nil else {
+            throw CLIError(.invalidArguments, "“\(path)” is outside “\(project.name)”'s repository.")
+        }
+        return await service.history(path: path, lines: lines.map { CodeHistoryService.lineRange($0) } ?? nil, exec: executor)
+    }
+
+    /// `<file>` or `<file>:<line>[-<line>]` → the file and its lines, as typed.
+    static func historyTarget(_ target: String) -> (path: String, lines: String?) {
+        guard let colon = target.range(of: ":", options: .backwards) else { return (target, nil) }
+        let tail = String(target[colon.upperBound...])
+        guard CodeHistoryService.lineRange(tail.replacingOccurrences(of: ":", with: "-")) != nil else { return (target, nil) }
+        return (String(target[..<colon.lowerBound]), tail)
+    }
+
+    /// The project `path` is in: its repository, or one of its chats'
+    /// worktrees (the repo to read in is then the worktree).
+    private func projectCovering(_ path: String) throws -> (project: Project, repo: String)? {
+        let here = Self.canonical(path)
+        func covers(_ root: String) -> Bool {
+            let root = Self.canonical(root)
+            return here == root || here.hasPrefix(root + "/")
+        }
+        for session in try store.sessions() {
+            if let worktree = session.worktreePath, covers(worktree),
+               let project = try session.projectId.flatMap({ try store.project($0) }) {
+                return (project, worktree)
+            }
+        }
+        for project in try store.projects() where covers(project.rootPath) {
+            return (project, project.rootPath)
+        }
+        return nil
     }
 
     // MARK: session list
@@ -365,4 +532,8 @@ struct Commands {
     static func canonical(_ path: String) -> String {
         URL(fileURLWithPath: (path as NSString).expandingTildeInPath).resolvingSymlinksInPath().standardizedFileURL.path
     }
+}
+
+struct BranchNameJSON: Encodable {
+    var branch: String
 }

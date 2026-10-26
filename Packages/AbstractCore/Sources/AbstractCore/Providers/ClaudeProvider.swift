@@ -46,6 +46,9 @@ public struct ClaudeProvider: ProviderDefinition {
         case .ask: []
         case .autoEdits: ["--permission-mode", "acceptEdits"]
         case .bypass: ["--permission-mode", "bypassPermissions"]
+        // Its plan mode is the read-only one: it explores, then asks
+        // to start through `ExitPlanMode`, whatever the message was.
+        case .plan, .readOnly: ["--permission-mode", "plan"]
         }
         return mode + ["--permission-prompt-tool", "stdio", "--allow-dangerously-skip-permissions"]
     }
@@ -57,6 +60,7 @@ public struct ClaudeProvider: ProviderDefinition {
         case .ask: "default"
         case .autoEdits: "acceptEdits"
         case .bypass: "bypassPermissions"
+        case .plan, .readOnly: "plan"
         }
         return #"{"type":"control_request","request_id":"# + ClaudeWire.quoted(requestId)
             + #","request":{"subtype":"set_permission_mode","mode":"# + ClaudeWire.quoted(mode) + "}}\n"
@@ -67,6 +71,14 @@ public struct ClaudeProvider: ProviderDefinition {
     public func buildStopTask(_ taskId: String, requestId: String) -> String? {
         #"{"type":"control_request","request_id":"# + ClaudeWire.quoted(requestId)
             + #","request":{"subtype":"stop_task","task_id":"# + ClaudeWire.quoted(taskId) + "}}\n"
+    }
+
+    /// Verified against claude 2.1.283's control channel: the turn ends with a
+    /// `result` whose `terminal_reason` is `aborted_streaming` (or
+    /// `aborted_tools` mid-tool), and the process, its session and its
+    /// background tasks stay for the next message.
+    public func buildInterrupt(requestId: String) -> String? {
+        #"{"type":"control_request","request_id":"# + ClaudeWire.quoted(requestId) + #","request":{"subtype":"interrupt"}}"# + "\n"
     }
 
     /// `background_tasks`, the control-request form of Ctrl+B: the blocking
@@ -86,6 +98,30 @@ public struct ClaudeProvider: ProviderDefinition {
         return json["model"]?.string
     }
 
+    /// `claude -p` with no tools, the small model and JSON output, reading
+    /// the prompt from stdin (`--tools` takes several values, so a prompt
+    /// argument after it would be read as one).
+    static let namingArgs = ["-p", "--tools", "", "--model", "haiku", "--output-format", "json", "--no-session-persistence"]
+
+    public func namingLaunch(prompt: String, home: String, binary: String?, model: String?) -> LaunchSpec? {
+        LaunchSpec(command: binary ?? self.binary, args: Self.namingArgs, cwd: home, stdinInitial: prompt, keepStdinOpen: false)
+    }
+
+    /// The `result` text of `--output-format json`.
+    public func namingAnswer(_ output: String) -> String? {
+        guard let envelope = ChatNaming.firstObject(in: output),
+              let outer = try? JSONSerialization.jsonObject(with: Data(envelope.utf8)) as? [String: Any],
+              outer["is_error"] as? Bool != true else { return nil }
+        return outer["result"] as? String
+    }
+
+    public func namingError(_ output: String) -> String? {
+        guard let envelope = ChatNaming.firstObject(in: output),
+              let outer = try? JSONSerialization.jsonObject(with: Data(envelope.utf8)) as? [String: Any],
+              outer["is_error"] as? Bool == true else { return nil }
+        return outer["result"] as? String
+    }
+
     public func buildLaunch(_ ctx: LaunchContext) -> LaunchSpec {
         launchSpec(ctx, resumeArgs: [])
     }
@@ -99,12 +135,106 @@ public struct ClaudeProvider: ProviderDefinition {
         return LaunchSpec(
             command: override.flatMap { $0.isEmpty ? nil : $0 } ?? binary,
             args: Self.baseArgs + Self.policyArgs(ctx.permissionPolicy) + ctx.readableDirs.flatMap { ["--add-dir", $0] }
+                + Self.skillArgs(ctx.skills)
                 + (ctx.model.map { ["--model", $0] } ?? [])
-                + (ctx.effort.map { ["--effort", $0] } ?? []) + Self.styleArgs(ctx.outputStyle) + resumeArgs + ctx.extraArgs,
+                + (ctx.effort.map { ["--effort", $0] } ?? []) + Self.settingsArgs(ctx)
+                + Self.mcpArgs(ctx) + Self.instructionArgs(ctx) + resumeArgs + ctx.extraArgs,
             cwd: ctx.cwd,
+            env: ["CLAUDE_CODE_BASH_EDIT_DIFF": "1"],
             stdinInitial: Self.userMessageLine(ctx.prompt, images: ctx.images),
             keepStdinOpen: true
         )
+    }
+
+    /// Library skills (ABS-122): Claude loads `.claude/skills` from every
+    /// folder added with `--add-dir`, links included, as it does from the
+    /// worktree's. Passed on every resume too.
+    static func skillArgs(_ skills: SkillsLaunch?) -> [String] {
+        skills.map { ["--add-dir", $0.folder] } ?? []
+    }
+
+    public var skillDelivery: SkillDelivery? { .addedDirectory }
+
+    /// Its own `toolServerSupport`: an Ask first tool gets the chat's
+    /// permission card through `--permission-prompt-tool stdio`.
+    public var toolServerSupport: ToolServerSupport { .askFirst }
+
+    /// Every MCP server the chat gets, in one config: the code-history
+    /// tool (ABS-61, checked in ABS-60), the plugin-tools server (ABS-97)
+    /// and the project's servers (ABS-123).
+    /// It sits beside the user's own servers (never `--strict-mcp-config`,
+    /// which would drop theirs) and is passed on every resume too, or the
+    /// tools disappear. With a chat folder it's a file only the user can
+    /// read, since headers and environment can hold keys; argv can be read
+    /// by anyone on the Mac.
+    ///
+    /// Allowed tools run without asking (`--allowedTools`), Off tools are
+    /// taken away (`--disallowedTools`), and Ask first tools get an `ask`
+    /// rule in `settingsArgs`, which asks even under full autonomy
+    /// (checked against claude 2.1.283).
+    static func mcpArgs(_ ctx: LaunchContext) -> [String] {
+        let servers = ctx.mcpServers
+        guard !servers.isEmpty else { return [] }
+        var config: [String: JSONValue] = [:]
+        for server in servers {
+            switch server.connection {
+            case let .url(url, headers):
+                var entry: [String: JSONValue] = ["type": .string("http"), "url": .string(url)]
+                if !headers.isEmpty { entry["headers"] = .object(headers.mapValues(JSONValue.string)) }
+                config[server.name] = .object(entry)
+            case let .command(argv, env):
+                var entry: [String: JSONValue] = [
+                    "command": .string(argv.first ?? ""),
+                    "args": .array(argv.dropFirst().map(JSONValue.string)),
+                ]
+                if !env.isEmpty { entry["env"] = .object(env.mapValues(JSONValue.string)) }
+                config[server.name] = .object(entry)
+            }
+        }
+        let json = JSONValue.object(["mcpServers": .object(config)]).compact()
+        var args = ["--mcp-config", ctx.configDirectory.flatMap { ChatConfigFiles.write(json, named: "claude-mcp.json", in: $0) } ?? json]
+        // The code-history tools by name; the plugin-tools server's by its
+        // name: Abstract asks itself for a plugin tool set to Ask first, so
+        // Claude mustn't ask again, and the list can change mid-chat.
+        let allowed = servers.flatMap { server -> [String] in
+            if server.name == CodeHistory.serverName && server.allowsEverything {
+                return [CodeHistory.historyTool, CodeHistory.excerptTool].map(CodeHistory.streamName)
+            }
+            return server.allowsEverything ? ["mcp__\(server.name)"] : server.allowed.map { toolName(server.name, $0) }
+        }
+        if !allowed.isEmpty { args += ["--allowedTools", allowed.joined(separator: ",")] }
+        let off = servers.flatMap { server in server.off.map { toolName(server.name, $0) } }
+        if !off.isEmpty { args += ["--disallowedTools", off.joined(separator: ",")] }
+        return args
+    }
+
+    /// How Claude names an MCP tool in rules and in its stream: anything
+    /// but letters, digits, `_` and `-` becomes `_`, as Claude does it. A
+    /// server's odd tool name (`x,Bash`) so stays one rule for that tool and
+    /// can't widen `--allowedTools` to another.
+    static func toolName(_ server: String, _ tool: String) -> String {
+        let clean = { (s: String) in String(s.map { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_" || $0 == "-") ? $0 : "_" }) }
+        return "mcp__\(clean(server))__\(clean(tool))"
+    }
+
+    /// Everything appended to Claude's system prompt, as one argument:
+    /// the profile's instructions (ABS-101) first, then how to use the
+    /// code-history tool when the chat gets it, then the project's notes
+    /// on its MCP servers.
+    static func instructionArgs(_ ctx: LaunchContext) -> [String] {
+        let parts = [ctx.instructions, ctx.historyTool == nil ? nil : CodeHistory.instruction,
+                     MCPServerLaunch.instructions(ctx.toolServers)].compactMap { $0 }
+        return parts.isEmpty ? [] : ["--append-system-prompt", parts.joined(separator: "\n\n")]
+    }
+
+    /// Extra settings for this run: the output style, and an `ask` rule for
+    /// every MCP tool set to Ask first.
+    static func settingsArgs(_ ctx: LaunchContext) -> [String] {
+        let ask = ctx.toolServers.flatMap { server in server.askFirst.map { toolName(server.name, $0) } }
+        guard !ask.isEmpty else { return styleArgs(ctx.outputStyle) }
+        var settings: [String: JSONValue] = ["permissions": .object(["ask": .array(ask.map(JSONValue.string))])]
+        if ctx.outputStyle != .default { settings["outputStyle"] = .string(ctx.outputStyle.title) }
+        return ["--settings", JSONValue.object(settings).compact()]
     }
 
     /// Claude's built-in styles go by their display name in its settings.
@@ -175,6 +305,10 @@ final class ClaudeParser: OutputParser {
     /// terminal. `commands_changed` repeats the list without saying.
     private var skills: Set<String> = []
     private var terminalOnly: Set<String> = []
+    /// The last `rate_limit_event`'s status, window and reset time.
+    private var lastRateLimit: String?
+    /// The CLI said the turn under way was interrupted; its `result` follows.
+    private var interrupted = false
 
     /// A `compact_boundary` whose summary turn hasn't arrived yet.
     private var boundary: (trigger: CompactionTrigger?, result: CompactionResult, durationMs: Int?)?
@@ -228,9 +362,9 @@ final class ClaudeParser: OutputParser {
         case "user": onUser(obj).map { Self.under(parent, $0) }
         case "result": onResult(obj)
         case "control_request": onControlRequest(obj)
-        // Housekeeping the UI has no use for; `tool_progress` is a long
-        // command's heartbeat.
-        case "rate_limit_event", "tool_progress": []
+        case "rate_limit_event": onRateLimit(obj)
+        // A long command's heartbeat; the UI has no use for it.
+        case "tool_progress": []
         case "control_response": onControlResponse(obj)
         case "prompt_suggestion": obj["suggestion"]?.string.flatMap { $0.isEmpty ? nil : [.promptSuggestion($0)] } ?? []
         default: nil
@@ -285,12 +419,35 @@ final class ClaudeParser: OutputParser {
                                                  tokensAfter: ClaudeWire.int(meta?["post_tokens"])),
                         durationMs: ClaudeWire.int(meta?["duration_ms"]))
             return []
+        // A failed request it is sending again; `error_status` is null when
+        // no answer came back at all.
+        case "api_retry":
+            guard let attempt = ClaudeWire.int(obj["attempt"]) else { return [] }
+            return [.notice(.retrying(attempt: attempt, maxAttempts: ClaudeWire.int(obj["max_retries"]),
+                                      httpStatus: ClaudeWire.int(obj["error_status"])))]
         // Every other system frame is the CLI's own bookkeeping (hooks,
         // thinking_tokens, task_summary, background_tasks_changed,
-        // permission_denied, compaction…). New ones appear between releases;
-        // none of them belong in the conversation.
+        // permission_denied…). New ones appear between releases; none of
+        // them belong in the conversation.
         default:
             return []
+        }
+    }
+
+    /// `rate_limit_info.status` is "allowed", "allowed_warning" or "rejected",
+    /// sent before every turn. A notice only when it turns to a warning or a
+    /// refusal, so a chat near its limit doesn't repeat it each turn.
+    private func onRateLimit(_ obj: JSONValue) -> [AgentEvent] {
+        guard let info = obj["rate_limit_info"], let status = info["status"]?.string else { return [] }
+        let resetsAt = ClaudeWire.double(info["resetsAt"]).map { Date(timeIntervalSince1970: $0) }
+        let key = [status, info["rateLimitType"]?.string ?? "", resetsAt.map { "\($0.timeIntervalSince1970)" } ?? ""]
+            .joined(separator: "|")
+        defer { lastRateLimit = key }
+        guard key != lastRateLimit else { return [] }
+        return switch status {
+        case "allowed_warning": [.notice(.nearLimit(resetsAt: resetsAt))]
+        case "rejected": [.notice(.limitReached(resetsAt: resetsAt))]
+        default: []
         }
     }
 
@@ -398,17 +555,28 @@ final class ClaudeParser: OutputParser {
             return finishCompaction(summary: Self.compactSummary(ClaudeWire.flatten(message["content"])))
         }
         let edit = ClaudeWire.editPreview(toolUseResult: obj["tool_use_result"])
+        let fileChanges = ClaudeWire.bashEditDiff(toolUseResult: obj["tool_use_result"])
         var events: [AgentEvent] = []
         for block in message["content"]?.array ?? [] {
             switch block["type"]?.string {
             case "tool_result":
-                events.append(.toolResult(toolUseId: block["tool_use_id"]?.string ?? "",
+                let id = block["tool_use_id"]?.string ?? ""
+                events.append(.toolResult(toolUseId: id,
                                           output: ClaudeWire.flatten(block["content"]),
                                           isError: block["is_error"]?.bool == true, edit: edit))
+                if let fileChanges { events.append(.toolFileChanges(toolUseId: id, changes: fileChanges)) }
+                let images = ClaudeWire.images(block["content"])
+                if !images.isEmpty { events.append(.toolImages(toolUseId: id, images: images)) }
             case "text":
                 // Claude Code's own additions (a skill's instructions, reminders)
                 // come as user messages marked synthetic; they aren't yours.
                 if obj["isSynthetic"]?.bool == true || obj["isMeta"]?.bool == true { continue }
+                // "[Request interrupted by user]", or "… for tool use": the CLI's
+                // note that the turn was stopped, which its result shows.
+                if let text = block["text"]?.string, text.hasPrefix("[Request interrupted by user") {
+                    interrupted = true
+                    continue
+                }
                 events.append(.text(role: .user, text: block["text"]?.string ?? "", blockId: nil, partial: false))
             default:
                 break
@@ -419,7 +587,12 @@ final class ClaudeParser: OutputParser {
 
     private func onResult(_ obj: JSONValue) -> [AgentEvent]? {
         let usage = obj["usage"]
-        var events: [AgentEvent] = finishCompaction() + [
+        // A stopped turn reports itself as an error; it isn't one. Its rule
+        // comes first so the usage after it folds in.
+        let stopped = interrupted || obj["terminal_reason"]?.string?.hasPrefix("aborted") == true
+        interrupted = false
+        var events: [AgentEvent] = finishCompaction() + (stopped ? [TurnStop.rule] : [])
+        events += [
             .usage(
                 UsageTotals(
                     inputTokens: ClaudeWire.int(usage?["input_tokens"]) ?? 0,
@@ -432,7 +605,7 @@ final class ClaudeParser: OutputParser {
                 turns: ClaudeWire.int(obj["num_turns"])
             ),
         ]
-        if obj["is_error"]?.bool == true {
+        if obj["is_error"]?.bool == true, !stopped {
             events.append(.error(obj["result"]?.string ?? obj["subtype"]?.string ?? "Agent reported an error"))
             events.append(.status(.errored, detail: nil))
         } else {
@@ -567,6 +740,15 @@ private enum ClaudeWire {
         return (content?.array ?? []).compactMap { $0["text"]?.string }.joined()
     }
 
+    /// The `image` blocks of a tool_result `content` array, base64 as Claude sends them.
+    static func images(_ content: JSONValue?) -> [ToolImage] {
+        (content?.array ?? []).compactMap { block in
+            guard block["type"]?.string == "image", let source = block["source"], source["type"]?.string == "base64",
+                  let encoded = source["data"]?.string, let data = Data(base64Encoded: encoded, options: .ignoreUnknownCharacters) else { return nil }
+            return ToolImage(mediaType: source["media_type"]?.string ?? "image/png", data: data)
+        }
+    }
+
     static func editPreview(toolUseResult result: JSONValue?) -> EditPreview? {
         guard let result, result.object != nil else { return nil }
         let filePath = result["filePath"]?.string ?? result["file_path"]?.string ?? ""
@@ -576,6 +758,23 @@ private enum ClaudeWire {
             return preview(createdFile: filePath, content: content)
         }
         return nil
+    }
+
+    static func bashEditDiff(toolUseResult result: JSONValue?) -> ToolFileChanges? {
+        guard let diff = result?["bashEditDiff"], diff.object != nil,
+              diff["skipped"]?.bool != true else { return nil }
+        let previews = (diff["files"]?.array ?? []).compactMap { file -> EditPreview? in
+            guard let path = file["filePath"]?.string, !path.isEmpty else { return nil }
+            return preview(structuredPatch: file["hunks"]?.array ?? [], filePath: path)
+        }
+        let previewPaths = Set(previews.map(\.filePath))
+        let remainingPaths = (diff["changedFiles"]?.array ?? []).compactMap(\.string)
+            .filter { !previewPaths.contains($0) }
+        let moreFiles = max(0, int(diff["moreFiles"]) ?? 0)
+        let incomplete = diff["unavailable"]?.bool == true || diff["shared"]?.bool == true
+        guard !previews.isEmpty || !remainingPaths.isEmpty || moreFiles > 0 || incomplete else { return nil }
+        return ToolFileChanges(previews: previews, remainingPaths: remainingPaths,
+                               moreFiles: moreFiles, incomplete: incomplete)
     }
 
     private static func preview(structuredPatch patch: [JSONValue], filePath: String) -> EditPreview? {

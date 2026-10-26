@@ -49,25 +49,55 @@ struct DiffView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.btCanvas)
         .environment(\.worktreeIsRemote, sessionId.hasPrefix(RemoteService.mirrorPrefix))
-        .task(id: sessionId) { await reload() }
-        .onChange(of: model.session(sessionId)?.status) { Task { await reload() } }
+        // Opened again (or in the other pane): a look first, a full read only if something changed.
+        .task(id: sessionId) { await reload(quietly: review.phase == .loaded) }
+        // Status flips several times a turn; what the agent changed is settled once it ends.
+        .onChange(of: model.session(sessionId)?.status) { old, new in
+            guard SessionStatus.endsTurn(from: old, to: new) else { return }
+            Task { await review.refreshNow { await reload(quietly: true) } }
+        }
         .onChange(of: model.pendingChangeSelection[sessionId]) { takePendingSelection() }
         .onChange(of: ignoreWhitespace) { Task { await reload() } }
+        // The repository picked here, from the git actions button's side, or gone.
+        .onChange(of: model.currentRepoPath(sessionId)) { Task { await reload() } }
     }
 
-    private func reload() async {
+    /// `quietly`: only when the worktree changed since the last read, and
+    /// without a spinner unless it takes a while.
+    private func reload(quietly: Bool = false) async {
         guard case .ready(let context) = model.diffAvailability(sessionId) else { return }
         review.ignoreWhitespace = ignoreWhitespace
-        await review.load(context)
+        let wanted = model.currentRepoPath(sessionId)
+        if review.selectedRepo != wanted {
+            await review.select(wanted, context)
+        } else if quietly {
+            await review.refresh(context)
+        } else {
+            await review.load(context)
+        }
+        // Gone since it was picked: the review fell back to the worktree's
+        // own. Only while it's still the one wanted, so a newer pick stands,
+        // and only once git confirms it isn't a checkout any more — a failed
+        // listing alone must not move the chat off it.
+        if !wanted.isEmpty, review.selectedRepo.isEmpty, model.currentRepoPath(sessionId) == wanted {
+            await model.dropRepoIfGone(sessionId, wanted, worktree: context.worktree, exec: context.reader)
+        }
         takePendingSelection()
     }
 
-    /// Refresh as the agent (or you) changes files, commits or switches branch.
+    /// Refresh as the agent (or you) changes files, commits or switches
+    /// branch: the worktree, its git folder and the shared refs, of which
+    /// only HEAD and the refs count, so git's own reads don't.
     private func watch(_ context: DiffContext) async {
-        let gitDir = (try? await context.executor.run("git", ["rev-parse", "--absolute-git-dir"], cwd: context.worktree))
-            .flatMap { $0.ok ? $0.stdout.trimmingCharacters(in: .whitespacesAndNewlines) : nil }
-        watcher = model.watch([context.worktree] + (gitDir.map { [$0] } ?? []), for: sessionId) {
-            Task { await reload() }
+        func dir(_ flag: String) async -> String? {
+            guard let out = try? await context.reader.run("git", ["rev-parse", flag], cwd: context.worktree), out.ok else { return nil }
+            return out.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let gitDir = await dir("--absolute-git-dir")
+        let refs = await dir("--git-common-dir").map { (($0 as NSString).isAbsolutePath ? $0 : context.worktree + "/" + $0) + "/refs" }
+        watcher = model.watch([context.worktree] + [gitDir, refs].compactMap { $0 }, for: sessionId,
+                              matters: { ReviewWatch.matters($0, gitDir: gitDir, refs: refs) }) {
+            review.refreshSoon { await reload(quietly: true) }
         }
     }
 
@@ -82,6 +112,7 @@ struct DiffView: View {
                   case .ready(let context) = model.diffAvailability(sessionId) {
             // A file in another of the worktree's repositories: show that one first.
             showTree = false
+            model.selectRepo(sessionId, repo.path)
             Task { await review.select(repo.path, context, focus: path) }
         }
     }
@@ -115,20 +146,21 @@ struct DiffView: View {
                     }
                     if review.selected.isSubmodule { RepoAccessNotice(repo: review.selected) }
                     RevundStrip(sessionId: sessionId, review: review)
+                    if presentation == .document, review.find.isOpen { ReviewFindBar(find: review.find) }
                     if !review.hasChanges {
                         ReviewEmptyState(review: review, context: context)
                     } else if presentation == .list {
                         // Paseo's Changes list: a file opens the diff in the main pane.
                         ChangesTree(review: review, onOpen: { model.openDiffTab(in: sessionId, focus: $0) },
-                                    onOpenRepo: { path in Task { await review.select(path, context) } })
+                                    onOpenRepo: { path in model.showRepo(path, in: review, context) })
                     } else if showTree, !rail {
                         ChangesTree(review: review, onOpen: { path in showTree = false; review.focus(path) },
-                                    onOpenRepo: { path in Task { await review.select(path, context) } })
+                                    onOpenRepo: { path in model.showRepo(path, in: review, context) })
                     } else {
                         HStack(spacing: 0) {
                             if rail {
                                 ChangesTree(review: review, onOpen: { review.focus($0) },
-                                            onOpenRepo: { path in Task { await review.select(path, context) } })
+                                            onOpenRepo: { path in model.showRepo(path, in: review, context) })
                                     .frame(width: 220)
                                 Rectangle().fill(Color.btBorder).frame(width: 1)
                             }
@@ -168,6 +200,8 @@ struct DiffView: View {
 final class ReviewStore {
     static let shared = ReviewStore()
     private var reviews: [String: DiffReview] = [:]
+
+    func existing(_ sessionId: String) -> DiffReview? { reviews[sessionId] }
 
     func review(_ sessionId: String) -> DiffReview {
         if let existing = reviews[sessionId] { return existing }
@@ -212,6 +246,7 @@ private struct ReviewToolbar: View {
                     .help(review.isWorking ? "Applying…" : "Refreshing…")
             }
             Spacer(minLength: Space.sm)
+            PluginReviewMenu(sessionId: context.sessionId, scope: review.mode.source)
             RevundReviewButton(sessionId: context.sessionId, branch: review.mode != .uncommitted)
             if showsTreeToggle {
                 Button { withAnimation(.snappy(duration: 0.2)) { showTree.toggle() } } label: {
@@ -234,7 +269,8 @@ private struct ReviewToolbar: View {
                 Toggle("Hide Whitespace Changes", isOn: $ignoreWhitespace)
                 Divider()
                 Button("Apply All to \(context.projectName)…", action: onApplyAll)
-                    .disabled(count == 0 || review.isWorking)
+                    .disabled(count == 0 || review.isWorking || context.acceptBlocked != nil)
+                if let blocked = context.acceptBlocked { Text(blocked) }
                 if review.mode == .uncommitted {
                     Button("Discard All Changes…", role: .destructive, action: onDiscardAll)
                         .disabled(count == 0 || review.isWorking)

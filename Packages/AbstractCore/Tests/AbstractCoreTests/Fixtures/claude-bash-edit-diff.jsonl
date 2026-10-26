@@ -1,0 +1,2 @@
+{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"bash-1","name":"Bash","input":{"command":"sed -i '' 's/beta/gamma/' alpha.txt"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"bash-1","content":""}]},"tool_use_result":{"bashEditDiff":{"files":[{"filePath":"/tmp/abstract-fixture/alpha.txt","hunks":[{"oldStart":1,"newStart":1,"lines":[" alpha","-beta","+gamma"]}]}],"moreFiles":0,"changedFiles":["/tmp/abstract-fixture/alpha.txt"]}}}

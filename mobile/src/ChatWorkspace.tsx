@@ -1,0 +1,791 @@
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { BlurTargetView } from 'expo-blur';
+import { AccessibilityInfo, ActivityIndicator, Alert, Animated, FlatList, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { SymbolView } from 'expo-symbols';
+import { CompactMenu as MenuView } from './CompactMenu';
+import * as Haptics from 'expo-haptics';
+import Markdown from 'react-native-markdown-display';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ProviderLogo, providerMenuImage } from './ProviderLogo';
+import { ProgressiveBlur } from './ProgressiveBlur';
+import { ScrollingTitle } from './ScrollingTitle';
+import { remote, type RemoteClient } from './remote';
+import { uuid } from './secure';
+import { attachmentPayload, pickAttachments, pickPhotos, type PickedAttachment } from './attachments';
+import { chatTimeline, type ChatItem } from './chatTimeline';
+import { sendPhoneDraft, visiblePhoneMessages, type PendingPhoneMessage } from './chatSending';
+import { TranscriptFollow } from './transcriptFollow';
+import { popToRootNatively } from './nativeStack';
+import { composerInputHeights } from './composerLayout';
+import { PullRequestIcon } from './PullRequestIcon';
+import { ContextPill } from './ContextPill';
+import { chatContext } from './chatContext';
+import { FileIcon } from './FileIcon';
+import { toolKind, toolSymbol } from './toolPresentation';
+import { SwipeForward } from './SwipeForward';
+import { useKeyboardHeight } from './useKeyboardVisible';
+import { connectionNotice, type ConnectionNotice } from './composerStatus';
+import { settingFromAction, settingsAccessibilityLabel, settingsMenuActions, type ComposerSetting } from './composerSettings';
+import { useReduceMotion } from './useReduceMotion';
+import { SyntaxCode, highlightDiffLines } from './SyntaxCode';
+import type { EditPreview } from './editPreview';
+import { buildRule, ruleKindTitle, saveRuleArgs, suggestedRule } from './permissionRules';
+import { stallText } from './stalls';
+import { MODE_CHOICES, currentPlan, effectivePlan, isReadOnlyMode, nonPlanPermissions, pendingPlanRequest, planHistory, planTitle, policyShort, policyTitle, quotedPlan } from './plan';
+import { swiftDate, type PendingPermission, type PermissionDecision, type PermissionRuleKind, type PlanState, type QueuedMessage, type Session, type Stall } from './types';
+import { chatPauseRow } from './pause';
+import { composerActions, queuedMessages, settledByQueue } from './messageQueue';
+import { contributionsFor } from './plugins';
+
+const ink = '#ECECEF', muted = '#A4A4AD', tertiary = '#75757E', canvas = '#1E1E21', panel = '#252529', raised = '#2B2B30', border = 'rgba(255,255,255,0.075)', warning = '#D2D2D8';
+const editStyles = StyleSheet.create({
+  previews: { marginLeft: 22, gap: 8, paddingBottom: 6 },
+  preview: { backgroundColor: panel, borderRadius: 6, overflow: 'hidden' },
+  path: { color: muted, fontFamily: 'JetBrainsMono', fontSize: 10, paddingHorizontal: 10, paddingVertical: 7 },
+  line: { color: ink, fontFamily: 'JetBrainsMono', fontSize: 11, lineHeight: 19, paddingHorizontal: 8 },
+  number: { color: tertiary },
+  plus: { color: '#4CC38A' },
+  minus: { color: '#EF6461' },
+  added: { backgroundColor: 'rgba(76,195,138,0.09)' },
+  removed: { backgroundColor: 'rgba(239,100,97,0.09)' },
+  gap: { color: tertiary, fontFamily: 'JetBrainsMono', fontSize: 11, lineHeight: 19, paddingHorizontal: 8 },
+  more: { paddingHorizontal: 10, paddingVertical: 7 },
+  moreText: { color: muted, fontFamily: 'Inter', fontSize: 11 },
+});
+const iconMap: Record<string, string> = { menu: 'sidebar.left', review: 'plusminus', files: 'doc.text', terminal: 'terminal', pr: 'arrow.triangle.pull', manage: 'ellipsis', attach: 'plus', send: 'arrow.up', stop: 'stop.fill', chevron: 'chevron.down', close: 'xmark' };
+const androidIcons: Record<string, string> = { menu: 'menu', review: 'difference', files: 'description', terminal: 'terminal', pr: 'merge', manage: 'more_horiz', attach: 'add', send: 'arrow_upward', stop: 'stop', chevron: 'keyboard_arrow_down', close: 'close', 'arrow.down': 'arrow_downward', sparkles: 'auto_awesome', 'doc.text': 'description', 'doc.badge.plus': 'note_add', pencil: 'edit', magnifyingglass: 'search', globe: 'public', checklist: 'checklist', 'list.bullet.clipboard': 'assignment', 'person.2': 'group', 'book.closed': 'menu_book', 'questionmark.bubble': 'help', 'puzzlepiece.extension': 'extension', 'wrench.and.screwdriver': 'build', 'exclamationmark.triangle': 'warning', 'pause.circle.fill': 'pause_circle', 'wifi.slash': 'wifi_off', 'slider.horizontal.3': 'tune' };
+function Glyph({ name, size = 14, color = muted }: { name: string; size?: number; color?: string }) { return <SymbolView name={{ ios: iconMap[name] || name, android: androidIcons[name] || (name === 'checkmark' ? 'check' : name), web: androidIcons[name] || (name === 'checkmark' ? 'check' : name) } as any} size={size} tintColor={color} style={{ width: size, height: size }} />; }
+function Chip({ icon, label, onPress, active }: { icon?: string; label?: string; onPress: () => void; active?: boolean }) { return <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={() => { Haptics.selectionAsync().catch(() => {}); onPress(); }} style={[s.chip, active && s.chipActive]}>{icon && <Glyph name={icon} size={14} color={active ? ink : muted} />}{label && <Text numberOfLines={1} style={[s.chipLabel, active && { color: ink }]}>{label}</Text>}</Pressable>; }
+function ToolbarAction({ label, onPress, children }: { label: string; onPress: () => void; children: React.ReactNode }) {
+  return <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress} style={chrome.toolbarButton}>{children}</Pressable>;
+}
+// Connecting or offline, said once along the top of the composer with what to do about it.
+function ConnectionEdge({ notice, reduceMotion, onAction }: { notice: ConnectionNotice; reduceMotion: boolean; onAction: () => void }) {
+  const opacity = useRef(new Animated.Value(reduceMotion ? 1 : 0)).current;
+  useEffect(() => { if (!reduceMotion) Animated.timing(opacity, { toValue: 1, duration: 180, useNativeDriver: true }).start(); }, []);
+  // VoiceOver hears the change once; TalkBack follows the live region.
+  useEffect(() => { if (Platform.OS === 'ios') AccessibilityInfo.announceForAccessibility(notice.title); }, [notice.title]);
+  const actionLabel = notice.action === 'retry' ? 'Retry' : 'Settings';
+  return <Animated.View style={[composerStyles.connection, { opacity }]}>
+    <View style={composerStyles.connectionIcon}>{notice.tone === 'connecting' ? <ActivityIndicator size="small" color={muted} /> : <Glyph name="wifi.slash" size={15} color={muted} />}</View>
+    <View accessible accessibilityLiveRegion="polite" accessibilityLabel={[notice.title, notice.detail].filter(Boolean).join('. ')} style={composerStyles.connectionText}>
+      <Text style={composerStyles.connectionTitle}>{notice.title}</Text>
+      {!!notice.detail && <Text style={composerStyles.connectionDetail}>{notice.detail}</Text>}
+    </View>
+    {notice.action && <Pressable accessibilityRole="button" accessibilityLabel={actionLabel} accessibilityHint={notice.action === 'retry' ? 'Tries to reach the Mac again' : 'Opens Settings to pair a Mac'} onPress={() => { Haptics.selectionAsync().catch(() => {}); onAction(); }} android_ripple={{ color: 'rgba(255,255,255,0.12)', borderless: true }} style={({ pressed }) => [composerStyles.connectionAction, pressed && Platform.OS === 'ios' && { opacity: 0.5 }]}><Text style={composerStyles.connectionActionLabel}>{actionLabel}</Text></Pressable>}
+  </Animated.View>;
+}
+// Agent, model, effort and mode behind one platform menu; the trigger reads them in one line.
+function ComposerSettingsMenu({ settings, provider, summary, onChoose }: { settings: ComposerSetting[]; provider: string; summary: string[]; onChoose: (event: string) => void }) {
+  return <MenuView title="Agent settings" actions={settingsMenuActions(settings, Platform.OS)} onPressAction={({ nativeEvent }) => onChoose(nativeEvent.event)} style={composerStyles.settingsMenu}>
+    <View accessible accessibilityRole="button" accessibilityLabel={settingsAccessibilityLabel(settings)} accessibilityHint="Opens agent, model, effort and mode choices" style={composerStyles.settings}>
+      <ProviderLogo provider={provider} size={14} />
+      <Text numberOfLines={1} maxFontSizeMultiplier={1.4} style={composerStyles.settingsValue}>{summary[0]}{summary.slice(1).map((part, index) => <Text key={index} style={composerStyles.settingsDetail}>{` · ${part}`}</Text>)}</Text>
+      <Glyph name="chevron" size={10} color={tertiary} />
+    </View>
+  </MenuView>;
+}
+type SlashChoiceKind = 'agent' | 'model' | 'effort' | 'mode';
+type SlashItem = { id: string; title: string; detail?: string; checked?: boolean; next?: boolean; onPress: () => void };
+function SlashPopup({ title, items, maxHeight, onBack }: { title: string; items: SlashItem[]; maxHeight: number; onBack?: () => void }) {
+  return <View style={[slashStyles.popup, { maxHeight }]}>
+    <View style={slashStyles.header}>{onBack && <Pressable accessibilityRole="button" accessibilityLabel="Back to commands" onPress={onBack} style={slashStyles.back}><Text style={slashStyles.backText}>‹</Text></Pressable>}<Text style={slashStyles.heading}>{title}</Text><Text style={slashStyles.count}>{items.length}</Text></View>
+    <ScrollView style={{ maxHeight: maxHeight - 39 }} keyboardShouldPersistTaps="always" showsVerticalScrollIndicator={false} contentContainerStyle={slashStyles.list}>
+      {items.length ? items.map(item => <Pressable key={item.id} accessibilityRole="button" accessibilityLabel={item.title} accessibilityState={{ selected: !!item.checked }} onPress={() => { Haptics.selectionAsync().catch(() => {}); item.onPress(); }} style={({ pressed }) => [slashStyles.row, pressed && slashStyles.rowPressed]}>
+        <View style={slashStyles.rowText}><Text numberOfLines={1} style={slashStyles.command}>{item.title}</Text>{item.detail ? <Text numberOfLines={1} style={slashStyles.detail}>{item.detail}</Text> : null}</View>
+        {item.checked ? <Glyph name="checkmark" size={15} color={ink} /> : item.next ? <Text style={slashStyles.next}>›</Text> : null}
+      </Pressable>) : <Text style={slashStyles.empty}>No matching commands</Text>}
+    </ScrollView>
+  </View>;
+}
+const slashStyles = StyleSheet.create({
+  popup: { position: 'absolute', bottom: '100%', left: 10, right: 10, marginBottom: 8, zIndex: 10, backgroundColor: '#303035', borderRadius: 13, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.2)', overflow: 'hidden', shadowColor: '#000', shadowOpacity: 0.28, shadowRadius: 16, shadowOffset: { width: 0, height: 8 }, elevation: 12 },
+  header: { minHeight: 39, flexDirection: 'row', alignItems: 'center', gap: 7, paddingHorizontal: 13, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border },
+  back: { width: 26, height: 29, alignItems: 'center', justifyContent: 'center' },
+  backText: { color: ink, fontFamily: 'Inter', fontSize: 25, lineHeight: 27 },
+  heading: { flex: 1, color: muted, fontFamily: 'Inter', fontSize: 10, fontWeight: '700', letterSpacing: 1 },
+  count: { color: tertiary, fontFamily: 'JetBrainsMono', fontSize: 10 },
+  list: { padding: 5 },
+  row: { minHeight: 51, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 10, borderRadius: 8 },
+  rowPressed: { backgroundColor: '#414148' },
+  rowText: { flex: 1, minWidth: 0, gap: 2 },
+  command: { color: ink, fontFamily: 'JetBrainsMono', fontSize: 13 },
+  detail: { color: muted, fontFamily: 'Inter', fontSize: 11 },
+  next: { color: tertiary, fontFamily: 'Inter', fontSize: 22 },
+  empty: { color: muted, fontFamily: 'Inter', fontSize: 12, paddingHorizontal: 10, paddingVertical: 16 },
+});
+type LinkKind = 'issue' | 'linkPr';
+type LinkItem = { number: number; title: string; url: string; body?: string; state?: string; isDraft?: boolean; baseRefName?: string; headRefName?: string };
+function LinkPickerSheet({ kind, query, setQuery, results, loading, search, select, close }: { kind: LinkKind | null; query: string; setQuery: (value: string) => void; results: LinkItem[]; loading: boolean; search: () => void; select: (item: LinkItem) => void; close: () => void }) {
+  const ios = Platform.OS === 'ios';
+  return <Modal visible={kind !== null} animationType="slide" presentationStyle={ios ? 'pageSheet' : 'overFullScreen'} transparent={!ios} onRequestClose={close}>
+    <KeyboardAvoidingView style={ios ? s.sheetRoot : s.sheetBackdrop} behavior={ios ? 'padding' : undefined}>
+      {!ios && <Pressable style={StyleSheet.absoluteFill} onPress={close} accessibilityLabel="Close search" />}
+      <SafeAreaView edges={['bottom']} style={[s.sheetPanel, ios && { flex: 1, maxHeight: '100%' }]}>
+        <View style={s.sheetHandle} />
+        <View style={s.sheetHeader}><Text style={s.sheetTitle}>{kind === 'issue' ? 'Find an issue' : 'Find a pull request'}</Text><Pressable accessibilityRole="button" accessibilityLabel="Close" onPress={close} style={s.sheetClose}><Glyph name="close" size={17} color={ink} /></Pressable></View>
+        <View style={s.sheetSearch}><Glyph name="magnifyingglass" size={17} color={tertiary} /><TextInput autoFocus value={query} onChangeText={setQuery} onSubmitEditing={search} returnKeyType="search" autoCapitalize="none" placeholder={kind === 'issue' ? 'Search issues' : 'Search pull requests'} placeholderTextColor={tertiary} style={s.sheetInput} /><Pressable accessibilityRole="button" accessibilityLabel="Search" onPress={search} style={s.sheetSearchButton}><Text style={s.sheetSearchButtonText}>Search</Text></Pressable></View>
+        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={s.sheetResults}>{loading ? <ActivityIndicator color={muted} style={{ padding: 20 }} /> : results.length ? results.map(item => <Pressable accessibilityRole="button" key={item.url} onPress={() => select(item)} style={s.sheetResult}><Text style={s.sheetReference}>#{item.number}</Text><View style={{ flex: 1 }}><Text numberOfLines={2} style={s.sheetResultTitle}>{item.title}</Text><Text style={s.sheetResultMeta}>{item.isDraft ? 'Draft' : item.state || ''}</Text></View><Glyph name="chevron" size={14} color={tertiary} /></Pressable>) : <Text style={s.sheetEmpty}>No results</Text>}</ScrollView>
+      </SafeAreaView>
+    </KeyboardAvoidingView>
+  </Modal>;
+}
+const ruleStyles = StyleSheet.create({
+  body: { gap: 14, paddingBottom: 28 },
+  lead: { color: muted, fontFamily: 'Inter', fontSize: 13, lineHeight: 19 },
+  label: { color: muted, fontFamily: 'Inter', fontSize: 12, fontWeight: '600' },
+  group: { gap: 7 },
+  chips: { flexDirection: 'row', flexWrap: 'wrap' },
+  pattern: { color: ink, backgroundColor: panel, borderRadius: 8, paddingHorizontal: 11, paddingVertical: 10, fontFamily: 'JetBrainsMono', fontSize: 13 },
+  remember: { backgroundColor: ink, borderRadius: 8, paddingHorizontal: 16, paddingVertical: 12, alignSelf: 'flex-start' },
+  rememberDisabled: { opacity: 0.4 },
+  rememberText: { color: canvas, fontFamily: 'Inter', fontSize: 14, fontWeight: '600' },
+});
+/// Writing one remembered permission answer for the chat's project, as on
+/// the Mac: pre-filled from the request, `*` where the rest may differ.
+function PermissionRuleSheet({ mac, sessionId, request, projectId, root, initialDecision, close }: { mac: RemoteClient; sessionId: string; request: PendingPermission; projectId: string; root: string; initialDecision: PermissionDecision; close: () => void }) {
+  const suggested = useMemo(() => suggestedRule(request.toolName, request.input, root), [request, root]);
+  const [ruleId] = useState(uuid);
+  const [kind, setKind] = useState<PermissionRuleKind>(suggested.kind);
+  const [pattern, setPattern] = useState(suggested.pattern);
+  const [decision, setDecision] = useState<PermissionDecision>(initialDecision);
+  const [expiresInDays, setExpiresInDays] = useState<number | null>(null);
+  const [saving, setSaving] = useState(false);
+  const ios = Platform.OS === 'ios';
+  const save = async () => {
+    if (saving || !pattern.trim()) return;
+    setSaving(true);
+    try {
+      const rule = buildRule({ id: ruleId, projectId, kind, pattern, decision, expiresInDays, now: swiftDate() });
+      await mac.request('savePermissionRule', saveRuleArgs(rule));
+      await mac.request('answer', { sessionId, requestId: request.requestId, allow: decision === 'allow' });
+      close();
+    } catch (e) { Alert.alert('Abstract', String(e)); } finally { setSaving(false); }
+  };
+  return <Modal visible animationType="slide" presentationStyle={ios ? 'pageSheet' : 'overFullScreen'} transparent={!ios} onRequestClose={close}>
+    <KeyboardAvoidingView style={ios ? s.sheetRoot : s.sheetBackdrop} behavior={ios ? 'padding' : undefined}>
+      {!ios && <Pressable style={StyleSheet.absoluteFill} onPress={close} accessibilityLabel="Cancel" />}
+      <SafeAreaView edges={['bottom']} style={[s.sheetPanel, ios && { flex: 1, maxHeight: '100%' }]}>
+        <View style={s.sheetHandle} />
+        <View style={s.sheetHeader}><Text style={s.sheetTitle}>Remember This Answer</Text><Pressable accessibilityRole="button" accessibilityLabel="Cancel" onPress={close} style={s.sheetClose}><Glyph name="close" size={17} color={ink} /></Pressable></View>
+        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={ruleStyles.body}>
+          <Text style={ruleStyles.lead}>Requests matching the pattern are answered for you in every chat of this project. Use * where the rest may differ, like npm test* or src/**. A deny rule beats an allow rule.</Text>
+          <View style={ruleStyles.group}><Text style={ruleStyles.label}>Answer</Text><View style={ruleStyles.chips}>{(['allow', 'deny'] as const).map(d => <Chip key={d} label={d === 'allow' ? 'Always allow' : 'Always deny'} active={decision === d} onPress={() => setDecision(d)} />)}</View></View>
+          <View style={ruleStyles.group}><Text style={ruleStyles.label}>Matches</Text><View style={ruleStyles.chips}>{(['command', 'path', 'tool'] as const).map(k => <Chip key={k} label={ruleKindTitle(k)} active={kind === k} onPress={() => setKind(k)} />)}</View></View>
+          <View style={ruleStyles.group}><Text style={ruleStyles.label}>Pattern</Text><TextInput value={pattern} onChangeText={setPattern} autoCapitalize="none" autoCorrect={false} placeholder="Pattern" placeholderTextColor={tertiary} style={ruleStyles.pattern} /></View>
+          <View style={ruleStyles.group}><Text style={ruleStyles.label}>Expires</Text><View style={ruleStyles.chips}><Chip label="Never" active={expiresInDays === null} onPress={() => setExpiresInDays(null)} /><Chip label="In 7 days" active={expiresInDays === 7} onPress={() => setExpiresInDays(7)} /><Chip label="In 30 days" active={expiresInDays === 30} onPress={() => setExpiresInDays(30)} /></View></View>
+          <Pressable accessibilityRole="button" accessibilityLabel="Remember" accessibilityState={{ disabled: !pattern.trim() || saving, busy: saving }} disabled={!pattern.trim() || saving} onPress={() => { Haptics.selectionAsync().catch(() => {}); save(); }} style={[ruleStyles.remember, (!pattern.trim() || saving) && ruleStyles.rememberDisabled]}><Text style={ruleStyles.rememberText}>{saving ? 'Remembering…' : 'Remember'}</Text></Pressable>
+        </ScrollView>
+      </SafeAreaView>
+    </KeyboardAvoidingView>
+  </Modal>;
+}
+function PermissionCard({ mac, sessionId, request, projectId, root, canRemember }: { mac: RemoteClient; sessionId: string; request: PendingPermission; projectId?: string | null; root: string; canRemember?: boolean }) {
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [remember, setRemember] = useState<PermissionDecision | null>(null);
+  const questions = request.toolName === 'AskUserQuestion' ? request.input?.questions || [] : [];
+  const submit = (allow: boolean) => mac.request(questions.length && allow ? 'answerQuestion' : 'answer', questions.length && allow ? { sessionId, requestId: request.requestId, answers } : { sessionId, requestId: request.requestId, allow }).catch(e => Alert.alert('Abstract', String(e)));
+  return <View style={s.permission}><Text style={s.permissionTitle}>{questions.length ? 'Question from agent' : `Permission · ${request.toolName}`}</Text>{questions.length ? questions.map((q: any) => <View key={q.question}><Text style={s.prose}>{q.question}</Text>{q.options?.map((o: any) => <Chip key={o.label} label={o.label} active={answers[q.question] === o.label} onPress={() => setAnswers({ ...answers, [q.question]: o.label })} />)}<TextInput value={answers[q.question] || ''} onChangeText={v => setAnswers({ ...answers, [q.question]: v })} placeholder="Your answer" placeholderTextColor={tertiary} style={s.permissionInput} /></View>) : <Text style={s.toolDetail}>{JSON.stringify(request.input, null, 2)}</Text>}<View style={s.permissionActions}><Chip label={questions.length ? 'Send answers' : 'Allow'} onPress={() => submit(true)} /><Chip label={questions.length ? 'Skip' : 'Deny'} onPress={() => submit(false)} /></View>{!!canRemember && !!projectId && !questions.length && <View style={[s.permissionActions, { flexWrap: 'wrap' }]}><Chip label="Always allow…" onPress={() => setRemember('allow')} /><Chip label="Always deny…" onPress={() => setRemember('deny')} /></View>}{remember && projectId && <PermissionRuleSheet key={`${request.requestId}-${remember}`} mac={mac} sessionId={sessionId} request={request} projectId={projectId} root={root} initialDecision={remember} close={() => setRemember(null)} />}</View>;
+}
+function PlanCard({ mac, sessionId, plan, permissions, onRequestChanges }: { mac: RemoteClient; sessionId: string; plan: PlanState; permissions?: PendingPermission[]; onRequestChanges: (quoted: string) => void }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [showsHistory, setShowsHistory] = useState(false);
+  const current = currentPlan(plan);
+  const history = planHistory(plan);
+  // A Mac that takes plan decisions gets them; an older one only knows the
+  // ExitPlanMode permission, so answer that instead.
+  const act = async (action: 'approve' | 'changes' | 'discard') => {
+    if (busy) return;
+    setBusy(action);
+    try {
+      if (mac.snapshot?.planApproval) {
+        await mac.request(action === 'approve' ? 'approvePlan' : action === 'changes' ? 'requestPlanChanges' : 'discardPlan', { sessionId });
+      } else {
+        const pending = pendingPlanRequest(permissions);
+        if (!pending) throw Error('That Mac has no plan waiting.');
+        await mac.request('answer', { sessionId, requestId: pending.requestId, allow: action === 'approve' });
+      }
+      if (action === 'changes' && current) onRequestChanges(`${quotedPlan(current)}\n\n`);
+    } catch (e) { Alert.alert('Abstract', String(e)); }
+    finally { setBusy(null); }
+  };
+  return <View style={s.permission}><View style={s.permissionActions}><Glyph name="list.bullet.clipboard" size={14} color={muted} /><Text style={s.permissionTitle}>{planTitle(plan)}{plan.status === 'changesRequested' ? ' · changes requested' : ''}</Text></View>{!!current && <Markdown style={markdownStyles} rules={codeRules}>{current}</Markdown>}{history.length > 0 && <><Chip label={showsHistory ? 'Hide earlier revisions' : `Show ${history.length} earlier ${history.length === 1 ? 'revision' : 'revisions'}`} onPress={() => setShowsHistory(!showsHistory)} />{showsHistory && history.map((revision, index) => <View key={index} style={{ opacity: 0.7 }}><Text style={s.thinkingLabel}>Revision {index + 1}</Text><Markdown style={markdownStyles} rules={codeRules}>{revision}</Markdown></View>)}</>}<View style={s.permissionActions}><Chip label={busy === 'approve' ? 'Starting…' : 'Approve and start'} active onPress={() => act('approve')} /><Chip label="Request changes" onPress={() => act('changes')} /><Chip label="Discard" onPress={() => act('discard')} /></View></View>;
+}
+function ToolEditPreview({ edit }: { edit: EditPreview }) {
+  const [showAll, setShowAll] = useState(false);
+  const highlighted = useMemo(() => highlightDiffLines(edit.lines, edit.path), [edit]);
+  const shown = showAll ? edit.lines : edit.lines.slice(0, 14);
+  return <View style={editStyles.preview}>
+    {edit.path ? <Text numberOfLines={1} style={editStyles.path}>{edit.path}</Text> : null}
+    <ScrollView horizontal><View>{shown.map((line, index) => <React.Fragment key={index}>
+      {index > 0 && line.startsHunk && <Text style={editStyles.gap}>⋯</Text>}
+      <Text style={[editStyles.line, line.kind === '+' && editStyles.added, line.kind === '-' && editStyles.removed]}>
+        <Text style={editStyles.number}>{String(line.next ?? line.old ?? '').padStart(4)} </Text>
+        <Text style={line.kind === '+' ? editStyles.plus : line.kind === '-' ? editStyles.minus : editStyles.number}>{line.kind === '-' ? '−' : line.kind}</Text>
+        {highlighted[index].map((part, partIndex) => <Text key={partIndex} style={{ color: part.color }}>{part.text}</Text>)}
+      </Text>
+    </React.Fragment>)}</View></ScrollView>
+    {edit.lines.length > shown.length && <Pressable onPress={() => setShowAll(true)} style={editStyles.more}><Text style={editStyles.moreText}>Show {edit.lines.length - shown.length} more lines</Text></Pressable>}
+  </View>;
+}
+function TranscriptRow({ row }: { row: ChatItem }) {
+  const [expanded, setExpanded] = useState(false);
+  if (row.kind === 'thinking') return <View style={s.thinkingRow}><Text style={s.thinkingLabel}>{row.pending ? 'Thinking' : 'Thought'}</Text><Text style={s.thinkingText}>{row.text.trim()}</Text></View>;
+  if (row.kind === 'turn') return <View style={s.turnRow}><View style={s.turnRule} /><Text style={s.thinkingLabel}>{duration(row.durationMs || 0)}</Text><View style={s.turnRule} /></View>;
+  if (row.kind === 'user') return <View style={s.userRow}><View style={s.userBubble}><Text style={s.prose}>{row.text}</Text></View></View>;
+  if (row.kind === 'tool') return <View><Pressable accessibilityRole="button" accessibilityLabel={`${row.text} ${row.target || ''}`} onPress={() => setExpanded(!expanded)} style={s.toolRow}>
+    <View style={s.toolIcon}>{row.failed ? <Glyph name="exclamationmark.triangle" size={15} color="#EF6461" /> : row.path && toolKind(row.toolName || '') === 'edit' ? <FileIcon path={row.path} size={17} /> : <Glyph name={toolSymbol(row.toolName || '')} size={15} color={tertiary} />}</View>
+    <Text style={s.toolVerb}>{row.text}</Text>{!!row.target && <Text numberOfLines={1} style={s.toolLabel}>{row.target}</Text>}
+    {(row.additions !== undefined || row.deletions !== undefined) && <Text style={{ fontFamily: 'JetBrainsMono', fontSize: 10, flexShrink: 0 }}><Text style={{ color: '#4CC38A' }}>+{row.additions || 0}</Text><Text style={{ color: tertiary }}> </Text><Text style={{ color: '#EF6461' }}>−{row.deletions || 0}</Text></Text>}
+    {row.failed && <Text style={s.toolFailed}>Failed</Text>}{row.pending && <Text style={s.toolPending}>Working</Text>}
+    {(!!row.detail || !!row.edits?.length) && <Glyph name={expanded ? 'chevron.up' : 'chevron.down'} size={10} color={tertiary} />}
+  </Pressable>{expanded && !!row.edits?.length && <View style={editStyles.previews}>{row.edits.map((edit, index) => <ToolEditPreview key={`${edit.path}-${index}`} edit={edit} />)}</View>}{expanded && !!row.detail && (!row.edits?.length || row.failed) && <Text selectable style={s.toolDetail}>{row.detail}</Text>}</View>;
+  if (row.kind === 'error') return <Text style={[s.prose, { color: '#F08A84' }]}>{row.text}</Text>;
+  return <Markdown style={markdownStyles} rules={codeRules}>{row.text}</Markdown>;
+}
+const codeRules = {
+  fence: (node: any) => <SyntaxCode key={node.key} code={String(node.content || '').replace(/\n$/, '')} language={node.sourceInfo?.trim().split(/\s+/)[0]} block />,
+  code_block: (node: any) => <SyntaxCode key={node.key} code={String(node.content || '').replace(/\n$/, '')} block />,
+};
+function duration(ms: number) {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return seconds % 60 ? `${minutes}m ${seconds % 60}s` : `${minutes}m`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+function DotLoader() {
+  const [step, setStep] = useState(0);
+  useEffect(() => { const timer = setInterval(() => setStep(value => (value + 1) % 6), 158); return () => clearInterval(timer); }, []);
+  const order = [0, 2, 4, 5, 3, 1];
+  const levels = [1, 0.7, 0.45, 0.28, 0.16, 0.16];
+  return <View style={{ width: 14, height: 14, alignItems: 'center', justifyContent: 'center' }}><View style={s.dotGrid}>{Array.from({ length: 6 }, (_, index) => <View key={index} style={[s.dot, { opacity: levels[(step - order.indexOf(index) + 6) % 6] }]} />)}</View></View>;
+}
+function WorkingStatus({ label, startedAt }: { label: string; startedAt?: number }) {
+  const [now, setNow] = useState(Date.now());
+  const fallback = useRef(Date.now());
+  useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer); }, []);
+  const started = startedAt == null ? fallback.current : (startedAt + 978307200) * 1000;
+  return <View style={s.working}><DotLoader /><Text style={s.workingLabel}>{label}</Text><Text style={s.workingDuration}>{duration(now - started)}</Text></View>;
+}
+// No output for a while, as the Mac's working line words it; stalled adds what you can do about it.
+// The state came in the snapshot from the chat's Mac; only the minutes tick here.
+function StallStatus({ mac, sessionId, stall }: { mac: RemoteClient; sessionId: string; stall: Stall }) {
+  const [now, setNow] = useState(swiftDate());
+  useEffect(() => { const timer = setInterval(() => setNow(swiftDate()), 1000); return () => clearInterval(timer); }, []);
+  const act = (name: string) => mac.request(name, { sessionId }).catch(e => Alert.alert('Abstract', String(e)));
+  return <View style={s.working}><DotLoader /><Text style={[s.workingLabel, { color: warning }]}>{stallText(stall, now)}</Text>
+    {stall.state === 'stalled' && <><Chip label="Keep waiting" onPress={() => act('keepWaiting')} /><Chip label="Stop" onPress={() => act('stop')} /><Chip label="Stop and retry" onPress={() => act('stopAndRetry')} /></>}
+  </View>;
+}
+type TranscriptGroupItem = { id: string; kind: 'group'; groupKind: 'command' | 'explore'; rows: ChatItem[] };
+function groupToolRows(rows: ChatItem[]): Array<ChatItem | TranscriptGroupItem> {
+  const result: Array<ChatItem | TranscriptGroupItem> = [];
+  for (let index = 0; index < rows.length;) {
+    const first = rows[index];
+    const kind = first.kind === 'tool' ? toolKind(first.toolName || '') : 'other';
+    if (kind === 'command' || kind === 'explore') {
+      let end = index + 1;
+      while (end < rows.length && rows[end].kind === 'tool' && toolKind(rows[end].toolName || '') === kind && (kind !== 'command' || end - index < 8)) end++;
+      if (end - index > 1) {
+        result.push({ id: `group-${first.id}`, kind: 'group', groupKind: kind, rows: rows.slice(index, end) });
+        index = end;
+        continue;
+      }
+    }
+    result.push(first);
+    index++;
+  }
+  return result;
+}
+function ToolGroupRow({ group }: { group: TranscriptGroupItem }) {
+  const [expanded, setExpanded] = useState(group.groupKind === 'command');
+  const pending = group.rows.some(row => row.pending);
+  const failed = group.rows.filter(row => row.failed).length;
+  const summary = group.groupKind === 'command' ? `${group.rows.length} commands` : (() => {
+    const reads = group.rows.filter(row => ['read', 'notebookread'].includes((row.toolName || '').toLowerCase()));
+    const files = new Set(reads.map(row => row.path || row.id)).size;
+    const searches = group.rows.filter(row => ['grep', 'glob', 'ls', 'toolsearch'].includes((row.toolName || '').toLowerCase())).length;
+    const web = group.rows.filter(row => ['websearch', 'web_search'].includes((row.toolName || '').toLowerCase())).length;
+    const pages = group.rows.filter(row => (row.toolName || '').toLowerCase() === 'webfetch').length;
+    const other = group.rows.length - reads.length - searches - web - pages;
+    return [files && `${files} file${files === 1 ? '' : 's'}`, searches && `${searches} search${searches === 1 ? '' : 'es'}`, web && `${web} web search${web === 1 ? '' : 'es'}`, pages && `${pages} page${pages === 1 ? '' : 's'}`, other > 0 && `${other} lookup${other === 1 ? '' : 's'}`].filter(Boolean).join(', ');
+  })();
+  return <View><Pressable accessibilityRole="button" accessibilityLabel={`${pending ? 'Running' : 'Ran'} ${summary}`} onPress={() => setExpanded(!expanded)} style={s.toolRow}>
+    <View style={s.toolIcon}><Glyph name={group.groupKind === 'command' ? 'terminal' : 'magnifyingglass'} size={15} color={tertiary} /></View>
+    <Text style={s.toolVerb}>{group.groupKind === 'command' ? pending ? 'Running' : 'Ran' : pending ? 'Exploring' : 'Explored'}</Text>
+    <Text style={s.toolLabel}>{summary}</Text>{failed > 0 && <Text style={s.toolFailed}>{failed} failed</Text>}
+    <Glyph name={expanded ? 'chevron.up' : 'chevron.down'} size={10} color={tertiary} />
+  </Pressable>{expanded && <View style={{ marginLeft: 9, paddingLeft: 10, borderLeftWidth: 1, borderLeftColor: border }}>{group.rows.map(row => <TranscriptRow key={row.id} row={row} />)}</View>}</View>;
+}
+const renderTranscriptItem = ({ item }: { item: ChatItem | TranscriptGroupItem }) => item.kind === 'group' ? <ToolGroupRow group={item} /> : <TranscriptRow row={item} />;
+const transcriptKey = (row: ChatItem | TranscriptGroupItem) => row.id;
+export function ChatWorkspace({ route, navigation }: any) {
+  const [, force] = useState(0);
+  useEffect(() => remote.subscribe(() => force(x => x + 1)), []);
+  const hostId = route.params.hostId as string;
+  const mac = remote.client(hostId);
+  const macName = remote.mac(hostId)?.name;
+  const id = route.params.sessionId as string;
+  const chat = mac.snapshot?.sessions.find(x => x.id === id);
+  const pr = mac.snapshot?.pullRequests?.[id];
+  // Ask-author lands here with the Mac-built quote in the composer.
+  const [message, setMessage] = useState(route.params.draft || '');
+  const [routeNotice, setNotice] = useState<string | null>(route.params.notice || null);
+  const [pendingSends, setPendingSends] = useState<PendingPhoneMessage[]>([]);
+  // The queued message the composer is editing; Send saves it in place.
+  const [editingQueued, setEditingQueued] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const sendLock = useRef(false);
+  const [syncing, setSyncing] = useState(false);
+  const keyboardHeight = useKeyboardHeight();
+  const safeArea = useSafeAreaInsets();
+  const { width: windowWidth, height: windowHeight, fontScale } = useWindowDimensions();
+  const reduceMotion = useReduceMotion();
+  const blurTarget = useRef<View>(null);
+  const [previewingMarkdown, setPreviewingMarkdown] = useState(false);
+  const [composerFocused, setComposerFocused] = useState(false);
+  const [atBottom, setAtBottom] = useState(true);
+  const [anchored, setAnchored] = useState(false);
+  const [attachments, setAttachments] = useState<PickedAttachment[]>([]);
+  const [menu, setMenu] = useState<'manage' | null>(null);
+  const [slashChoosing, setSlashChoosing] = useState<SlashChoiceKind | null>(null);
+  const [linkSheet, setLinkSheet] = useState<LinkKind | null>(null);
+  const [linkQuery, setLinkQuery] = useState('');
+  const [linkResults, setLinkResults] = useState<LinkItem[]>([]);
+  const [linkLoading, setLinkLoading] = useState(false);
+  const [rename, setRename] = useState('');
+  const [diff, setDiff] = useState({ files: 0, added: 0, removed: 0 });
+  const [bottomPanelHeight, setBottomPanelHeight] = useState(180);
+  const scroll = useRef<FlatList<ChatItem | TranscriptGroupItem>>(null);
+  const follow = useRef(new TranscriptFollow());
+  const followFrames = useRef<Array<number>>([]);
+  const followTimers = useRef<Array<ReturnType<typeof setTimeout>>>([]);
+  const mayLoadOlder = useRef(false);
+  const lines = mac.lines[id] || [];
+  const hasOlder = mac.hasOlder(id);
+  const loadingHistory = mac.loadingHistory.has(id);
+  const rows = useMemo(() => chatTimeline(lines, id), [id, lines]);
+  const displayRows = useMemo(() => groupToolRows(rows), [rows]);
+  const visibleSends = useMemo(() => visiblePhoneMessages(pendingSends, lines), [pendingSends, lines]);
+  useEffect(() => {
+    if (pendingSends.length && !visibleSends.length) setPendingSends([]);
+  }, [pendingSends, visibleSends]);
+  // Sent mid-turn, a message waits in the Mac's queue, which shows it from then on.
+  const queue = queuedMessages(mac.snapshot, id);
+  useEffect(() => {
+    const settled = settledByQueue(pendingSends, queue);
+    if (settled.length) setPendingSends(current => current.filter(item => !settled.includes(item.id)));
+  }, [pendingSends, queue]);
+  useEffect(() => {
+    if (editingQueued && !queue.some(item => item.id === editingQueued)) {
+      setEditingQueued(null);
+      setSendError('That message was sent before your edit was saved. Tap Send to send this as a new message.');
+    }
+  }, [editingQueued, queue]);
+  const actions = chat ? composerActions(mac.snapshot, chat, !!message.trim() || attachments.length > 0) : null;
+  const removeQueued = (item: QueuedMessage) => mac.request('removeQueued', { sessionId: id, id: item.id })
+    .catch(error => Alert.alert('Abstract', String(error?.message || error)));
+  const editQueued = (item: QueuedMessage) => { setEditingQueued(item.id); setMessage(item.text); setSendError(null); setPreviewingMarkdown(false); };
+  const transcriptRows = useMemo(() => chat?.prompt && !lines.length
+    ? [{ id: 'prompt', kind: 'user' as const, text: chat.prompt }, ...displayRows] : displayRows, [chat?.prompt, lines.length, displayRows]);
+  const lastRow = rows.at(-1);
+  const showWorking = mac.status === 'online' && (chat?.status === 'running' || chat?.status === 'provisioning');
+  const stall = showWorking ? mac.snapshot?.stalls?.[id] : undefined;
+  // A chat gone quiet says so whatever its last event was: a stuck tool call is exactly what goes quiet.
+  const showWorkingRow = showWorking && (!!stall || !(lastRow?.pending && ['tool', 'prose', 'thinking'].includes(lastRow.kind)));
+  const workingLabel = lastRow && (lastRow.kind === 'thinking' || (lastRow.kind === 'tool' && !lastRow.pending)) ? 'Thinking…' : 'Working…';
+  const pendingPermissions = mac.snapshot?.pendingPermissions?.[id];
+  const permissionRoot = chat?.worktreePath || mac.snapshot?.projects.find(x => x.id === chat?.projectId)?.rootPath || '';
+  const canRemember = mac.snapshot?.permissionRules !== undefined;
+  const plan = effectivePlan(mac.snapshot?.plans?.[id], pendingPermissions);
+  const turnStartedAt = mac.snapshot?.turnStartedAt?.[id] ?? chat?.lastEventAt ?? undefined;
+  const macView = remote.mac(hostId);
+  const pauseRow = macView && chat ? chatPauseRow(macView, chat.projectId) : null;
+  const transcriptFooter = useMemo(() => <View style={s.transcriptFooter}>{visibleSends.map(item => <View key={item.id} style={s.userRow}><View style={s.userBubble}>{!!item.text && <Text style={s.prose}>{item.text}</Text>}{item.attachments.map(attachment => <Text key={attachment.id} style={s.pendingAttachment}>{attachment.reference ? `${attachment.reference} ` : ''}{attachment.title}</Text>)}</View><Text style={s.pendingStatus}>{item.status === 'sending' ? 'Sending…' : 'Sent'}</Text></View>)}{queue.map(item => <View key={item.id} style={s.userRow}><View style={[s.userBubble, queueStyles.bubble, editingQueued === item.id && queueStyles.editing]}>{!!item.text && <Text style={[s.prose, { color: muted }]}>{item.text}</Text>}{item.attachments.map(attachment => <Text key={attachment.id} style={s.pendingAttachment}>{attachment.reference ? `${attachment.reference} ` : ''}{attachment.title}</Text>)}</View><View style={queueStyles.actions}><Chip label="Edit" onPress={() => editQueued(item)} /><Chip label="Remove" onPress={() => removeQueued(item)} /></View></View>)}{!!actions?.queueCaption && <Text style={queueStyles.caption}>{actions.queueCaption}</Text>}{plan && <PlanCard mac={mac} sessionId={id} plan={plan} permissions={pendingPermissions} onRequestChanges={quoted => setMessage(quoted)} />}{nonPlanPermissions(pendingPermissions).map(request => <PermissionCard key={request.requestId} mac={mac} sessionId={id} request={request} projectId={chat?.projectId} root={permissionRoot} canRemember={canRemember} />)}{syncing && <Text style={s.thinkingLabel}>Syncing chat from Mac…</Text>}{showWorkingRow && (stall ? <StallStatus mac={mac} sessionId={id} stall={stall} /> : <WorkingStatus label={workingLabel} startedAt={turnStartedAt} />)}</View>, [visibleSends, queue, editingQueued, actions?.queueCaption, mac, pendingPermissions, plan, id, syncing, showWorkingRow, stall, workingLabel, turnStartedAt, chat?.projectId, permissionRoot, canRemember]);
+  const loadEarlier = React.useCallback(() => {
+    mayLoadOlder.current = false;
+    follow.current.stopFollowing();
+    setAtBottom(false);
+    setAnchored(true);
+    mac.loadOlder(id).catch(() => {});
+  }, [id]);
+  const cancelFollow = React.useCallback(() => {
+    followFrames.current.forEach(cancelAnimationFrame);
+    followTimers.current.forEach(clearTimeout);
+    followFrames.current = [];
+    followTimers.current = [];
+  }, []);
+  const scheduleFollow = React.useCallback(() => {
+    cancelFollow();
+    if (!follow.current.shouldFollow) return;
+    setAnchored(false);
+    // FlatList's scrollToEnd estimates unmeasured rows and skips the padding under the composer; the native one uses the real content size.
+    const reachEnd = () => { if (follow.current.shouldFollow) (scroll.current?.getNativeScrollRef() as ScrollView | null)?.scrollToEnd({ animated: false }); };
+    reachEnd();
+    followFrames.current.push(requestAnimationFrame(reachEnd));
+    followTimers.current.push(setTimeout(reachEnd, 100), setTimeout(reachEnd, 300));
+  }, [cancelFollow]);
+  useEffect(() => cancelFollow, [cancelFollow]);
+  useEffect(() => { scheduleFollow(); }, [keyboardHeight, bottomPanelHeight, attachments.length, scheduleFollow]);
+  const updateScroll = React.useCallback((event: any, ended = false) => {
+    const { contentOffset, layoutMeasurement, contentSize } = event.nativeEvent;
+    const next = ended
+      ? follow.current.endGesture(contentOffset.y, layoutMeasurement.height, contentSize.height)
+      : follow.current.scroll(contentOffset.y, layoutMeasurement.height, contentSize.height);
+    setAtBottom(previous => previous === next ? previous : next);
+    if (follow.current.isGestureActive && mayLoadOlder.current && contentOffset.y < 180 && mac.hasOlder(id)) loadEarlier();
+  }, [id, loadEarlier]);
+  const onTranscriptScroll = React.useCallback((event: any) => {
+    updateScroll(event);
+  }, [updateScroll]);
+  const onTranscriptSize = React.useCallback(() => scheduleFollow(), [scheduleFollow]);
+  const onTranscriptDrag = React.useCallback(() => { cancelFollow(); follow.current.beginGesture(); setAnchored(true); mayLoadOlder.current = true; }, [cancelFollow]);
+  useEffect(() => {
+    follow.current.jump();
+    mayLoadOlder.current = false;
+    setAtBottom(true);
+    scheduleFollow();
+  }, [id, scheduleFollow]);
+  useEffect(() => {
+    if (!chat) return;
+    const chatRoot = chat.worktreePath || mac.snapshot?.projects.find(x => x.id === chat.projectId)?.rootPath || '';
+    const request = (name: string, args: Record<string, unknown> = {}) => mac.request(name, { sessionId: id, ...args }).catch(e => Alert.alert('Abstract', String(e)));
+    navigation.setOptions({
+      headerTransparent: true,
+      headerStyle: { backgroundColor: 'transparent' },
+      headerBackground: () => <ProgressiveBlur edge="top" blurTarget={blurTarget} />,
+      headerTitle: () => <ScrollingTitle title={chat.name} provider={chat.providerId} subtitle={chat.profileId && chat.profileName ? chat.profileName : null} width={Math.max(72, Math.min(192, windowWidth - 245))} />,
+      headerLeft: () => <ToolbarAction label="Open sidebar" onPress={() => popToRootNatively().then(done => { if (!done) navigation.popTo('Sidebar', { selectedChat: id }); })}><Glyph name="menu" size={19} color={ink} /></ToolbarAction>,
+      headerRight: () => <View style={chrome.nativeActions}>
+        <ToolbarAction label="Review changes" onPress={() => navigation.navigate('Review', { hostId, sessionId: id })}><Glyph name="review" size={17} color={muted} /></ToolbarAction>
+        <ToolbarAction label="Files" onPress={() => navigation.navigate('Files', { hostId, root: chatRoot, sessionId: id })}><Glyph name="files" size={18} /></ToolbarAction>
+        <ToolbarAction label="Pull request" onPress={() => navigation.navigate('PullRequest', { hostId, sessionId: id })}><PullRequestIcon pr={pr} size={17} color={muted} /></ToolbarAction>
+        <MenuView actions={[
+          ...contributionsFor(mac.snapshot?.plugins || [], 'chatMenu').map(({ contribution }, index) => ({
+            id: `plugin:${index}`, title: contribution.title,
+            image: Platform.OS === 'ios' ? (contribution.symbol || 'puzzlepiece.extension') : undefined,
+          })),
+          { id: 'terminal', title: 'Terminal', image: Platform.OS === 'ios' ? 'terminal' : undefined },
+          { id: 'rename', title: 'Rename chat', image: Platform.OS === 'ios' ? 'pencil' : undefined },
+          { id: 'resume', title: 'Resume agent', image: Platform.OS === 'ios' ? 'arrow.clockwise' : undefined },
+          { id: 'archive', title: chat.archivedAt ? 'Unarchive chat' : 'Archive chat', image: Platform.OS === 'ios' ? 'archivebox' : undefined },
+          { id: 'delete', title: 'Delete chat', attributes: { destructive: true }, image: Platform.OS === 'ios' ? 'trash' : undefined },
+        ]} onPressAction={({ nativeEvent }) => {
+          if (nativeEvent.event.startsWith('plugin:')) {
+            const found = contributionsFor(mac.snapshot?.plugins || [], 'chatMenu')[Number(nativeEvent.event.slice(7))];
+            if (found) navigation.navigate('Plugin', { hostId, pluginId: found.plugin.id, title: found.contribution.title, place: 'chatMenu', contributionId: found.contribution.id, chatId: id, invoke: true });
+            return;
+          }
+          switch (nativeEvent.event) {
+            case 'terminal': navigation.navigate('Terminal', { hostId, root: chatRoot, sessionId: id }); break;
+            case 'rename': if (Platform.OS === 'ios') Alert.prompt('Rename chat', '', name => name.trim() && request('rename', { name: name.trim() }), 'plain-text', chat.name); else { setRename(chat.name); setMenu('manage'); } break;
+            case 'resume': request('resume'); break;
+            case 'archive': request('setArchived', { archived: !chat.archivedAt }); break;
+            case 'delete': Alert.alert('Delete chat?', chat.name, [{ text: 'Cancel' }, { text: 'Keep worktree', onPress: () => request('deleteChat', { removeWorktree: false }) }, { text: 'Delete worktree too', style: 'destructive', onPress: () => request('deleteChat', { removeWorktree: true }) }]); break;
+          }
+        }}><View style={chrome.toolbarButton} accessibilityLabel="More chat actions"><Glyph name="manage" size={20} /></View></MenuView>
+      </View>,
+    });
+  }, [navigation, id, windowWidth, chat?.name, chat?.providerId, chat?.profileId, chat?.profileName, chat?.archivedAt, chat?.worktreePath, pr?.state, pr?.isDraft, mac.snapshot?.plugins]);
+  useEffect(() => {
+    if (mac.status !== 'online') { setSyncing(false); return; }
+    let active = true;
+    const retries: Array<ReturnType<typeof setTimeout>> = [];
+    setSyncing(true);
+    mac.subscribeChat(id).then(() => {
+      if (active) setSyncing(false);
+      if (!active || !follow.current.shouldFollow) return;
+      // The list's content size callback follows later row measurements.
+      scheduleFollow();
+      retries.push(setTimeout(() => { if (active) scheduleFollow(); }, 250));
+    }).catch(() => { if (active) setSyncing(false); });
+    return () => {
+      active = false;
+      retries.forEach(clearTimeout);
+      mac.unsubscribeChat(id).catch(() => {});
+    };
+  }, [hostId, id, mac.status, scheduleFollow]);
+  useEffect(() => { if (!chat) return; const root = chat.worktreePath || mac.snapshot?.projects.find(x => x.id === chat.projectId)?.rootPath; if (!root || mac.status !== 'online') { setDiff({ files: 0, added: 0, removed: 0 }); return; } let active = true; const refresh = () => mac.exec(root, ['diff', 'HEAD', '--numstat']).then(result => { if (!active) return; const counts = result.stdout.split('\n').filter(line => line.includes('\t')).reduce((n, line) => { const [a, d] = line.split('\t'); return { files: n.files + 1, added: n.added + (Number(a) || 0), removed: n.removed + (Number(d) || 0) }; }, { files: 0, added: 0, removed: 0 }); setDiff(counts); }).catch(() => {}); const timer = setTimeout(refresh, 400); const interval = setInterval(refresh, 15000); return () => { active = false; clearTimeout(timer); clearInterval(interval); }; }, [hostId, id, chat?.status, chat?.worktreePath, chat?.projectId, mac.status]);
+  if (!chat) return <View style={s.waiting}><Text style={s.faint}>Waiting for this chat on the Mac…</Text></View>;
+  const root = chat.worktreePath || mac.snapshot?.projects.find(x => x.id === chat.projectId)?.rootPath || '';
+  const context = chatContext(chat, chat.projectId ? mac.snapshot?.projects.find(x => x.id === chat.projectId)?.name : null);
+  const catalog = mac.snapshot?.modelCatalogs?.[chat.providerId];
+  const modelOption = catalog?.models.find(x => x.id === chat.model) || catalog?.versions.find(x => x.id === chat.model);
+  const defaultModelLabel = mac.snapshot?.defaultModelNames?.[chat.providerId] || catalog?.accountDefault?.label;
+  const modelLabel = chat.model ? modelOption?.label || chat.model : defaultModelLabel || 'Default model';
+  const effortLabel = (chat.effort || modelOption?.defaultEffort || catalog?.accountDefault?.defaultEffort || 'Default effort').replace(/^./, x => x.toUpperCase());
+  const providerLabel = { codex: 'Codex', claude: 'Claude Code', opencode: 'OpenCode', muse: 'Muse Code' }[chat.providerId] || chat.providerId;
+  const policyLabel = policyTitle(chat.permissionPolicy);
+  const act = (name: string, args: Record<string, unknown> = {}) => mac.request(name, { sessionId: id, ...args }).catch(e => Alert.alert('Abstract', String(e)));
+  const send = () => {
+    if (mac.status !== 'online' || sendLock.current) return;
+    if (editingQueued) { saveQueuedEdit(editingQueued); return; }
+    if (!message.trim() && !attachments.length) {
+      // Messages left waiting (after Stop or a relaunch) go on their own.
+      if (queue.length && actions?.primary === 'send') act('send', { text: '' });
+      return;
+    }
+    if (/^\/[a-z]+$/i.test(message.trim()) && runSlash(message.trim().slice(1))) return;
+    const draft = { text: message, attachments: [...attachments] };
+    const pending: PendingPhoneMessage = { ...draft, id: uuid(), afterSeq: lines.at(-1)?.seq || 0, status: 'sending' };
+    void sendPhoneDraft(sendLock, draft,
+      () => draft.attachments.length
+        ? mac.request('sendAttachments', { sessionId: id, text: draft.text, ...attachmentPayload(draft.attachments) })
+        : mac.request('send', { sessionId: id, text: draft.text }),
+      () => {
+        setPendingSends(current => [...current, pending]);
+        setSending(true);
+        setSendError(null);
+        setMessage('');
+        setNotice(null);
+        setAttachments([]);
+        setPreviewingMarkdown(false);
+      },
+      () => { setPendingSends(current => current.map(item => item.id === pending.id ? { ...item, status: 'accepted' } : item)); setSending(false); },
+      error => {
+        // A line from the Mac is stronger evidence than a lost response.
+        if (visiblePhoneMessages([...pendingSends, pending], mac.lines[id] || []).some(item => item.id === pending.id)) {
+          setPendingSends(current => current.filter(item => item.id !== pending.id));
+          setMessage(draft.text);
+          setAttachments(draft.attachments);
+          setSendError(`Could not send. ${error instanceof Error ? error.message : String(error)} Your message is back in the composer. Tap Send to try again.`);
+        } else setPendingSends(current => current.map(item => item.id === pending.id ? { ...item, status: 'accepted' } : item));
+        setSending(false);
+      });
+  };
+  const saveQueuedEdit = (queuedId: string) => {
+    if (!message.trim()) { removeQueued({ id: queuedId } as QueuedMessage); setEditingQueued(null); return; }
+    sendLock.current = true;
+    setSending(true);
+    mac.request('editQueued', { sessionId: id, id: queuedId, text: message.trim() })
+      .then(() => { setMessage(''); setSendError(null); },
+        error => setSendError(`${error?.message || error} Tap Send to send this as a new message.`))
+      .finally(() => { setEditingQueued(null); sendLock.current = false; setSending(false); });
+  };
+  // Steer sends what's typed and the queue into the running turn; Interrupt
+  // stops the turn and sends them. Attachments wait in the queue first.
+  const turnAction = (name: 'steer' | 'interrupt') => {
+    if (mac.status !== 'online' || sendLock.current) return;
+    const draft = { text: message, attachments: [...attachments] };
+    sendLock.current = true;
+    setSending(true);
+    let queued = false;
+    const clear = () => { setMessage(''); setAttachments([]); setNotice(null); };
+    (async () => {
+      if (draft.attachments.length) {
+        await mac.request('sendAttachments', { sessionId: id, text: draft.text, ...attachmentPayload(draft.attachments) });
+        // In the Mac's queue now: never sent again from here.
+        queued = true;
+        clear();
+      }
+      await mac.request(name, { sessionId: id, text: queued ? '' : draft.text });
+    })().then(() => { clear(); setSendError(null); },
+      error => setSendError(queued
+        ? `Queued instead; it goes when this turn ends. ${error?.message || error}`
+        : `Could not ${name === 'steer' ? 'steer' : 'interrupt'}. ${error?.message || error}`))
+      .finally(() => { sendLock.current = false; setSending(false); });
+  };
+  const primary = actions?.primary ?? 'send';
+  const searchLinks = async (source: LinkKind, query: string) => {
+    if (!root) return;
+    setLinkLoading(true);
+    try {
+      const kind = source === 'issue' ? 'issue' : 'pr';
+      const fields = source === 'issue' ? 'number,title,url,state,body' : 'number,title,url,state,body,isDraft,baseRefName,headRefName';
+      const args = [kind, 'list', '--limit', '30', '--json', fields, '--state', query.trim() ? 'all' : 'open', ...(query.trim() ? ['--search', query.trim()] : [])];
+      const reply = await mac.request('exec', { command: 'gh', args, cwd: root });
+      const output = reply.exec?._0;
+      if (output?.code !== 0) throw Error(output?.stderr || 'Could not search GitHub.');
+      setLinkResults(JSON.parse(output.stdout || '[]'));
+    } catch (error) { Alert.alert('GitHub', String(error)); setLinkResults([]); }
+    finally { setLinkLoading(false); }
+  };
+  const openLinks = (source: LinkKind) => { setLinkSheet(source); setLinkQuery(''); setLinkResults([]); searchLinks(source, ''); };
+  const attachLink = (item: (typeof linkResults)[number]) => {
+    if (attachments.some(x => x.url === item.url)) { setLinkSheet(null); return; }
+    setAttachments([...attachments, { id: uuid(), kind: linkSheet === 'issue' ? 'githubIssue' : 'pullRequest', title: item.title,
+      path: null, reference: `#${item.number}`, url: item.url, body: item.body?.slice(0, 12_000) || null,
+      details: [item.state ? `State: ${item.isDraft ? 'Draft' : item.state}` : '', item.baseRefName ? `Base: ${item.baseRefName}` : '', item.headRefName ? `Head: ${item.headRefName}` : ''].filter(Boolean), data: '', size: 0 }]);
+    setLinkSheet(null);
+  };
+  const slashCommands = [
+    ['agent', 'Switch this chat to another agent'], ['model', 'Choose the model'],
+    ['effort', 'Choose the reasoning effort'], ['mode', 'Choose how much the agent may do without asking'],
+    ...(chat.status === 'running' ? [['stop', 'Stop the agent']] : []),
+    ['diff', 'Review the changes'], ['rename', 'Rename this chat'], ['attach', 'Attach files or a folder']
+  ];
+  const slashQuery = message.startsWith('/') && !/\s/.test(message) ? message.slice(1).toLowerCase() : null;
+  const slashMatches = slashQuery == null ? [] : slashCommands.filter(([command]) => command.includes(slashQuery)).sort(([a], [b]) => Number(b === slashQuery) - Number(a === slashQuery));
+  const runSlash = (command: string) => {
+    switch (command) {
+      case 'agent': case 'model': case 'effort': case 'mode': setSlashChoosing(command); return true;
+      case 'stop': act('stop'); break;
+      case 'diff': navigation.navigate('Review', { hostId, sessionId: id }); break;
+      case 'rename': setMenu('manage'); break;
+      case 'attach': pickAttachments(attachments).then(setAttachments).catch(e => Alert.alert('Attachment', String(e))); break;
+      default: return false;
+    }
+    setMessage('');
+    setSlashChoosing(null);
+    return true;
+  };
+  const providerChoices = (mac.snapshot?.providers || []).map(value => ({ id: value, title: ({ codex: 'Codex', claude: 'Claude Code', opencode: 'OpenCode', muse: 'Muse Code' } as Record<string, string>)[value] || value, selected: value === chat.providerId, image: Platform.OS === 'ios' ? providerMenuImage(value) : undefined }));
+  const modelChoices = [{ id: '', title: defaultModelLabel ? `Default (${defaultModelLabel})` : 'Default model', selected: !chat.model }, ...(catalog?.models || []).map(value => ({ id: value.id, title: value.label, selected: value.id === chat.model }))];
+  const effortChoices = [{ id: '', title: 'Default effort', selected: !chat.effort }, ...(modelOption?.efforts || catalog?.accountDefault?.efforts || []).map(value => ({ id: value, title: value.replace(/^./, x => x.toUpperCase()), selected: value === chat.effort }))];
+  const policyChoices = MODE_CHOICES.map(({ id, title }) => ({ id, title, selected: id === chat.permissionPolicy }));
+  const settings: ComposerSetting[] = [
+    { kind: 'agent', title: 'Agent', value: providerLabel, image: providerMenuImage(chat.providerId), choices: providerChoices },
+    { kind: 'model', title: 'Model', value: modelLabel, image: 'cpu', choices: modelChoices },
+    { kind: 'effort', title: 'Reasoning effort', value: effortLabel === 'Default effort' ? 'Default' : effortLabel, image: 'gauge.with.dots.needle.67percent', choices: effortChoices },
+    { kind: 'mode', title: 'Mode', value: policyLabel, image: 'hand.raised', choices: policyChoices },
+  ];
+  // Plan and Ask already show above the composer, so the trigger leaves them out.
+  const settingsSummary = [modelLabel, ...(effortLabel === 'Default effort' ? [] : [effortLabel]), ...(isReadOnlyMode(chat.permissionPolicy) ? [] : [policyShort(chat.permissionPolicy)])];
+  const chooseSetting = (event: string) => {
+    const choice = settingFromAction(event);
+    if (!choice) return;
+    Haptics.selectionAsync().catch(() => {});
+    if (choice.kind === 'agent') act('setAgent', { providerId: choice.id, model: null, effort: null });
+    else if (choice.kind === 'model') act('setAgent', { providerId: chat.providerId, model: choice.id || null, effort: null });
+    else if (choice.kind === 'effort') act('setAgent', { providerId: chat.providerId, model: chat.model, effort: choice.id || null });
+    else act('setPolicy', { policy: choice.id });
+  };
+  const notice = connectionNotice({ status: mac.status, unreachable: mac.unreachable, macName, lastSeenAt: mac.lastSeenAt, error: mac.error, now: Date.now() });
+  const resolveConnection = () => notice?.action === 'settings' ? navigation.navigate('Settings') : remote.reconnect(hostId).catch(() => {});
+  const online = mac.status === 'online';
+  const pickFiles = () => pickAttachments(attachments).then(setAttachments).catch(e => Alert.alert('Attachment', String(e)));
+  const pickFromLibrary = () => pickPhotos(attachments).then(setAttachments).catch(e => Alert.alert('Attachment', String(e)));
+  const addActions = [
+    { id: 'attach', title: 'Attach files', image: Platform.OS === 'ios' ? 'paperclip' : undefined, attributes: editingQueued ? { disabled: true } : undefined },
+    { id: 'photos', title: 'Photo library', image: Platform.OS === 'ios' ? 'photo.on.rectangle' : undefined, attributes: editingQueued ? { disabled: true } : undefined },
+    ...(root ? [{ id: 'issue', title: 'Link a GitHub issue', image: Platform.OS === 'ios' ? 'smallcircle.filled.circle' : undefined }, { id: 'linkPr', title: 'Link a pull request', image: Platform.OS === 'ios' ? 'arrow.triangle.pull' : undefined }] : []),
+  ];
+  const sendable = !!message.trim() || attachments.length > 0 || !!editingQueued || (primary === 'stop' && !editingQueued) || (primary === 'send' && queue.length > 0);
+  const sendLabel = !online ? `${macName || 'Mac'} isn't reachable` : sending ? 'Sending message' : editingQueued ? 'Save queued message' : primary === 'stop' ? 'Stop agent' : primary === 'queue' ? 'Queue message, sent when this turn ends' : 'Send message';
+  const sendDisabled = sending || !online || !sendable;
+  const applySlashChoice = (action: () => void) => { action(); setMessage(''); setSlashChoosing(null); };
+  const slashChoices: SlashItem[] = slashChoosing === 'agent' ? providerChoices.map(choice => ({ id: choice.id, title: choice.title, checked: choice.selected, onPress: () => applySlashChoice(() => act('setAgent', { providerId: choice.id, model: null, effort: null })) }))
+    : slashChoosing === 'model' ? modelChoices.map(choice => ({ id: choice.id || 'default', title: choice.title, checked: choice.selected, onPress: () => applySlashChoice(() => act('setAgent', { providerId: chat.providerId, model: choice.id || null, effort: null })) }))
+    : slashChoosing === 'effort' ? effortChoices.map(choice => ({ id: choice.id || 'default', title: choice.title, checked: choice.selected, onPress: () => applySlashChoice(() => act('setAgent', { providerId: chat.providerId, model: chat.model, effort: choice.id || null })) }))
+    : slashChoosing === 'mode' ? policyChoices.map(choice => ({ id: choice.id, title: choice.title, checked: choice.selected, onPress: () => applySlashChoice(() => act('setPolicy', { policy: choice.id })) })) : [];
+  const slashItems: SlashItem[] = slashChoosing ? slashChoices : slashMatches.map(([command, detail]) => ({ id: command, title: `/${command}`, detail, next: ['agent', 'model', 'effort', 'mode'].includes(command), onPress: () => { runSlash(command); } }));
+  const slashPopupOpen = !previewingMarkdown && (slashChoosing !== null || slashQuery !== null);
+  const keyboardOffset = Platform.OS === 'ios' ? keyboardHeight : 0;
+  const slashPopupHeight = Math.max(150, Math.min(365, windowHeight - keyboardOffset - bottomPanelHeight - safeArea.top - 22));
+  const { minHeight: composerMinHeight, maxHeight: composerMaxHeight } = composerInputHeights(windowHeight, keyboardOffset, safeArea.top, fontScale);
+  const jumpToLatest = () => {
+    follow.current.jump();
+    setAtBottom(true);
+    scheduleFollow();
+  };
+  // Native visible-row preservation fights scrollToEnd as streamed rows change height.
+  // Keep it from the reader's first touch until the transcript follows new output again.
+  return <SafeAreaView edges={['left', 'right']} style={s.root}>
+    {pauseRow && <View style={s.pauseBanner}><Glyph name="pause.circle.fill" size={16} color="#E8B34A" /><Text style={s.pauseBannerText}>{pauseRow.text}</Text><Pressable accessibilityRole="button" accessibilityLabel={pauseRow.button} accessibilityState={{ disabled: !pauseRow.canAct }} disabled={!pauseRow.canAct} onPress={() => mac.request(pauseRow.request.name, pauseRow.request.args).catch(error => Alert.alert('Abstract', String(error.message || error)))} style={[s.pauseBannerButton, !pauseRow.canAct && { opacity: 0.45 }]}><Text style={s.pauseBannerButtonText}>{pauseRow.button}</Text></Pressable></View>}
+    <SwipeForward onSwipe={() => navigation.navigate('Review', { hostId, sessionId: id })} onBack={() => navigation.goBack()}><BlurTargetView ref={blurTarget} style={{ flex: 1 }}><FlatList ref={scroll} style={s.transcript} contentInsetAdjustmentBehavior="automatic" contentContainerStyle={[s.transcriptContent, { paddingBottom: bottomPanelHeight + keyboardOffset + 20 }]} data={transcriptRows} keyExtractor={transcriptKey} renderItem={renderTranscriptItem} initialNumToRender={14} maxToRenderPerBatch={12} windowSize={7} updateCellsBatchingPeriod={30} maintainVisibleContentPosition={anchored ? { minIndexForVisible: 1 } : undefined} ListHeaderComponent={hasOlder || loadingHistory ? <Pressable accessibilityRole="button" accessibilityLabel="Load older messages" disabled={loadingHistory} onPress={loadEarlier} style={{ alignItems: 'center', paddingVertical: 10 }}>{loadingHistory ? <ActivityIndicator size="small" color={muted} /> : <Text style={s.thinkingLabel}>Load older messages</Text>}</Pressable> : null} ListFooterComponent={transcriptFooter} onContentSizeChange={onTranscriptSize} onLayout={scheduleFollow} onScroll={onTranscriptScroll} onScrollBeginDrag={onTranscriptDrag} onScrollEndDrag={event => updateScroll(event, true)} onMomentumScrollBegin={() => { follow.current.beginGesture(); setAnchored(true); }} onMomentumScrollEnd={event => updateScroll(event, true)} scrollEventThrottle={16} keyboardShouldPersistTaps="handled" />{!atBottom && <Pressable accessibilityLabel="Jump to latest" style={[s.jump, { bottom: bottomPanelHeight + keyboardOffset + 12 }]} onPress={jumpToLatest}><Glyph name="arrow.down" size={14} color={ink} /></Pressable>}</BlurTargetView></SwipeForward>
+    <ProgressiveBlur edge="bottom" blurTarget={blurTarget} style={[s.bottomBlur, { bottom: keyboardOffset, height: bottomPanelHeight + 24 }]} />
+    <View style={[s.bottomPanel, { bottom: keyboardOffset }]} onLayout={event => {
+      const measuredHeight = event?.nativeEvent?.layout?.height;
+      if (typeof measuredHeight !== 'number' || !Number.isFinite(measuredHeight)) return;
+      setBottomPanelHeight(height => Math.abs(height - measuredHeight) < 1 ? height : measuredHeight);
+    }}>
+      <View style={s.contextRow}>
+        <ContextPill context={context} onPress={chat.projectId ? () => navigation.navigate('Worktrees', { hostId, projectId: chat.projectId }) : undefined} />
+        {isReadOnlyMode(chat.permissionPolicy) && <View style={s.prContext} accessibilityLabel={`Mode: ${policyLabel}`}><Glyph name={chat.permissionPolicy === 'plan' ? 'list.bullet.clipboard' : 'questionmark.bubble'} size={13} color={ink} /><Text style={s.prContextLabel}>{chat.permissionPolicy === 'plan' ? 'Plan mode' : policyLabel}</Text></View>}
+        {pr && <Pressable accessibilityRole="button" accessibilityLabel={`Pull request #${pr.number}`} onPress={() => navigation.navigate('PullRequest', { hostId, sessionId: id })} style={s.prContext}><PullRequestIcon pr={pr} size={14} /><Text style={s.prContextLabel}>#{pr.number}</Text></Pressable>}
+        {contributionsFor(mac.snapshot?.plugins || [], 'chatPanel').map(({ plugin, contribution }) => <Pressable key={`${plugin.id}:${contribution.id}`} accessibilityRole="button" accessibilityLabel={contribution.title} onPress={() => { Haptics.selectionAsync().catch(() => {}); navigation.navigate('Plugin', { hostId, pluginId: plugin.id, title: contribution.title, place: 'chatPanel', contributionId: contribution.id, chatId: id }); }} style={s.changesPill}>
+          <Glyph name={contribution.symbol || 'puzzlepiece.extension'} size={13} color={ink} /><Text style={s.changesPillLabel}>{contribution.title}</Text>
+        </Pressable>)}
+        {diff.files > 0 && <Pressable accessibilityRole="button" accessibilityLabel={`Review ${diff.files} changed ${diff.files === 1 ? 'file' : 'files'}`} onPress={() => { Haptics.selectionAsync().catch(() => {}); navigation.navigate('Review', { hostId, sessionId: id }); }} style={s.changesPill}>
+          <Glyph name="review" size={13} color={ink} /><Text style={s.changesPillLabel}>{diff.files} {diff.files === 1 ? 'file' : 'files'}</Text>{diff.added > 0 && <Text style={s.changesAdded}>+{diff.added}</Text>}{diff.removed > 0 && <Text style={s.changesRemoved}>−{diff.removed}</Text>}
+        </Pressable>}
+      </View>
+    {menu === 'manage' && <View style={s.menu}><TextInput style={s.menuInput} value={rename} onChangeText={setRename} placeholder="Rename chat" placeholderTextColor={tertiary} /><Chip label="Rename" onPress={() => { if (rename.trim()) act('rename', { name: rename.trim() }); setMenu(null); }} /><Chip icon="close" onPress={() => setMenu(null)} label="Close" /></View>}
+    <LinkPickerSheet kind={linkSheet} query={linkQuery} setQuery={setLinkQuery} results={linkResults} loading={linkLoading} search={() => linkSheet && searchLinks(linkSheet, linkQuery)} select={attachLink} close={() => setLinkSheet(null)} />
+    <View style={[s.composerWrap, { paddingBottom: keyboardHeight ? 7 : safeArea.bottom + 7 }]}>
+      {!!routeNotice && <Text accessibilityRole="alert" style={s.sendError} onPress={() => setNotice(null)}>{routeNotice}</Text>}
+      {!!sendError && <Text accessibilityRole="alert" style={s.sendError}>{sendError}</Text>}
+      {!!editingQueued && <View style={queueStyles.controls}><Text style={queueStyles.reason}>Editing a queued message.</Text><Chip label="Cancel" onPress={() => { setEditingQueued(null); setMessage(''); }} /></View>}
+      {!!actions?.steer && !editingQueued && <View style={queueStyles.controls}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Steer" accessibilityHint="Sends this into the turn now" accessibilityState={{ disabled: !actions.steer.enabled || sending }} disabled={!actions.steer.enabled || sending} onPress={() => turnAction('steer')} style={[queueStyles.control, (!actions.steer.enabled || sending) && { opacity: 0.45 }]}><Text style={queueStyles.controlLabel}>Steer</Text></Pressable>
+        <Pressable accessibilityRole="button" accessibilityLabel="Interrupt" accessibilityHint="Stops this turn and sends now" accessibilityState={{ disabled: sending }} disabled={sending} onPress={() => turnAction('interrupt')} style={[queueStyles.control, sending && { opacity: 0.45 }]}><Text style={queueStyles.controlLabel}>Interrupt</Text></Pressable>
+        {!!actions.steer.reason && <Text style={queueStyles.reason}>{actions.steer.reason}</Text>}
+      </View>}
+      {attachments.length > 0 && <ScrollView horizontal style={s.attachments} contentContainerStyle={{ gap: 5 }}>{attachments.map(item => <Chip key={item.id} label={`${item.reference ? `${item.reference} ` : ''}${item.title} ×`} onPress={() => setAttachments(attachments.filter(x => x.id !== item.id))} />)}</ScrollView>}
+      <View style={[composerStyles.box, composerFocused && composerStyles.boxFocused]}>
+        {notice && <ConnectionEdge key={notice.tone} notice={notice} reduceMotion={reduceMotion} onAction={resolveConnection} />}
+        <View style={s.composerTextRow}>
+          {previewingMarkdown ? <ScrollView accessibilityLabel="Markdown preview" style={[s.composerInput, { minHeight: composerMinHeight, maxHeight: composerMaxHeight }]}><Markdown style={markdownStyles} rules={codeRules}>{message}</Markdown></ScrollView> : <TextInput accessibilityLabel="Message" value={message} editable={!sending} onChangeText={value => { setMessage(value); setSendError(null); setSlashChoosing(null); }} multiline scrollEnabled style={[s.composerInput, { minHeight: composerMinHeight, maxHeight: composerMaxHeight }]} onFocus={() => setComposerFocused(true)} onBlur={() => setComposerFocused(false)} placeholder={online ? 'Type / for commands' : 'Write now, send when connected'} placeholderTextColor={tertiary} textAlignVertical="top" />}
+        </View>
+        <View style={composerStyles.actions}>
+          {sending
+            ? <Pressable accessibilityRole="button" accessibilityLabel="Attach files" accessibilityState={{ disabled: sending || !!editingQueued }} disabled={sending || !!editingQueued} onPress={pickFiles} android_ripple={{ color: 'rgba(255,255,255,0.12)', borderless: true }} style={({ pressed }) => [composerStyles.iconButton, (sending || !!editingQueued) && { opacity: 0.4 }, pressed && Platform.OS === 'ios' && { opacity: 0.5 }]}><Glyph name="attach" size={20} color={muted} /></Pressable>
+            : <MenuView title="Add to message" actions={addActions} onPressAction={({ nativeEvent }) => nativeEvent.event === 'attach' ? pickFiles() : nativeEvent.event === 'photos' ? pickFromLibrary() : openLinks(nativeEvent.event as LinkKind)}><View accessible accessibilityRole="button" accessibilityLabel={root ? 'Add files, photos, issues or pull requests' : 'Add files or photos'} style={composerStyles.iconButton}><Glyph name="attach" size={20} color={muted} /></View></MenuView>}
+          <ComposerSettingsMenu settings={settings} provider={chat.providerId} summary={settingsSummary} onChoose={chooseSetting} />
+          {!!message && <Pressable accessibilityRole="button" accessibilityLabel={previewingMarkdown ? 'Edit Markdown' : 'Preview Markdown'} onPress={() => setPreviewingMarkdown(!previewingMarkdown)} style={({ pressed }) => [composerStyles.textButton, pressed && { opacity: 0.5 }]}><Text maxFontSizeMultiplier={1.4} style={composerStyles.textButtonLabel}>{previewingMarkdown ? 'Edit' : 'Preview'}</Text></Pressable>}
+          <Pressable accessibilityRole="button" accessibilityLabel={sendLabel} accessibilityState={{ disabled: sendDisabled, busy: sending }} disabled={sendDisabled} onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {}); if (primary === 'stop' && !editingQueued) act('stop'); else send(); }} style={composerStyles.sendTarget}>
+            {({ pressed }) => <View style={[composerStyles.send, !sendDisabled && composerStyles.sendReady, pressed && { opacity: 0.7 }]}>{sending ? <ActivityIndicator size="small" color={muted} /> : <Glyph name={primary === 'stop' && !editingQueued ? 'stop' : 'send'} size={primary === 'stop' && !editingQueued ? 13 : 16} color={sendDisabled ? tertiary : canvas} />}</View>}
+          </Pressable>
+        </View>
+      </View>
+      {slashPopupOpen && <SlashPopup key={slashChoosing || slashQuery || 'commands'} title={slashChoosing ? `/${slashChoosing}` : 'COMMANDS'} items={slashItems} maxHeight={slashPopupHeight} onBack={slashChoosing ? () => setSlashChoosing(null) : undefined} />}
+    </View>
+    </View>
+  </SafeAreaView>;
+}
+const queueStyles = StyleSheet.create({
+  bubble: { opacity: 0.7, borderStyle: 'dashed', borderWidth: 1, borderColor: border },
+  editing: { borderColor: muted },
+  actions: { flexDirection: 'row', marginTop: 2 },
+  caption: { color: tertiary, fontFamily: 'Inter', fontSize: 12, textAlign: 'right' },
+  controls: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
+  control: { paddingHorizontal: 12, minHeight: 32, justifyContent: 'center', borderRadius: 16, backgroundColor: raised },
+  controlLabel: { color: ink, fontFamily: 'Inter', fontSize: 13, fontWeight: '600' },
+  reason: { flex: 1, color: tertiary, fontFamily: 'Inter', fontSize: 12 },
+});
+const composerStyles = StyleSheet.create({
+  // A filled surface with a hairline, never an outline; focus only lifts the hairline.
+  box: { borderRadius: 20, backgroundColor: panel, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.1)', paddingHorizontal: 6, paddingTop: 4, overflow: 'hidden' },
+  boxFocused: { borderColor: 'rgba(255,255,255,0.24)' },
+  actions: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 2 },
+  iconButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  settingsMenu: { flex: 1, minWidth: 0 },
+  settings: { minHeight: 44, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 4 },
+  settingsValue: { flexShrink: 1, minWidth: 0, color: ink, fontFamily: 'Inter', fontSize: 13, fontWeight: '500' },
+  settingsDetail: { color: muted, fontWeight: '400' },
+  textButton: { minHeight: 44, paddingHorizontal: 8, alignItems: 'center', justifyContent: 'center' },
+  textButtonLabel: { color: muted, fontFamily: 'Inter', fontSize: 13, fontWeight: '500' },
+  sendTarget: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  send: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: '#38383E' },
+  sendReady: { backgroundColor: ink },
+  connection: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 44, marginHorizontal: -6, marginTop: -4, marginBottom: 2, paddingLeft: 12, paddingRight: 4, paddingVertical: 6, backgroundColor: 'rgba(255,255,255,0.035)', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border },
+  connectionIcon: { width: 20, alignItems: 'center' },
+  connectionText: { flex: 1, minWidth: 0, gap: 1 },
+  connectionTitle: { color: ink, fontFamily: 'Inter', fontSize: 13, fontWeight: '600', lineHeight: 18 },
+  connectionDetail: { color: muted, fontFamily: 'Inter', fontSize: 12, lineHeight: 16 },
+  connectionAction: { minHeight: 44, minWidth: 44, paddingHorizontal: 10, alignItems: 'center', justifyContent: 'center' },
+  connectionActionLabel: { color: ink, fontFamily: 'Inter', fontSize: 13, fontWeight: '600' },
+});
+const chrome = StyleSheet.create({
+  toolbarButton: { width: 40, height: 44, alignItems: 'center', justifyContent: 'center' },
+  nativeActions: { flexDirection: 'row', alignItems: 'center', gap: 0 },
+});
+const markdownStyles = StyleSheet.create({ body: { color: ink, fontFamily: 'Inter', fontSize: 15, lineHeight: 23 }, paragraph: { marginTop: 0, marginBottom: 10 }, heading1: { color: ink, fontFamily: 'Inter', fontSize: 19, fontWeight: '600', marginVertical: 8 }, heading2: { color: ink, fontFamily: 'Inter', fontSize: 16, fontWeight: '600', marginVertical: 8 }, heading3: { color: ink, fontFamily: 'Inter', fontSize: 14, fontWeight: '600', marginVertical: 6 }, code_inline: { color: ink, backgroundColor: '#303036', fontFamily: 'JetBrainsMono', fontSize: 12 }, code_block: { color: ink, backgroundColor: panel, fontFamily: 'JetBrainsMono', fontSize: 11, padding: 9, borderRadius: 6 }, fence: { color: ink, backgroundColor: panel, fontFamily: 'JetBrainsMono', fontSize: 11, padding: 9, borderRadius: 6 }, link: { color: '#91B8F6' }, bullet_list: { marginBottom: 10 }, ordered_list: { marginBottom: 10 }, blockquote: { backgroundColor: 'transparent', borderLeftColor: '#55555E', borderLeftWidth: 2, paddingLeft: 10 }, strong: { fontWeight: '700' } });
+const s = StyleSheet.create({
+  pendingAttachment: { color: muted, fontFamily: 'Inter', fontSize: 12, marginTop: 4 },
+  pendingStatus: { color: tertiary, fontFamily: 'Inter', fontSize: 11, marginTop: 4 },
+  sendError: { color: '#F08A84', fontFamily: 'Inter', fontSize: 12, lineHeight: 17, paddingHorizontal: 8, paddingBottom: 6 },
+  bottomBlur: { top: undefined, bottom: 0, zIndex: 1 },
+  bottomPanel: { position: 'absolute', left: 0, right: 0, zIndex: 2 },
+  contextRow: { height: 40, marginHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  changesPill: { flexShrink: 0, minHeight: 32, flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 9, borderRadius: 16, backgroundColor: raised, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.16)' },
+  changesPillLabel: { color: ink, fontFamily: 'Inter', fontSize: 11, fontWeight: '600' },
+  changesAdded: { color: '#4CC38A', fontFamily: 'JetBrainsMono', fontSize: 10 },
+  changesRemoved: { color: '#EF6461', fontFamily: 'JetBrainsMono', fontSize: 10 },
+  prContext: { flexShrink: 0, minHeight: 32, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, borderRadius: 16, backgroundColor: raised, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.16)' },
+  prContextLabel: { color: muted, fontFamily: 'Inter', fontSize: 11, fontWeight: '600' },
+  composerTextRow: { flexDirection: 'row' },
+  composerInput: { flex: 1, color: ink, fontFamily: 'Inter', fontSize: 15, lineHeight: 22, paddingHorizontal: 4, paddingTop: 6, paddingBottom: 6 },
+  root: { flex: 1, backgroundColor: canvas }, pauseBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(232,179,74,0.12)', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border, paddingHorizontal: 14, paddingVertical: 8 }, pauseBannerText: { color: ink, fontFamily: 'Inter', fontSize: 13, lineHeight: 18, flex: 1 }, pauseBannerButton: { paddingHorizontal: 8, paddingVertical: 4 }, pauseBannerButtonText: { color: ink, fontFamily: 'Inter', fontSize: 13, fontWeight: '600' }, sheetRoot: { flex: 1, backgroundColor: canvas }, sheetBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.55)' }, sheetPanel: { backgroundColor: canvas, minHeight: 390, maxHeight: '85%', borderTopLeftRadius: 18, borderTopRightRadius: 18, paddingHorizontal: 16 }, sheetHandle: { alignSelf: 'center', width: 36, height: 4, borderRadius: 2, backgroundColor: '#5C5C65', marginTop: 10, marginBottom: 12 }, sheetHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 15 }, sheetTitle: { color: ink, fontFamily: 'Inter', fontSize: 19, fontWeight: '600' }, sheetClose: { width: 38, height: 38, borderRadius: 19, backgroundColor: raised, alignItems: 'center', justifyContent: 'center' }, sheetSearch: { minHeight: 50, borderRadius: 10, backgroundColor: panel, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12 }, sheetInput: { flex: 1, minWidth: 0, color: ink, fontFamily: 'Inter', fontSize: 15 }, sheetSearchButton: { minHeight: 38, justifyContent: 'center', paddingHorizontal: 6 }, sheetSearchButtonText: { color: ink, fontFamily: 'Inter', fontSize: 13, fontWeight: '600' }, sheetResults: { paddingTop: 12, paddingBottom: 25 }, sheetResult: { minHeight: 62, flexDirection: 'row', alignItems: 'center', gap: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border }, sheetReference: { color: muted, fontFamily: 'JetBrainsMono', fontSize: 12 }, sheetResultTitle: { color: ink, fontFamily: 'Inter', fontSize: 14.5, lineHeight: 20 }, sheetResultMeta: { color: tertiary, fontFamily: 'Inter', fontSize: 11, marginTop: 2 }, sheetEmpty: { color: tertiary, fontFamily: 'Inter', fontSize: 13, textAlign: 'center', paddingTop: 28 }, waiting: { flex: 1, justifyContent: 'center', padding: 18, backgroundColor: canvas }, faint: { color: tertiary, fontFamily: 'Inter', fontSize: 10 }, chip: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', gap: 5, paddingHorizontal: 9, paddingVertical: 7, borderRadius: 5 }, chipActive: { backgroundColor: '#303036' }, chipLabel: { color: muted, fontFamily: 'Inter', fontSize: 11.5, fontWeight: '500', maxWidth: 145 }, transcript: { flex: 1 }, transcriptContent: { paddingHorizontal: 16, paddingTop: 18, paddingBottom: 44, gap: 14 }, transcriptFooter: { gap: 12 }, userRow: { alignItems: 'flex-end' }, userBubble: { backgroundColor: raised, borderRadius: 11, paddingHorizontal: 13, paddingVertical: 10, maxWidth: '94%' }, prose: { color: ink, fontFamily: 'Inter', fontSize: 15, lineHeight: 23 }, thinkingRow: { gap: 4, paddingVertical: 2 }, thinkingLabel: { color: tertiary, fontFamily: 'Inter', fontSize: 12 }, thinkingText: { color: tertiary, fontFamily: 'Inter', fontSize: 13, lineHeight: 20, fontStyle: 'italic' }, turnRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 4 }, turnRule: { height: StyleSheet.hairlineWidth, backgroundColor: border, flex: 1 }, toolRow: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 38, paddingHorizontal: 2 }, toolIcon: { width: 20, height: 20, alignItems: 'center', justifyContent: 'center' }, toolVerb: { color: muted, fontFamily: 'Inter', fontWeight: '500', fontSize: 13.5 }, toolLabel: { flex: 1, color: tertiary, fontFamily: 'JetBrainsMono', fontSize: 12.5 }, toolFailed: { color: '#EF6461', fontFamily: 'Inter', fontSize: 10 }, toolPending: { color: tertiary, fontFamily: 'Inter', fontSize: 10 }, toolDetail: { color: tertiary, backgroundColor: panel, fontFamily: 'JetBrainsMono', fontSize: 11.5, lineHeight: 18, padding: 10, marginLeft: 22, borderRadius: 5 }, permission: { padding: 10, backgroundColor: raised, borderRadius: 8, gap: 7 }, permissionTitle: { color: ink, fontWeight: '600', fontSize: 12 }, permissionInput: { color: ink, padding: 7, backgroundColor: canvas, borderRadius: 5 }, permissionActions: { flexDirection: 'row' }, working: { flexDirection: 'row', alignItems: 'center', gap: 7 }, dotGrid: { width: 8, height: 13, flexDirection: 'row', flexWrap: 'wrap', columnGap: 2, rowGap: 2 }, dot: { width: 3, height: 3, borderRadius: 2, backgroundColor: muted }, workingLabel: { color: muted, fontFamily: 'Inter', fontSize: 13 }, workingDuration: { color: tertiary, fontFamily: 'Inter', fontSize: 13, fontVariant: ['tabular-nums'] }, jump: { position: 'absolute', right: 13, bottom: 12, width: 38, height: 38, borderRadius: 19, backgroundColor: raised, alignItems: 'center', justifyContent: 'center' }, slashMenu: { maxHeight: 220, backgroundColor: raised, borderTopColor: border, borderTopWidth: 1, padding: 5 }, slashRow: { flexDirection: 'row', alignItems: 'center', gap: 9, minHeight: 40, paddingHorizontal: 7 }, slashCommand: { color: ink, fontFamily: 'JetBrainsMono', fontSize: 11, minWidth: 55 }, slashDetail: { color: tertiary, fontFamily: 'Inter', fontSize: 10, flex: 1 }, menu: { maxHeight: 220, padding: 6, backgroundColor: raised, borderTopColor: border, borderTopWidth: 1 }, menuInput: { color: ink, fontSize: 14, padding: 9 }, linkSearch: { flexDirection: 'row', alignItems: 'center' }, linkResult: { flexDirection: 'row', alignItems: 'center', gap: 7, minHeight: 30, paddingHorizontal: 7 }, linkReference: { color: tertiary, fontFamily: 'JetBrainsMono', fontSize: 10 }, linkTitle: { color: ink, fontFamily: 'Inter', fontSize: 11, flex: 1 }, composerWrap: { paddingHorizontal: 10, paddingTop: 7, paddingBottom: 8 }, attachments: { maxHeight: 30 } });

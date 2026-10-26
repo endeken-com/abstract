@@ -3,6 +3,37 @@ import Testing
 import AbstractCore
 
 @Suite struct PanelLayoutTests {
+    @Test func sideChromeMovesIntoThePanelAndBackAsTheWindowResizes() {
+        var layout = PanelLayout.standard()
+        let files = layout.side.tabs[1].id
+        layout.activate(files)
+
+        #expect(!SidePanelChrome.usesPanelHeader(mainColumnWidth: 700, sideIsOpen: layout.side.isOpen))
+        #expect(SidePanelChrome.usesPanelHeader(mainColumnWidth: 380, sideIsOpen: layout.side.isOpen))
+        #expect(SidePanelChrome.usesPanelHeader(mainColumnWidth: 280, sideIsOpen: layout.side.isOpen))
+        #expect(!SidePanelChrome.usesPanelHeader(mainColumnWidth: 700, sideIsOpen: layout.side.isOpen))
+        #expect(layout.side.active?.id == files)
+
+        layout.setOpen(.side, false)
+        #expect(!SidePanelChrome.usesPanelHeader(mainColumnWidth: 280, sideIsOpen: layout.side.isOpen))
+    }
+
+    @Test func sideHeaderHeightMatchesTheTitleBandOnBothSidesOfTheThreshold() {
+        // One row at the title band's height, wide or compact, so the hairline
+        // under it lines up with the main pane's and never jumps on resize.
+        #expect(SidePanelChrome.headerHeight == 52)
+        for width in [CGFloat(700), 620, 619, 380, 280] {
+            #expect(SidePanelChrome.hairlineOffset(mainColumnWidth: width, sideIsOpen: true) == SidePanelChrome.headerHeight)
+        }
+        // At the narrowest panel, the chat buttons keep their room and the
+        // tabs take the rest: the two together never exceed the header.
+        let controls: CGFloat = 4 * 28 + 3 * 2
+        let tabs = SidePanelChrome.tabsWidth(headerWidth: 260, controlsWidth: controls, gap: 2)
+        #expect(tabs + controls + 2 == 260)
+        #expect(tabs > 0)
+        #expect(SidePanelChrome.tabsWidth(headerWidth: 100, controlsWidth: controls, gap: 2) == 0)
+    }
+
     @Test func standardHasChangesAndFilesBesideTheChat() {
         let layout = PanelLayout.standard()
         #expect(layout.side.isOpen)

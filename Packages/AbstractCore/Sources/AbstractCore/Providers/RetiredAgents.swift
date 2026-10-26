@@ -33,7 +33,11 @@ final class LocalModelParser: OutputParser {
 
     func feed(_ line: String, stream: OutputStreamKind) -> [AgentEvent] {
         codex.feed(line, stream: stream).filter { event in
-            guard case .error(let message) = event else { return true }
+            let message: String
+            switch event {
+            case let .error(text), let .notice(.warning(text)): message = text
+            default: return true
+            }
             return !(message.contains("Model metadata for") || message.contains("service tier"))
         }
     }

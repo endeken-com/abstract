@@ -78,7 +78,7 @@ struct AddProjectSheet: View {
                     GridRow {
                         Text("Permissions").foregroundStyle(Color.btTextSecondary)
                         Picker("", selection: $policy) {
-                            ForEach(PermissionPolicy.allCases, id: \.self) { p in Text(p.title).tag(p) }
+                            ForEach(PermissionPolicy.autonomyCases, id: \.self) { p in Text(p.title).tag(p) }
                         }
                         .labelsHidden()
                     }
@@ -128,7 +128,7 @@ struct AddProjectSheet: View {
     private func save() {
         guard let probe else { return }
         do {
-            try model.addProject(probe, name: name, baseRef: baseRef, providerId: providerId, policy: policy)
+            try model.addProject(probe, name: name, baseRef: Project.baseRef(typed: baseRef) ?? "HEAD", providerId: providerId, policy: policy)
             dismiss()
         } catch {
             self.error = error.localizedDescription

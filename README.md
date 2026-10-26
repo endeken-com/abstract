@@ -3,6 +3,14 @@
 A native macOS app for running several CLI coding agents in parallel, each in
 its own git worktree, then reviewing and merging what they changed.
 
+The [iOS and Android app](mobile/README.md) lives in `mobile/`. It pairs with a
+running Mac through Abstract's encrypted remote protocol. Its React Native
+builds use Xcode Cloud for iOS and GitHub Actions for Google Play.
+
+The [internet relay deployment](infra/relay/README.md) uses a Docker container on
+Lightsail Micro, deployed manually with GitHub Actions. Client integration is
+still pending.
+
 Abstract drives agents you already pay for as **subscription CLIs**
 (`claude`, `codex`), never metered API calls. It never sees your keys and never
 talks to a model itself.
@@ -74,6 +82,8 @@ chat in the app later and it's handed over once the agent is idle. See `CommandL
 and runs a scripted stand-in agent that speaks Claude's real stream format and
 edits real files, so every screen can be exercised without spending tokens.
 Add `--snapshot <dir>` to capture every screen in both themes and quit.
+`scripts/demo-snapshot.sh <Abstract.app> <dir>` does the same with a time limit; CI runs
+it on every pull request and links the PNGs, the "Screenshots" artifact, in a comment.
 
 ## Layout
 

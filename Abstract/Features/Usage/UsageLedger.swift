@@ -9,18 +9,21 @@ final class UsageLedger {
     private(set) var loading = false
     private(set) var loadedAt: Date?
 
-    /// Next to Abstract's database (the demo's own folder in demo mode).
-    private var cache: URL {
-        let data = ProcessInfo.processInfo.environment["ABSTRACT_DATA_DIR"].map { URL(fileURLWithPath: $0) }
+    /// Abstract's own folder (the demo's in demo mode).
+    private var data: URL {
+        ProcessInfo.processInfo.environment["ABSTRACT_DATA_DIR"].map { URL(fileURLWithPath: $0) }
             ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Abstract")
-        return data.appendingPathComponent("usage-cache.json")
     }
+
+    /// Next to Abstract's database.
+    private var cache: URL { data.appendingPathComponent("usage-cache.json") }
 
     func load() async {
         guard !loading else { return }
         loading = true
-        let (home, cache) = (NSHomeDirectory(), cache)
-        records = await Task.detached(priority: .utility) { LocalUsage.load(home: home, cache: cache) }.value
+        // Muse keeps no log of its own; its steps are read from the chats'.
+        let (home, cache, chatLogs) = (NSHomeDirectory(), cache, data.appendingPathComponent("sessions"))
+        records = await Task.detached(priority: .utility) { LocalUsage.load(home: home, cache: cache, chatLogs: chatLogs) }.value
         loadedAt = Date()
         loading = false
     }
@@ -38,6 +41,9 @@ struct UsageReport {
         let cost: Double
         /// A price was assumed rather than known (newer OpenAI models).
         let estimated: Bool
+
+        /// Tokens only: the agent reports no cost and none is estimated (Muse).
+        var hasCost: Bool { provider?.hasCost ?? true }
     }
 
     struct Point: Identifiable {
@@ -65,10 +71,7 @@ struct UsageReport {
         end = now
         let shown = records.filter { $0.date >= from }
 
-        func costed(_ r: LocalUsage.Record) -> (Double, Bool) {
-            let known = ModelPricing.rates(provider: r.provider, model: r.model)?.known ?? false
-            return (ModelPricing.cost(provider: r.provider, model: r.model, tokens: r.tokens) ?? 0, !known)
-        }
+        func costed(_ r: LocalUsage.Record) -> (Double, Bool) { ModelPricing.price(r) }
 
         func rows(_ key: (LocalUsage.Record) -> String, name: (String) -> String, provider: (LocalUsage.Record) -> LocalUsage.Provider?) -> [Row] {
             var totals: [String: (LocalUsage.Tokens, Double, Bool, LocalUsage.Provider?)] = [:]
@@ -82,7 +85,7 @@ struct UsageReport {
                 .sorted { $0.cost > $1.cost }
         }
 
-        providers = rows({ $0.provider.rawValue }, name: { $0 == "claude" ? "Claude Code" : "Codex" }, provider: { $0.provider })
+        providers = rows({ $0.provider.rawValue }, name: { LocalUsage.Provider(rawValue: $0)?.name ?? $0 }, provider: { $0.provider })
         models = rows({ $0.model }, name: { $0 }, provider: { $0.provider })
         // Named once per folder: a chat's worktree reads as the chat, a project root as the project.
         let names = Dictionary(uniqueKeysWithValues: Set(shown.map(\.cwd)).map { ($0, workspaceName($0)) })

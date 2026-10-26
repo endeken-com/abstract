@@ -1,10 +1,13 @@
 import Foundation
+import GRDB
 import Synchronization
 
 /// Token use read from the agents' own session logs: every Claude profile
 /// (`~/.claude` and any `~/.claude-*` a `CLAUDE_CONFIG_DIR` points at,
-/// subagent transcripts included) and Codex (`~/.codex/sessions`). Nothing
-/// is sent anywhere; costs are estimates at API list prices.
+/// subagent transcripts included), Codex (`~/.codex/sessions`) and OpenCode
+/// (`~/.local/share/opencode/opencode.db`), and Muse Code, which keeps no log
+/// of its own, from Abstract's chat logs. Nothing is sent anywhere; costs are
+/// estimates at API list prices unless the agent logged its own.
 public enum LocalUsage {
     public struct Tokens: Codable, Sendable, Hashable {
         /// Input not served from the cache.
@@ -28,7 +31,22 @@ public enum LocalUsage {
         }
     }
 
-    public enum Provider: String, Codable, Sendable, Hashable, CaseIterable { case claude, codex }
+    public enum Provider: String, Codable, Sendable, Hashable, CaseIterable {
+        case claude, codex, opencode, muse
+
+        public var name: String {
+            switch self {
+            case .claude: "Claude Code"
+            case .codex: "Codex"
+            case .opencode: "OpenCode"
+            case .muse: "Muse Code"
+            }
+        }
+
+        /// Muse reports no cost and Abstract holds no price for its models,
+        /// so its use is counted in tokens only.
+        public var hasCost: Bool { self != .muse }
+    }
 
     /// One model response.
     public struct Record: Codable, Sendable, Hashable {
@@ -39,9 +57,12 @@ public enum LocalUsage {
         public var model: String
         public var cwd: String
         public var tokens: Tokens
+        /// What the agent itself said the response cost (OpenCode does).
+        public var reportedCost: Double?
 
-        public init(key: String?, date: Date, provider: Provider, model: String, cwd: String, tokens: Tokens) {
+        public init(key: String?, date: Date, provider: Provider, model: String, cwd: String, tokens: Tokens, reportedCost: Double? = nil) {
             self.key = key; self.date = date; self.provider = provider; self.model = model; self.cwd = cwd; self.tokens = tokens
+            self.reportedCost = reportedCost
         }
     }
 
@@ -73,13 +94,15 @@ public enum LocalUsage {
     }
 
     /// Every record from every log, reusing `cache` for files that haven't
-    /// changed since, then writing it back. Slow the first time; run it off
-    /// the main thread.
-    public static func load(home: String, cache: URL?, fileManager fm: FileManager = .default) -> [Record] {
+    /// changed since, then writing it back. `chatLogs`: Abstract's own chat
+    /// logs, where Muse's steps are read. Slow the first time; run it off the
+    /// main thread.
+    public static func load(home: String, cache: URL?, chatLogs: URL? = nil, fileManager fm: FileManager = .default) -> [Record] {
         let stored = cache.flatMap { try? Data(contentsOf: $0) }.flatMap { try? JSONDecoder().decode([String: CachedFile].self, from: $0) } ?? [:]
         var fresh: [String: CachedFile] = [:]
         let sources = claudeHomes(home: home, fileManager: fm).flatMap { transcripts(under: $0 + "/projects", fileManager: fm).map { ($0, Provider.claude) } }
             + transcripts(under: home + "/.codex/sessions", fileManager: fm).map { ($0, Provider.codex) }
+            + (chatLogs.map { transcripts(under: $0.path, fileManager: fm) } ?? []).map { ($0, Provider.muse) }
         var changed: [(url: URL, provider: Provider, modified: Date, size: Int)] = []
         for (url, provider) in sources {
             guard let attributes = try? fm.attributesOfItem(atPath: url.path),
@@ -95,7 +118,12 @@ public enum LocalUsage {
         DispatchQueue.concurrentPerform(iterations: changed.count) { i in
             let file = changed[i]
             guard let data = try? Data(contentsOf: file.url, options: .alwaysMapped) else { return }
-            let records = file.provider == .claude ? claudeRecords(data) : codexRecords(data)
+            let records = switch file.provider {
+            case .claude: claudeRecords(data)
+            case .codex: codexRecords(data)
+            case .muse: museRecords(data)
+            case .opencode: [Record]()
+            }
             parsed.withLock { $0[file.url.path] = CachedFile(modified: file.modified, size: file.size, records: records) }
         }
         fresh.merge(parsed.withLock { $0 }) { _, new in new }
@@ -103,8 +131,11 @@ public enum LocalUsage {
             try? fm.createDirectory(at: cache.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? data.write(to: cache, options: .atomic)
         }
+        // OpenCode's database takes its writes in a WAL file, so its own date
+        // says nothing; it is quick to read again each time.
+        let openCode = openCodeRecords(database: openCodeDatabase(home: home), fileManager: fm)
         var seen = Set<String>()
-        return fresh.values.flatMap(\.records).sorted { $0.date < $1.date }.filter { record in
+        return (fresh.values.flatMap(\.records) + openCode).sorted { $0.date < $1.date }.filter { record in
             guard let key = record.key else { return true }
             return seen.insert(key).inserted
         }
@@ -179,6 +210,74 @@ public enum LocalUsage {
         return records
     }
 
+    // MARK: Muse steps in Abstract's chat logs
+
+    /// Each `session/tokenUsage` step Muse reported in one of Abstract's chat
+    /// logs, dated by the log line, in the folder the Muse session runs in.
+    /// Keyed by session, turn and step, so a step read twice counts once.
+    public static func museRecords(_ data: Data) -> [Record] {
+        let markers = [Data("tokenUsage".utf8), Data("workspaceRoot".utf8)]
+        let decoder = JSONDecoder()
+        var records: [Record] = []
+        var cwd = ""
+        for line in lines(data, containing: nil) where markers.contains(where: { line.range(of: $0) != nil }) {
+            guard let logged = try? decoder.decode(OutputLine.self, from: line), logged.stream == .stdout,
+                  let msg = try? decoder.decode(JSONValue.self, from: Data(logged.line.utf8)) else { continue }
+            // The host names its folder when the session starts or resumes.
+            if let root = (msg["result"]?["session"] ?? msg["params"]?["session"])?["workspaceRoot"]?.string {
+                cwd = root
+            }
+            guard msg["method"]?.string == "session/tokenUsage", let params = msg["params"],
+                  let usage = params["usage"], let session = params["sessionId"]?.string,
+                  let date = logged.at ?? params["emittedAtMs"]?.double.map({ Date(timeIntervalSince1970: $0 / 1000) })
+                    ?? msg["emittedAtMs"]?.double.map({ Date(timeIntervalSince1970: $0 / 1000) }) else { continue }
+            let totals = MuseUsage.totals(usage)
+            let step = params["sourceRange"]?["first"]?["sequence"]?.int.map(String.init) ?? params["viewCursor"]?.string
+            let key = ["muse", session, params["turnId"]?.string, step].compactMap { $0 }.joined(separator: ":")
+            records.append(Record(key: key, date: date, provider: .muse, model: params["modelId"]?.string ?? "muse",
+                                  cwd: cwd, tokens: Tokens(input: totals.inputTokens, cacheWrite5m: totals.cacheWrite,
+                                                           cacheRead: totals.cacheRead, output: totals.outputTokens)))
+        }
+        return records
+    }
+
+    // MARK: OpenCode messages
+
+    public static func openCodeDatabase(home: String) -> String { home + "/.local/share/opencode/opencode.db" }
+
+    /// Every assistant message in OpenCode's database; nothing if it isn't there.
+    public static func openCodeRecords(database path: String, fileManager fm: FileManager = .default) -> [Record] {
+        guard fm.fileExists(atPath: path) else { return [] }
+        var config = Configuration()
+        config.readonly = true
+        config.busyMode = .timeout(2)
+        guard let queue = try? DatabaseQueue(path: path, configuration: config),
+              let rows = try? queue.read({ db in
+                  try Row.fetchAll(db, sql: "SELECT id, data FROM message WHERE data LIKE '%\"tokens\"%'")
+              }) else { return [] }
+        return rows.compactMap { row in
+            let data: String = row["data"]
+            return openCodeRecord(id: row["id"], data: Data(data.utf8))
+        }
+    }
+
+    /// One OpenCode step: an assistant message with its tokens and the cost
+    /// OpenCode worked out. Reasoning is billed as output.
+    public static func openCodeRecord(id: String, data: Data) -> Record? {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              object["role"] as? String == "assistant",
+              let usage = object["tokens"] as? [String: Any],
+              let created = (object["time"] as? [String: Any])?["created"] as? NSNumber else { return nil }
+        let cache = usage["cache"] as? [String: Any]
+        let tokens = Tokens(input: int(usage["input"]), cacheWrite5m: int(cache?["write"]), cacheRead: int(cache?["read"]),
+                            output: int(usage["output"]) + int(usage["reasoning"]))
+        guard tokens.total > 0 else { return nil }
+        let model = [object["providerID"] as? String, object["modelID"] as? String].compactMap { $0 }.joined(separator: "/")
+        return Record(key: "opencode:" + id, date: Date(timeIntervalSince1970: created.doubleValue / 1000), provider: .opencode,
+                      model: model.isEmpty ? "opencode" : model, cwd: (object["path"] as? [String: Any])?["cwd"] as? String ?? "",
+                      tokens: tokens, reportedCost: (object["cost"] as? NSNumber)?.doubleValue)
+    }
+
     // MARK: Helpers
 
     /// Lines of a JSONL file, skipping any without `needle` before parsing them.
@@ -244,7 +343,9 @@ public enum ModelPricing {
     static let codexFallback = Rates(input: 1.25, output: 10)
 
     public static func rates(provider: LocalUsage.Provider, model: String) -> (rates: Rates, known: Bool)? {
-        let id = model.lowercased()
+        var id = model.lowercased()
+        // OpenCode names models `provider/model`; the price follows the model.
+        if provider == .opencode, let slash = id.firstIndex(of: "/") { id = String(id[id.index(after: slash)...]) }
         if let match = table.filter({ id.hasPrefix($0.prefix) }).max(by: { $0.prefix.count < $1.prefix.count }) {
             return (match.rates, true)
         }
@@ -259,6 +360,15 @@ public enum ModelPricing {
         let millions = Double(t.input) * r.input + Double(t.output) * r.output + Double(t.cacheRead) * r.cacheRead
             + Double(t.cacheWrite5m) * r.cacheWrite5m + Double(t.cacheWrite1h) * r.cacheWrite1h
         return millions / 1_000_000
+    }
+
+    /// What a response cost: the agent's own figure when it logged one above
+    /// zero, else the list price. `estimated` when that price was assumed.
+    public static func price(_ record: LocalUsage.Record) -> (cost: Double, estimated: Bool) {
+        if let reported = record.reportedCost, reported > 0 { return (reported, false) }
+        guard record.provider.hasCost else { return (0, false) }
+        let known = rates(provider: record.provider, model: record.model)?.known ?? false
+        return (cost(provider: record.provider, model: record.model, tokens: record.tokens) ?? 0, !known)
     }
 
     /// What reading from the cache saved, against paying full input price.

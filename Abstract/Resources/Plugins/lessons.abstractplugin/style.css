@@ -1,0 +1,51 @@
+/* Lessons on Abstract's plugin kit (/_abstract/abstract-ui.css). */
+
+.content {
+  max-width: 640px;
+  padding: var(--ab-space-lg);
+}
+.about {
+  margin-bottom: var(--ab-space-lg);
+}
+fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+legend {
+  padding: 0;
+}
+.targets {
+  display: grid;
+  gap: 6px;
+}
+.ab-field {
+  margin-top: var(--ab-space-md);
+}
+details {
+  margin-top: var(--ab-space-md);
+}
+summary {
+  color: var(--ab-text-2);
+}
+summary:hover {
+  color: var(--ab-text);
+}
+pre {
+  margin: var(--ab-space-sm) 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--ab-border);
+  border-radius: var(--ab-radius-md);
+  background: var(--ab-code);
+  color: var(--ab-text-2);
+  font-family: var(--ab-font);
+  font-size: var(--ab-text-sm);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+.ab-notice {
+  margin-top: var(--ab-space-md);
+}
+.actions {
+  margin-top: var(--ab-space-lg);
+}

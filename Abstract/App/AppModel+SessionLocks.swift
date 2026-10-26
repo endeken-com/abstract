@@ -14,7 +14,7 @@ extension AppModel {
         "This chat is driven from the command line, so it's read-only here until its agent stops.")
 
     var locksDirectory: URL { engine.logsURL.deletingLastPathComponent().appendingPathComponent("locks", isDirectory: true) }
-    private var storePath: String { engine.logsURL.deletingLastPathComponent().appendingPathComponent("abstract.sqlite").path }
+    var storePath: String { engine.logsURL.deletingLastPathComponent().appendingPathComponent("abstract.sqlite").path }
 
     /// `abstract` drives the chat: its agent runs there, or a command is at work on it.
     func isDrivenFromCLI(_ sessionId: String) -> Bool { cliDriven[sessionId] != nil }
@@ -129,6 +129,14 @@ extension AppModel {
     /// chat is listed like any other; it doesn't take over the screen.
     func startForCommandLine(_ request: AppLink.StartRequest) async -> AppLink.StartReply {
         let id = request.sessionId
+        if let rename = request.rename {
+            do {
+                let branch = try await renameRunBranch(id, from: rename.worktree, to: rename.name)
+                return AppLink.StartReply(agent: nil, message: nil, branch: branch)
+            } catch {
+                return AppLink.StartReply(agent: nil, message: error.localizedDescription)
+            }
+        }
         reload()
         guard let session = session(id) else { return AppLink.StartReply(agent: nil, message: "Abstract can't find session \(id).") }
         if request.fresh { feed(id).reset() }
@@ -145,7 +153,7 @@ extension AppModel {
         case .up:
             return AppLink.StartReply(agent: appAgents[id], message: nil)
         case let .failed(message):
-            stop(id)
+            stopAgent(id)
             return AppLink.StartReply(agent: nil, message: message)
         }
     }

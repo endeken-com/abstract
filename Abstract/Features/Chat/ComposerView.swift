@@ -2,14 +2,16 @@ import SwiftUI
 import AppKit
 import AbstractCore
 
-/// The reply box. Return breaks the line, Command-Return sends, and the send
-/// button turns into Stop while the agent works.
+/// The reply box. Return sends, Shift-Return breaks the line. While the
+/// agent works, Send becomes Queue, beside Steer and Interrupt (or Stop
+/// when there's nothing to send).
 struct ComposerView: View {
     @Environment(AppModel.self) private var model
     let session: Session
     @State private var draft = ""
     @State private var previewingMarkdown = false
     @State private var markdownHeight: CGFloat = 20
+    @State private var sending = false
     @FocusState private var focused: Bool
     /// The `/` menu: the highlighted row, the command whose choices it shows
     /// (nil: the commands), and the draft it was closed on with Esc.
@@ -18,6 +20,13 @@ struct ComposerView: View {
     @State private var slashDismissed: String?
 
     private var working: Bool { session.status == .running || session.status == .provisioning }
+    private var queue: [QueuedMessage] { model.queuedMessages(session.id) }
+    /// Mid-turn, a message waits for the turn to end (ABS-103); a chat on a
+    /// Mac too old to queue keeps plain Stop.
+    private var queueing: Bool { (working || model.turnInProgress(session.id)) && !model.queueUnsupported(session.id) }
+    private var hasDraft: Bool {
+        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.comments(session.id).isEmpty || !attachments.isEmpty
+    }
     /// `abstract` drives the chat: nothing goes to its agent from here.
     private var readOnly: Bool { model.isDrivenFromCLI(session.id) }
     /// Its agent starts once it's set up; its first message is already there.
@@ -29,7 +38,8 @@ struct ComposerView: View {
     }
     /// A review or attachments can go on their own; otherwise there must be something typed.
     private var canSend: Bool {
-        !readOnly && !settingUp && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.comments(session.id).isEmpty || !attachments.isEmpty)
+        !readOnly && !settingUp && !sending && (!remote || model.remote.unreachableMessage(session.id) == nil)
+            && (hasDraft || (!queueing && !queue.isEmpty))
     }
     private var attachments: [PromptAttachment] {
         get { model.draftAttachments[session.id] ?? [] }
@@ -57,6 +67,24 @@ struct ComposerView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if let notice = model.composerNotices[session.id] {
+                Text(notice)
+                    .font(.btChatCaption)
+                    .foregroundStyle(Color.btTextSecondary)
+                    .frame(maxWidth: Space.readingWidth, alignment: .leading)
+                    .padding(.bottom, Space.sm)
+            }
+            if let unreachable = model.remote.unreachableMessage(session.id) {
+                Text(unreachable)
+                    .font(.btChatCaption)
+                    .foregroundStyle(Color.btTextSecondary)
+                    .frame(maxWidth: Space.readingWidth, alignment: .leading)
+                    .padding(.bottom, Space.sm)
+            }
+            QueuedMessages(session: session, working: queueing, edit: editQueued)
+                .padding(.horizontal, Space.lg)
+                .padding(.bottom, queue.isEmpty ? 0 : Space.sm)
+                .frame(maxWidth: Space.readingWidth + 2 * Space.lg)
             HStack {
                 ReviewPill(sessionId: session.id)
                 Spacer(minLength: 0)
@@ -75,7 +103,7 @@ struct ComposerView: View {
                         .padding(.top, 7)
                         .padding(.trailing, Space.sm)
                 }
-                HStack(alignment: .bottom, spacing: Space.sm) {
+                VStack(alignment: .leading, spacing: Space.xs) {
                     // The agent's guess at your next message shows as the placeholder;
                     // Tab takes it; Markdown stays literal until Preview is opened.
                     if previewingMarkdown {
@@ -85,66 +113,72 @@ struct ComposerView: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { markdownHeight = $0 }
                         }
-                        .frame(height: min(max(markdownHeight, 20), 180))
-                        .padding(.vertical, 7)
+                        .frame(height: min(max(markdownHeight, 60), 180))
+                        .padding(.top, 10)
                     } else {
-                        GrowingTextEditor(text: $draft, placeholder: placeholder, font: BTFont.chat(13.5), lines: 1...10, focused: $focused)
-                            .disabled(readOnly || settingUp)
+                        GrowingTextEditor(text: $draft, placeholder: placeholder, font: BTFont.chat(13.5), lines: 3...10, focused: $focused)
+                            .disabled(readOnly || settingUp || sending)
                             .onKeyPress(.tab) {
                                 guard draft.isEmpty, let suggestion else { return .ignored }
                                 draft = suggestion
                                 return .handled
                             }
-                            .returnBreaksLine(commandReturn: send)
-                            // Last, so it sees these keys before the Tab and Return handlers above.
+                            .onKeyPress(.return, phases: [.down, .repeat], action: returnKey)
+                            // Last, so it sees these keys before the Tab handler above.
                             // Repeats too: holding ↓ keeps moving down the menu, not the caret.
-                            .onKeyPress(keys: [.upArrow, .downArrow, .return, .tab, .escape], phases: [.down, .repeat], action: slashKey)
-                            .padding(.vertical, 7)
+                            .onKeyPress(keys: [.upArrow, .downArrow, .tab, .escape], phases: [.down, .repeat], action: slashKey)
+                            .padding(.top, 10)
                     }
 
-                    AttachmentButtons(repoRoot: repoRoot, sessionId: session.id, attachments: attachmentsBinding)
-                        .disabled(readOnly || settingUp)
+                    HStack(spacing: Space.xs) {
+                        AttachmentButtons(repoRoot: repoRoot, sessionId: session.id, attachments: attachmentsBinding)
+                            .disabled(readOnly || settingUp)
 
-                    if !draft.isEmpty {
-                        Button(previewingMarkdown ? "Edit" : "Preview") {
-                            previewingMarkdown.toggle()
-                            if !previewingMarkdown { focused = true }
-                        }
-                        .buttonStyle(.plain)
-                        .font(.btChatCaption)
-                        .foregroundStyle(Color.btTextSecondary)
-                        .frame(height: 26)
-                        .help(previewingMarkdown ? "Edit Markdown" : "Preview Markdown")
-                    }
-
-                    // The send button becomes Stop while the agent works.
-                    if working {
-                        Button { model.stop(session.id) } label: {
-                            Image(systemName: "stop.fill")
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundStyle(Color.btText)
-                                .frame(width: 26, height: 26)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .help("Stop the agent (⌘.)")
-                    } else {
-                        Button(action: send) {
-                            // The shortcut that sends, as the button's face: ⌘↩.
-                            HStack(spacing: 1) {
-                                Image(systemName: "command")
-                                Image(systemName: "return")
+                        if !draft.isEmpty {
+                            Button(previewingMarkdown ? "Edit" : "Preview") {
+                                previewingMarkdown.toggle()
+                                if !previewingMarkdown { focused = true }
                             }
-                                .font(.system(size: 11, weight: .regular))
-                                .foregroundStyle(canSend ? Color.btText : Color.btTextTertiary)
-                                .padding(.horizontal, 4)
-                                .frame(minWidth: 26, minHeight: 26)
-                                .contentShape(Rectangle())
+                            .buttonStyle(.btGhost)
+                            .help(previewingMarkdown ? "Edit Markdown" : "Preview Markdown")
                         }
-                        .buttonStyle(.plain)
-                        .disabled(!canSend)
-                        .help("Send (⌘↩)")
-                        .animation(.snappy(duration: 0.15), value: canSend)
+                        Spacer(minLength: Space.sm)
+
+                        // Mid-turn: Queue, and Steer or Interrupt to act on the turn now.
+                        if queueing {
+                            if hasDraft || !queue.isEmpty {
+                                Button("Steer") { act(model.steer) }
+                                    .buttonStyle(.btGhost)
+                                    .disabled(sending || !model.canSteer(session.id))
+                                    .help(model.steerUnavailable(session.id) ?? "Send this into the turn now")
+                                Button("Interrupt") { act(model.interrupt) }
+                                    .buttonStyle(.btGhost)
+                                    .disabled(sending)
+                                    .help("Stop this turn and send now")
+                            } else {
+                                Button("Stop") { model.stop(session.id) }
+                                    .buttonStyle(.btGhost)
+                                    .disabled(remote && model.remote.unreachableMessage(session.id) != nil)
+                                    .help(model.remote.unreachableMessage(session.id) ?? "Stop the agent (⌘.)")
+                            }
+                            if hasDraft {
+                                Button("Queue", action: send)
+                                    .buttonStyle(.btPrimary)
+                                    .disabled(!canSend)
+                                    .help(model.remote.unreachableMessage(session.id) ?? "Send when this turn ends (Return)")
+                            }
+                        } else if working {
+                            Button("Stop") { model.stop(session.id) }
+                                .buttonStyle(.btGhost)
+                                .disabled(remote && model.remote.unreachableMessage(session.id) != nil)
+                                .help(model.remote.unreachableMessage(session.id) ?? "Stop the agent (⌘.)")
+                        } else {
+                            Button("Send", action: send)
+                                .buttonStyle(.btPrimary)
+                                .disabled(!canSend)
+                                .help(model.remote.unreachableMessage(session.id) ?? "Send (Return)")
+                                .animation(.snappy(duration: 0.15), value: canSend)
+                        }
                     }
                 }
             }
@@ -201,6 +235,15 @@ struct ComposerView: View {
                 .allowsHitTesting(false)
         }
         .onAppear { focused = true }
+        // Lines quoted from Files or Review wait here for your question.
+        .onChange(of: model.pendingDrafts[session.id], initial: true) { _, pending in
+            guard let pending else { return }
+            draft = draft.isEmpty ? pending : pending + draft
+            model.pendingDrafts[session.id] = nil
+            focused = true
+        }
+        // Closing ⌘F's bar hands the keyboard back here.
+        .onChange(of: model.feed(session.id).find.closings) { focused = true }
     }
 
     private func send() {
@@ -214,19 +257,66 @@ struct ComposerView: View {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard canSend else { return }
         let pending = attachments
+        let message = model.messageWithReview(session.id, text: text)
+        if remote {
+            sending = true
+            Task {
+                do {
+                    try await model.sendRemoteFollowUp(session.id, text: message, attachments: pending)
+                    sent()
+                } catch { model.flash(error.localizedDescription, isError: true) }
+                sending = false
+            }
+            return
+        }
+        do {
+            // The review goes with the message, after it, then the attachments.
+            // Leave the draft and attachments in place until delivery succeeds.
+            try model.sendFollowUp(session.id, text: message, attachments: pending)
+            sent()
+        } catch {
+            model.flash(error.localizedDescription, isError: true)
+        }
+    }
+
+    /// Steer or Interrupt, with what's typed.
+    private func act(_ action: @escaping (String, String, [PromptAttachment]) async throws -> Void) {
+        guard !sending, !readOnly, !settingUp else { return }
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let message = hasDraft ? model.messageWithReview(session.id, text: text) : ""
+        let pending = attachments
+        sending = true
+        Task {
+            do {
+                try await action(session.id, message, pending)
+                if !message.isEmpty || !pending.isEmpty { sent() }
+            } catch { model.flash(error.localizedDescription, isError: true) }
+            sending = false
+        }
+    }
+
+    /// A queued message back in the box, ahead of anything typed since.
+    private func editQueued(_ message: QueuedMessage) {
+        Task {
+            guard let message = await model.takeQueued(session.id, id: message.id) else {
+                model.flash("That message has already been sent.")
+                return
+            }
+            draft = draft.isEmpty ? message.text : message.text + "\n\n" + draft
+            attachments += message.attachments
+            previewingMarkdown = false
+            focused = true
+        }
+    }
+
+    private func sent() {
+        model.composerNotices[session.id] = nil
         draft = ""
         previewingMarkdown = false
         attachments = []
         RevundService.shared.userWrote(session.id)
-        do {
-            // The review goes with the message, after it, then the attachments.
-            try model.sendFollowUp(session.id, text: model.messageWithReview(session.id, text: text), attachments: pending)
-            model.discardComments(session.id)
-        } catch {
-            draft = text
-            attachments = pending
-            model.flash(error.localizedDescription, isError: true)
-        }
+        model.keepCommentsAsNotes(session.id)
+        model.discardComments(session.id)
     }
 
     // MARK: - The / menu
@@ -323,7 +413,7 @@ struct ComposerView: View {
         }
     }
 
-    /// ↑ ↓ move through the `/` menu, Return or Tab picks, Esc steps back.
+    /// ↑ ↓ move through the `/` menu, Tab picks, Esc steps back.
     /// Everything else, and every key while it's closed, goes on to the box.
     private func slashKey(_ press: KeyPress) -> KeyPress.Result {
         let items = slashItems
@@ -334,10 +424,37 @@ struct ComposerView: View {
         switch press.key {
         case .upArrow: slashSelected = (current - 1 + items.count) % items.count
         case .downArrow: slashSelected = (current + 1) % items.count
-        case .return, .tab: items[current].run()
+        case .tab: items[current].run()
         case .escape:
             if slashChoosing != nil { slashChoosing = nil; slashSelected = 0 } else { slashDismissed = draft }
         default: return .ignored
+        }
+        return .handled
+    }
+
+    private func returnKey(_ press: KeyPress) -> KeyPress.Result {
+        let editor = NSApp.keyWindow?.firstResponder as? NSTextView
+        let items = slashItems
+        switch ChatComposerReturnAction.resolve(
+            isComposing: editor?.hasMarkedText() == true, slashMenuOpen: !items.isEmpty,
+            shift: press.modifiers.contains(.shift), command: press.modifiers.contains(.command),
+            option: press.modifiers.contains(.option), control: press.modifiers.contains(.control),
+            repeated: press.phase == .repeat
+        ) {
+        case .system:
+            return .ignored
+        case .consume:
+            return .handled
+        case .newline:
+            let edit = ChatComposerDraftEdit.insertingNewline(into: draft, selectedRange: editor?.selectedRange())
+            draft = edit.text
+            if let editor {
+                DispatchQueue.main.async { [weak editor] in editor?.setSelectedRange(edit.selection) }
+            }
+        case .selectSlashItem:
+            items[min(slashSelected, items.count - 1)].run()
+        case .send:
+            send()
         }
         return .handled
     }
@@ -352,14 +469,27 @@ private struct ComposerContext: View {
 
     var body: some View {
         HStack(spacing: Space.sm) {
-            if let branch = session.branch {
-                Label(branch, systemImage: "arrow.triangle.branch")
-                    .labelStyle(.titleAndIcon)
-                    .font(.btChatCaption)
-                    .foregroundStyle(Color.btTextTertiary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .help(branch)
+            if let line = BranchLine(session: session) {
+                Label {
+                    Text(line.branch)
+                } icon: {
+                    Image(nsImage: Octicon.gitBranch).renderingMode(.template).resizable().frame(width: 11, height: 11)
+                }
+                .labelStyle(.titleAndIcon)
+                .font(.btChatCaption)
+                .foregroundStyle(Color.btTextTertiary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .help(line.help)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(line.accessibilityLabel)
+                .contextMenu {
+                    Button("Copy Branch Name") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(line.branch, forType: .string)
+                        model.flash("Copied")
+                    }
+                }
             }
             Spacer(minLength: Space.md)
             BackgroundTasksChip(sessionId: session.id)
@@ -378,7 +508,7 @@ private struct ComposerContext: View {
         .task(id: "\(session.status.rawValue)-\(resultCount)") {
             try? await Task.sleep(for: .milliseconds(400))
             guard !Task.isCancelled, case .ready(let context) = model.diffAvailability(session.id) else { totals = nil; return }
-            let files = (try? await Diff.collectUncommitted(context.executor, worktree: context.worktree, exclude: context.exclude)) ?? []
+            let files = (try? await Diff.collectUncommitted(context.reader, worktree: context.worktree, exclude: context.exclude)) ?? []
             totals = (files.reduce(0) { $0 + $1.additions }, files.reduce(0) { $0 + $1.deletions })
         }
     }

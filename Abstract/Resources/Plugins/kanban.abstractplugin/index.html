@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:">
+<link rel="stylesheet" href="/_abstract/abstract-ui.css">
+<link rel="stylesheet" href="style.css">
+<title>Kanban</title>
+</head>
+<body>
+<div class="ab-page">
+  <header class="ab-header">
+    <div class="ab-header-title">
+      <h1>Kanban</h1>
+      <span id="summary" class="ab-tertiary ab-small"></span>
+    </div>
+    <div id="tabs"></div>
+    <span class="ab-spacer"></span>
+    <label class="ab-search">
+      <input id="search" type="search" placeholder="Search chats" aria-label="Search title, branch or pull request" autocomplete="off" spellcheck="false">
+      <span class="ab-kbd" aria-hidden="true">/</span>
+    </label>
+  </header>
+
+  <div class="ab-toolbar" role="group" aria-label="Board filters">
+    <div id="filters" class="filters"></div>
+    <span class="ab-spacer"></span>
+    <p class="hints ab-tertiary ab-small" aria-hidden="true">
+      <span class="hint"><span class="ab-kbd">J</span><span class="ab-kbd">K</span> move</span>
+      <span class="hint"><span class="ab-kbd">H</span><span class="ab-kbd">L</span> across</span>
+      <span class="hint"><span class="ab-kbd">↵</span> open</span>
+    </p>
+  </div>
+
+  <p id="unreachable" class="ab-notice notice" hidden></p>
+
+  <main id="view" tabindex="-1" aria-label="Chats by progress"></main>
+</div>
+<script src="/_abstract/abstract-ui.js"></script>
+<script src="board.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

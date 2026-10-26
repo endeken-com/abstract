@@ -21,8 +21,8 @@ public struct WorktreeInfo: Sendable, Hashable, Identifiable {
 public enum Git {
     // MARK: Running git
 
-    static func git(_ exec: any Executor, cwd: String?, _ args: [String]) async throws -> ExecResult {
-        try await exec.run("git", args, cwd: cwd)
+    static func git(_ exec: any Executor, cwd: String?, _ args: [String], stdin: Data? = nil) async throws -> ExecResult {
+        try await exec.run("git", args, cwd: cwd, stdin: stdin)
     }
 
     /// Stdout of a git command that must succeed.
@@ -53,6 +53,13 @@ public enum Git {
 
     public static func branchExists(_ exec: any Executor, root: String, branch: String) async -> Bool {
         (try? await git(exec, cwd: root, ["rev-parse", "--verify", "--quiet", branch]))?.ok ?? false
+    }
+
+    /// The commit `ref` names, or nil when it doesn't name one here.
+    public static func commit(_ exec: any Executor, root: String, ref: String) async -> String? {
+        guard let out = try? await git(exec, cwd: root, ["rev-parse", "--verify", "--quiet", ref + "^{commit}"]), out.ok else { return nil }
+        let sha = GitText.trimmed(out.stdout)
+        return sha.isEmpty ? nil : sha
     }
 
     /// Whether `ancestor` is `descendant` or one of its ancestors.
@@ -191,9 +198,15 @@ public enum Git {
         _ = try await gitOK(exec, cwd: worktree, ["commit", "-m", message])
     }
 
-    /// Pushes `branch` to `origin`, setting it as the upstream.
+    /// How long a push or pull may take before it's stopped.
+    static let transferLimit: Duration = .seconds(300)
+
+    /// Pushes `branch` to `origin`, setting it as the upstream. Stopped after
+    /// `transferLimit`.
     public static func push(_ exec: any Executor, worktree: String, branch: String) async throws {
-        _ = try await gitOK(exec, cwd: worktree, ["push", "-u", "origin", "HEAD:refs/heads/\(branch)"])
+        _ = try await withTimeLimit(transferLimit, what: "git push") {
+            try await gitOK(exec, cwd: worktree, ["push", "-u", "origin", "HEAD:refs/heads/\(branch)"])
+        }
     }
 
     /// What publishing a worktree's branch involves: uncommitted files, and

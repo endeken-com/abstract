@@ -32,7 +32,7 @@ private let codexCache = #"""
 private struct HomeExecutor: Executor {
     let homeDirectory: String
     let base = LocalExecutor.shared
-    func run(_ command: String, _ args: [String], cwd: String?) async throws -> ExecResult { try await base.run(command, args, cwd: cwd) }
+    func run(_ command: String, _ args: [String], cwd: String?, stdin: Data?) async throws -> ExecResult { try await base.run(command, args, cwd: cwd, stdin: stdin) }
     func spawn(_ spec: LaunchSpec, onLine: @escaping @Sendable (OutputLine) -> Void,
                onExit: @escaping @Sendable (Int32?) -> Void) throws -> RunningProcess {
         try base.spawn(spec, onLine: onLine, onExit: onExit)
@@ -133,6 +133,8 @@ struct ClaudeModelCatalogTests {
         try body.write(toFile: script, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script)
 
+        // A slow login shell (its first lookup) isn't what's measured.
+        _ = await LocalExecutor.shared.searchPath
         let started = Date()
         let catalog = await ClaudeProvider().discoverModels(executor: HomeExecutor(homeDirectory: home), binary: script, timeout: .seconds(10))
         #expect(catalog?.models.map(\.id) == ["opus[1m]", "claude-fable-5-1[1m]", "sonnet", "haiku"])

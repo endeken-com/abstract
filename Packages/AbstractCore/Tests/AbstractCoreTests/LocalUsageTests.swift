@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 import Testing
 @testable import AbstractCore
 
@@ -31,6 +32,117 @@ struct LocalUsageTests {
         #expect(records.count == 1)
         #expect(records[0].model == "gpt-5.6-terra" && records[0].cwd == "/repo")
         #expect(records[0].tokens == LocalUsage.Tokens(input: 300, cacheRead: 600, output: 100))
+    }
+
+    /// A Muse chat's log as Abstract writes it: every serve line from the
+    /// recorded fixture, stamped a second apart, after your message.
+    private static func museChatLog(start: Date) throws -> Data {
+        let url = try #require(Bundle.module.url(forResource: "muse-serve-tools", withExtension: "jsonl", subdirectory: "Fixtures"))
+        let serve = try String(contentsOf: url, encoding: .utf8).split(separator: "\n").map(String.init)
+        let logged = [OutputLine(stream: .user, line: "Read hello.txt, then make made.txt.", at: start)]
+            + serve.enumerated().map { OutputLine(stream: .stdout, line: $0.element, at: start.addingTimeInterval(Double($0.offset + 1))) }
+        let encoder = JSONEncoder()
+        return Data(try logged.map { String(decoding: try encoder.encode($0), as: UTF8.self) }.joined(separator: "\n").utf8)
+    }
+
+    @Test func museStepsComeFromAbstractsChatLog() throws {
+        let start = Date(timeIntervalSince1970: 1_792_210_740)
+        let records = LocalUsage.museRecords(try Self.museChatLog(start: start))
+        #expect(records.count == 7)
+        #expect(records.allSatisfy { $0.provider == .muse && $0.model == "muse-wonder-1.0" })
+        // The folder the host said the session runs in, and the time Abstract logged each step.
+        #expect(records.allSatisfy { $0.cwd == "/tmp/clean-worktree" })
+        #expect(records[0].date == start.addingTimeInterval(12))
+        #expect(records[0].key == "muse:01a14729-33bd-76a3-a92f-67c07ae22697:01a14815-a52b-7813-a703-11ac3c9dd6a5:56")
+        #expect(Set(records.compactMap(\.key)).count == 7)
+        #expect(records[0].tokens == LocalUsage.Tokens(input: 30217, output: 132))
+        #expect(records[1].tokens == LocalUsage.Tokens(input: 198, cacheRead: 30196, output: 55))
+        // The steps add up to Muse's own running total, never counted twice.
+        #expect(records.reduce(LocalUsage.Tokens()) { $0 + $1.tokens }.total == 215_070)
+        // No cost, and none estimated.
+        #expect(records.allSatisfy { ModelPricing.price($0) == (0, false) })
+    }
+
+    @Test func museChatLogsCountOnceAcrossReads() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("abstract-usage-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: root) }
+        let home = root.appendingPathComponent("home").path
+        let chatLogs = root.appendingPathComponent("sessions")
+        let cache = root.appendingPathComponent("usage-cache.json")
+        try fm.createDirectory(at: chatLogs, withIntermediateDirectories: true)
+        try fm.createDirectory(atPath: home, withIntermediateDirectories: true)
+        let log = try Self.museChatLog(start: Date(timeIntervalSince1970: 1_792_210_740))
+        try log.write(to: chatLogs.appendingPathComponent("chat-1.jsonl"))
+        // Another agent's chat holds no Muse steps.
+        try Data(#"{"stream":"stdout","line":"{\"type\":\"result\"}"}"#.utf8).write(to: chatLogs.appendingPathComponent("chat-2.jsonl"))
+
+        let first = LocalUsage.load(home: home, cache: cache, chatLogs: chatLogs)
+        #expect(first.count == 7 && first.allSatisfy { $0.provider == .muse })
+        #expect(first.reduce(LocalUsage.Tokens()) { $0 + $1.tokens }.total == 215_070)
+        // Read again from the cache, as after a relaunch: the same total.
+        #expect(LocalUsage.load(home: home, cache: cache, chatLogs: chatLogs) == first)
+        // The same steps copied into a second log still count once.
+        try log.write(to: chatLogs.appendingPathComponent("chat-3.jsonl"))
+        #expect(LocalUsage.load(home: home, cache: cache, chatLogs: chatLogs) == first)
+    }
+
+    @Test func everyAgentHasAName() {
+        #expect(LocalUsage.Provider.allCases.map(\.name) == ["Claude Code", "Codex", "OpenCode", "Muse Code"])
+        #expect(LocalUsage.Provider.allCases.filter { !$0.hasCost } == [.muse])
+    }
+
+    @Test func openCodeStepsComeFromItsDatabaseWithTheirOwnCost() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("abstract-home-\(UUID().uuidString)").path
+        defer { try? fm.removeItem(atPath: home) }
+        let path = LocalUsage.openCodeDatabase(home: home)
+        try fm.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+        try Self.writeOpenCodeDatabase(at: path)
+
+        let records = LocalUsage.load(home: home, cache: nil)
+        // The user's message and a failed step with no tokens don't count.
+        #expect(records.map(\.model) == ["anthropic/claude-opus-4-6", "opencode/big-pickle"])
+        #expect(records.allSatisfy { $0.provider == .opencode && $0.cwd == "/tmp/demo/worktree" })
+        #expect(records[0].key == "opencode:msg_c1a0000002demoStep1000000")
+        #expect(records[0].date == Date(timeIntervalSince1970: 1_790_000_001))
+        #expect(records[0].tokens == LocalUsage.Tokens(input: 3, cacheWrite5m: 11071, output: 131))
+        #expect(records[1].tokens == LocalUsage.Tokens(input: 474, cacheRead: 141, output: 170))
+
+        // A subscription step logs no cost, so it's priced like the same model under Claude.
+        let claude = LocalUsage.Record(key: nil, date: .now, provider: .claude, model: "claude-opus-4-6", cwd: "", tokens: records[0].tokens)
+        #expect(ModelPricing.price(records[0]).cost == ModelPricing.price(claude).cost)
+        #expect(ModelPricing.price(records[0]).cost > 0 && !ModelPricing.price(records[0]).estimated)
+        // A model the table doesn't know keeps the cost OpenCode reported.
+        #expect(ModelPricing.price(records[1]) == (0.0123, false))
+    }
+
+    @Test func openCodeWithoutADatabaseReportsNothing() {
+        #expect(LocalUsage.openCodeRecords(database: "/nonexistent/opencode.db").isEmpty)
+    }
+
+    /// The fixture's rows in a `message` table shaped like OpenCode 1.18's.
+    private static func writeOpenCodeDatabase(at path: String) throws {
+        let url = try #require(Bundle.module.url(forResource: "opencode-messages", withExtension: "jsonl", subdirectory: "Fixtures"))
+        var db: OpaquePointer?
+        try #require(sqlite3_open(path, &db) == SQLITE_OK)
+        defer { sqlite3_close(db) }
+        try #require(sqlite3_exec(db, """
+            CREATE TABLE message (id text PRIMARY KEY, session_id text NOT NULL, time_created integer NOT NULL,
+                                  time_updated integer NOT NULL, data text NOT NULL)
+            """, nil, nil, nil) == SQLITE_OK)
+        for line in try String(contentsOf: url, encoding: .utf8).split(separator: "\n") {
+            let row = try #require(JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])
+            let data = try JSONSerialization.data(withJSONObject: try #require(row["data"]))
+            var statement: OpaquePointer?
+            try #require(sqlite3_prepare_v2(db, "INSERT INTO message VALUES (?, ?, 0, 0, ?)", -1, &statement, nil) == SQLITE_OK)
+            defer { sqlite3_finalize(statement) }
+            let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+            sqlite3_bind_text(statement, 1, try #require(row["id"] as? String), -1, transient)
+            sqlite3_bind_text(statement, 2, try #require(row["session_id"] as? String), -1, transient)
+            sqlite3_bind_text(statement, 3, String(decoding: data, as: UTF8.self), -1, transient)
+            try #require(sqlite3_step(statement) == SQLITE_DONE)
+        }
     }
 
     @Test func pricesFollowTheLongestPrefix() throws {

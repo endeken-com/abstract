@@ -1,0 +1,211 @@
+/* Kanban on Abstract's plugin kit (/_abstract/abstract-ui.css). Colours
+   come from the host's --abstract-* tokens, through the kit's names. */
+
+.ab-page {
+  height: 100vh;
+  min-height: 0;
+}
+.ab-header {
+  position: static;
+}
+.ab-search {
+  flex: 0 1 240px;
+}
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.hints {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  white-space: nowrap;
+}
+.hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.hint .ab-kbd:last-of-type {
+  margin-right: 2px;
+}
+.notice {
+  margin: var(--ab-space-sm) var(--ab-space-lg) 0;
+}
+#view {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* ---------- Board ---------- */
+
+.board {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(200px, 1fr));
+  gap: var(--ab-space-md);
+  align-items: start;
+  min-width: min-content;
+  padding: 0 var(--ab-space-lg) var(--ab-space-xl);
+}
+.column {
+  min-width: 0;
+}
+.column-header {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: var(--ab-space-sm);
+  height: 40px;
+  padding: 0 4px;
+  background: var(--ab-canvas);
+  font-size: var(--ab-text-sm);
+  font-weight: 600;
+}
+.column-header .ab-count {
+  color: var(--ab-text-3);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.cards {
+  display: grid;
+  gap: 6px;
+}
+.column-empty {
+  padding: 14px 10px;
+  border: 1px dashed var(--ab-border);
+  border-radius: var(--ab-radius-md);
+  color: var(--ab-text-3);
+  font-size: var(--ab-text-sm);
+  text-align: center;
+}
+
+.card {
+  appearance: none;
+  display: grid;
+  gap: 5px;
+  width: 100%;
+  padding: 9px 10px 9px;
+  color: var(--ab-text);
+  font: inherit;
+  text-align: left;
+}
+.card:focus-visible {
+  border-radius: var(--ab-radius-md);
+}
+.card-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.card .title {
+  flex: 1;
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-weight: 500;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.card-meta {
+  display: flex;
+  align-items: baseline;
+  gap: var(--ab-space-sm);
+  color: var(--ab-text-3);
+  font-size: var(--ab-text-sm);
+}
+.card-meta .ab-truncate {
+  flex: 1;
+}
+.age {
+  flex: none;
+  color: var(--ab-text-3);
+  font-size: var(--ab-text-sm);
+  font-variant-numeric: tabular-nums;
+}
+.card-foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+.branch {
+  max-width: 100%;
+  color: var(--ab-text-2);
+  font-size: var(--ab-text-xs);
+}
+.card-foot .branch {
+  flex: 0 1 auto;
+  margin-right: 2px;
+}
+.pin {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--ab-text-2);
+}
+
+/* ---------- List and Mine ---------- */
+
+.list .rows {
+  padding: 2px 0 6px;
+}
+.list .ab-group-header {
+  padding-left: calc(var(--ab-space-lg) + 4px);
+}
+.row {
+  appearance: none;
+  display: grid;
+  grid-template-columns: 12px minmax(160px, 3fr) minmax(70px, 1.1fr) minmax(70px, 1.1fr) minmax(70px, 1.3fr) 252px 36px;
+  align-items: center;
+  gap: var(--ab-space-md);
+  width: calc(100% - 2 * var(--ab-space-sm));
+  margin: 0 var(--ab-space-sm);
+  border: 0;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  padding: 0 var(--ab-space-sm) 0 12px;
+}
+.row .title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+}
+.row .title .pin {
+  margin-top: 0;
+}
+.row .cell {
+  color: var(--ab-text-3);
+  font-size: var(--ab-text-sm);
+}
+.row .badges {
+  display: flex;
+  overflow: hidden;
+  gap: 4px;
+}
+.row .age {
+  text-align: right;
+}
+
+@media (max-width: 760px) {
+  .hints {
+    display: none;
+  }
+  .row {
+    grid-template-columns: 12px minmax(0, 1fr) 150px 36px;
+  }
+  .row .cell:not(.badges) {
+    display: none;
+  }
+}

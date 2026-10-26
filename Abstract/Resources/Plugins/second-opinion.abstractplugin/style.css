@@ -1,0 +1,43 @@
+/* Second opinion's side-panel tab on Abstract's plugin kit. */
+
+.content {
+  padding: var(--ab-space-md);
+}
+.review {
+  display: grid;
+  gap: 6px;
+}
+.review-head {
+  display: flex;
+  align-items: center;
+  gap: var(--ab-space-sm);
+}
+.review-title {
+  font-weight: 600;
+}
+.review-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--ab-space-sm);
+  margin-top: 4px;
+}
+.rounds {
+  display: flex;
+  gap: 4px;
+}
+.round {
+  width: 18px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--ab-border-strong);
+  transition: background var(--ab-medium) var(--ab-ease);
+}
+.round.current {
+  background: var(--ab-text-2);
+}
+.round.done {
+  background: var(--ab-text);
+}
+.ab-empty {
+  padding: 36px 12px;
+}

@@ -1,5 +1,32 @@
 import Foundation
 
+/// Put the side panel's chrome in the panel when the main pane no longer has
+/// enough titlebar room for both sets of tabs and the chat actions.
+public enum SidePanelChrome {
+    /// Height of the window's title band, and of the side panel's own header
+    /// within it. One height for both panes, so the hairline under each sits
+    /// at the same offset whether the panel header is showing or not.
+    public static let headerHeight: CGFloat = 52
+
+    public static func usesPanelHeader(mainColumnWidth: CGFloat, sideIsOpen: Bool) -> Bool {
+        sideIsOpen && mainColumnWidth < 620
+    }
+
+    /// Distance from the top of the window to the hairline under the side
+    /// panel's header. The same on both sides of the compact threshold, so
+    /// resizing across it never jumps the border.
+    public static func hairlineOffset(mainColumnWidth: CGFloat, sideIsOpen: Bool) -> CGFloat {
+        headerHeight
+    }
+
+    /// Room for the tabs in the panel's own header: what's left once the chat
+    /// buttons keep theirs, so they are never pushed off the panel's edge.
+    /// The tabs scroll within this; the buttons do not move.
+    public static func tabsWidth(headerWidth: CGFloat, controlsWidth: CGFloat, gap: CGFloat) -> CGFloat {
+        max(0, headerWidth - controlsWidth - gap)
+    }
+}
+
 /// What a tab shows. Add a case here and register a view for it in the app;
 /// the layout logic never needs to change.
 public enum PaneKind: String, Codable, Sendable, CaseIterable, Hashable {
@@ -9,16 +36,19 @@ public enum PaneKind: String, Codable, Sendable, CaseIterable, Hashable {
     case terminal
     /// GitHub pull-request review. Reserved for the GitHub integration.
     case review
+    /// A plugin's tab in the side panel (ABS-96). Which plugin and which
+    /// contribution rides in the pane item's id (`PluginContributions`).
+    case plugin
 
     /// Kinds that can be open more than once.
-    public var allowsMultiple: Bool { self == .terminal }
+    public var allowsMultiple: Bool { self == .terminal || self == .plugin }
 
     /// Where a kind may live. Reviewing changes needs the tall side panel;
     /// the chat is the window's main area, never a tab.
     public func fits(_ slot: PanelSlot) -> Bool {
         switch self {
         case .chat: false
-        case .changes, .review: slot == .side
+        case .changes, .review, .plugin: slot == .side
         default: true
         }
     }
@@ -157,6 +187,23 @@ public struct PanelLayout: Codable, Hashable, Sendable {
 
     public mutating func resize(_ slot: PanelSlot, to size: Double) {
         self[slot].size = min(max(size, slot.sizes.lowerBound), slot.sizes.upperBound)
+    }
+
+    /// Bring a plugin's side-panel tab forward, adding it the first time
+    /// (ABS-96). Its steady id keeps one tab per contribution.
+    public mutating func showPluginTab(paneItemId: String) {
+        if items.contains(where: { $0.id == paneItemId }) {
+            activate(paneItemId)
+        } else {
+            add(.plugin, to: .side, id: paneItemId)
+        }
+    }
+
+    /// Take a plugin's tabs away — what turning it off does to every chat.
+    public mutating func removePluginTabs(pluginId: String) {
+        for item in items(of: .plugin) where PluginContributions.parsePaneItemId(item.id)?.pluginId == pluginId {
+            close(item.id)
+        }
     }
 }
 

@@ -16,13 +16,14 @@ extension PointerChange {
 /// Which repository the review shows: the worktree's own, or one of its
 /// submodules, each reviewed on its own, and which ones have uncommitted work.
 struct RepoMenu: View {
+    @Environment(AppModel.self) private var model
     let review: DiffReview
     let context: DiffContext
 
     var body: some View {
         Menu {
             ForEach(review.repoList) { repo in
-                Button { Task { await review.select(repo.path, context) } } label: {
+                Button { model.showRepo(repo.path, in: review, context) } label: {
                     Image(systemName: repo.isSubmodule ? "shippingbox" : "folder")
                     Text(name(repo))
                     let notes = [repo.path == review.selectedRepo ? "Showing" : nil,

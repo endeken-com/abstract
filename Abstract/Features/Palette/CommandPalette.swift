@@ -152,6 +152,17 @@ struct CommandPalette: View {
         items.append(Item(id: "settings", section: "App", title: "Settings", symbol: "gearshape", shortcut: ["⌘", ","]) {
             model.isSettingsOpen = true
         })
+        if model.everythingPaused {
+            items.append(Item(id: "resume-everything", section: "App", title: "Resume everything",
+                              subtitle: "Turns back on the automations Pause everything switched off", symbol: "play.circle") {
+                model.resumeEverything()
+            })
+        } else {
+            items.append(Item(id: "pause-everything", section: "App", title: "Pause everything",
+                              subtitle: "Stops every running agent and pauses every automation", symbol: "pause.circle") {
+                model.pauseEverything()
+            })
+        }
         items.append(Item(id: "new", section: "Start", title: "New chat", symbol: "square.and.pencil", shortcut: ["⌘", "N"]) {
             model.showNewChatLikeCurrent()
         })
@@ -172,6 +183,14 @@ struct CommandPalette: View {
         for theme in ThemeChoice.allCases {
             items.append(Item(id: "theme-\(theme.rawValue)", section: "Appearance", title: "Theme: \(theme.title)", symbol: "circle.lefthalf.filled") {
                 UserDefaults.standard.set(theme.rawValue, forKey: "theme")
+            })
+        }
+        // Commands plugins add to ⌘K (ABS-96), under their plugin's name.
+        for contribution in model.plugins.contributions(.palette) {
+            items.append(Item(id: "plugin-\(contribution.id)", section: contribution.pluginName,
+                              title: contribution.contribution.title,
+                              symbol: contribution.contribution.symbolOrFallback) {
+                model.invokePlugin(contribution)
             })
         }
         return items

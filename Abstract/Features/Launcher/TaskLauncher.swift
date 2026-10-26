@@ -9,6 +9,8 @@ struct TaskLauncher: View {
     var initialProjectId: String?
     /// Start with no project: a standalone chat.
     var initialStandalone = false
+    /// What the prompt starts with, from asking about some lines.
+    var initialPrompt: String?
     var autofocus = true
     /// Inside a sheet the sheet is the container; draw no field frame of our own.
     var embedded = false
@@ -22,6 +24,10 @@ struct TaskLauncher: View {
     @State private var projectId: String?
     /// No project: the chat works in a folder of its own. Only on this Mac.
     @State private var standalone = false
+    /// The profile the fields below were filled from; they can still change.
+    @State private var profileId: String?
+    /// The workflow the chat runs; its first step's profile fills the fields.
+    @State private var workflowId: String?
     @State private var providerId = "claude"
     @State private var modelId: String?
     @State private var effort: String?
@@ -32,6 +38,8 @@ struct TaskLauncher: View {
     @State private var policy: PermissionPolicy = .ask
     @State private var starting = false
     @State private var error: String?
+    /// Why the project's default Mac wasn't used for this chat.
+    @State private var deviceNotice: String?
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -72,6 +80,38 @@ struct TaskLauncher: View {
                             Button("Add Project…") { model.isAddingProject = true }
                         }
                     }
+                    if !offeredProfiles.isEmpty || !model.workflows.isEmpty {
+                        CompactMenu(title: setupTitle) {
+                            Picker("Profile", selection: setupBinding) {
+                                Text("No Profile").tag(String?.none)
+                                ForEach(offeredProfiles) { profile in
+                                    Label {
+                                        Text(profile.name)
+                                    } icon: {
+                                        IconTile(value: profile.iconValue, name: profile.name, context: .profile, size: 18)
+                                    }
+                                        .tag(Optional("profile:\(profile.id)"))
+                                }
+                            }
+                            .pickerStyle(.inline)
+                            if !model.workflows.isEmpty {
+                                Picker("Workflow", selection: setupBinding) {
+                                    ForEach(model.workflows) { workflow in
+                                        Label {
+                                            Text(workflow.name)
+                                        } icon: {
+                                            IconTile(value: workflow.iconValue, name: workflow.name, context: .workflow, size: 18)
+                                        }
+                                            .tag(Optional("workflow:\(workflow.id)"))
+                                    }
+                                }
+                                .pickerStyle(.inline)
+                            }
+                            Divider()
+                            Text("A profile fills in the agent, model, effort and permissions, and gives the agent its instructions. A workflow hands the chat from one profile to the next. Manage them in Settings.")
+                        }
+                        .help("Start from a saved setup or a workflow")
+                    }
                     CompactMenu(title: ProviderRegistry.name(providerId), logo: providerId) {
                         Picker("Agent", selection: providerBinding) {
                             ForEach(model.pickableAgents(on: device, keeping: providerId), id: \.id) { p in
@@ -91,7 +131,7 @@ struct TaskLauncher: View {
                     }
                     CompactMenu(title: policy.title) {
                         Picker("Permissions", selection: $policy) {
-                            ForEach(PermissionPolicy.allCases, id: \.self) { p in Text(p.title).tag(p) }
+                            ForEach(PermissionPolicy.autonomyCases, id: \.self) { p in Text(p.title).tag(p) }
                         }
                         .pickerStyle(.inline)
                         Divider()
@@ -134,6 +174,12 @@ struct TaskLauncher: View {
                     .padding(.horizontal, embedded ? 0 : Space.lg)
                     .padding(.bottom, Space.md)
                     .textSelection(.enabled)
+            } else if let deviceNotice {
+                Label(deviceNotice, systemImage: "exclamationmark.triangle")
+                    .font(.btCallout)
+                    .foregroundStyle(Color.btWarning)
+                    .padding(.horizontal, embedded ? 0 : Space.lg)
+                    .padding(.bottom, Space.md)
             } else if device == nil, let status = model.providerStatus[providerId], !status.available {
                 Label("\(ProviderRegistry.name(providerId)) wasn't found on this Mac. Set its path in Settings › Agents.", systemImage: "exclamationmark.triangle")
                     .font(.btCallout)
@@ -145,15 +191,21 @@ struct TaskLauncher: View {
         .modifier(OptionalFieldChrome(active: !embedded, focused: focused))
         .attachmentInput($attachments, focused: focused)
         .onAppear {
+            if prompt.isEmpty, let initialPrompt { prompt = initialPrompt }
             let firstRemoteProject = onlineDevices.compactMap { device in
                 model.remote.links[device.id]?.snapshot?.projects.first { $0.archivedAt == nil }?.id
             }.first
             let initial = initialProjectId ?? model.selectedSession?.projectId ?? model.projects.first?.id ?? firstRemoteProject
             // Asked for, or there's no project to start in.
             if initialStandalone || initial == nil { chooseStandalone(); if autofocus { focused = true }; return }
-            // A project on a paired Mac starts its chat there.
-            device = initial.flatMap { id in model.projects.contains { $0.id == id } ? nil : model.remote.device(ofProject: id) }
-            select(initial)
+            if let initial, model.projects.contains(where: { $0.id == initial }) {
+                // This Mac's project: its default Mac is pre-selected.
+                selectLocal(initial)
+            } else {
+                // A project on a paired Mac starts its chat there.
+                device = initial.flatMap { model.remote.device(ofProject: $0) }
+                select(initial)
+            }
             if autofocus { focused = true }
         }
         .onChange(of: model.focusLauncherToken) { focused = true }
@@ -194,6 +246,7 @@ struct TaskLauncher: View {
     private var deviceBinding: Binding<String?> {
         Binding(get: { device }, set: { new in
             guard new != device else { return }
+            deviceNotice = nil
             device = new
             worktree = nil
             modelId = nil
@@ -204,7 +257,44 @@ struct TaskLauncher: View {
     }
 
     private var projectBinding: Binding<String?> {
-        Binding(get: { projectId }, set: { select($0) })
+        Binding(get: { projectId }, set: { new in
+            // Picking one of this Mac's projects pre-selects its default
+            // Mac; on another Mac the device already chosen stays.
+            if device == nil { selectLocal(new) } else { deviceNotice = nil; select(new) }
+        })
+    }
+
+    /// The profiles this project offers (Project Settings picks them),
+    /// plus the chosen one when it isn't among them.
+    private var offeredProfiles: [AgentProfile] {
+        var offered = AgentProfile.visible(model.profiles, in: standalone ? nil : model.project(projectId))
+        if let chosen = model.profile(profileId), !offered.contains(chosen) { offered.append(chosen) }
+        return offered
+    }
+
+    private var setupTitle: String {
+        if let workflow = model.workflow(workflowId) { return workflow.name }
+        return offeredProfiles.first { $0.id == profileId }?.name ?? "No profile"
+    }
+
+    /// A profile ("profile:<id>") or a workflow ("workflow:<id>"); a
+    /// workflow's first step fills the fields in.
+    private var setupBinding: Binding<String?> {
+        Binding(get: {
+            workflowId.map { "workflow:\($0)" } ?? profileId.map { "profile:\($0)" }
+        }, set: { new in
+            let parts = new?.split(separator: ":", maxSplits: 1).map(String.init) ?? []
+            let kind = parts.first, id = parts.count > 1 ? parts[1] : nil
+            workflowId = kind == "workflow" ? id : nil
+            profileId = kind == "profile" ? id : nil
+            let profile = model.profile(profileId)
+                ?? model.workflow(workflowId)?.steps.first.flatMap { model.profile($0.profileId) }
+            guard let profile else { return }
+            providerId = profile.providerId
+            modelId = profile.model
+            effort = profile.effort
+            policy = profile.permissionPolicy
+        })
     }
 
     private var providerBinding: Binding<String> {
@@ -236,6 +326,35 @@ struct TaskLauncher: View {
         standalone = true
         projectId = nil
         worktree = nil
+        deviceNotice = nil
+    }
+
+    /// Selecting one of this Mac's projects: pre-select the Mac its new
+    /// chats default to, and that Mac's own record of the project, when
+    /// it's connected and has it. Otherwise the chat runs on this Mac
+    /// and the note below the prompt says why.
+    private func selectLocal(_ id: String?) {
+        deviceNotice = nil
+        guard let id, let p = model.projects.first(where: { $0.id == id }) else { select(id); return }
+        let online = Set(onlineDevices.map(\.id))
+        if let target = p.resolvedDefaultDevice(online: online) {
+            let theirs = (model.remote.links[target]?.snapshot?.projects ?? []).filter { $0.archivedAt == nil }
+            if let counterpart = Project.counterpart(of: p, in: theirs) {
+                device = target
+                select(counterpart.id)
+                return
+            }
+            deviceNotice = "\(deviceName(target)) doesn't have a project called “\(p.name)”, so this chat runs on This Mac."
+        } else if p.defaultDeviceMissing(online: online) {
+            deviceNotice = "\(deviceName(p.defaultDeviceId)) isn't connected, so this chat runs on This Mac."
+        }
+        device = nil
+        select(id)
+    }
+
+    private func deviceName(_ id: String?) -> String {
+        guard let id, let name = model.remote.paired.first(where: { $0.id == id })?.peer.name else { return "Its default Mac" }
+        return name
     }
 
     private func start() {
@@ -243,16 +362,27 @@ struct TaskLauncher: View {
         starting = true
         error = nil
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let profile = model.profile(profileId)?.snapshot
+        let workflow = model.workflow(workflowId)
         Task {
             do {
+                if let workflow, let problem = workflow.problem(profiles: model.profiles) {
+                    throw AbstractError.message("“\(workflow.name)” can't start: \(problem)")
+                }
+                let progress = workflow.map { model.workflowProgress($0) }
                 if let device, let projectId {
+                    if progress != nil, model.remote.links[device]?.snapshot?.workflows != true {
+                        throw AbstractError.message("That Mac needs a newer version of Abstract to run a workflow.")
+                    }
                     let id = try await model.remote.startChat(on: device, RemoteStart(
                         projectId: projectId, providerId: providerId, prompt: text, attachments: attachments, baseRef: baseRef,
-                        policy: policy, model: modelId, effort: effort, worktree: worktree?.path))
+                        policy: policy, model: modelId, effort: effort, worktree: worktree?.path, profile: profile,
+                        workflow: progress))
                     model.open(id, newTab: true)
                 } else {
                     try await model.startChat(projectId: projectId, providerId: providerId, prompt: text, attachments: attachments,
-                                              baseRef: baseRef, policy: policy, model: modelId, effort: effort, existing: worktree)
+                                              baseRef: baseRef, policy: policy, model: modelId, effort: effort, existing: worktree,
+                                              profile: profile, workflow: progress)
                 }
                 prompt = ""
                 attachments = []
@@ -507,11 +637,14 @@ struct NewChatSheet: View {
                     .keyboardShortcut(.cancelAction)
                     .help("Close")
             }
-            TaskLauncher(initialProjectId: initialProjectId, initialStandalone: standalone, embedded: true, onStarted: { dismiss() })
+            TaskLauncher(initialProjectId: initialProjectId, initialStandalone: standalone,
+                         initialPrompt: model.newChatPrompt, embedded: true,
+                         onStarted: { model.newChatPrompt = nil; dismiss() })
         }
         .padding(Space.xl)
         .frame(width: 760)
         .background(Color.btCanvas)
+        .onDisappear { model.newChatPrompt = nil }
     }
 }
 

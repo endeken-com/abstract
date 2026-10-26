@@ -32,6 +32,8 @@ import AbstractCore
             "--permission-mode", "acceptEdits", "--permission-prompt-tool", "stdio", "--allow-dangerously-skip-permissions",
         ])
         #expect(spec.cwd == "/tmp/work")
+        #expect(spec.env["CLAUDE_CODE_BASH_EDIT_DIFF"] == "1")
+        #expect(provider.buildResume(ctx, resumeId: "s").env["CLAUDE_CODE_BASH_EDIT_DIFF"] == "1")
         #expect(spec.keepStdinOpen)
         #expect(spec.stdinInitial == #"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"make hi.txt"}]}}"# + "\n")
     }
@@ -325,18 +327,78 @@ import AbstractCore
             lines: [.init(origin: .context, content: "keep"), .init(origin: .removed, content: "old"),
                     .init(origin: .added, content: "new"), .init(origin: .added, content: "more")]))])
     }
+
+    @Test func bashEditDiffFixtureShowsInlineChange() throws {
+        let url = try #require(Bundle.module.url(forResource: "claude-bash-edit-diff", withExtension: "jsonl", subdirectory: "Fixtures"))
+        let parser = provider.makeParser()
+        var timeline = Timeline()
+        for line in try String(contentsOf: url, encoding: .utf8).split(separator: "\n") {
+            timeline.append(contentsOf: parser.feed(String(line), stream: .stdout))
+        }
+        guard case let .tools(_, calls)? = timeline.blocks.first else { Issue.record("missing Bash call"); return }
+        let call = try #require(calls.first)
+        let changes = try #require(call.fileChanges)
+        let edit = try #require(changes.previews.first)
+        #expect(edit.filePath == "/tmp/abstract-fixture/alpha.txt")
+        #expect(edit.additions == 1 && edit.deletions == 1)
+        #expect(edit.lines == [
+            .init(origin: .context, content: "alpha", oldLine: 1, newLine: 1),
+            .init(origin: .removed, content: "beta", oldLine: 2),
+            .init(origin: .added, content: "gamma", newLine: 2),
+        ])
+        #expect(changes.remainingPaths.isEmpty && changes.moreFiles == 0 && !changes.incomplete)
+    }
+
+    @Test func bashEditDiffListsOtherFilesAndIncompleteResults() throws {
+        let paths = (1...8).map { "/tmp/abstract-fixture/\($0).txt" }
+        let files = paths.prefix(5).map { path in
+            ["filePath": path, "hunks": [["oldStart": 1, "newStart": 1, "lines": ["-before", "+after"]]]] as [String: Any]
+        }
+        let payload: [String: Any] = ["type": "user", "message": ["content": [["type": "tool_result", "tool_use_id": "b", "content": "ok"]]],
+                                      "tool_use_result": ["bashEditDiff": ["files": files, "changedFiles": paths,
+                                                                             "moreFiles": 3, "unavailable": true, "shared": true]]]
+        let line = String(decoding: try JSONSerialization.data(withJSONObject: payload), as: UTF8.self)
+        let events = Self.feed([line])
+        let changes = try #require(events.compactMap { if case let .toolFileChanges(_, changes) = $0 { changes } else { nil } }.first)
+        #expect(changes.previews.count == 5)
+        #expect(changes.remainingPaths == Array(paths.suffix(3)))
+        #expect(changes.moreFiles == 3 && changes.incomplete)
+        #expect(changes.previews.allSatisfy { $0.additions == 1 && $0.deletions == 1 })
+    }
+
+    @Test func bashEditDiffSkippedAndOlderResultsStayUnchanged() {
+        let old = Self.feed([#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"b","content":"ok"}]},"tool_use_result":{}}"#])
+        let skipped = Self.feed([#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"b","content":"ok"}]},"tool_use_result":{"bashEditDiff":{"skipped":true,"changedFiles":["/tmp/a"]}}}"#])
+        #expect(old == [.toolResult(toolUseId: "b", output: "ok", isError: false, edit: nil)])
+        #expect(skipped == old)
+    }
+
+    @Test func imagesInAToolResultAreKept() {
+        let png = Data([0x89, 0x50, 0x4E, 0x47]).base64EncodedString()
+        let events = Self.feed([
+            #"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":""# + png + #""}}]}]}}"#,
+        ])
+        #expect(events == [.toolResult(toolUseId: "t", output: "", isError: false, edit: nil),
+                           .toolImages(toolUseId: "t", images: [ToolImage(mediaType: "image/png", data: Data([0x89, 0x50, 0x4E, 0x47]))])])
+        var timeline = Timeline()
+        timeline.append(.toolUse(id: "t", name: "Read", input: .object(["file_path": .string("/w/shot.png")]), edit: nil))
+        events.forEach { timeline.append($0) }
+        guard case let .tools(_, calls)? = timeline.blocks.first else { Issue.record("no call"); return }
+        #expect(calls.first?.result?.images.map(\.mediaType) == ["image/png"])
+    }
 }
 
 @Suite struct ProviderRegistryTests {
     @Test func listsEveryProviderOnce() {
         let ids = ProviderRegistry.all.map(\.id)
-        #expect(ids == ["claude", "codex", "opencode"])
+        #expect(ids == ["claude", "codex", "opencode", "muse"])
         #expect(Set(ids).count == ids.count)
     }
 
     @Test func looksUpById() {
         #expect(ProviderRegistry.provider("claude")?.name == "Claude Code")
         #expect(ProviderRegistry.provider("codex")?.name == "Codex")
+        #expect(ProviderRegistry.provider("muse")?.name == "Muse Code")
         #expect(ProviderRegistry.provider("nope") == nil)
     }
 }

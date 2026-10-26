@@ -41,7 +41,7 @@ struct PanelWorkspace: View {
                         model.updateLayout(session.id) { $0.resize(.side, to: size) }
                     }
                     .ignoresSafeArea(.container, edges: .top)
-                    // Its tabs live in the title band, beside the toolbar buttons.
+                    // At narrow widths its tabs and actions move into its header.
                     PanelView(slot: .side, session: session, showsTabs: false)
                         .frame(width: side)
                         .transition(.move(edge: .trailing).combined(with: .opacity))
@@ -74,8 +74,34 @@ private struct PanelView: View {
 
     var body: some View {
         let panel = model.layout(for: session.id)[slot]
+        let compactSideHeader = slot == .side &&
+            SidePanelChrome.usesPanelHeader(mainColumnWidth: model.mainColumnWidth, sideIsOpen: panel.isOpen)
+        // The side panel runs up through the title band, like the main pane,
+        // so its hairline sits at the band's edge on both sides of the divider.
+        let inTitleBand = slot == .side && !showsTabs
+        let hairlineOffset = SidePanelChrome.hairlineOffset(mainColumnWidth: model.mainColumnWidth, sideIsOpen: panel.isOpen)
         VStack(spacing: 0) {
-            if showsTabs {
+            if compactSideHeader {
+                // One row in the title band: the tabs scroll in what's left
+                // after the chat buttons, so all of them stay visible.
+                let canRun = Project.nonBlank(model.project(session.projectId)?.runScript) != nil && session.worktreePath != nil
+                let buttons = CGFloat(canRun ? 4 : 3)
+                let controlsWidth = buttons * Chrome.button + (buttons - 1) * Chrome.gap
+                GeometryReader { geo in
+                    HStack(spacing: Chrome.gap) {
+                        PanelTabBar(slot: .side, session: session)
+                            .frame(width: SidePanelChrome.tabsWidth(headerWidth: geo.size.width, controlsWidth: controlsWidth, gap: Chrome.gap),
+                                   alignment: .leading)
+                        ChatToolbarControls(session: session, showsTabs: false)
+                            .frame(width: controlsWidth)
+                    }
+                    .frame(maxHeight: .infinity)
+                }
+                .padding(.horizontal, 10)
+                .frame(height: hairlineOffset)
+            } else if inTitleBand {
+                Color.clear.frame(height: hairlineOffset)
+            } else if showsTabs {
                 PanelTabBar(slot: slot, session: session)
                     .padding(.horizontal, 10)
                     .frame(height: 38)
@@ -90,37 +116,42 @@ private struct PanelView: View {
             }
         }
         .background(Color.btCanvas)
+        .ignoresSafeArea(.container, edges: inTitleBand ? .top : Edge.Set())
     }
 }
 
-/// Fixed-width tabs and a + for more, nothing else. The bottom panel shows
-/// it above its content; the side panel's sits in the title band, where
-/// tabs that run into the toolbar buttons fade out under them.
+/// Fixed-width tabs and a + for more. The + stays outside the scrolling tabs
+/// so it remains reachable even when long tab names fill the available room.
 struct PanelTabBar: View {
     @Environment(AppModel.self) private var model
     let slot: PanelSlot
     let session: Session
-    /// In the title band: the + follows the last tab and the row fades out at its end.
+    /// In the title band the row fades out at its end.
     var inTitleBand = false
 
     var body: some View {
         let panel = model.layout(for: session.id)[slot]
-        HStack(spacing: 2) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 2) {
-                    ForEach(panel.tabs) { item in
-                        PanelTab(item: item, active: item.id == panel.active?.id, slot: slot, session: session)
+        ScrollViewReader { proxy in
+            HStack(spacing: 2) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 2) {
+                        ForEach(panel.tabs) { item in
+                            PanelTab(item: item, active: item.id == panel.active?.id, slot: slot, session: session)
+                                .id(item.id)
+                        }
                     }
-                    if inTitleBand { addMenu }
                 }
-            }
-            .mask {
-                HStack(spacing: 0) {
-                    Rectangle()
-                    if inTitleBand { LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing).frame(width: 28) }
+                .mask {
+                    HStack(spacing: 0) {
+                        Rectangle()
+                        if inTitleBand { LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing).frame(width: 28) }
+                    }
                 }
+                addMenu
             }
-            if !inTitleBand { addMenu }
+            .onChange(of: panel.active?.id, initial: true) { _, id in
+                if let id { proxy.scrollTo(id, anchor: .center) }
+            }
         }
     }
 
@@ -128,6 +159,18 @@ struct PanelTabBar: View {
         ChromeIconMenu(symbol: "plus", help: "New tab", size: 24) {
             ForEach(PaneKind.allCases.filter { $0.fits(slot) && $0.isAvailable }, id: \.self) { kind in
                 Button(kind.title) { model.updateLayout(session.id) { $0.add(kind, to: slot) } }
+            }
+            // Tabs plugins offer beside a chat (ABS-96), side panel only.
+            if slot == .side {
+                let offered = model.plugins.contributions(.chatPanel)
+                if !offered.isEmpty {
+                    Divider()
+                    ForEach(offered) { contribution in
+                        Button(contribution.contribution.title) {
+                            model.showPluginPanelTab(contribution, in: session.id)
+                        }
+                    }
+                }
             }
         }
     }
@@ -220,6 +263,13 @@ private struct PaneTabTitle: View {
     let item: PaneItem
     let session: Session
 
+    private var pluginTitle: String? {
+        guard let parsed = PluginContributions.parsePaneItemId(item.id) else { return nil }
+        return model.plugins.contributions(.chatPanel).first {
+            $0.pluginId == parsed.pluginId && $0.contribution.id == parsed.contributionId
+        }?.contribution.title
+    }
+
     var body: some View {
         switch item.kind {
         case .terminal:
@@ -231,6 +281,8 @@ private struct PaneTabTitle: View {
             Text("Files")
         case .review:
             Text(verbatim: model.pullRequests[session.id]?.label ?? "Pull Request")
+        case .plugin:
+            Text(pluginTitle ?? "Plugin")
         default:
             Text(item.kind.title)
         }
@@ -256,7 +308,7 @@ struct PaneGlyph: View {
                 Image(systemName: "apple.terminal").font(.system(size: 11.5, weight: .regular))
             case .review:
                 PullRequestGlyph(kind: .open).frame(width: 12, height: 12)
-            case .chat:
+            case .chat, .plugin:
                 Image(systemName: kind.symbol).font(.system(size: 11.5, weight: .regular))
             }
         }
@@ -338,4 +390,3 @@ struct RegionGlyph: View {
         .frame(width: 16, height: 13)
     }
 }
-

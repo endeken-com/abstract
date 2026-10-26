@@ -49,6 +49,10 @@ public final class ChatStream {
     public private(set) var providerId: String
     private var parser: (any OutputParser)?
     private let makeParser: (String) -> (any OutputParser)?
+    /// Codex reuses item ids on resumed turns. Keep this across parser restarts,
+    /// and rebuild it from the same input and output lines during replay.
+    private var codexTurn = 0
+    private var codexPromptWaiting = false
 
     /// Between a `summarize` marker and the handoff that follows it.
     public private(set) var isSummarizing = false
@@ -68,6 +72,12 @@ public final class ChatStream {
     public func restart(providerId: String) {
         self.providerId = providerId
         parser = makeParser(providerId)
+    }
+
+    /// Lines the parser wants written to the live agent's stdin, drained.
+    /// Empty for agents whose parsers only read.
+    public func takePendingInput() -> [String] {
+        (parser as? any InputDrivingParser)?.takePendingInput() ?? []
     }
 
     /// What the summary turn said, its replies joined.
@@ -90,6 +100,7 @@ public final class ChatStream {
                 return []
             case .handoff:
                 isSummarizing = false
+                codexPromptWaiting = false
                 restart(providerId: marker.to)
                 return [.handoff(from: marker.from, to: marker.to, summary: marker.summary, source: marker.source)]
             }
@@ -97,17 +108,53 @@ public final class ChatStream {
             // A message of yours means any hidden turn is over, even one whose
             // handoff never got logged.
             isSummarizing = false
+            if providerId == "codex" {
+                codexTurn += 1
+                codexPromptWaiting = true
+            }
             return [.text(role: .user, text: line.line, blockId: nil, partial: false)]
+        case .note:
+            return [.notice(.info(line.line))]
+        case .launch:
+            return LaunchRecord(line).map { [.launch($0)] } ?? []
         case .compaction:
             return CompactionMarker(line).map { [$0.event] } ?? []
         case .stdout, .stderr:
             let events = parser?.feed(line.line, stream: line.stream) ?? [.raw(line: line.line, stream: line.stream)]
-            return isSummarizing ? summarizing(events) : events
+            let scoped = providerId == "codex" ? scopeCodex(events) : events
+            return isSummarizing ? summarizing(scoped) : scoped
         }
     }
 
-    public func onExit(code: Int32?) -> [AgentEvent] {
-        guard isSummarizing else { return parser?.onExit(code: code) ?? [] }
+    private func scopeCodex(_ events: [AgentEvent]) -> [AgentEvent] {
+        // A turn without a recorded user line still gets its own namespace.
+        if events.contains(where: { if case .status(.running, _) = $0 { true } else { false } }) {
+            if !codexPromptWaiting { codexTurn += 1 }
+            codexPromptWaiting = false
+        }
+        func id(_ raw: String) -> String { "codex:\(codexTurn):\(raw)" }
+        return events.map { event in
+            switch event {
+            case let .text(.assistant, text, blockId, partial):
+                return .text(role: .assistant, text: text, blockId: blockId.map(id), partial: partial)
+            case let .thinking(text, blockId, partial):
+                return .thinking(text: text, blockId: blockId.map(id), partial: partial)
+            case let .toolUse(raw, name, input, edit):
+                return .toolUse(id: id(raw), name: name, input: input, edit: edit)
+            case let .toolResult(raw, output, isError, edit):
+                return .toolResult(toolUseId: id(raw), output: output, isError: isError, edit: edit)
+            case let .toolImages(raw, images):
+                return .toolImages(toolUseId: id(raw), images: images)
+            default:
+                return event
+            }
+        }
+    }
+
+    /// `stopRequested`: you pressed Stop, so however the process ended, the
+    /// turn was stopped rather than failed.
+    public func onExit(code: Int32?, stopRequested: Bool = false) -> [AgentEvent] {
+        guard isSummarizing else { return stopRequested ? TurnStop.events : parser?.onExit(code: code) ?? [] }
         summaryFinished = true
         if code != 0, capturedSummary.isEmpty { summaryFailed = true }
         return []
@@ -141,7 +188,7 @@ public final class ChatStream {
             for event in feed(line) {
                 // A question from before is either answered or gone.
                 if case .permissionRequest = event { continue }
-                timeline.append(event)
+                timeline.append(event, at: line.at)
             }
         }
         return timeline
@@ -186,7 +233,7 @@ public enum HandoffTranscript {
                 agent = name(to)
                 speaker = nil
                 out += "\n---\n\n_Handed over from \(name(from)) to \(agent)._\n"
-            case .thinking, .system, .turn, .raw, .compaction:
+            case .thinking, .system, .turn, .notice, .raw, .compaction:
                 continue
             }
         }
@@ -195,7 +242,7 @@ public enum HandoffTranscript {
 
     /// "Edit `/path`", "Bash `swift test`".
     static func toolLine(_ call: ToolCall) -> String {
-        let keys = ["file_path", "path", "notebook_path", "command", "pattern", "url", "query"]
+        let keys = ["file_path", "filePath", "path", "notebook_path", "command", "pattern", "url", "query"]
         let target = call.edit?.filePath ?? keys.lazy.compactMap { call.input[$0]?.string }.first
         guard let target else { return call.name }
         let line = target.replacingOccurrences(of: "\n", with: " ")

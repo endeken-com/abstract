@@ -3,7 +3,8 @@ import AbstractCore
 
 enum SettingsTab: String, CaseIterable, Identifiable {
     case appearance, notifications, usage
-    case general, worktrees, agents, integrations
+    case general, worktrees, integrations, plugins
+    case agents, profiles, workflows, skills
     case devices, advanced
     var id: String { rawValue }
     var title: String {
@@ -14,7 +15,11 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .general: "General"
         case .worktrees: "Git & Worktrees"
         case .agents: "Agents"
+        case .profiles: "Profiles"
+        case .workflows: "Workflows"
+        case .skills: "Skills"
         case .integrations: "Integrations"
+        case .plugins: "Plugins"
         case .devices: "Devices"
         case .advanced: "Advanced"
         }
@@ -27,25 +32,77 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .general: "gearshape"
         case .worktrees: "arrow.triangle.branch"
         case .agents: "terminal"
+        case .profiles: "person.crop.circle"
+        case .workflows: Workflow.defaultSymbol
+        case .skills: "book.closed"
         case .integrations: "link"
+        case .plugins: "puzzlepiece.extension"
         case .devices: "laptopcomputer.and.iphone"
         case .advanced: "flask"
         }
     }
 
+    /// One sentence under the pane's title: what it's for.
+    var subtitle: String {
+        switch self {
+        case .appearance: "The theme, and the fonts the interface, the editor and chats are set in."
+        case .notifications: "What Abstract tells you about, and when a quiet chat counts as stalled."
+        case .usage: "Your agents' accounts and plan limits, and what they used."
+        case .general: "How chats read, automations' time zone, the command line and updates."
+        case .worktrees: "Where new worktrees go and how their branches are named."
+        case .agents: "The coding agents Abstract runs, and what each starts with."
+        case .profiles: "Saved setups a chat or automation starts from: agent, model, permissions and instructions."
+        case .workflows: "Profiles taking turns on one chat: say, research, then build, review and test."
+        case .skills: "Skills Abstract manages once and gives to every agent in a project."
+        case .integrations: "Revund."
+        case .plugins: "Plugins add panels, tools and background work to Abstract."
+        case .devices: "Paired Macs, and phones that drive this one."
+        case .advanced: "Options for debugging Abstract and its agents."
+        }
+    }
+
+    /// Words the settings search also matches, beside the title.
+    var keywords: String {
+        switch self {
+        case .appearance: "theme dark light ink paper graphite font size text editor chat"
+        case .notifications: "alert notify stalled quiet finished attention"
+        case .usage: "accounts limits tokens cost plan claude codex"
+        case .general: "transcript output style time zone timezone command line cli updates nightly"
+        case .worktrees: "git branch worktree folder prefix"
+        case .agents: "claude codex opencode path binary model effort default"
+        case .profiles: "profile instructions permissions reviewer planner implementer"
+        case .workflows: "workflow sequence chain steps pipeline researcher developer reviewer qa"
+        case .skills: "skills library"
+        case .integrations: "revund api key"
+        case .plugins: "plugins kanban extensions"
+        case .devices: "pair remote mac phone mobile internet"
+        case .advanced: "debug raw output developer"
+        }
+    }
+
+    func matches(_ query: String) -> Bool {
+        let words = query.lowercased().split(separator: " ")
+        let haystack = "\(title) \(keywords)".lowercased()
+        return words.allSatisfy { haystack.contains($0) }
+    }
+
     /// The sidebar's groups, in order.
     static let groups: [(title: String, tabs: [SettingsTab])] = [
         ("Personal", [.appearance, .notifications, .usage]),
-        ("Workflow", [.general, .worktrees, .agents, .integrations]),
+        ("Projects", [.general, .worktrees, .integrations, .plugins]),
+        ("Agents", [.agents, .profiles, .workflows, .skills]),
         ("System", [.devices, .advanced]),
     ]
 }
 
 /// Settings as a panel over the window (⌘,), like ⌘K: sections on the left,
-/// the section on the right. Esc or a click outside closes it.
+/// the section on the right under its title. Esc, the close button or a
+/// click outside closes it.
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
     @AppStorage("settingsTab") private var tab: SettingsTab = .general
+    @State private var query = ""
+
 
     var body: some View {
         GeometryReader { geo in
@@ -55,53 +112,35 @@ struct SettingsView: View {
                     .onTapGesture { close() }
 
                 HStack(spacing: 0) {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("Settings")
-                            .font(BTFont.ui(13, .semibold))
-                            .foregroundStyle(Color.btText)
-                            .padding(.horizontal, Rail.rowPadding)
-                            .padding(.bottom, Space.sm)
-                        ForEach(SettingsTab.groups, id: \.title) { group in
-                            Text(group.title.uppercased())
-                                .font(BTFont.ui(10.5, .semibold))
-                                .tracking(0.6)
-                                .foregroundStyle(Color.btTextTertiary)
-                                .padding(.horizontal, Rail.rowPadding)
-                                .padding(.top, Space.md)
-                                .padding(.bottom, 2)
-                            ForEach(group.tabs) { item in
-                                Button { tab = item } label: {
-                                    HStack(spacing: 8) {
-                                        Image(systemName: item.symbol)
-                                            .font(.system(size: 12, weight: .medium))
-                                            .frame(width: Rail.iconColumn)
-                                        Text(item.title).font(BTFont.ui(13))
-                                        Spacer(minLength: 0)
-                                    }
-                                    .foregroundStyle(tab == item ? Color.btText : Color.btTextSecondary)
-                                    .padding(.horizontal, Rail.rowPadding)
-                                    .frame(height: Rail.rowHeight)
-                                }
-                                .buttonStyle(RailRowStyle(selected: tab == item))
-                            }
-                        }
-                        Spacer(minLength: 0)
-                    }
-                    .padding(Space.md)
-                    .padding(.top, Space.xs)
-                    .frame(width: 190)
-                    .frame(maxHeight: .infinity, alignment: .top)
-                    .background(Color.btSidebar)
+                    sidebar
+                        .frame(width: 190)
+                        .frame(maxHeight: .infinity, alignment: .top)
+                        .background(Color.btSidebar)
 
                     Rectangle().fill(Color.btBorder).frame(width: 1)
 
-                    ScrollView {
-                        pane
-                            .frame(maxWidth: .infinity, alignment: .top)
+                    VStack(spacing: 0) {
+                        // Above the scroll view, not in it: a grouped form
+                        // stacked with anything else in a scroll view sends
+                        // layout round and round.
+                        header
+                        ScrollView {
+                            pane
+                                .frame(maxWidth: .infinity, alignment: .top)
+                        }
+                        .id(tab)
+                        .btThinScrollIndicator()
                     }
-                    .btThinScrollIndicator()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color.btCanvas)
+                    .overlay(alignment: .topTrailing) {
+                        Button(action: close) {
+                            Image(systemName: "xmark").font(.system(size: 11, weight: .semibold))
+                        }
+                        .buttonStyle(.icon(size: 26))
+                        .help("Close Settings (Esc)")
+                        .padding(Space.md)
+                    }
                 }
                 // Nearly the whole window: settings are read, not glanced at.
                 .frame(width: max(geo.size.width - 64, 0), height: max(geo.size.height - 64, 0))
@@ -110,9 +149,92 @@ struct SettingsView: View {
             }
             .frame(width: geo.size.width, height: geo.size.height)
         }
-        .onKeyPress(.escape) { close(); return .handled }
+        .onKeyPress(.escape) {
+            if !query.isEmpty { query = ""; return .handled }
+            close()
+            return .handled
+        }
         .focusable()
         .focusEffectDisabled()
+    }
+
+    private var sidebar: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text("Settings")
+                .font(BTFont.ui(13, .semibold))
+                .foregroundStyle(Color.btText)
+                .padding(.horizontal, Rail.rowPadding)
+                .padding(.bottom, Space.sm)
+            SettingsSearchField(query: $query) {
+                if let first = visibleGroups.first?.tabs.first { tab = first }
+            }
+            .padding(.bottom, Space.xs)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 1) {
+                    ForEach(visibleGroups, id: \.title) { group in
+                        Text(group.title.uppercased())
+                            .font(BTFont.ui(10.5, .semibold))
+                            .tracking(0.6)
+                            .foregroundStyle(Color.btTextTertiary)
+                            .padding(.horizontal, Rail.rowPadding)
+                            .padding(.top, Space.md)
+                            .padding(.bottom, 2)
+                        ForEach(group.tabs) { item in
+                            Button { tab = item } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: item.symbol)
+                                        .font(.system(size: 12, weight: .medium))
+                                        .frame(width: Rail.iconColumn)
+                                    Text(item.title).font(BTFont.ui(13))
+                                    Spacer(minLength: 0)
+                                }
+                                .foregroundStyle(tab == item ? Color.btText : Color.btTextSecondary)
+                                .padding(.horizontal, Rail.rowPadding)
+                                .frame(height: Rail.rowHeight)
+                            }
+                            .buttonStyle(RailRowStyle(selected: tab == item))
+                        }
+                    }
+                    if visibleGroups.isEmpty {
+                        Text("No settings match “\(query)”.")
+                            .font(.btCaption)
+                            .foregroundStyle(Color.btTextTertiary)
+                            .padding(.horizontal, Rail.rowPadding)
+                            .padding(.top, Space.md)
+                    }
+                }
+            }
+            .scrollIndicators(.never)
+        }
+        .padding(Space.md)
+        .padding(.top, Space.xs)
+    }
+
+    private var visibleGroups: [(title: String, tabs: [SettingsTab])] {
+        let query = query.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return SettingsTab.groups }
+        return SettingsTab.groups.compactMap { group in
+            let tabs = group.tabs.filter { $0.matches(query) }
+            return tabs.isEmpty ? nil : (group.title, tabs)
+        }
+    }
+
+    /// The pane's title and what it's for, lined up with the form below.
+    private var header: some View {
+        VStack(alignment: .leading, spacing: Space.xs) {
+            Text(tab.title)
+                .font(.btTitle)
+                .foregroundStyle(Color.btText)
+            Text(tab.subtitle)
+                .font(.btBody)
+                .foregroundStyle(Color.btTextSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: SettingsLayout.rowWidth - 2 * SettingsLayout.textInset, alignment: .leading)
+        .padding(.horizontal, SettingsLayout.margin + SettingsLayout.textInset)
+        .frame(maxWidth: .infinity)
+        .padding(.top, Space.xl)
+        .padding(.bottom, Space.xs)
     }
 
     @ViewBuilder
@@ -124,13 +246,55 @@ struct SettingsView: View {
         case .general: GeneralSettingsPane()
         case .worktrees: WorktreeSettingsPane()
         case .agents: AgentSettingsPane()
+        case .profiles: ProfilesSettingsPane()
+        case .workflows: WorkflowsSettingsPane()
+        case .skills: SkillsSettingsPane()
         case .integrations: IntegrationsSettingsPane()
+        case .plugins: PluginsSettingsPane()
         case .devices: DevicesSettingsPane()
         case .usage: UsageSettingsPane()
         }
     }
 
     private func close() { model.isSettingsOpen = false }
+}
+
+/// Where a settings pane's words line up. A grouped form centres its rows,
+/// at most about 704 points wide with 20 around them, and their words start
+/// 10 in; the title above and panes of their own follow it.
+enum SettingsLayout {
+    static let rowWidth: CGFloat = 704
+    static let margin: CGFloat = 20
+    static let textInset: CGFloat = 10
+}
+
+/// Filters the settings sections as you type; Return opens the first.
+private struct SettingsSearchField: View {
+    @Binding var query: String
+    let submit: () -> Void
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11))
+                .foregroundStyle(Color.btTextTertiary)
+            TextField("Search", text: $query)
+                .textFieldStyle(.plain)
+                .font(BTFont.ui(13))
+                .focused($focused)
+                .onSubmit(submit)
+            if !query.isEmpty {
+                Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.btTextTertiary)
+                    .help("Clear")
+            }
+        }
+        .padding(.horizontal, 8)
+        .frame(height: Field.compactHeight)
+        .btFieldChrome(focused: focused)
+    }
 }
 
 extension View {
@@ -167,13 +331,15 @@ private struct AppearanceSettingsPane: View {
         Form {
             Section {
                 HStack(spacing: Space.md) {
-                    ForEach([ThemeChoice.graphite, .paper, .system]) { choice in
+                    ForEach([ThemeChoice.graphite, .paper, .ink, .system]) { choice in
                         ThemeCard(choice: choice, selected: theme == choice) { theme = choice }
                     }
                 }
                 .padding(.vertical, Space.xs)
             } header: {
                 Text("Theme")
+            } footer: {
+                SettingsCaption("Ink is true black with high contrast. Match System uses it when macOS is in Dark mode with Increase contrast turned on (System Settings → Accessibility → Display).")
             }
             InterfaceFontSection()
             EditorFontSection()
@@ -199,6 +365,16 @@ private struct AppearanceSettingsPane: View {
 private struct NotificationSettingsPane: View {
     @Environment(AppModel.self) private var model
 
+    /// The thresholds re-clamp on the way in, so Stalled always comes after quiet.
+    private var quietMinutes: Binding<Int> {
+        Binding(get: { model.stallThresholds.quietMinutes },
+                set: { model.stallThresholds = StallThresholds(quietMinutes: $0, stalledMinutes: model.stallThresholds.stalledMinutes) })
+    }
+    private var stalledMinutes: Binding<Int> {
+        Binding(get: { model.stallThresholds.stalledMinutes },
+                set: { model.stallThresholds = StallThresholds(quietMinutes: model.stallThresholds.quietMinutes, stalledMinutes: $0) })
+    }
+
     var body: some View {
         @Bindable var model = model
         Form {
@@ -215,8 +391,26 @@ private struct NotificationSettingsPane: View {
                     Text("When an automation fails")
                     Text("A scheduled run couldn't create its workspace or start its agent.")
                 }
+                Toggle(isOn: $model.notifyStalled) {
+                    Text("When a chat goes quiet")
+                    Text("Its agent is still working but hasn't produced any output for a long time.")
+                }
             } header: {
                 Text("Notify me")
+            }
+            Section {
+                Stepper(value: quietMinutes, in: 1...120) {
+                    Text("Show “No output” after")
+                    Text("\(model.stallThresholds.quietMinutes) minutes without output. The chat's working line says so; nothing else happens.")
+                }
+                Stepper(value: stalledMinutes, in: 2...240) {
+                    Text("Mark the chat Stalled after")
+                    Text("\(model.stallThresholds.stalledMinutes) minutes without output. You're told once, with Keep waiting, Stop and Stop and retry.")
+                }
+            } header: {
+                Text("Chats that go quiet")
+            } footer: {
+                SettingsCaption("Time spent waiting for your answer to a permission or a question, or for a task running in the background, doesn't count. Abstract never restarts a quiet chat on its own.")
             }
         }
         .settingsPane()
@@ -446,14 +640,16 @@ private struct ThemeCard: View {
     private var preview: some View {
         switch choice {
         case .graphite:
-            WindowMock().environment(\.colorScheme, .dark)
+            WindowMock(theme: .graphite)
         case .paper:
-            WindowMock().environment(\.colorScheme, .light)
+            WindowMock(theme: .paper)
+        case .ink:
+            WindowMock(theme: .ink)
         case .system:
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
-                    WindowMock().environment(\.colorScheme, .light)
-                    WindowMock().environment(\.colorScheme, .dark)
+                    WindowMock(theme: .paper)
+                    WindowMock(theme: .graphite)
                         .mask(alignment: .trailing) { Rectangle().frame(width: geo.size.width / 2) }
                 }
             }
@@ -461,48 +657,52 @@ private struct ThemeCard: View {
     }
 }
 
-/// Sidebar, a heading, a few lines and an accent button, in theme colours.
+/// Sidebar, a heading, a few lines and an accent button, in one theme's colours.
 private struct WindowMock: View {
+    let theme: Theme
+
     var body: some View {
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 3) {
-                    ForEach(0..<3, id: \.self) { _ in Circle().fill(Color.btTextTertiary.opacity(0.6)).frame(width: 5, height: 5) }
+                    ForEach(0..<3, id: \.self) { _ in Circle().fill(c(.textTertiary).opacity(0.6)).frame(width: 5, height: 5) }
                 }
                 .padding(.bottom, 4)
-                bar(Color.btTextTertiary.opacity(0.5), width: 30)
-                bar(Color.btText.opacity(0.55), width: 38)
+                bar(c(.textTertiary).opacity(0.5), width: 30)
+                bar(c(.text).opacity(0.55), width: 38)
                     .padding(.vertical, 3)
                     .padding(.horizontal, 3)
-                    .background(Color.btSelection, in: RoundedRectangle(cornerRadius: 2.5, style: .continuous))
+                    .background(c(.selection), in: RoundedRectangle(cornerRadius: 2.5, style: .continuous))
                     .padding(.horizontal, -3)
-                bar(Color.btTextTertiary.opacity(0.5), width: 26)
-                bar(Color.btTextTertiary.opacity(0.5), width: 34)
+                bar(c(.textTertiary).opacity(0.5), width: 26)
+                bar(c(.textTertiary).opacity(0.5), width: 34)
             }
             .padding(7)
             .frame(width: 58, alignment: .topLeading)
             .frame(maxHeight: .infinity, alignment: .top)
-            .background(Color.btSidebar)
+            .background(c(.sidebar))
 
-            Rectangle().fill(Color.btBorder).frame(width: 0.5)
+            Rectangle().fill(c(.border)).frame(width: 0.5)
 
             VStack(alignment: .leading, spacing: 5) {
-                bar(Color.btText.opacity(0.8), width: 48, height: 4.5)
-                bar(Color.btTextSecondary.opacity(0.45), width: 70)
-                Rectangle().fill(Color.btBorder).frame(height: 0.5).padding(.vertical, 2)
-                bar(Color.btTextSecondary.opacity(0.5), width: 58)
-                bar(Color.btTextTertiary.opacity(0.45), width: 44)
+                bar(c(.text).opacity(0.8), width: 48, height: 4.5)
+                bar(c(.textSecondary).opacity(0.45), width: 70)
+                Rectangle().fill(c(.border)).frame(height: 0.5).padding(.vertical, 2)
+                bar(c(.textSecondary).opacity(0.5), width: 58)
+                bar(c(.textTertiary).opacity(0.45), width: 44)
                 Spacer(minLength: 0)
                 HStack {
                     Spacer()
-                    Capsule().fill(Color.btAccent).frame(width: 22, height: 7)
+                    Capsule().fill(c(.accent)).frame(width: 22, height: 7)
                 }
             }
             .padding(8)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(Color.btCanvas)
+            .background(c(.canvas))
         }
     }
+
+    private func c(_ role: PaletteRole) -> Color { .bt(role, in: theme) }
 
     private func bar(_ color: Color, width: CGFloat, height: CGFloat = 3.5) -> some View {
         Capsule().fill(color).frame(width: width, height: height)

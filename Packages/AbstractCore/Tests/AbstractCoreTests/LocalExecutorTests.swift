@@ -32,21 +32,22 @@ private final class Recorder: Sendable {
 
     /// `.some(code)` once onExit fired, nil on timeout.
     func waitForExit(timeout: Duration = .seconds(10)) async -> Int32?? {
-        let deadline = ContinuousClock.now + timeout
-        while ContinuousClock.now < deadline {
-            if let first = state.withLock({ $0.exits.first }) { return .some(first) }
-            try? await Task.sleep(for: .milliseconds(10))
-        }
-        return nil
+        await poll(timeout) { self.state.withLock { $0.exits.first } }
     }
 
     func waitForLine(timeout: Duration = .seconds(10), _ match: (OutputLine) -> Bool) async -> OutputLine? {
+        await poll(timeout) { self.lines.first(where: match) }
+    }
+
+    /// Looks once more after the deadline: on a busy machine this task can
+    /// wake past it, and what it waited for may have come meanwhile.
+    private func poll<T>(_ timeout: Duration, _ look: () -> T?) async -> T? {
         let deadline = ContinuousClock.now + timeout
         while ContinuousClock.now < deadline {
-            if let line = lines.first(where: match) { return line }
+            if let found = look() { return found }
             try? await Task.sleep(for: .milliseconds(10))
         }
-        return nil
+        return look()
     }
 }
 
@@ -96,10 +97,74 @@ private final class Recorder: Sendable {
         #expect(out.stderr.split(separator: "\n").count == 200_000)
     }
 
+    @Test(.timeLimit(.minutes(1)))
+    func runGivesTheCommandItsInput() async throws {
+        // Four times what a pipe holds, so writing and reading must overlap.
+        let input = String(repeating: "0123456789abcde\n", count: 16_384)
+        let out = try await exec.run("cat", [], cwd: nil, stdin: Data(input.utf8))
+        #expect(out.ok)
+        #expect(out.stdout == input)
+        // Without input it reads nothing, rather than waiting for some.
+        #expect(try await exec.run("cat", [], cwd: nil).stdout == "")
+        #expect(try await exec.run("cat", [], cwd: nil, stdin: Data()).stdout == "")
+    }
+
+    @Test func runIgnoresInputTheCommandNeverReads() async throws {
+        let out = try await exec.run("true", [], cwd: nil, stdin: Data(repeating: 65, count: 256 << 10))
+        #expect(out.ok)
+    }
+
     @Test func runMissingCommandThrowsNotFound() async {
         await #expect(throws: AbstractError.notFound("abstract-no-such-binary")) {
             try await self.exec.run("abstract-no-such-binary", [], cwd: nil)
         }
+    }
+
+    @Test func runInAMissingFolderThrows() async {
+        await #expect(throws: AbstractError.self) {
+            try await self.exec.run("sh", ["-c", "true"], cwd: "/abstract-no-such-folder")
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func cancellingRunStopsTheCommandAndWhatItStarted() async throws {
+        let dir = NSTemporaryDirectory() + "run-cancel-\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        let task = Task { [exec] in
+            try await exec.run("sh", ["-c", "sleep 30 & echo $$ $! > pids; wait"], cwd: dir)
+        }
+        var pids: [pid_t] = []
+        let deadline = ContinuousClock.now + .seconds(10)
+        while pids.count < 2 && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+            let text = (try? String(contentsOfFile: dir + "/pids", encoding: .utf8)) ?? ""
+            pids = text.split(whereSeparator: \.isWhitespace).compactMap { pid_t($0) }
+        }
+        try #require(pids.count == 2)
+        let start = ContinuousClock.now
+        task.cancel()
+        await #expect(throws: CancellationError.self) { try await task.value }
+        #expect(ContinuousClock.now - start < .seconds(5))
+        let gone = ContinuousClock.now + .seconds(5)
+        while pids.contains(where: { kill($0, 0) == 0 }) && ContinuousClock.now < gone {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(!pids.contains { kill($0, 0) == 0 }, "the shell and its sleep both ended")
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func cancellingRunEscalatesToSIGKILL() async throws {
+        // A slow login shell (its first lookup) isn't what's measured.
+        _ = await exec.searchPath
+        let task = Task { [exec] in
+            try await exec.run("sh", ["-c", "trap '' TERM; while :; do sleep 0.1; done"], cwd: nil)
+        }
+        try await Task.sleep(for: .milliseconds(300))
+        let start = ContinuousClock.now
+        task.cancel()
+        await #expect(throws: CancellationError.self) { try await task.value }
+        #expect(ContinuousClock.now - start < .seconds(8))
     }
 
     // MARK: which / PATH
@@ -201,6 +266,8 @@ private final class Recorder: Sendable {
 
     @Test(.timeLimit(.minutes(1)))
     func terminateEndsSleep() async throws {
+        // A slow login shell (its first lookup) isn't what's measured.
+        _ = await exec.searchPath
         let start = ContinuousClock.now
         let (process, recorder) = try spawn("sleep", ["30"])
         try await Task.sleep(for: .milliseconds(100))

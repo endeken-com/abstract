@@ -1,0 +1,3 @@
+  WORKSPACE ORG NAME   USER
+* example   Example    Sample Person <person@example.com>
+  sandbox   Sample Org Sample Person <person@example.com>

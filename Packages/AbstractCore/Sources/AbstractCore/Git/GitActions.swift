@@ -2,6 +2,8 @@ import Foundation
 
 /// Where a chat's branch stands, for the git actions button.
 public struct BranchState: Sendable, Equatable {
+    /// The local branch the worktree is on; nil on a detached HEAD.
+    public var branch: String?
     public var dirty = false
     public var hasOrigin = false
     public var hasUpstream = false
@@ -21,6 +23,27 @@ public struct BranchState: Sendable, Equatable {
 
     /// The base's branch name without its remote: `main`.
     public var baseName: String? { base.map { $0.hasPrefix("origin/") ? String($0.dropFirst(7)) : $0 } }
+
+    /// The branch a chat recording `recorded` should follow: the one its
+    /// worktree is on now (renamed, or switched to), when that's another.
+    /// nil keeps the record, as a detached HEAD does.
+    public func movedBranch(from recorded: String?) -> String? {
+        guard let branch, branch != recorded else { return nil }
+        return branch
+    }
+
+    /// Whether a chat may take `branch` as its own: never one of its bases
+    /// (`main`, `origin/main`). An agent that switched its worktree onto the
+    /// base must not turn the chat's Push into a push to the base.
+    public static func mayFollow(_ branch: String, bases: [String?]) -> Bool {
+        let names = bases.compactMap { $0 }.map { base -> String in
+            for prefix in ["refs/heads/", "refs/remotes/origin/", "origin/"] where base.hasPrefix(prefix) {
+                return String(base.dropFirst(prefix.count))
+            }
+            return base
+        }
+        return !names.contains(branch)
+    }
 }
 
 /// The git actions behind the Commit button, after Paseo's (Apache-2.0,
@@ -47,6 +70,7 @@ public enum GitActions {
             return r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         }
         func count(_ args: [String]) async -> Int { Int(await out(args) ?? "") ?? 0 }
+        state.branch = await out(["symbolic-ref", "--quiet", "--short", "HEAD"]).flatMap { $0.isEmpty ? nil : $0 }
         state.dirty = await Diff.isDirty(exec, worktree: worktree)
         state.hasOrigin = await out(["remote", "get-url", "origin"]) != nil
         if await out(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"]) != nil {
@@ -55,7 +79,7 @@ public enum GitActions {
             state.behind = await count(["rev-list", "--count", "HEAD..@{upstream}"])
         } else if state.hasOrigin {
             state.ahead = await count(["rev-list", "--count", "HEAD", "--not", "--remotes=origin"])
-            if let branch = await out(["symbolic-ref", "--short", "HEAD"]) {
+            if let branch = state.branch {
                 state.upstreamGone = await out(["config", "branch.\(branch).merge"]) != nil
             }
         }
@@ -110,7 +134,9 @@ public enum GitActions {
     }
 
     public static func pull(_ exec: any Executor, worktree: String) async throws {
-        let result = try await Git.git(exec, cwd: worktree, ["pull", "--no-rebase"])
+        let result = try await withTimeLimit(Git.transferLimit, what: "git pull") {
+            try await Git.git(exec, cwd: worktree, ["pull", "--no-rebase"])
+        }
         guard result.ok else {
             _ = try? await Git.git(exec, cwd: worktree, ["merge", "--abort"])
             throw AbstractError.message(result.stderr.trimmingCharacters(in: .whitespacesAndNewlines))

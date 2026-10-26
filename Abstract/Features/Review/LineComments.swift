@@ -41,6 +41,8 @@ nonisolated struct LineComment: Identifiable, Hashable, Sendable {
     var context: ReviewLineContext? = nil
     /// What the review compared when it was written: "uncommitted", "committed", a commit.
     var source: String? = nil
+    /// Who wrote it when it wasn't you: the agent that reviewed (ABS-112).
+    var author: String? = nil
 }
 
 extension AppModel {
@@ -51,11 +53,11 @@ extension AppModel {
     }
 
     func addComment(_ sessionId: String, on ref: LineRef, code: String, text: String,
-                    context: ReviewLineContext? = nil, source: String? = nil) {
+                    context: ReviewLineContext? = nil, source: String? = nil, author: String? = nil) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         lineComments[sessionId, default: []].append(LineComment(id: UUID(), ref: ref, code: code, text: text,
-                                                                context: context, source: source))
+                                                                context: context, source: source, author: author))
     }
 
     func updateComment(_ sessionId: String, _ id: UUID, text: String) {
@@ -69,6 +71,22 @@ extension AppModel {
     }
 
     func discardComments(_ sessionId: String) { lineComments[sessionId] = nil }
+
+    /// The comments going to the agent are kept as notes on their lines,
+    /// at the commit the review showed, for the turn they lead to.
+    func keepCommentsAsNotes(_ sessionId: String) {
+        let comments = comments(sessionId)
+        guard !comments.isEmpty, let worktree = session(sessionId)?.worktreePath else { return }
+        let exec = executor(for: sessionId)
+        Task {
+            let head = await TurnGit.head(exec, worktree: worktree)
+            for c in comments {
+                let reviewed = c.source.flatMap { $0.count >= 7 && $0.allSatisfy(\.isHexDigit) ? $0 : nil }
+                try? store.save(CodeNote(sessionId: sessionId, kind: .lineComment, path: c.ref.path, line: c.ref.line,
+                                         commit: reviewed ?? head, body: c.text))
+            }
+        }
+    }
 
     /// Your message with the review attached after it, as the agent gets it.
     /// Sending clears the comments.
@@ -91,7 +109,7 @@ extension AppModel {
         for (i, c) in ordered.enumerated() {
             lines.append("")
             lines.append("Comment \(i + 1): \(c.ref.path):\(c.ref.side == .old ? "old" : "new"):\(c.ref.line)")
-            lines.append(c.text)
+            lines.append(c.author.map { "\($0): \(c.text)" } ?? c.text)
             if let context = c.context {
                 lines.append(context.hunkHeader)
                 for line in context.lines {
@@ -201,12 +219,20 @@ private struct SavedComment: View {
             }
         } else {
             HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
-                Text(comment.text)
-                    .font(.btBody)
-                    .foregroundStyle(Color.btText)
-                    .lineSpacing(2)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 2) {
+                    // A reviewer's finding says whose it is (ABS-112).
+                    if let author = comment.author {
+                        Label(author, systemImage: "person.2")
+                            .font(.btCaption)
+                            .foregroundStyle(Color.btTextSecondary)
+                    }
+                    Text(comment.text)
+                        .font(.btBody)
+                        .foregroundStyle(Color.btText)
+                        .lineSpacing(2)
+                        .textSelection(.enabled)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 HStack(spacing: 2) {
                     Button { editing = true } label: { Image(systemName: "pencil") }
                         .help("Edit comment")

@@ -3,9 +3,8 @@ import SwiftUI
 import UniformTypeIdentifiers
 import AbstractCore
 
-/// Linear's mark and GitHub's issue octicon (MIT), drawn in the text colour.
+/// GitHub's issue octicon (MIT), drawn in the text colour.
 enum BrandGlyph {
-    static let linear = template(#"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"><path d="M2.886 4.18A11.982 11.982 0 0 1 11.99 0C18.624 0 24 5.376 24 12.009c0 3.64-1.62 6.903-4.18 9.105L2.887 4.18ZM1.817 5.626l16.556 16.556c-.524.33-1.075.62-1.65.866L.951 7.277c.247-.575.537-1.126.866-1.65ZM.322 9.163l14.515 14.515c-.71.172-1.443.282-2.195.322L0 11.358a12 12 0 0 1 .322-2.195Zm-.17 4.862 9.823 9.824a12.02 12.02 0 0 1-9.824-9.824Z"/></svg>"#)
     static let issue = template(#"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><path d="M8 9.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z"/><path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Z"/></svg>"#)
 
     private static func template(_ svg: String) -> NSImage {
@@ -32,6 +31,8 @@ private enum Thumbnails {
 struct AttachmentGlyph: View {
     let kind: PromptAttachment.Kind
     var path: String?
+    /// Tracker issues: the plugin whose icon it shows.
+    var tracker: String?
     var size: CGFloat = 13
 
     var body: some View {
@@ -49,8 +50,8 @@ struct AttachmentGlyph: View {
             Image(nsImage: BrandGlyph.issue).renderingMode(.template).resizable().frame(width: size, height: size)
         case .pullRequest:
             PullRequestGlyph(kind: .open).frame(width: size, height: size)
-        case .linearIssue:
-            Image(nsImage: BrandGlyph.linear).renderingMode(.template).resizable().frame(width: size - 1, height: size - 1)
+        case .trackerIssue:
+            TrackerGlyph(pluginId: tracker, size: size)
         case .revundReview:
             RevundGlyph(size: size)
         }
@@ -59,6 +60,39 @@ struct AttachmentGlyph: View {
     private func isFolder(_ path: String) -> Bool {
         var isDir: ObjCBool = false
         return FileManager.default.fileExists(atPath: path, isDirectory: &isDir) && isDir.boolValue
+    }
+}
+
+/// A tracker plugin's icon, or a plain ticket when it isn't installed. A
+/// one-colour icon takes the text colour; Jira's keeps its blue (ABS-143).
+struct TrackerGlyph: View {
+    let pluginId: String?
+    var size: CGFloat = 13
+
+    var body: some View {
+        if let image = TrackerIcons.image(pluginId) {
+            Image(nsImage: image).renderingMode(image.isTemplate ? .template : .original)
+                .resizable().aspectRatio(contentMode: .fit).frame(width: size - 1, height: size - 1)
+        } else {
+            Image(systemName: "ticket").font(.system(size: size * 0.8)).frame(width: size, height: size)
+        }
+    }
+}
+
+/// The marks of the trackers an issue control searches, side by side:
+/// one for a project linked to one tracker, both when it links both or
+/// links none and both are on (ABS-143).
+struct TrackerMarks: View {
+    let trackers: [ResolvedIssueTracker]
+    var size: CGFloat = 13
+
+    var body: some View {
+        let shown = trackers.prefix(2)
+        HStack(spacing: 2) {
+            ForEach(Array(shown)) { tracker in
+                TrackerGlyph(pluginId: tracker.pluginId, size: shown.count > 1 ? size - 2 : size)
+            }
+        }
     }
 }
 
@@ -85,7 +119,7 @@ private struct AttachmentPill: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            AttachmentGlyph(kind: attachment.kind, path: attachment.path, size: 14)
+            AttachmentGlyph(kind: attachment.kind, path: attachment.path, tracker: attachment.tracker, size: 14)
                 .foregroundStyle(Color.btTextSecondary)
             Text(attachment.label)
                 .font(BTFont.ui(12))
@@ -139,35 +173,63 @@ enum AttachmentActions {
     }
 }
 
-/// Linear (once connected in Settings › Integrations), GitHub issue and pull
-/// request buttons, beside Send. `repoRoot` is where `gh` looks for the
-/// repository; nil hides GitHub.
+/// Issue tracker (while a tracker plugin is on, ABS-141), GitHub issue and
+/// pull request buttons, beside Send. GitHub's ask the project's code host
+/// (ABS-139); a nil `repoRoot` hides them.
 struct AttachmentButtons: View {
+    @Environment(AppModel.self) private var model
     let repoRoot: String?
-    /// The chat, or else the project, whose Mac runs `gh`; neither is this Mac.
+    /// The chat, or else the project, whose code host is asked, on its Mac.
     var sessionId: String? = nil
     var projectId: String? = nil
     @Binding var attachments: [PromptAttachment]
     var size: CGFloat = 26
     @State private var picking: AttachSource?
-    @AppStorage(LinearAccount.connectedKey) private var linearConnected = false
+    @State private var supportsGitHubIssues = false
 
     var body: some View {
         HStack(spacing: 0) {
-            if linearConnected {
-                button(.linear, help: "Link a Linear issue") {
-                    Image(nsImage: BrandGlyph.linear).renderingMode(.template).resizable().frame(width: 12, height: 12)
+            let project = model.projectIssueTrackers(projectId ?? model.session(sessionId)?.projectId)
+            let trackers = project.shown()
+            if !trackers.isEmpty {
+                button(.tracker, help: Self.trackerHelp(project)) {
+                    TrackerMarks(trackers: trackers, size: 13)
                 }
             }
             if repoRoot != nil {
-                button(.githubIssue, help: "Link a GitHub issue") {
-                    Image(nsImage: BrandGlyph.issue).renderingMode(.template).resizable().frame(width: 13, height: 13)
+                if supportsGitHubIssues {
+                    button(.githubIssue, help: "Link a GitHub issue") {
+                        Image(nsImage: BrandGlyph.issue).renderingMode(.template).resizable().frame(width: 13, height: 13)
+                    }
                 }
                 button(.pullRequest, help: "Link a pull request") {
                     PullRequestGlyph(kind: .open).frame(width: 13, height: 13)
                 }
             }
         }
+        .task(id: repoRoot) {
+            guard repoRoot != nil,
+                  let project = model.project(projectId ?? model.session(sessionId)?.projectId) else {
+                supportsGitHubIssues = false
+                return
+            }
+            let origin = await model.origin(of: project)
+            supportsGitHubIssues = origin.flatMap(GitRemote.host) == "github.com"
+                || model.codeHost(remote: origin, context: CodeHostContext())?.pluginId == "sh.abstract.github"
+        }
+    }
+
+    /// "Link a Linear issue from ENG · Core", or which trackers it searches.
+    static func trackerHelp(_ project: ProjectIssueTrackers) -> String {
+        if project.linked.count == 1, let only = project.linked.first {
+            return "Link a \(only.tracker.title) issue from \(only.link.title)"
+        }
+        if !project.linked.isEmpty {
+            return "Link an issue from " + project.linked.map { "\($0.link.title) in \($0.tracker.title)" }
+                .joined(separator: " or ")
+        }
+        let titles = project.shown().map(\.title)
+        return titles.count == 1 ? "Link a \(titles[0]) issue" : "Link a \(titles.joined(separator: " or ")) issue"
     }
 
     private func button<Label: View>(_ source: AttachSource, help: String, @ViewBuilder label: () -> Label) -> some View {
@@ -206,11 +268,15 @@ struct AttachUploadButton: View {
 }
 
 enum AttachSource: Hashable {
-    case linear, githubIssue, pullRequest
+    /// The project's linked trackers, or every one that's on (ABS-141, ABS-143).
+    case tracker, githubIssue, pullRequest
 
-    var placeholder: String {
+    func placeholder(_ trackers: [ResolvedIssueTracker]) -> String {
         switch self {
-        case .linear: "Search Linear issues, or paste ENG-123"
+        case .tracker:
+            trackers.count == 1
+                ? "Search \(trackers[0].title) issues, or paste \(trackers[0].declaration.keyExample)"
+                : "Search \(trackers.map(\.title).joined(separator: " and ")) issues, or paste a key or link"
         case .githubIssue: "Search issues, or #number"
         case .pullRequest: "Search pull requests, or #number"
         }
@@ -218,7 +284,7 @@ enum AttachSource: Hashable {
 
     var empty: String {
         switch self {
-        case .linear: "No open issues assigned to you."
+        case .tracker: "No open issues assigned to you."
         case .githubIssue: "No open issues."
         case .pullRequest: "No open pull requests."
         }
@@ -226,7 +292,7 @@ enum AttachSource: Hashable {
 
     var kind: PromptAttachment.Kind {
         switch self {
-        case .linear: .linearIssue
+        case .tracker: .trackerIssue
         case .githubIssue: .githubIssue
         case .pullRequest: .pullRequest
         }
@@ -250,6 +316,9 @@ private struct AttachPicker: View {
         var state: String
         var stateTint: Color? = nil
         var attachment: PromptAttachment
+        /// The tracker it came from, named with its mark above its first
+        /// result when several trackers are searched.
+        var section: ResolvedIssueTracker? = nil
     }
 
     @State private var query = ""
@@ -257,18 +326,32 @@ private struct AttachPicker: View {
     @State private var selection = 0
     @State private var loading = true
     @State private var problem: String?
-    @State private var linear = LinearAccount.shared
+    /// Trackers that couldn't be asked, each with what to do.
+    @State private var trackerProblems: [String] = []
+    /// The newest search; an older one still answering doesn't overwrite it.
+    @State private var generation = 0
+    /// Every tracker, unscoped, instead of the project's links (ABS-143).
+    @State private var searchAll = false
     @FocusState private var focused: Bool
+
+    private var trackerProject: ProjectIssueTrackers {
+        model.projectIssueTrackers(projectId ?? model.session(sessionId)?.projectId)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
-                AttachmentGlyph(kind: source.kind, size: 13).foregroundStyle(Color.btTextTertiary)
-                TextField(source.placeholder, text: $query)
+                if source == .tracker {
+                    TrackerMarks(trackers: trackerProject.shown(searchAll: searchAll), size: 13)
+                        .foregroundStyle(Color.btTextTertiary)
+                } else {
+                    AttachmentGlyph(kind: source.kind, size: 13).foregroundStyle(Color.btTextTertiary)
+                }
+                TextField(source.placeholder(trackerProject.shown(searchAll: searchAll)), text: $query)
                     .textFieldStyle(.plain)
                     .font(BTFont.ui(13))
                     .focused($focused)
-                    .onSubmit { if items.indices.contains(selection) { pick(items[selection].attachment) } }
+                    .onSubmit { if !loading, items.indices.contains(selection) { choose(items[selection]) } }
                     .onKeyPress(.downArrow) { selection = min(selection + 1, max(items.count - 1, 0)); return .handled }
                     .onKeyPress(.upArrow) { selection = max(selection - 1, 0); return .handled }
                 if loading { ProgressView().controlSize(.small) }
@@ -276,11 +359,12 @@ private struct AttachPicker: View {
             .padding(.horizontal, 12)
             .frame(height: 40)
             Hairline()
+            if source == .tracker { scope }
             content
         }
         .frame(width: 420)
         .onAppear { focused = true }
-        .task(id: "\(query)|\(linear.key ?? "")") {
+        .task(id: "\(searchAll)\u{0}\(query)") {
             // Typing settles before searching.
             if !query.isEmpty { try? await Task.sleep(for: .milliseconds(250)) }
             guard !Task.isCancelled else { return }
@@ -288,12 +372,48 @@ private struct AttachPicker: View {
         }
     }
 
+    /// Where the search looks: the project's linked tracker projects, with
+    /// Search all beside them, or, for a project not linked yet, every
+    /// tracker that's on and where to link one (ABS-143).
+    @ViewBuilder
+    private var scope: some View {
+        let project = trackerProject
+        if project.canSearchAll {
+            HStack(spacing: 8) {
+                Text(searchAll ? "Searching every project in " + project.available.map(\.title).joined(separator: " and ")
+                               : "Searching " + project.linked.map { "\($0.link.title) in \($0.tracker.title)" }
+                                   .joined(separator: " and "))
+                    .font(.btCallout).foregroundStyle(Color.btTextTertiary).lineLimit(1).truncationMode(.tail)
+                Spacer(minLength: 8)
+                Toggle("Search all", isOn: $searchAll).toggleStyle(.checkbox).font(.btCallout)
+                    .help("Search every project in every tracker, not only the ones this project links to")
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 30)
+            Hairline()
+        } else if project.available.count > 1 {
+            Text("This project isn't linked to \(project.available.map(\.title).joined(separator: " or ")) yet, so \(project.available.count == 2 ? "both are" : "all are") searched. Link it in Project Settings.")
+                .font(.btCallout).foregroundStyle(Color.btTextTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12).padding(.vertical, 8)
+            Hairline()
+        }
+    }
+
     @ViewBuilder
     private var content: some View {
-        if source == .linear, !linear.isConnected {
-            LinearConnectForm()
-                .padding(12)
-        } else if let problem {
+        if !trackerProblems.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(trackerProblems, id: \.self) { line in
+                    Text(line).font(.btCallout).foregroundStyle(Color.btTextSecondary)
+                        .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+        }
+        if let problem {
             Text(problem)
                 .font(.btCallout)
                 .foregroundStyle(Color.btTextSecondary)
@@ -301,16 +421,30 @@ private struct AttachPicker: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(12)
         } else if items.isEmpty {
-            Text(loading ? " " : query.isEmpty ? source.empty : "Nothing matches.")
-                .font(.btCallout)
-                .foregroundStyle(Color.btTextTertiary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(12)
+            if trackerProblems.isEmpty || loading {
+                Text(loading ? " " : query.isEmpty ? source.empty : "Nothing matches.")
+                    .font(.btCallout)
+                    .foregroundStyle(Color.btTextTertiary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+            }
         } else {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 0) {
                         ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                            if let section = item.section {
+                                HStack(spacing: 6) {
+                                    TrackerGlyph(pluginId: section.pluginId, size: 11)
+                                    Text(section.title)
+                                }
+                                    .font(BTFont.ui(11, .medium))
+                                    .foregroundStyle(Color.btTextTertiary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.horizontal, 8)
+                                    .padding(.top, index == 0 ? 4 : 10)
+                                    .padding(.bottom, 4)
+                            }
                             row(item, selected: index == selection).id(index)
                         }
                     }
@@ -324,7 +458,7 @@ private struct AttachPicker: View {
     }
 
     private func row(_ item: Item, selected: Bool) -> some View {
-        Button { pick(item.attachment) } label: {
+        Button { choose(item) } label: {
             HStack(spacing: 10) {
                 Text(item.reference)
                     .font(BTFont.mono(11.5))
@@ -350,32 +484,61 @@ private struct AttachPicker: View {
         .help(item.attachment.url ?? "")
     }
 
+    private func choose(_ item: Item) {
+        guard item.attachment.kind == .trackerIssue else { pick(item.attachment); return }
+        Task {
+            loading = true
+            pick(await model.completeTrackerIssue(item.attachment))
+            loading = false
+        }
+    }
+
     private func load() async {
+        generation += 1
+        let mine = generation
         loading = true
-        defer { loading = false }
+        defer { if mine == generation { loading = false } }
         do {
             switch source {
-            case .linear:
-                guard let key = linear.apiKey() else { items = []; return }
-                items = try await Linear.search(query, apiKey: key).map {
-                    Item(id: $0.id, reference: $0.identifier, title: $0.title, state: $0.state ?? "", attachment: $0.attachment)
+            case .tracker:
+                let projectId = projectId ?? model.session(sessionId)?.projectId
+                let groups = await model.searchIssueTrackers(query, projectId: projectId, searchAll: searchAll)
+                guard mine == generation, !Task.isCancelled else { return }
+                // Each result says its tracker whenever more than one is searched.
+                let named = groups.count > 1
+                items = groups.flatMap { group in
+                    group.issues.enumerated().map { index, issue in
+                        Item(id: "\(group.tracker.pluginId):\(issue.key)", reference: issue.key, title: issue.title,
+                             state: issue.state ?? "",
+                             attachment: issue.attachment(trackerId: group.tracker.pluginId, trackerName: group.tracker.title),
+                             section: named && index == 0 ? group.tracker : nil)
+                    }
                 }
+                trackerProblems = groups.compactMap(\.problem)
             case .githubIssue, .pullRequest:
-                guard let repoRoot else { return }
-                let executor = sessionId != nil ? model.executor(for: sessionId) : model.executor(forProject: projectId)
-                switch await GitHub.access(executor) {
-                case .missing: problem = "Linking GitHub needs the GitHub CLI. Install it with `brew install gh`."; return
-                case .signedOut: problem = "The GitHub CLI isn't signed in. Run `gh auth login` in a terminal, then try again."; return
-                case .ready: break
+                // The project's code host answers (ABS-139).
+                guard repoRoot != nil, let project = model.project(projectId ?? model.session(sessionId)?.projectId) else { return }
+                guard let host = await model.codeHost(for: project, chatId: sessionId), host.answers(.searchIssuesAndPullRequests) else {
+                    problem = await model.codeHostMissing(project)
+                    return
                 }
-                let found = source == .pullRequest
-                    ? try await GitHub.searchPullRequests(executor, repo: repoRoot, query: query)
-                    : try await GitHub.searchIssues(executor, repo: repoRoot, query: query)
+                switch await host.access() {
+                case .missing(let install):
+                    problem = "Linking \(host.title) needs its command-line tool." + (install.map { " Install it with `\($0)`." } ?? "")
+                    return
+                case .signedOut(let hint):
+                    problem = "\(host.title) isn't signed in." + (hint.map { " Run `\($0)` in a terminal, then try again." } ?? "")
+                    return
+                case .ready, .unavailable: break
+                }
+                let found = try await host.search(query, pullRequests: source == .pullRequest)
                 items = found.map {
-                    Item(id: $0.id, reference: "#\($0.number)", title: $0.title,
+                    var attachment = $0.attachment
+                    if source == .pullRequest { attachment.trackerName = host.title }
+                    return Item(id: $0.id, reference: "#\($0.number)", title: $0.title,
                          state: $0.isDraft ? "Draft" : $0.state.capitalized,
                          stateTint: source == .pullRequest ? prStateTint($0.state, isDraft: $0.isDraft) : nil,
-                         attachment: $0.attachment)
+                         attachment: attachment)
                 }
             }
             problem = nil
@@ -393,51 +556,6 @@ private struct AttachPicker: View {
         case "MERGED": return .btPullRequestMergedInk
         case "CLOSED": return .btPullRequestClosedInk
         default: return .btTextTertiary
-        }
-    }
-}
-
-/// Paste a personal API key; it's checked with Linear, then kept in the keychain.
-struct LinearConnectForm: View {
-    @State private var key = ""
-    @State private var connecting = false
-    @State private var error: String?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Connect Linear with a personal API key. It's kept in your keychain.")
-                .font(.btCallout)
-                .foregroundStyle(Color.btTextSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 6) {
-                SecureField("lin_api_…", text: $key)
-                    .btField(compact: true)
-                    .onSubmit(connect)
-                Button(connecting ? "Checking…" : "Connect", action: connect)
-                    .buttonStyle(.bt(.secondary, size: .small))
-                    .disabled(connecting || key.trimmingCharacters(in: .whitespaces).isEmpty)
-            }
-            HStack(spacing: 4) {
-                if let error {
-                    Text(error).font(.btCallout).foregroundStyle(Color.btRemoved)
-                } else {
-                    Button("Create a key in Linear") {
-                        NSWorkspace.shared.open(URL(string: "https://linear.app/settings/account/security")!)
-                    }
-                    .buttonStyle(.link)
-                    .font(.btCallout)
-                }
-            }
-        }
-    }
-
-    private func connect() {
-        guard !connecting else { return }
-        connecting = true
-        error = nil
-        Task {
-            do { try await LinearAccount.shared.connect(key) } catch { self.error = error.localizedDescription }
-            connecting = false
         }
     }
 }
@@ -526,7 +644,8 @@ struct AttachmentChips: View {
             ForEach(Array(chips.enumerated()), id: \.offset) { _, chip in
                 Button { AttachmentActions.open(chip.target) } label: {
                     HStack(spacing: 6) {
-                        AttachmentGlyph(kind: chip.kind, path: chip.target?.hasPrefix("/") == true ? chip.target : nil, size: 13)
+                        AttachmentGlyph(kind: chip.kind, path: chip.target?.hasPrefix("/") == true ? chip.target : nil,
+                                        tracker: chip.tracker, size: 13)
                             .foregroundStyle(Color.btTextSecondary)
                         Text(chip.label)
                             .font(.btChatCaption)

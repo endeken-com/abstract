@@ -101,6 +101,16 @@ enum DemoAgent {
         return emit(user)
     }
 
+    /// Claude reading an image: its result carries the picture, not text.
+    private static func readImage(_ path: String, sid: String) -> [String] {
+        let id = "toolu_demo_\(UUID().uuidString.prefix(8))"
+        let data = (try? Data(contentsOf: URL(fileURLWithPath: path))) ?? Data()
+        let content: [[String: Any]] = [["type": "image", "source": ["type": "base64", "media_type": "image/png", "data": data.base64EncodedString()]]]
+        let result: [String: Any] = ["type": "user", "session_id": sid,
+                                     "message": ["role": "user", "content": [["tool_use_id": id, "type": "tool_result", "content": content]]]]
+        return [pause(0.3), toolUse(id, "Read", ["file_path": path], sid: sid), pause(0.3), emit(result)]
+    }
+
     private static func todos(_ states: [String], sid: String) -> [String] {
         let items = [("Read how rows pick their status", "Reading how rows pick their status"),
                      ("Derive status from the live process", "Deriving status from the live process"),
@@ -169,6 +179,7 @@ enum DemoAgent {
                   result: ["type": "create", "filePath": "\(cwd)/\(helper)", "content": helperBody, "structuredPatch": []], sid: sid)
         s += background.midway()
         s += todos(["completed", "completed", "completed"], sid: sid)
+        s += readImage("\(cwd)/assets/logo.png", sid: sid)
 
         s += streamText("""
         Done. Rows now derive their status instead of trusting the stored field, so a chat whose agent died shows **Error** rather than a stale **Working**.
@@ -177,7 +188,7 @@ enum DemoAgent {
         - live rows pulse, so running chats stand out at a glance
         - the stored field is untouched, so history and filters still work
 
-        Run `swift test` to confirm nothing else depended on the old behaviour.
+        Run `swift test` to confirm nothing else depended on the old behaviour. The dot's colour matches `assets/logo.png`.
         """, messageId: "msg_b_\(sid)", sid: sid)
         s.append(pause(0.2))
         s.append(emit(["type": "system", "subtype": "post_turn_summary", "session_id": sid, "status_category": "completed", "status_detail": "Rows derive status from liveness", "needs_action": ""]))

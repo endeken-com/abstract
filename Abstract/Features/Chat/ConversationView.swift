@@ -20,16 +20,21 @@ struct ConversationView: View {
         // themselves are observed by the list, a row at a time.
         let feed = model.feed(session.id)
         let permissions = model.pendingPermissions(session.id)
-        let approvals = ToolSegment.approvals(for: feed.calls, pending: permissions)
+        // A plan shows as its card below, not as a tool approval.
+        let approvals = ToolSegment.approvals(for: feed.calls, pending: permissions.filter { !Plan.isExitPlanMode($0.toolName) })
         let matched = Set(approvals.values.map(\.requestId))
-        let working = session.status == .running || session.status == .provisioning
+        let working = (session.status == .running || session.status == .provisioning)
+            && model.remote.unreachableMessage(session.id) == nil
         let context = TranscriptContext(sessionId: session.id, working: working, approvals: approvals,
                                         latestTodoCallId: feed.calls.last { ToolKind($0.name) == .todo }?.id,
                                         prose: ProseStyle(font: chatFont, size: chatSize), transcript: transcript)
         TranscriptList(feed: feed, context: context, jump: jump, atBottom: $atBottom) {
             VStack(alignment: .leading, spacing: 20) {
+                if let plan = model.plans[session.id], plan.isVisible {
+                    PlanCard(sessionId: session.id, plan: plan)
+                }
                 // Approvals Claude asked for without sending the call first.
-                ForEach(permissions.filter { !matched.contains($0.requestId) }) { p in
+                ForEach(permissions.filter { !matched.contains($0.requestId) && !Plan.isExitPlanMode($0.toolName) }) { p in
                     PermissionCard(sessionId: session.id, request: p)
                         .transition(.opacity)
                 }
@@ -41,11 +46,29 @@ struct ConversationView: View {
                 if !working, feed.turns > 0, model.setups[session.id] == nil {
                     ChatChangesSummary(session: session, turnKey: feed.turns)
                 }
+                if let progress = session.workflow {
+                    WorkflowStrip(sessionId: session.id, progress: progress)
+                }
+                if let merged = AskAuthor.mergedLine(model.pullRequests[session.id]) {
+                    Text(merged)
+                        .font(.btChatCaption)
+                        .foregroundStyle(Color.btTextTertiary)
+                }
             }
             .padding(.top, 20)
             .frame(maxWidth: .infinity, alignment: .leading)
             .animation(.snappy(duration: 0.25), value: permissions)
         }
+        .overlay(alignment: .top) {
+            if feed.find.isOpen {
+                TranscriptFindBar(find: feed.find)
+                    .frame(maxWidth: 520)
+                    .padding(.top, Space.sm)
+                    .padding(.horizontal, Space.lg)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.snappy(duration: 0.15), value: feed.find.isOpen)
         .overlay(alignment: .bottom) {
             if !atBottom {
                 Button {
@@ -64,6 +87,7 @@ struct ConversationView: View {
             }
         }
         .animation(.snappy(duration: 0.2), value: atBottom)
+        .task(id: feed.turns) { model.loadTurnCommits(session.id) }
     }
 }
 
@@ -94,8 +118,9 @@ enum TranscriptRows {
                 let target = ToolPresentation.command(call).map { TextClip.line($0) } ?? ToolPresentation.path(call) ?? ""
                 return [ToolPresentation.verb(call.name), target].filter { !$0.isEmpty }.joined(separator: " ")
             }.joined(separator: "\n")
-        case let .turn(_, summary, _, _, _): return summary ?? ""
+        case let .turn(_, info): return TurnSummary.label(info)
         case let .error(_, message): return message
+        case let .notice(_, notice): return notice.message(agent: "The agent")
         case let .handoff(_, from, to, summary, _):
             return (["Handed over from \(ProviderRegistry.name(from)) to \(ProviderRegistry.name(to))"] + [summary].compactMap { $0 })
                 .joined(separator: "\n")
@@ -140,7 +165,7 @@ struct BlockView: View, Equatable {
             // The fade only for text still arriving: finished text draws the
             // fast way (a custom text renderer draws through Core Graphics,
             // which stalls a scroll that brings many rows in at once).
-            AgentProse(markdown: text, streaming: streaming || live ? streaming : nil)
+            ReplyProse(sessionId: sessionId, text: text, streaming: streaming || live ? streaming : nil)
         case let .thinking(_, text):
             ThinkingView(text: text, streaming: live)
         case let .tools(_, calls):
@@ -148,8 +173,8 @@ struct BlockView: View, Equatable {
         case .system:
             // The model and mode are in the composer footer already.
             EmptyView()
-        case let .turn(_, summary, duration, usage, cost):
-            TurnSummary(summary: summary, durationMs: duration, usage: usage, cost: cost)
+        case let .turn(id, info):
+            TurnSummary(id: id, info: info, sessionId: sessionId)
         case let .error(_, message):
             VStack(alignment: .leading, spacing: Space.sm) {
                 HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
@@ -163,6 +188,8 @@ struct BlockView: View, Equatable {
                 if LimitDetector.classify(message) != nil { ContinueWithActions(sessionId: sessionId) }
             }
             .btLeadingRule(Color.btRemoved)
+        case let .notice(_, notice):
+            NoticeRow(sessionId: sessionId, notice: notice)
         case let .raw(_, lines):
             // Frames no parser understood are debugging material, not
             // conversation. Settings › General can bring them back.
@@ -192,6 +219,38 @@ private struct SignInActions: View {
             .help("Pick another Claude account; the chat carries on there")
         }
     }
+}
+
+/// A retry, a usage limit or a warning, on one line in the agent's own words.
+private struct NoticeRow: View {
+    @Environment(AppModel.self) private var model
+    let sessionId: String
+    let notice: AgentNotice
+
+    var body: some View {
+        let agent = ProviderRegistry.name(model.session(sessionId)?.providerId ?? "")
+        VStack(alignment: .leading, spacing: Space.sm) {
+            HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
+                Image(systemName: icon).foregroundStyle(isInfo ? Color.btTextTertiary : Color.btWarning).font(.system(size: 11, weight: .regular))
+                SelectableText(TextClip.block(notice.message(agent: agent)))
+                    .font(.btChatCaption).foregroundStyle(Color.btTextSecondary).lineSpacing(2)
+                Spacer(minLength: 0)
+            }
+            // Out of room until the limit resets: another agent can carry on now.
+            if case .limitReached = notice { ContinueWithActions(sessionId: sessionId) }
+        }
+    }
+
+    private var icon: String {
+        switch notice {
+        case .retrying: "arrow.clockwise"
+        case .nearLimit, .limitReached: "gauge.with.dots.needle.67percent"
+        case .warning: "exclamationmark.triangle"
+        case .info: "info.circle"
+        }
+    }
+
+    private var isInfo: Bool { if case .info = notice { true } else { false } }
 }
 
 /// A limit stopped the agent: carry on with another one.
@@ -343,6 +402,7 @@ private struct CompactionRow: View {
 }
 
 private struct UserBubble: View {
+    @Environment(AppModel.self) private var model
     @Environment(\.proseStyle) private var prose
     @Environment(\.transcriptExpansion) private var expansion
     @Environment(\.transcriptRow) private var row
@@ -381,7 +441,10 @@ private struct UserBubble: View {
             Spacer(minLength: 80)
             VStack(alignment: .leading, spacing: prose.lineSpacing - 1) {
                 if shownText.count <= 24_000 {
-                    AgentProse(markdown: long && !open ? MarkdownHealing.heal(shownText) : shownText)
+                    let links = model.linkPills(in: shownText)
+                    AgentProse(markdown: long && !open ? MarkdownHealing.heal(shownText) : shownText, findField: "user",
+                               links: links.pills)
+                        .task(id: links.matches) { await model.pluginLinks.follow(links.matches) }
                 } else {
                     SelectableLines(shown.map { TextClip.line($0, max: 4_000) }, spacing: prose.lineSpacing - 1)
                         .font(prose.font(size: prose.points - 1))
@@ -421,13 +484,23 @@ private struct UserBubble: View {
     }
 }
 
+private struct ProseParseKey: Hashable {
+    let marks: FindMarkKey?
+    let links: LinkPills?
+}
+
 /// Markdown at a size meant for reading, with selectable text and quiet code blocks.
 struct AgentProse: View {
     @Environment(\.proseStyle) private var prose
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.transcriptFind) private var find
     let markdown: String
     /// A reply as it streams: new text fades in. Nil for prose that never streams.
     var streaming: Bool?
+    /// Which of the row's texts this is, for ⌘F to mark its matches.
+    var findField: String?
+    /// Statuses to show after its links (ABS-126), once it has stopped streaming.
+    var links: LinkPills?
     @State private var fade = StreamFade()
     @State private var tick = 0.0
 
@@ -435,18 +508,38 @@ struct AgentProse: View {
         if let streaming, !reduceMotion {
             Revealing(text: markdown, streaming: streaming) { shown, catchingUp in
                 let partial = streaming || catchingUp
-                styled(StructuredText(partial ? MarkdownHealing.heal(shown) : shown, parser: StreamFadeParser(fade: fade, live: partial)))
+                styled(StructuredText(partial ? MarkdownHealing.heal(shown) : shown, parser: marking(StreamFadeParser(fade: fade, live: partial))))
                     .textRenderer(StreamFadeRenderer(fade: fade, tick: tick))
                     // Redraws for as long as the newest characters take to fade in.
                     .onChange(of: shown) { withAnimation(.linear(duration: StreamFade.duration)) { tick += 1 } }
             }
         } else {
-            styled(StructuredText(markdown: markdown))
+            styled(StructuredText(markdown, parser: marking(AttributedStringMarkdownParser(baseURL: nil))))
         }
+    }
+
+    /// The parser, marking what ⌘F is finding when this text is one it
+    /// looks through, with its links' statuses after them.
+    private func marking(_ parser: any MarkupParser) -> any MarkupParser {
+        let parser = links.map { LinkPillParser(base: parser, pills: $0) } ?? parser
+        guard let findField, let find else { return parser }
+        return FindMarkParser(base: parser, query: find.query, current: find.current(in: findField))
+    }
+
+    private var marks: FindMarkKey? {
+        guard let findField, let find else { return nil }
+        return FindMarkKey(query: find.query, current: find.current(in: findField))
+    }
+
+    /// What the parse depends on besides the text: ⌘F's marks and the links' statuses.
+    private var parseKey: AnyHashable? {
+        guard marks != nil || links != nil else { return nil }
+        return AnyHashable(ProseParseKey(marks: marks, links: links))
     }
 
     private func styled(_ text: StructuredText) -> some View {
         text
+            .parsing(key: parseKey)
             .font(prose.body)
             .foregroundStyle(Color.btProse)
             .textual.structuredTextStyle(.gitHub)
@@ -512,6 +605,7 @@ private struct CodeBlockChrome: View {
 private struct ThinkingView: View {
     @Environment(\.proseStyle) private var prose
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.transcriptFind) private var find
     let text: String
     let streaming: Bool
     @State private var fade = StreamFade()
@@ -524,7 +618,7 @@ private struct ThinkingView: View {
                 .foregroundStyle(Color.btTextTertiary)
             if streaming, !reduceMotion {
                 Revealing(text: text.trimmingCharacters(in: .whitespacesAndNewlines), streaming: true) { shown, _ in
-                    Text(shown)
+                    Text(marked(shown))
                         .font(prose.font(size: prose.points - 1.5).italic())
                         .foregroundStyle(Color.btTextTertiary)
                         .lineSpacing(prose.lineSpacing - 2)
@@ -536,7 +630,7 @@ private struct ThinkingView: View {
                         }
                 }
             } else {
-                SelectableText(text.trimmingCharacters(in: .whitespacesAndNewlines))
+                SelectableText(marked(text.trimmingCharacters(in: .whitespacesAndNewlines)))
                     .font(prose.font(size: prose.points - 1.5).italic())
                     .foregroundStyle(Color.btTextTertiary)
                     .lineSpacing(prose.lineSpacing - 2)
@@ -544,36 +638,103 @@ private struct ThinkingView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
+
+    private func marked(_ text: String) -> AttributedString {
+        guard let find else { return AttributedString(text) }
+        return FindMarks.mark(AttributedString(text), query: find.query, current: find.current(in: "thinking"))
+    }
 }
 
 /// The end of a turn as a quiet rule: what was done and how long it took.
-/// Token counts and cost are subscription noise, so they wait in the tooltip.
+/// Token counts and cost are subscription noise, so they wait in the
+/// tooltip. The newest one adds the chat's total once it's idle.
 private struct TurnSummary: View {
-    let summary: String?
-    let durationMs: Int?
-    let usage: UsageTotals?
-    let cost: Double?
+    @Environment(AppModel.self) private var model
+    @State private var hovering = false
+    @State private var showingLaunch = false
+    let id: Int
+    let info: TurnInfo
+    let sessionId: String
 
     var body: some View {
-        let label = [summary, durationMs.map { RelativeTime.duration($0) }].compactMap { $0 }.joined(separator: " · ")
-        let details = [
-            usage.map { "\(RelativeTime.tokens($0.inputTokens + $0.cacheRead + $0.cacheWrite)) in, \(RelativeTime.tokens($0.outputTokens)) out" },
-            cost.flatMap { $0 > 0 ? String(format: "$%.2f", $0) : nil },
-        ].compactMap { $0 }.joined(separator: " · ")
-        if !label.isEmpty {
+        VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: Space.md) {
                 Hairline()
-                Text(label)
+                Text([Self.label(info), total].compactMap { $0 }.joined(separator: " · "))
                     .font(.btChatCaption)
                     .foregroundStyle(Color.btTextTertiary)
                     .monospacedDigit()
                     .lineLimit(1)
                     .fixedSize()
+                if hovering, info.launch != nil {
+                    Button("How this turn started") { showingLaunch = true }
+                        .buttonStyle(.plain)
+                        .font(.btChatCaption)
+                        .foregroundStyle(Color.btTextSecondary)
+                }
                 Hairline()
             }
-            .padding(.vertical, Space.xs)
-            .help(details)
+            if let shas = model.turnCommits[sessionId]?[id], !shas.isEmpty {
+                HStack(spacing: Space.sm) {
+                    Text(shas.count == 1 ? "Commit" : "Commits")
+                        .font(.btChatCaption)
+                        .foregroundStyle(Color.btTextTertiary)
+                    ForEach(shas, id: \.self) { sha in
+                        Button(AskAuthor.short(sha)) { model.openCommitInReview(sha, in: sessionId) }
+                            .buttonStyle(.plain)
+                            .font(.btChatMonoSmall)
+                            .foregroundStyle(Color.btTextSecondary)
+                            .help("Show \(AskAuthor.short(sha)) in Changes")
+                    }
+                }
+            }
         }
+        .padding(.vertical, Space.xs)
+        .onHover { hovering = $0 }
+        .help(details + (info.launch == nil ? "" : " · How this turn started"))
+        .contextMenu {
+            if info.launch != nil { Button("How this turn started") { showingLaunch = true } }
+        }
+        .sheet(isPresented: $showingLaunch) {
+            if let launch = info.launch { LaunchDetailsView(record: launch) }
+        }
+    }
+
+    /// "2m 14s", "Did the thing · Done in 2m 14s", "Stopped after 1m 12s",
+    /// "Failed after 40s"; "—" when the log doesn't say.
+    static func label(_ info: TurnInfo) -> String {
+        let length = info.durationMs.map { RelativeTime.duration($0) }
+        switch info.ending {
+        case .stopped: return length.map { "Stopped after \($0)" } ?? "Stopped"
+        case .failed: return length.map { "Failed after \($0)" } ?? "Failed"
+        case .done:
+            guard let summary = info.summary, !summary.isEmpty else { return length ?? "—" }
+            return [summary, length.map { "Done in \($0)" }].compactMap { $0 }.joined(separator: " · ")
+        }
+    }
+
+    /// The whole chat's working time, once the chat is idle and has had more than one turn.
+    private var total: String? {
+        let feed = model.feed(sessionId)
+        guard feed.lastTurnId == id, feed.time.turns > 1,
+              let status = model.session(sessionId)?.status, status != .running, status != .waitingInput, status != .provisioning
+        else { return nil }
+        return "\(RelativeTime.duration(feed.time.workingMs)) in total"
+    }
+
+    private var details: String {
+        let times = info.startedAt.flatMap { start in
+            info.endedAt.map { "\(start.formatted(date: .omitted, time: .standard)) – \($0.formatted(date: .omitted, time: .standard))" }
+        }
+        let reported = info.reportedMs.flatMap { reported in
+            info.measuredMs.flatMap { abs($0 - reported) >= 1000 ? "the agent counted \(RelativeTime.duration(reported)) itself" : nil }
+        }
+        return [
+            times,
+            reported,
+            info.usage.map { "\(RelativeTime.tokens($0.inputTokens + $0.cacheRead + $0.cacheWrite)) in, \(RelativeTime.tokens($0.outputTokens)) out" },
+            info.costUsd.flatMap { $0 > 0 ? String(format: "$%.2f", $0) : nil },
+        ].compactMap { $0 }.joined(separator: " · ")
     }
 }
 
@@ -613,20 +774,46 @@ private struct WorkingIndicator: View {
     @Environment(\.transcriptMode) private var transcript
 
     var body: some View {
+        // A chat gone quiet says so here, whatever its last event was: a
+        // stuck tool call is exactly what goes quiet.
+        if let stall = model.stallState(session.id) {
+            stallLine(stall)
         // Streaming text, running tool rows and shown thinking already show the agent at work.
-        if case .text(_, _, _, true)? = last { EmptyView() } else if case .toolUse? = last { EmptyView() }
+        } else if case .text(_, _, _, true)? = last { EmptyView() } else if case .toolUse? = last { EmptyView() }
         else if case .thinking? = last, transcript.showsThinking { EmptyView() } else {
             SwiftUI.TimelineView(.periodic(from: .now, by: 1)) { context in
                 HStack(spacing: Space.sm) {
                     DotLoader()
                     Text(label).font(.btChatCallout.weight(.regular)).foregroundStyle(Color.btTextSecondary)
-                    if let start = model.turnStartedAt[session.id] {
+                    // The log knows when the turn started, after a relaunch too.
+                    if let start = feed.turnStartedAt ?? model.turnStartedAt[session.id] {
                         Text(RelativeTime.duration(Int(context.date.timeIntervalSince(start) * 1000)))
                             .font(.btChatCallout).foregroundStyle(Color.btTextTertiary).monospacedDigit()
                     }
                 }
             }
         }
+    }
+
+    /// No output for a while, in amber; stalled adds what you can do about it.
+    private func stallLine(_ stall: StallState) -> some View {
+        SwiftUI.TimelineView(.periodic(from: .now, by: 1)) { context in
+            HStack(spacing: Space.sm) {
+                DotLoader()
+                Text(stallText(stall, at: context.date))
+                    .font(.btChatCallout.weight(.regular)).foregroundStyle(Color.btWarning)
+                if stall.isStalled {
+                    Button("Keep waiting") { model.keepWaiting(session.id) }
+                    Button("Stop") { model.stop(session.id) }
+                    Button("Stop and retry") { model.stopAndRetry(session.id) }
+                }
+            }
+        }
+    }
+
+    private func stallText(_ stall: StallState, at now: Date) -> String {
+        let minutes = stall.quietMinutes(at: now) ?? 0
+        return stall.isStalled ? "Stalled — no output for \(minutes) min" : "No output for \(minutes) min"
     }
 
     /// The tool row already says what's running, so this only says the turn

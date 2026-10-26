@@ -7,6 +7,7 @@ import AbstractCore
 /// This Mac, the Macs paired with it, and the ones nearby to pair.
 struct DevicesSettingsPane: View {
     @Environment(AppModel.self) private var model
+    @State private var invitation = ""
 
     var body: some View {
         @Bindable var remote = model.remote
@@ -20,7 +21,7 @@ struct DevicesSettingsPane: View {
                     Text("Other Macs see this name. The code beside it identifies this Mac's key.")
                 }
                 Toggle(isOn: $remote.hosting) {
-                    Text("Let paired Macs use this one")
+                    Text("Let paired devices use this Mac")
                     Text(remote.hosting
                          ? (remote.listening ? "Paired Macs can see these projects, start chats and answer their agents here." : "Starting…")
                          : "Off: paired Macs can't reach this one, and no new Mac can ask to pair.")
@@ -30,6 +31,33 @@ struct DevicesSettingsPane: View {
             } footer: {
                 SettingsCaption("A paired Mac can run commands here through the agents, the same as you can. Pair only your own Macs.")
             }
+
+            Section {
+                Toggle(isOn: $remote.internetHosting) {
+                    Text("Connect over the internet")
+                    Text("Paired devices reconnect from any network while this Mac is awake and Abstract is open.")
+                }.disabled(!remote.hosting)
+                if remote.hosting && remote.internetHosting {
+                    LabeledContent(remote.internetAddress == nil ? "Connecting to the relay…" : "Ready for internet connections") {
+                        Button("Copy invitation") {
+                            remote.makeInvitation()
+                            if let link = remote.invitation?.link {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(link, forType: .string)
+                            }
+                        }.disabled(remote.internetAddress == nil)
+                    }
+                    Text("Paste the invitation on your phone or other Mac, then compare the pairing codes. Invitations expire after 10 minutes and can be used once.")
+                        .font(.btCallout).foregroundStyle(Color.btTextSecondary)
+                }
+                HStack {
+                    TextField("Paste an Abstract invitation", text: $invitation)
+                        .textFieldStyle(.roundedBorder)
+                    Button("Pair") { remote.pair(invitation: invitation); invitation = "" }
+                        .disabled(invitation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            } header: { Text("Internet") }
+            footer: { SettingsCaption("Connections are encrypted between your devices. Existing pairings learn this Mac's internet address when they next connect locally.") }
 
             Section {
                 if remote.paired.isEmpty {
@@ -232,14 +260,19 @@ struct PairingSheet: View {
 
 // MARK: - Sidebar
 
-/// Paired Macs connected now, each with its projects and chats.
+/// Paired Macs connected now, each with its projects and chats, when the
+/// rail groups chats by project.
 struct RemoteDevicesSection: View {
     @Environment(AppModel.self) private var model
+    /// The chats the search and filters let through, by id.
+    let chats: [String: SidebarChats.Chat]
+    /// A search or filter is on: projects with nothing to show are left out.
+    var narrowing = false
 
     var body: some View {
         let links = model.remote.paired.compactMap { model.remote.links[$0.id] }.filter { $0.snapshot != nil }
         ForEach(links, id: \.device.id) { link in
-            RemoteDeviceGroup(link: link)
+            RemoteDeviceGroup(link: link, chats: chats, narrowing: narrowing)
         }
     }
 }
@@ -247,8 +280,9 @@ struct RemoteDevicesSection: View {
 private struct RemoteDeviceGroup: View {
     @Environment(AppModel.self) private var model
     let link: RemoteLink
+    let chats: [String: SidebarChats.Chat]
+    let narrowing: Bool
     @AppStorage("sidebar.remoteCollapsed") private var collapsedRaw = ""
-    @AppStorage("sidebar.remoteShowArchived") private var showArchivedRaw = ""
 
     var body: some View {
         let snapshot = link.snapshot
@@ -259,45 +293,30 @@ private struct RemoteDeviceGroup: View {
                 .frame(width: 22, height: 22)
                 .help(link.state == .online ? "Connected" : "Not connected")
         }
-        .contextMenu {
-            if snapshot?.sessions.contains(where: { $0.archivedAt != nil }) == true {
-                Button(showArchived ? "Hide Archived Chats" : "Show Archived Chats") {
-                    showArchived.toggle()
-                }
-            }
-        }
         if !collapsed.wrappedValue, let snapshot {
             ForEach(snapshot.projects.sorted { $0.sortOrder < $1.sortOrder }) { project in
-                let chats = snapshot.sessions.filter { $0.projectId == project.id && (showArchived || $0.archivedAt == nil) }
-                    .sorted { ($0.lastEventAt ?? $0.createdAt) > ($1.lastEventAt ?? $1.createdAt) }
-                RailGroup(title: project.name, trailing: AnyView(
-                    Button { model.showNewChat(in: project.id) } label: { Image(systemName: "plus") }
-                        .buttonStyle(RailIconStyle())
-                        .help("New chat in \(project.name) on \(link.device.peer.name)")
-                )) {
-                    if chats.isEmpty {
-                        Text("No chats")
-                            .font(BTFont.ui(13))
-                            .foregroundStyle(Color.btTextTertiary.opacity(0.7))
-                            .padding(.leading, Rail.rowPadding + Rail.chatIndent + Rail.iconColumn + 8)
-                            .frame(maxWidth: .infinity, minHeight: Rail.rowHeight, alignment: .leading)
-                    }
-                    ForEach(chats) { session in
-                        if let mirror = model.session(RemoteService.mirrorId(device: link.device.id, session: session.id)) {
-                            RailChatRow(session: mirror, backgroundTasks: model.runningBackgroundTasks(mirror.id)).equatable()
+                let rows = shown(snapshot.sessions.filter { $0.projectId == project.id })
+                if !narrowing || !rows.isEmpty {
+                    RailGroup(title: project.name, trailing: AnyView(
+                        Button { model.showNewChat(in: project.id) } label: { Image(systemName: "plus") }
+                            .buttonStyle(RailIconStyle())
+                            .help("New chat in \(project.name) on \(link.device.peer.name)")
+                    )) {
+                        if rows.isEmpty {
+                            Text("No chats")
+                                .font(BTFont.ui(13))
+                                .foregroundStyle(Color.btTextTertiary.opacity(0.7))
+                                .padding(.leading, Rail.rowPadding + Rail.chatIndent + Rail.iconColumn + 8)
+                                .frame(maxWidth: .infinity, minHeight: Rail.rowHeight, alignment: .leading)
                         }
+                        ForEach(rows) { chat in RailChatRow(chat: chat, showPin: true).equatable() }
                     }
                 }
             }
-            let scratch = snapshot.sessions.filter { $0.projectId == nil && (showArchived || $0.archivedAt == nil) }
-                .sorted { ($0.lastEventAt ?? $0.createdAt) > ($1.lastEventAt ?? $1.createdAt) }
+            let scratch = shown(snapshot.sessions.filter { $0.projectId == nil })
             if !scratch.isEmpty {
-                RailGroup(title: "Standalone") {
-                    ForEach(scratch) { session in
-                        if let mirror = model.session(RemoteService.mirrorId(device: link.device.id, session: session.id)) {
-                            RailChatRow(session: mirror, backgroundTasks: model.runningBackgroundTasks(mirror.id)).equatable()
-                        }
-                    }
+                RailGroup(title: SidebarChats.standalone) {
+                    ForEach(scratch) { chat in RailChatRow(chat: chat, showPin: true).equatable() }
                 }
             }
         }
@@ -314,13 +333,10 @@ private struct RemoteDeviceGroup: View {
         }
     }
 
-    private var showArchived: Bool {
-        get { showArchivedRaw.split(separator: ",").contains(Substring(link.device.id)) }
-        nonmutating set {
-            var ids = Set(showArchivedRaw.split(separator: ",").map(String.init))
-            if newValue { ids.insert(link.device.id) } else { ids.remove(link.device.id) }
-            showArchivedRaw = ids.sorted().joined(separator: ",")
-        }
+    /// This Mac's view of `sessions` that the rail shows, most recently active first.
+    private func shown(_ sessions: [Session]) -> [SidebarChats.Chat] {
+        sessions.compactMap { chats[RemoteService.mirrorId(device: link.device.id, session: $0.id)] }
+            .sorted { $0.activeAt > $1.activeAt }
     }
 }
 

@@ -1,0 +1,1062 @@
+import React, { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { AccessibilityInfo, ActivityIndicator, Alert, AppState, FlatList, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View, type ScrollViewProps } from 'react-native';
+import { CommonActions, NavigationContainer } from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { StatusBar } from 'expo-status-bar';
+import * as Haptics from 'expo-haptics';
+import { useFonts } from 'expo-font';
+import { SymbolView } from 'expo-symbols';
+import Svg, { Path } from 'react-native-svg';
+import { CompactMenu as MenuView } from './CompactMenu';
+import { BlurTargetView } from 'expo-blur';
+import { useHeaderHeight } from '@react-navigation/elements';
+import { remote, type RemoteClient } from './remote';
+import { counterpartProject, defaultMacName, itemKey, macChats, macProjects, macPullRequests, resolveChatTarget, type MacView } from './macs';
+import { ChatWorkspace } from './ChatWorkspace';
+import { BranchIcon, PullRequestIcon } from './PullRequestIcon';
+import { contextSymbols } from './chatContext';
+import { FileIcon } from './FileIcon';
+import { SwipeForward } from './SwipeForward';
+import { useKeyboardHeight } from './useKeyboardVisible';
+import { NativeSelect } from './NativeSelect';
+import { ProviderLogo, providerMenuImage } from './ProviderLogo';
+import { ProfileIcon } from './ProfileIcon';
+import { ChatListHeader, ChatRow, NoMatches, StatusGroups, useChatListPrefs, useTicking } from './ChatList';
+import { KanbanBoardScreen } from './KanbanBoard';
+import { chatsFromMacs, filterIsEmpty, narrow, type ChatFacts } from './chatGroups';
+import { KeyboardAwareScrollView } from './KeyboardAwareScrollView';
+import { ProgressiveBlur } from './ProgressiveBlur';
+import { SyntaxCode, highlightDiffLines, highlightLines } from './SyntaxCode';
+import { askAuthor, relativePath, type AskAuthorRequest } from './askAuthor';
+import { TerminalView } from './TerminalView';
+import { SettingsScreen } from './SettingsScreen';
+import { PluginsScreen } from './PluginsScreen';
+import { PluginScreen, PluginView } from './PluginView';
+import { macContributions } from './plugins';
+import { uuid } from './secure';
+import { attachmentPayload, pickAttachments, type PickedAttachment } from './attachments';
+import { deleteRuleArgs, ruleDetail, rulesForProject } from './permissionRules';
+import { displayDate, swiftDate, type AgentProfile, type Automation, type AutomationRun, type AutomationTrigger, type Policy, type Project, type Session } from './types';
+import { appliedProfile, automationProfileName, findProfile, newProfile, profileIcons, profileSnapshotOf, sessionProfileName, sortedProfiles, visibleProfiles } from './profiles';
+import { globalPauseAction, globalPauseConfirm, isProjectPaused, pauseBannerRows, pauseRequest, projectPauseAction } from './pause';
+import { MODE_CHOICES } from './plan';
+import { nextSidebarReturn, restorable, returnChat, type SidebarReturn, type StackRoute } from './sidebarReturn';
+import { CHANGED_OPTIONS, CONCURRENCY_OPTIONS, MISSED_OPTIONS, catchUpOf, concurrencyForWorkspace, policiesOf, runDetail, runStatusLabel, showsChanged } from './automationPolicies';
+
+// Graphite values come from Abstract/Theme/Palette.swift.
+const ink = '#ECECEF', muted = '#A4A4AD', tertiary = '#75757E';
+const bg = '#1E1E21', sidebar = '#19191C', panel = '#252529', raised = '#2B2B30', inset = '#303036';
+const accent = ink, border = 'rgba(255,255,255,0.075)';
+const Stack = createNativeStackNavigator();
+
+type IconName = 'menu' | 'back' | 'plus' | 'compose' | 'more' | 'clock' | 'worktree' | 'pull' | 'board' | 'devices' | 'folder' | 'chat' | 'review' | 'files' | 'terminal' | 'settings' | 'chevron' | 'close' | 'refresh' | 'check' | 'failed' | 'pending' | 'skipped' | 'filter' | 'plugin';
+const symbols: Record<IconName, { ios: string; android: string; web: string }> = {
+  menu: { ios: 'sidebar.left', android: 'menu', web: 'menu' },
+  back: { ios: 'chevron.left', android: 'arrow_back', web: 'arrow_back' },
+  plus: { ios: 'plus', android: 'add', web: 'add' },
+  compose: { ios: 'square.and.pencil', android: 'edit_square', web: 'edit_square' },
+  more: { ios: 'ellipsis', android: 'more_horiz', web: 'more_horiz' },
+  clock: { ios: 'clock.arrow.circlepath', android: 'schedule', web: 'schedule' },
+  worktree: contextSymbols.worktree,
+  pull: { ios: 'point.3.filled.connected.trianglepath.dotted', android: 'merge', web: 'merge' },
+  board: { ios: 'rectangle.split.3x1', android: 'view_column', web: 'view_column' },
+  devices: { ios: 'laptopcomputer', android: 'laptop_mac', web: 'laptop_mac' },
+  folder: { ios: 'folder', android: 'folder', web: 'folder' },
+  chat: { ios: 'bubble.left', android: 'chat_bubble', web: 'chat_bubble' },
+  review: { ios: 'plusminus', android: 'difference', web: 'difference' },
+  files: { ios: 'doc.text', android: 'description', web: 'description' },
+  terminal: { ios: 'terminal', android: 'terminal', web: 'terminal' },
+  settings: { ios: 'gearshape', android: 'settings', web: 'settings' },
+  chevron: { ios: 'chevron.right', android: 'chevron_right', web: 'chevron_right' },
+  close: { ios: 'xmark', android: 'close', web: 'close' },
+  refresh: { ios: 'arrow.clockwise', android: 'refresh', web: 'refresh' },
+  check: { ios: 'checkmark', android: 'check', web: 'check' },
+  failed: { ios: 'xmark', android: 'close', web: 'close' },
+  pending: { ios: 'clock', android: 'schedule', web: 'schedule' },
+  skipped: { ios: 'minus', android: 'remove', web: 'remove' },
+  filter: { ios: 'line.3.horizontal.decrease', android: 'filter_list', web: 'filter_list' },
+  plugin: { ios: 'puzzlepiece.extension', android: 'extension', web: 'extension' }
+};
+function Icon({ name, size = 19, color = muted }: { name: IconName; size?: number; color?: string }) {
+  return <SymbolView name={symbols[name] as any} size={size} tintColor={color} style={{ width: size, height: size }} />;
+}
+
+function useRemote() {
+  const [, rerender] = useState(0);
+  useEffect(() => remote.subscribe(() => rerender(x => x + 1)), []);
+  return remote;
+}
+// The connection to the Mac that owns what a screen shows.
+function useMac(hostId?: string) { return useRemote().client(hostId); }
+function macStatus(mac: MacView) { return mac.state === 'online' ? 'Connected' : mac.state === 'connecting' ? 'Connecting' : `${mac.name} isn't reachable`; }
+function Button({ title, onPress, secondary, danger }: { title: string; onPress: () => void; secondary?: boolean; danger?: boolean }) {
+  return <Pressable onPress={() => { Haptics.selectionAsync().catch(() => {}); onPress(); }} style={[styles.button, secondary && styles.secondary, danger && styles.danger]}><Text style={[styles.buttonText, secondary && { color: ink }]}>{title}</Text></Pressable>;
+}
+function ReviewFileButton({ title, destructive, onPress }: { title: string; destructive?: boolean; onPress: () => void }) {
+  const color = destructive ? '#EF8582' : '#8EDBAD';
+  return <Pressable accessibilityRole="button" accessibilityLabel={title} onPress={() => { Haptics.selectionAsync().catch(() => {}); onPress(); }} style={({ pressed }) => [styles.reviewFileButton, destructive ? styles.reviewFileButtonDiscard : styles.reviewFileButtonApply, pressed && styles.reviewFileButtonPressed]}>
+    <SymbolView name={{ ios: destructive ? 'trash' : 'checkmark.circle', android: destructive ? 'delete_outline' : 'check_circle' }} size={16} tintColor={color} />
+    <Text style={[styles.reviewFileButtonText, { color }]}>{title}</Text>
+  </Pressable>;
+}
+type PRButtonKind = 'primary' | 'secondary';
+function PRButtonFace({ title, kind = 'secondary', disabled, loading }: { title: string; kind?: PRButtonKind; disabled?: boolean; loading?: boolean }) {
+  return <View style={[styles.prButton, kind === 'primary' && styles.prButtonPrimary, disabled && styles.prButtonDisabled]}>
+    {loading && <ActivityIndicator size="small" color={kind === 'primary' ? bg : ink} />}
+    <Text style={[styles.prButtonText, kind === 'primary' && styles.prButtonTextPrimary]}>{title}</Text>
+  </View>;
+}
+function PRButton({ title, onPress, kind = 'secondary', disabled, loading, accessibilityLabel }: { title: string; onPress: () => void; kind?: PRButtonKind; disabled?: boolean; loading?: boolean; accessibilityLabel?: string }) {
+  return <Pressable accessibilityRole="button" accessibilityLabel={accessibilityLabel || title} accessibilityState={{ disabled: !!disabled, busy: !!loading }} disabled={disabled} onPress={() => { Haptics.selectionAsync().catch(() => {}); onPress(); }}><PRButtonFace title={title} kind={kind} disabled={disabled} loading={loading} /></Pressable>;
+}
+function Row({ title, subtitle, subtitleIcon, onPress, trailing, icon, iconNode }: { title: string; subtitle?: string; subtitleIcon?: React.ReactNode; onPress: () => void; trailing?: string; icon?: IconName; iconNode?: React.ReactNode }) {
+  return <Pressable onPress={onPress} style={styles.row}>{iconNode || (icon && <Icon name={icon} size={15} color={tertiary} />)}<View style={{ flex: 1 }}><Text style={styles.rowTitle}>{title}</Text>{subtitle ? subtitleIcon ? <View style={styles.subtitleRow}>{subtitleIcon}<Text style={[styles.subtitle, styles.subtitleText]}>{subtitle}</Text></View> : <Text style={styles.subtitle}>{subtitle}</Text> : null}</View>{trailing ? <Text style={styles.trailing}>{trailing}</Text> : <Icon name="chevron" size={12} color={tertiary} />}</Pressable>;
+}
+function Section({ title, children, iconNode }: { title: string; children: React.ReactNode; iconNode?: React.ReactNode }) {
+  return <View style={styles.section}><View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>{iconNode}<Text style={styles.sectionTitle}>{title}</Text></View>{children}</View>;
+}
+function PaneSection({ title, detail, children }: { title: string; detail?: string; children: React.ReactNode }) {
+  return <View style={styles.paneSection}><View style={styles.paneSectionHeader}><Text style={styles.paneSectionTitle}>{title}</Text>{detail ? <Text style={styles.paneSectionDetail}>{detail}</Text> : null}</View>{children}</View>;
+}
+function Empty({ text }: { text: string }) { return <Text style={styles.empty}>{text}</Text>; }
+function HeaderScrollView({ keyboardAware, contentContainerStyle, ...props }: ScrollViewProps & { keyboardAware?: boolean }) {
+  const headerHeight = useHeaderHeight();
+  const contentStyle = StyleSheet.flatten(contentContainerStyle);
+  const existingTop = contentStyle?.paddingTop ?? contentStyle?.paddingVertical ?? contentStyle?.padding;
+  const padded = [contentContainerStyle, { paddingTop: headerHeight + (typeof existingTop === 'number' ? existingTop : 0) }];
+  return keyboardAware ? <KeyboardAwareScrollView {...props} contentContainerStyle={padded} /> : <ScrollView {...props} contentContainerStyle={padded} />;
+}
+function HeaderSpacer() {
+  return <View style={{ height: useHeaderHeight() }} />;
+}
+function run(action: () => Promise<unknown>) { action().catch(error => Alert.alert('Abstract', String(error.message || error))); }
+// Pausing everything on a Mac stops every agent at work there, so it asks first.
+function confirmPauseEverything(mac: MacView, act: () => void) {
+  const { title, message } = globalPauseConfirm(mac.name);
+  Alert.alert(title, message, [{ text: 'Cancel' }, { text: 'Pause everything', style: 'destructive', onPress: act }]);
+}
+// The paused banner, as across the top of the Mac's window: what is paused,
+// and the resume that turns back on only what that pause switched off.
+function PauseBanners({ macs, projectId }: { macs: MacView[]; projectId?: string }) {
+  const state = useRemote();
+  const rows = pauseBannerRows(macs, projectId);
+  if (!rows.length) return null;
+  return <>{rows.map(row => <View key={row.key} style={styles.pauseBanner}>
+    <SymbolView name={{ ios: 'pause.circle.fill', android: 'pause_circle', web: 'pause_circle' } as any} size={16} tintColor="#E8B34A" style={{ width: 16, height: 16 }} />
+    <Text style={styles.pauseBannerText}>{row.text}</Text>
+    <Pressable accessibilityRole="button" accessibilityLabel={row.button} accessibilityState={{ disabled: !row.canAct }} disabled={!row.canAct} onPress={() => run(() => state.client(row.hostId).request(row.request.name, row.request.args))} style={[styles.pauseBannerButton, !row.canAct && styles.pauseBannerButtonDisabled]}><Text style={styles.pauseBannerButtonText}>{row.button}</Text></Pressable>
+  </View>)}</>;
+}
+function GlobalPauseButton({ mac }: { mac: MacView }) {
+  const state = useRemote();
+  const action = globalPauseAction(mac.snapshot);
+  if (!action || mac.state !== 'online') return null;
+  const send = () => { const request = pauseRequest(action); run(() => state.client(mac.id).request(request.name, request.args)); };
+  return <Button title={action === 'pause' ? 'Pause everything' : 'Resume everything'} secondary={action === 'pause'} onPress={() => action === 'pause' ? confirmPauseEverything(mac, send) : send()} />;
+}
+// Ask the chat that wrote some lines about them: the Mac blames them and
+// builds the prompt; the phone opens that chat with it in the composer,
+// or New Chat with it as the first message.
+function askAboutLines(navigation: any, hostId: string, state: RemoteClient, request: AskAuthorRequest) {
+  run(async () => {
+    const answer = await askAuthor(state, request);
+    if (answer.sessionId) navigation.navigate('Chat', { hostId, sessionId: answer.sessionId, draft: answer.draft, notice: answer.notice || undefined });
+    else navigation.navigate('NewChat', { hostId, projectId: answer.projectId || undefined, prompt: answer.draft });
+  });
+}
+function activeRoot(mac: RemoteClient, session: Session) { return session.worktreePath || mac.snapshot?.projects.find(x => x.id === session.projectId)?.rootPath || ''; }
+
+// The sidebar remembers the chat it was opened from, and the screens opened
+// from that chat, so closing it returns there (sidebarReturn.ts).
+const SidebarReturnContext = createContext<SidebarReturn>(null);
+function HeaderAction({ label, hint, icon, size = 19, onPress }: { label: string; hint?: string; icon: IconName; size?: number; onPress: () => void }) {
+  return <Pressable accessibilityRole="button" accessibilityLabel={label} accessibilityHint={hint} onPress={onPress} style={({ pressed }) => [styles.headerAction, pressed && styles.headerActionPressed]}><Icon name={icon} size={size} color={ink} /></Pressable>;
+}
+// Destinations beside the chats, kept in one labeled menu so the list leads.
+function MoreDestinations({ navigate }: { navigate: (name: string) => void }) {
+  const prs = macPullRequests(useRemote().macs()).length;
+  const ios = Platform.OS === 'ios';
+  return <MenuView title="Go to" actions={[
+    { id: 'Automations', title: 'Automations', image: ios ? symbols.clock.ios : undefined },
+    { id: 'Worktrees', title: 'Worktrees', image: ios ? symbols.worktree.ios : undefined },
+    { id: 'PullRequests', title: 'Pull Requests', subtitle: prs ? `${prs} open` : undefined, image: ios ? symbols.pull.ios : undefined },
+    { id: 'Kanban', title: 'Kanban', image: ios ? symbols.board.ios : undefined },
+    { id: 'Plugins', title: 'Plugins', image: ios ? symbols.plugin.ios : undefined },
+  ]} onPressAction={({ nativeEvent }) => navigate(nativeEvent.event)}>
+    <View accessible accessibilityRole="button" accessibilityLabel="More" accessibilityHint="Automations, worktrees, pull requests, Kanban and plugins" style={styles.headerAction}><Icon name="more" size={20} color={ink} /></View>
+  </MenuView>;
+}
+function WorkspaceRail({ navigate, selectedChat }: { navigate: (name: string, params?: Record<string, unknown>) => void; selectedChat?: { hostId?: string; sessionId?: string } | null }) {
+  const state = useRemote();
+  const macs = state.macs();
+  const online = macs.filter(mac => mac.state === 'online').length;
+  const footer = !macs.length ? 'Offline' : online === macs.length ? 'Connected' : online ? `${online} of ${macs.length} connected` : macs.some(mac => mac.state === 'connecting') ? 'Connecting' : 'Offline';
+  const [prefs, setPrefs] = useChatListPrefs();
+  const [searching, setSearching] = useState(false);
+  const [query, setQuery] = useState('');
+  const now = useTicking();
+  const all = chatsFromMacs(macs);
+  const visible = narrow(all, prefs, query);
+  const narrowing = !filterIsEmpty(prefs.filter) || !!query.trim();
+  const isSelected = (chat: ChatFacts) => selectedChat?.hostId === chat.hostId && selectedChat.sessionId === chat.session.id;
+  const openChat = (chat: ChatFacts) => navigate('Chat', { hostId: chat.hostId, sessionId: chat.session.id });
+  const row = (chat: ChatFacts) => <ChatRow key={chat.session.id} chat={chat} showProject={false} now={now} selected={isSelected(chat)} onPress={() => openChat(chat)} />;
+  const macRow = (mac: MacView) => <View key={`host-${mac.id}`}>
+    <Pressable accessibilityRole="button" accessibilityLabel={`${mac.name}, ${macStatus(mac)}`} onPress={() => navigate('Settings')} style={styles.railHost}><Icon name="devices" size={14} color={tertiary} /><Text numberOfLines={1} style={styles.railHostTitle}>{mac.name}</Text><View style={[styles.connectionDot, mac.state !== 'online' && { backgroundColor: tertiary }]} /></Pressable>
+    {mac.state !== 'online' && <Text style={styles.railMacStatus}>{macStatus(mac)}</Text>}
+    <View style={styles.railPause}><GlobalPauseButton mac={mac} /></View>
+  </View>;
+  return <View style={styles.rail}>
+    <HeaderScrollView contentContainerStyle={styles.railContent} keyboardDismissMode="on-drag" keyboardShouldPersistTaps="handled">
+      <PauseBanners macs={macs} />
+      {macs.length > 0 && <ChatListHeader all={all} prefs={prefs} setPrefs={setPrefs} searching={searching} setSearching={setSearching} query={query} setQuery={setQuery} />}
+      {prefs.arrangement === 'status'
+        ? <StatusGroups chats={visible} now={now} showMac={macs.length > 1} isSelected={isSelected} openChat={openChat} />
+        : macs.map(mac => {
+          const chats = visible.filter(c => c.hostId === mac.id).sort((a, b) => b.session.createdAt - a.session.createdAt);
+          const standalone = chats.filter(c => !c.session.projectId);
+          return <View key={mac.id}>
+            {macRow(mac)}
+            <View style={mac.state === 'unreachable' && styles.unreachable}>
+              {(mac.snapshot?.projects || []).map(project => {
+                const rows = chats.filter(c => c.session.projectId === project.id);
+                if (narrowing && !rows.length) return null;
+                return <View key={project.id} style={styles.railGroup}>
+                  <Pressable onPress={() => navigate('Project', { hostId: mac.id, projectId: project.id })} style={styles.railGroupHeader}>
+                    <Text numberOfLines={1} style={styles.railGroupTitle}>{project.name}</Text>{isProjectPaused(mac.snapshot, project.id) && <Text style={styles.pausedLabel}>Paused</Text>}<Icon name="chevron" size={12} color={tertiary} />
+                  </Pressable>
+                  {rows.map(row)}
+                </View>;
+              })}
+              {standalone.length > 0 && <View style={styles.railGroup}><Text style={[styles.railGroupTitle, styles.railGroupHeader]}>Standalone</Text>{standalone.map(row)}</View>}
+            </View>
+          </View>;
+        })}
+      {narrowing && !visible.length && <NoMatches />}
+      {macs.length > 0 && !narrowing && !visible.length && <Text style={styles.railEmpty}>No chats yet. Start one with New chat at the top.</Text>}
+      {!macs.length && <Text style={styles.railEmpty}>Pair a Mac to see its projects and chats.</Text>}
+      {macs.length > 0 && prefs.arrangement === 'status' && macs.map(macRow)}
+    </HeaderScrollView>
+    <Pressable accessibilityRole="button" accessibilityLabel={`Settings, ${footer}`} onPress={() => navigate('Settings')} style={({ pressed }) => [styles.railFooter, pressed && styles.railFooterPressed]}><Icon name="settings" /><Text numberOfLines={1} style={styles.railFooterTitle}>Settings</Text><Text numberOfLines={1} style={styles.railDetail}>{footer}</Text><View style={[styles.connectionDot, !online && { backgroundColor: tertiary }]} /></Pressable>
+  </View>;
+}
+// The list of chats. Opened from a chat, Close (or a left swipe) returns to
+// that chat and whatever was open over it; on a cold launch, or once that
+// chat is gone, there is nothing to return to, so the list stays.
+function SidebarScreen({ navigation, route }: any) {
+  const state = useRemote();
+  const macs = state.macs();
+  const remembered = restorable(useContext(SidebarReturnContext), macs);
+  const chat = returnChat(remembered);
+  const chatName = chat && state.client(chat.hostId).snapshot?.sessions.find(x => x.id === chat.sessionId)?.name;
+  const close = () => {
+    if (!remembered) return;
+    navigation.dispatch(CommonActions.reset({ index: remembered.length, routes: [{ key: route.key, name: route.name, params: route.params }, ...remembered] }));
+  };
+  const navigate = (name: string, params?: Record<string, unknown>) => navigation.navigate(name, params);
+  useEffect(() => {
+    navigation.setOptions({
+      headerLeft: remembered ? () => <HeaderAction label="Close sidebar" hint={chatName ? `Returns to ${chatName}` : undefined} icon="menu" onPress={close} /> : () => null,
+      headerRight: () => <View style={styles.headerActions}>
+        <MoreDestinations navigate={navigate} />
+        <HeaderAction label="New chat" icon="compose" size={18} onPress={() => navigate('NewChat', {})} />
+      </View>,
+    });
+  }, [navigation, remembered, chatName]);
+  return <SafeAreaView edges={['bottom', 'left', 'right']} style={{ flex: 1, backgroundColor: sidebar }}>
+    <SwipeForward enabled={!!remembered} onSwipe={close}>
+      <WorkspaceRail navigate={navigate} selectedChat={chat} />
+    </SwipeForward>
+  </SafeAreaView>;
+}
+// One way back at every level: Back to the screen this one was opened from.
+// The chat itself shows the sidebar button instead (ChatWorkspace).
+function ScreenNavigation({ navigation }: { navigation: any }) {
+  return navigation.canGoBack() ? <HeaderAction label="Back" icon="back" size={17} onPress={() => navigation.goBack()} /> : null;
+}
+function PullRequestsScreen({ navigation }: any) {
+  const state = useRemote();
+  const prs = macPullRequests(state.macs());
+  return <HeaderScrollView style={styles.page} contentContainerStyle={styles.content}>
+    <Text style={styles.title}>Pull Requests</Text>
+    {prs.map(({ mac, sessionId, pr, chat }) => <Pressable key={itemKey(mac.id, sessionId)} style={[styles.row, mac.state === 'unreachable' && styles.unreachable]} onPress={() => navigation.navigate('PullRequest', { hostId: mac.id, sessionId })}><PullRequestIcon pr={pr} /><View style={{ flex: 1 }}><Text style={styles.rowTitle} numberOfLines={1}>{`#${pr.number}  ${pr.title}`}</Text><Text style={styles.subtitle}>{`${pr.standing || (pr.isDraft ? 'Draft' : pr.state)} · ${chat?.name || ''} · ${mac.name}`}</Text></View><Icon name="chevron" size={12} /></Pressable>)}
+    {!prs.length && <Empty text="No pull requests on your Macs." />}
+  </HeaderScrollView>;
+}
+
+function ProjectsScreen({ navigation }: any) {
+  const state = useRemote();
+  const macs = state.macs();
+  return <HeaderScrollView style={styles.page} contentContainerStyle={styles.content}><Text style={styles.title}>Projects</Text>{!macs.length && <Text style={styles.lead}>Pair a Mac to see its projects</Text>}
+    {macs.map(mac => <View key={mac.id} style={mac.state === 'unreachable' && styles.unreachable}><PauseBanners macs={[mac]} /><Section title={mac.name}>
+      {mac.state !== 'online' && <Text style={styles.hint}>{macStatus(mac)}</Text>}
+      <GlobalPauseButton mac={mac} />
+      {(mac.snapshot?.projects || []).map(project => <Row key={project.id} title={project.name} subtitle={project.rootPath} trailing={isProjectPaused(mac.snapshot, project.id) ? 'Paused' : undefined} onPress={() => navigation.navigate('Project', { hostId: mac.id, projectId: project.id })} />)}
+      {!mac.snapshot?.projects.length && <Empty text="No projects available." />}
+    </Section></View>)}
+  </HeaderScrollView>;
+}
+function ProjectScreen({ route, navigation }: any) {
+  const hostId = route.params.hostId as string;
+  const store = useRemote();
+  const state = useMac(hostId);
+  const project = state.snapshot?.projects.find(x => x.id === route.params.projectId) as Project | undefined;
+  if (!project) return <View style={styles.content}><Empty text="Project unavailable." /></View>;
+  const chats = state.snapshot?.sessions.filter(x => x.projectId === project.id && !x.archivedAt) || [];
+  const macs = store.macs();
+  const mac = remote.mac(hostId);
+  // The default Mac is kept on this record on the Mac that owns the project;
+  // changing it here asks that Mac to record it. Older Macs only show it.
+  const canSetDefault = state.snapshot?.projectDefaultDevice === true && state.status === 'online';
+  const unknownDefault = !!project.defaultDeviceId && !macs.some(m => m.id === project.defaultDeviceId);
+  const projectAction = state.status === 'online' ? projectPauseAction(state.snapshot, project.id) : null;
+  return <HeaderScrollView style={styles.page} contentContainerStyle={styles.content}><Text style={styles.title}>{project.name}</Text><Text style={styles.lead}>{`${mac?.name || ''} · ${project.rootPath}`}</Text>
+    {mac && <PauseBanners macs={[mac]} projectId={project.id} />}
+    <View style={styles.actions}><Button title="New chat" onPress={() => navigation.navigate('NewChat', { hostId, projectId: project.id })} />{projectAction && <Button title={projectAction === 'pause' ? 'Pause project' : 'Resume project'} secondary={projectAction === 'pause'} onPress={() => { const request = pauseRequest(projectAction, project.id); run(() => state.request(request.name, request.args)); }} />}<Button title="Worktrees" secondary onPress={() => navigation.navigate('Worktrees', { hostId, projectId: project.id })} /><Button title="Files" secondary onPress={() => navigation.navigate('Files', { hostId, root: project.rootPath })} /><Button title="Terminal" secondary onPress={() => navigation.navigate('Terminal', { hostId, root: project.rootPath })} /></View>
+    <Section title="New chats run on"><Text style={styles.body}>{mac ? defaultMacName(macs, mac, project) : 'A paired Mac'}</Text><Text style={styles.hint}>New chats for this project start on this Mac. It is kept on {mac?.name || 'the Mac'} with the project.</Text>
+      {canSetDefault ? <View style={styles.choices}>{macs.map(m => <Button key={m.id} title={m.name} secondary={(project.defaultDeviceId || hostId) !== m.id} onPress={() => run(() => state.request('setProjectDefaultDevice', { projectId: project.id, deviceId: m.id === hostId ? null : m.id }))} />)}{unknownDefault && <Button title="A paired Mac" onPress={() => {}} />}</View>
+        : <Text style={styles.hint}>{state.status === 'online' ? `Update Abstract on ${mac?.name || 'this Mac'} to change this from your phone.` : 'Reconnect to change this.'}</Text>}
+    </Section>
+    {state.snapshot?.codeHistory && <Section title="Code history"><View style={styles.row}><View style={{ flex: 1 }}><Text style={styles.rowTitle}>Give agents the history of the code they change</Text><Text style={styles.subtitle}>{project.agentHistory === false ? 'Agents get no history of earlier chats in this project.' : 'Before changing code, an agent can look up what earlier chats in this project were asked, corrected and decided about it, and is told to follow those decisions.'}</Text></View><Switch accessibilityLabel="Give agents the history of the code they change" value={project.agentHistory !== false} onValueChange={enabled => run(() => state.request('setAgentHistory', { projectId: project.id, enabled }))} /></View></Section>}
+    <Section title="Chats">{chats.map(chat => <Row key={chat.id} title={chat.name} subtitle={`${chat.providerId} · ${chat.branch || chat.status}${sessionProfileName(chat) ? ` · ${sessionProfileName(chat)}` : ''}`} subtitleIcon={chat.branch ? <BranchIcon size={11} color={tertiary} /> : undefined} iconNode={<ProviderLogo provider={chat.providerId} size={16} />} onPress={() => navigation.navigate('Chat', { hostId, sessionId: chat.id })} trailing={chat.status} />)}{!chats.length && <Empty text="No chats in this project." />}</Section>
+    {state.snapshot?.permissionRules !== undefined && <Section title="Permission rules">
+      <Text style={styles.empty}>Answers you've told Abstract to remember for this project. A request matching a rule is answered for you in every chat. A deny rule beats an allow rule.</Text>
+      {rulesForProject(state.snapshot, project.id).map(rule => <View key={rule.id} style={styles.row}><View style={{ flex: 1 }}><Text selectable style={[styles.rowTitle, { fontFamily: 'JetBrainsMono', fontSize: 13 }]}>{rule.pattern}</Text><Text style={styles.subtitle}>{ruleDetail(rule, swiftDate())}</Text></View><Button title="Delete" danger onPress={() => Alert.alert('Delete rule?', `${rule.pattern}\n${ruleDetail(rule, swiftDate())}`, [{ text: 'Cancel' }, { text: 'Delete', style: 'destructive', onPress: () => run(() => state.request('deletePermissionRule', deleteRuleArgs(rule))) }])} /></View>)}
+      {!rulesForProject(state.snapshot, project.id).length && <Empty text="No rules yet. When an agent asks for permission, choose “Always allow…” or “Always deny…” on its card." />}
+    </Section>}
+  </HeaderScrollView>;
+}
+function ChatsScreen({ navigation }: any) {
+  const state = useRemote();
+  const macs = state.macs();
+  const chats = macChats(macs);
+  return <HeaderScrollView style={styles.page} contentContainerStyle={styles.content}><Text style={styles.title}>Chats</Text>{!macs.length && <Text style={styles.lead}>Pair a Mac to see its chats</Text>}{macs.some(mac => mac.state === 'online') && <Button title="New standalone chat" onPress={() => navigation.navigate('NewChat', { standalone: true })} />}
+    {chats.map(({ mac, chat }) => <View key={itemKey(mac.id, chat.id)} style={mac.state === 'unreachable' && styles.unreachable}><Row title={chat.name} subtitle={`${mac.snapshot?.projects.find(p => p.id === chat.projectId)?.name || 'No project'} · ${chat.providerId}${sessionProfileName(chat) ? ` · ${sessionProfileName(chat)}` : ''} · ${mac.name}`} iconNode={<ProviderLogo provider={chat.providerId} size={16} />} trailing={chat.status} onPress={() => navigation.navigate('Chat', { hostId: mac.id, sessionId: chat.id })} /></View>)}
+    {!chats.length && <Empty text="No chats available." />}
+  </HeaderScrollView>;
+}
+type LauncherChoice = { id: string; title: string; selected?: boolean; image?: string };
+function LauncherPicker({ label, value, choices, onSelect, leading }: { label: string; value: string; choices: LauncherChoice[]; onSelect: (id: string) => void; leading?: React.ReactNode }) {
+  return <MenuView title={label} actions={choices.map(choice => ({ id: choice.id, title: choice.title, state: choice.selected ? 'on' : 'off', image: choice.image }))} onPressAction={({ nativeEvent }) => onSelect(nativeEvent.event)}>
+    <View accessibilityRole="button" accessibilityLabel={`${label}: ${value}`} style={styles.launcherPicker}>{leading}<Text numberOfLines={1} style={styles.launcherPickerText}>{value}</Text><SymbolView name={{ ios: 'chevron.down', android: 'keyboard_arrow_down' }} size={10} tintColor={tertiary} /></View>
+  </MenuView>;
+}
+function BrandMark() {
+  return <Svg width={44} height={44} viewBox="0 0 100 100" accessibilityLabel="Abstract">
+    <Path fill={ink} d="M93.67,50c-0.4,9-8.84,14.39-15.12,19.54-6.08,5-10.27,11.3-15.62,17-7.09,7.51-15.66,9.2-23.62,1.85-5.69-5.25-9.59-12.08-15.48-17.16S9.3,61.23,7.17,53.25C4.73,44.13,13,37.56,19.28,32.53S30.14,22,35.27,16C41.18,9,49.1,3.23,58,9.13,65.36,14,69.51,22.59,76.1,28.4,82.85,34.34,93.22,39.95,93.67,50c0.09,1.92,3.09,1.93,3,0-0.43-9.53-8.15-15.31-15-20.84C74.09,23,69.22,14.46,61.78,8.27,55.37,2.93,47.38,2,40.4,6.88,32.57,12.37,28,21.39,20.73,27.51,14.33,32.87,5.7,38.28,4,47.13c-1.74,9.11,5.18,15.93,11.6,21.2,3.6,3,7.34,5.74,10.47,9.22s6,7.57,9.28,11.07C41,94.63,48.71,98.71,56.86,95c9.45-4.35,14.2-15.05,21.84-21.65C86.18,66.85,96.18,61,96.67,50,96.76,48.07,93.76,48.07,93.67,50Z" />
+  </Svg>;
+}
+function NewChatScreen({ route, navigation }: any) {
+  const store = useRemote();
+  const macs = store.macs();
+  // A chat starts on the Mac that owns its project; a standalone chat on the Mac chosen for it.
+  const [hostId, setHostId] = useState<string | null>(route.params?.hostId || null);
+  const fallbackHost = (macs.find(mac => mac.state === 'online') || macs[0])?.id || null;
+  useEffect(() => {
+    if (!macs.some(mac => mac.id === hostId) && fallbackHost !== hostId) setHostId(fallbackHost);
+  }, [hostId, fallbackHost]);
+  const state = store.client(hostId);
+  const [prompt, setPrompt] = useState(route.params?.prompt || '');
+  const [attachments, setAttachments] = useState<PickedAttachment[]>([]);
+  const [projectId, setProjectId] = useState<string | null>(route.params?.projectId || null);
+  const [standalone, setStandalone] = useState(!!route.params?.standalone);
+  const project = state.snapshot?.projects.find(x => x.id === projectId);
+  const [profileId, setProfileId] = useState<string | null>(null);
+  const offeredProfiles = visibleProfiles(state.snapshot?.profiles, standalone ? null : project, profileId);
+  const [provider, setProvider] = useState('claude');
+  const [modelName, setModelName] = useState('');
+  const [customModel, setCustomModel] = useState(false);
+  const [effort, setEffort] = useState('');
+  const [policy, setPolicy] = useState<Policy>('ask');
+  const [base, setBase] = useState('HEAD');
+  const [worktree, setWorktree] = useState(route.params?.worktree || '');
+  const [worktrees, setWorktrees] = useState<Array<{ path: string; branch: string }>>([]);
+  const [busy, setBusy] = useState(false);
+  // Why the project's default Mac wasn't used for this chat.
+  const [deviceNotice, setDeviceNotice] = useState<string | null>(null);
+  // Picking a project pre-selects the Mac its new chats default to (kept on
+  // its record on the Mac that owns it), and that Mac's own record of it.
+  const chooseProject = (ownerMacId: string, chosen: Project) => {
+    const target = resolveChatTarget(macs, ownerMacId, chosen);
+    setDeviceNotice(target.notice);
+    setStandalone(false);
+    setHostId(target.macId);
+    setProjectId(target.projectId);
+    setWorktree('');
+    setModelName('');
+    setEffort('');
+  };
+  const resolvedInitial = useRef(false);
+  useEffect(() => {
+    if (resolvedInitial.current) return;
+    if (project && hostId) { resolvedInitial.current = true; if (!route.params?.worktree) chooseProject(hostId, project); }
+  }, [project?.id, hostId]);
+  useEffect(() => {
+    if (!projectId && !standalone && hostId && state.snapshot?.projects.length) chooseProject(hostId, state.snapshot.projects[0]);
+  }, [projectId, standalone, hostId, state.snapshot?.projects]);
+  useEffect(() => {
+    if (!project) return;
+    setProvider(project.defaultProviderId);
+    setPolicy(project.defaultPermissionPolicy);
+    setBase(project.defaultBaseRef || 'HEAD');
+  }, [hostId, project?.id]);
+  useEffect(() => {
+    if (!project && state.snapshot?.providers.length && !state.snapshot.providers.includes(provider)) {
+      setProvider(state.snapshot.providers[0]);
+      setModelName('');
+      setEffort('');
+    }
+  }, [project?.id, provider, state.snapshot?.providers]);
+  useEffect(() => {
+    if (!project) { setWorktrees([]); return; }
+    let active = true;
+    state.exec(project.rootPath, ['worktree', 'list', '--porcelain']).then(result => {
+      if (!active || result.code !== 0) return;
+      const entries = result.stdout.split(/\n\n+/).map(block => ({ path: block.match(/^worktree (.*)$/m)?.[1] || '', branch: block.match(/^branch refs\/heads\/(.*)$/m)?.[1] || '' }));
+      setWorktrees(entries.filter(entry => entry.path && entry.path !== project.rootPath));
+    }).catch(() => { if (active) setWorktrees([]); });
+    return () => { active = false; };
+  }, [hostId, project?.id]);
+  const catalog = state.snapshot?.modelCatalogs?.[provider];
+  const modelOption = [...(catalog?.models || []), ...(catalog?.versions || [])].find(x => x.id === modelName);
+  const effortLevels = modelOption?.efforts || catalog?.accountDefault?.efforts || [];
+  const providerLabel = (id: string) => ({ claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode' } as Record<string, string>)[id] || id;
+  const policyLabels: Record<Policy, string> = { ask: 'Ask before acting', 'auto-edits': 'Accept edits', bypass: 'Full autonomy', plan: 'Plan', 'read-only': 'Ask (read-only)' };
+  const selectedWorktree = worktrees.find(x => x.path === worktree);
+  const worktreeLabel = selectedWorktree?.branch || (worktree ? worktree.split('/').pop() || worktree : 'New worktree');
+  const worktreeHolder = worktree && state.snapshot?.sessions.find(x => x.worktreePath === worktree && !x.archivedAt);
+  const canStart = !busy && state.status === 'online' && !!state.snapshot?.providers.includes(provider) && (!!project || standalone || !state.snapshot?.projects.length) && (!!prompt.trim() || attachments.length > 0);
+  const chooseProfile = (id: string) => {
+    const chosen = findProfile(state.snapshot?.profiles, id || null);
+    setProfileId(chosen?.id || null);
+    if (!chosen) return;
+    const filled = appliedProfile(chosen);
+    setProvider(filled.providerId); setModelName(filled.model || ''); setEffort(filled.effort || ''); setPolicy(filled.policy); setCustomModel(false);
+  };
+  const submit = async () => {
+    if (!canStart) return;
+    setBusy(true);
+    try {
+      const chosen = findProfile(state.snapshot?.profiles, profileId);
+      const profile = chosen ? profileSnapshotOf(chosen) : null;
+      const response = project
+        ? await state.request('startChat', { _0: { projectId: project.id, providerId: provider, prompt: prompt.trim(), ...attachmentPayload(attachments), baseRef: base || null, policy, model: modelName || null, effort: effort || null, worktree: worktree || null, profile } })
+        : await state.request('startStandaloneConfigured', { providerId: provider, prompt: prompt.trim(), policy,
+          ...attachmentPayload(attachments), model: modelName || null, effort: effort || null, profile });
+      navigation.replace('Chat', { hostId, sessionId: response.started?.sessionId });
+    } catch (error) { Alert.alert('Could not start chat', String(error)); } finally { setBusy(false); }
+  };
+  const recent = macChats(macs).slice(0, 6);
+  const projectChoices = macProjects(macs).map(({ mac, project: choice }) => ({ id: itemKey(mac.id, choice.id), hostId: mac.id, projectId: choice.id, title: macs.length > 1 ? `${choice.name} · ${mac.name}` : choice.name }));
+  // The Macs that have this project, for running this one chat elsewhere
+  // than its default Mac.
+  const projectMacChoices = project ? macs.flatMap(mac => {
+    const counterpart = counterpartProject(project, mac.snapshot?.projects || []);
+    return counterpart ? [{ macId: mac.id, projectId: counterpart.id, title: mac.state === 'online' ? mac.name : `${mac.name} (${mac.state === 'connecting' ? 'connecting' : 'not reachable'})` }] : [];
+  }) : [];
+  const macName = (id: string | null) => macs.find(mac => mac.id === id)?.name || 'No Mac';
+  return <HeaderScrollView keyboardAware style={styles.page} contentContainerStyle={styles.launcherContent}>
+    <View style={styles.launcherIntro}><BrandMark /><Text style={styles.launcherTitle}>{state.snapshot?.projects.length ? 'What should we build?' : 'Welcome to Abstract'}</Text><Text style={styles.launcherDescription}>{state.snapshot?.projects.length ? 'Each chat runs its own agent in an isolated worktree, so several can work at once without stepping on each other.' : 'Connect a Mac and start a standalone chat, or add a project on your Mac to work in isolated worktrees.'}</Text></View>
+    <View style={styles.launcherBox}>
+      <TextInput autoFocus={!!state.snapshot?.projects.length} style={styles.launcherPrompt} value={prompt} onChangeText={setPrompt} multiline textAlignVertical="top" placeholder="Describe the task. Be as specific as you would with a colleague." placeholderTextColor={tertiary} />
+      {attachments.length > 0 && <View style={styles.launcherAttachments}>{attachments.map(item => <Pressable key={item.id} accessibilityRole="button" accessibilityLabel={`Remove ${item.title}`} onPress={() => setAttachments(attachments.filter(x => x.id !== item.id))} style={styles.launcherAttachment}><Text numberOfLines={1} style={styles.launcherPickerText}>{item.title} ×</Text></Pressable>)}</View>}
+      <View style={styles.launcherControls}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Attach files or images" onPress={() => run(async () => setAttachments(await pickAttachments(attachments)))} style={styles.launcherPicker}><Icon name="plus" size={16} color={muted} /></Pressable>
+        <LauncherPicker label="Project" value={project?.name || 'No project'} choices={[...projectChoices.map(x => ({ id: x.id, title: x.title, selected: x.hostId === hostId && x.projectId === projectId })), { id: '', title: 'No project', selected: !projectId }]} onSelect={id => { const choice = projectChoices.find(x => x.id === id); const chosen = choice && macs.find(mac => mac.id === choice.hostId)?.snapshot?.projects.find(x => x.id === choice.projectId); setProfileId(null); if (choice && chosen) chooseProject(choice.hostId, chosen); else { setStandalone(true); setProjectId(null); setWorktree(''); setDeviceNotice(null); } }} />
+        {!project && macs.length > 1 && <LauncherPicker label="Mac" value={macName(hostId)} leading={<Icon name="devices" size={13} color={muted} />} choices={macs.map(mac => ({ id: mac.id, title: mac.state === 'online' ? mac.name : `${mac.name} (${mac.state === 'connecting' ? 'connecting' : 'not reachable'})`, selected: mac.id === hostId }))} onSelect={id => { setHostId(id); setModelName(''); setEffort(''); setProfileId(null); }} />}
+        {project && projectMacChoices.length > 1 && <LauncherPicker label="Mac" value={macName(hostId)} leading={<Icon name="devices" size={13} color={muted} />} choices={projectMacChoices.map(x => ({ id: x.macId, title: x.title, selected: x.macId === hostId }))} onSelect={id => { const choice = projectMacChoices.find(x => x.macId === id); if (!choice || choice.macId === hostId) return; setDeviceNotice(null); setHostId(choice.macId); setProjectId(choice.projectId); setWorktree(''); setModelName(''); setEffort(''); setProfileId(null); }} />}
+        {offeredProfiles.length > 0 && <LauncherPicker label="Profile" value={findProfile(offeredProfiles, profileId)?.name || 'No profile'} choices={[{ id: '', title: 'No profile', selected: !profileId }, ...offeredProfiles.map(x => ({ id: x.id, title: x.name, selected: x.id === profileId }))]} onSelect={chooseProfile} />}
+        <LauncherPicker label="Agent" value={providerLabel(provider)} leading={<ProviderLogo provider={provider} size={13} />} choices={(state.snapshot?.providers || []).map(id => ({ id, title: providerLabel(id), selected: id === provider, image: Platform.OS === 'ios' ? providerMenuImage(id) : undefined }))} onSelect={id => { setProvider(id); setModelName(''); setEffort(''); setCustomModel(false); }} />
+        <LauncherPicker label="Model" value={modelOption?.label || modelName || state.snapshot?.defaultModelNames?.[provider] || 'Default model'} choices={[{ id: '', title: 'Default model', selected: !modelName }, ...(catalog?.models || []).map(x => ({ id: x.id, title: x.label, selected: modelName === x.id })), ...(catalog?.versions || []).map(x => ({ id: x.id, title: x.label, selected: modelName === x.id })), { id: '__other__', title: 'Other Model…' }]} onSelect={id => { if (id === '__other__') setCustomModel(true); else { setModelName(id); setEffort(''); setCustomModel(false); } }} />
+        {effortLevels.length > 0 && <LauncherPicker label="Reasoning effort" value={effort ? effort.replace(/^./, x => x.toUpperCase()) : 'Default effort'} choices={[{ id: '', title: 'Default effort', selected: !effort }, ...effortLevels.map(id => ({ id, title: id.replace(/^./, x => x.toUpperCase()), selected: effort === id }))]} onSelect={setEffort} />}
+        <LauncherPicker label="Mode" value={policyLabels[policy]} choices={MODE_CHOICES.map(({ id, title }) => ({ id, title, selected: id === policy }))} onSelect={id => setPolicy(id as Policy)} />
+        {project && <><LauncherPicker label="Worktree" value={worktreeLabel} choices={[{ id: '', title: 'New worktree', selected: !worktree }, ...worktrees.map(x => ({ id: x.path, title: x.branch || x.path.split('/').pop() || x.path, selected: x.path === worktree }))]} onSelect={setWorktree} />{!worktree && <View style={styles.launcherBase}><Text style={styles.launcherBaseLabel}>from</Text><TextInput style={styles.launcherBaseInput} value={base} onChangeText={setBase} autoCapitalize="none" autoCorrect={false} placeholder="HEAD" placeholderTextColor={tertiary} /></View>}</>}
+      </View>
+      {customModel && <TextInput autoFocus style={styles.launcherCustomModel} value={modelName} onChangeText={value => { setModelName(value); setEffort(''); }} autoCapitalize="none" autoCorrect={false} placeholder="Model name" placeholderTextColor={tertiary} />}
+      {deviceNotice && <Text style={styles.launcherWarning}>{deviceNotice}</Text>}
+      {worktreeHolder && <Text style={styles.launcherWarning}>“{worktreeHolder.name}” works here now. Starting stops its agent and this chat takes the worktree.</Text>}
+      <View style={styles.launcherFooter}><Pressable accessibilityRole="button" accessibilityState={{ disabled: !canStart }} disabled={!canStart} onPress={() => run(submit)} style={[styles.launcherStart, !canStart && styles.launcherStartDisabled]}><Text style={styles.launcherStartText}>{busy ? 'Starting…' : 'Start'}</Text><Icon name="chevron" size={13} color={bg} /></Pressable></View>
+    </View>
+    {recent.length > 0 && <View style={styles.launcherRecent}><Text style={styles.launcherRecentLabel}>Recent</Text>{recent.map(({ mac, chat }) => <Pressable key={itemKey(mac.id, chat.id)} onPress={() => navigation.navigate('Chat', { hostId: mac.id, sessionId: chat.id })} style={styles.launcherRecentRow}><ProviderLogo provider={chat.providerId} size={15} /><Text numberOfLines={1} style={styles.launcherRecentName}>{chat.name}</Text><Text numberOfLines={1} style={styles.launcherRecentMeta}>{`${mac.snapshot?.projects.find(x => x.id === chat.projectId)?.name || 'Standalone'}${macs.length > 1 ? ` · ${mac.name}` : ''}`}</Text></Pressable>)}</View>}
+    {macContributions(macs.filter(mac => mac.state === 'online'), 'home').map(({ mac, plugin, contribution }) => <View key={`${mac.id}:${plugin.id}:${contribution.id}`} style={[styles.launcherRecent, { marginTop: 28 }]}>
+      <Text style={styles.launcherRecentLabel}>{contribution.title}</Text>
+      <View style={{ borderRadius: 10, overflow: 'hidden' }}><PluginView navigation={navigation} height={220} route={{ hostId: mac.id, pluginId: plugin.id, title: contribution.title, place: 'home', contributionId: contribution.id }} /></View>
+    </View>)}
+  </HeaderScrollView>;
+}
+function WorktreesScreen({ route, navigation }: any) {
+  const store = useRemote(); const hostId = route.params?.hostId as string | undefined;
+  const state = store.client(hostId); const project = hostId ? state.snapshot?.projects.find(x => x.id === route.params?.projectId) : undefined;
+  const [output, setOutput] = useState('');
+  const refresh = () => { if (project) state.exec(project.rootPath, ['worktree', 'list', '--porcelain']).then(x => setOutput(x.stdout)).catch(error => setOutput(String(error))); };
+  useEffect(refresh, [hostId, project?.id]);
+  const entries = output.split(/\n\n+/).map(block => ({ path: block.match(/^worktree (.*)$/m)?.[1], branch: block.match(/^branch refs\/heads\/(.*)$/m)?.[1] })).filter(x => x.path);
+  return <HeaderScrollView style={styles.page} contentContainerStyle={styles.content}><Text style={styles.title}>Worktrees</Text>{!project ? store.macs().map(mac => <View key={mac.id} style={mac.state === 'unreachable' && styles.unreachable}><Section title={mac.name}>{mac.state !== 'online' && <Text style={styles.hint}>{macStatus(mac)}</Text>}{mac.snapshot?.projects.map(p => <Row key={p.id} title={p.name} subtitle={p.rootPath} onPress={() => navigation.navigate('Worktrees', { hostId: mac.id, projectId: p.id })} />)}</Section></View>) : <><Text style={styles.lead}>{project.name}</Text>{entries.map(entry => <View key={entry.path}><Row title={entry.branch || 'Detached'} subtitle={entry.path} onPress={() => navigation.navigate('Files', { hostId, root: entry.path })} /><Button title="Terminal" secondary onPress={() => navigation.navigate('Terminal', { hostId, root: entry.path })} />{entry.path !== project.rootPath && <><Button title="New chat here" secondary onPress={() => navigation.navigate('NewChat', { hostId, projectId: project.id, worktree: entry.path })} /><Button title="Remove worktree" danger onPress={() => Alert.alert('Remove worktree?', entry.path || '', [{ text: 'Cancel' }, { text: 'Remove', style: 'destructive', onPress: () => run(async () => { await state.request('removeWorktree', { projectId: project.id, path: entry.path, deleteBranch: false }); refresh(); }) }])} /></>}</View>)}{!entries.length && <Empty text="No worktrees found." />}</>}
+    <Text style={styles.hint}>Create a chat to create a new worktree. Open a worktree to browse its files.</Text>
+  </HeaderScrollView>;
+}
+function FilesScreen({ route, navigation }: any) {
+  const hostId = route.params.hostId as string; const state = useMac(hostId); const root = route.params.root as string;
+  const [paths, setPaths] = useState<string[]>([]); const [query, setQuery] = useState(''); const [folder, setFolder] = useState('');
+  const [error, setError] = useState(''); const [loading, setLoading] = useState(false);
+  const refresh = () => { setLoading(true); setError(''); state.request('listFiles', { root }).then(response => setPaths(response.files?._0 || [])).catch(reason => setError(String(reason.message || reason))).finally(() => setLoading(false)); };
+  useEffect(() => { refresh(); }, [hostId, root]);
+  const matchingPaths = query.trim() ? paths.filter(path => path.toLowerCase().includes(query.trim().toLowerCase())) : null;
+  const entries = matchingPaths
+    ? matchingPaths.slice(0, 500).map(path => ({ path, name: path.split('/').at(-1) || path, directory: false }))
+    : [...new Map(paths.filter(path => path.startsWith(folder ? `${folder}/` : '')).map(path => {
+        const remainder = path.slice(folder ? folder.length + 1 : 0);
+        const name = remainder.split('/')[0];
+        const directory = remainder.includes('/');
+        const child = folder ? `${folder}/${name}` : name;
+        return [child, { path: child, name, directory }] as const;
+      })).values()].sort((a, b) => Number(b.directory) - Number(a.directory) || a.name.localeCompare(b.name));
+  return <SwipeForward enabled={!!route.params.sessionId} onSwipe={() => navigation.navigate('Terminal', { hostId, root, sessionId: route.params.sessionId })} onBack={() => navigation.goBack()}><View style={styles.page}>
+    <HeaderSpacer />
+    <View style={styles.filesFilterSection}>
+      <View style={styles.filesFilterHeading}><Text style={styles.filesFilterTitle}>FILES</Text><Text style={styles.filesFilterCount}>{loading ? 'Loading…' : matchingPaths ? `${matchingPaths.length} matches` : `${entries.length} items`}</Text></View>
+      <View style={styles.filesFilterRow}><View style={styles.fileFilter}><Icon name="filter" size={16} color={tertiary} /><TextInput style={styles.fileFilterInput} placeholder="Filter files" placeholderTextColor={tertiary} value={query} onChangeText={setQuery} autoCapitalize="none" autoCorrect={false} />{query ? <Pressable style={styles.fileFilterClear} onPress={() => setQuery('')} accessibilityLabel="Clear filter"><Icon name="close" size={13} color={muted} /></Pressable> : null}</View><Pressable style={styles.fileRefreshButton} accessibilityLabel="Refresh files" onPress={() => { Haptics.selectionAsync().catch(() => {}); refresh(); }}><Icon name="refresh" size={17} color={muted} /></Pressable></View>
+    </View>
+    {folder ? <Pressable style={styles.breadcrumb} onPress={() => setFolder(folder.split('/').slice(0, -1).join('/'))}><Icon name="back" size={13} color={muted} /><Text numberOfLines={1} style={styles.breadcrumbText}>{folder}</Text></Pressable> : null}
+    {error ? <View style={styles.paneEmpty}><Icon name="failed" size={22} color="#EF6461" /><Text style={styles.paneEmptyTitle}>Couldn't load files</Text><Text style={styles.empty}>{error}</Text><Button title="Try again" secondary onPress={refresh} /></View> : loading && !paths.length ? <View style={styles.paneEmpty}><Text style={styles.empty}>Loading files…</Text></View> : <FlatList contentContainerStyle={styles.fileList} data={entries} keyExtractor={item => item.path} ListEmptyComponent={<View style={styles.paneEmpty}><Text style={styles.empty}>{query.trim() ? 'No matching files.' : 'No files found.'}</Text></View>} renderItem={({ item }) => <Pressable style={styles.fileTreeRow} onPress={() => item.directory ? setFolder(item.path) : navigation.navigate('File', { hostId, root, sessionId: route.params.sessionId, path: root.replace(/\/$/, '') + '/' + item.path })}><FileIcon path={item.path} directory={item.directory} size={17} /><View style={{ flex: 1, minWidth: 0 }}><Text numberOfLines={1} style={styles.fileTreeTitle}>{item.name}</Text>{query ? <Text numberOfLines={1} style={styles.fileTreeSubtitle}>{item.path}</Text> : null}</View>{item.directory ? <Icon name="chevron" size={11} color={tertiary} /> : null}</Pressable>} />}
+  </View></SwipeForward>;
+}
+function FileScreen({ route, navigation }: any) {
+  const hostId = route.params.hostId as string; const state = useMac(hostId); const path = route.params.path as string;
+  const root = route.params.root as string | undefined;
+  const [content, setContent] = useState(''); const [editing, setEditing] = useState(false);
+  const [selectedLine, setSelectedLine] = useState<number | null>(null);
+  useEffect(() => { state.readFile(path).then(setContent).catch(error => Alert.alert('File', String(error))); }, [hostId, path]);
+  useEffect(() => { navigation.setOptions({ title: path.split('/').at(-1) || 'File' }); }, [navigation, path]);
+  const save = async () => { await state.writeFile(path, content); setEditing(false); };
+  const lines = content.split('\n');
+  const relative = root ? relativePath(root, path) : null;
+  const canAsk = !!state.snapshot?.codeHistory && !!root && !!relative && selectedLine !== null && !editing;
+  const highlighted = useMemo(() => editing ? [] : highlightLines(lines, path), [content, editing, path]);
+  return <KeyboardAvoidingView style={styles.page} behavior={Platform.OS === 'ios' ? 'padding' : undefined}><HeaderSpacer /><View style={styles.paneToolbar}><FileIcon path={path} size={16} /><Text style={styles.editorMeta}>{content.length} characters · {lines.length} lines{editing ? ' · Editing' : ''}</Text><View style={{ flex: 1 }} />{canAsk && <Pressable style={styles.editorAction} accessibilityLabel="Ask the chat that wrote this line" onPress={() => askAboutLines(navigation, hostId, state, { root: root!, path: relative!, lineStart: selectedLine! + 1, lineEnd: selectedLine! + 1, code: [lines[selectedLine!]], revision: 'HEAD', sessionId: route.params.sessionId || null })}><Text style={styles.editorActionText}>Ask who wrote line {selectedLine! + 1}</Text></Pressable>}<Pressable style={styles.editorAction} onPress={() => editing ? run(save) : setEditing(true)}><Text style={styles.editorActionText}>{editing ? 'Save' : 'Edit'}</Text></Pressable>{editing && <Pressable style={styles.editorAction} onPress={() => { setEditing(false); state.readFile(path).then(setContent).catch(() => {}); }}><Text style={styles.editorActionText}>Cancel</Text></Pressable>}</View>
+    {editing ? <ScrollView style={{ flex: 1 }} keyboardShouldPersistTaps="handled"><TextInput style={styles.editorInput} value={content} onChangeText={setContent} multiline autoCapitalize="none" autoCorrect={false} textAlignVertical="top" /></ScrollView> : <ScrollView style={{ flex: 1 }}><ScrollView horizontal contentContainerStyle={styles.editorCode}><View>{lines.map((line, index) => <Pressable key={index} accessibilityLabel={`Line ${index + 1}`} onPress={() => setSelectedLine(selectedLine === index ? null : index)} style={[styles.editorLineRow, selectedLine === index && styles.editorLineSelected]}><Text style={styles.editorLineNumber}>{String(index + 1).padStart(4)}</Text><Text style={styles.editorLineText}>{(highlighted[index] || []).map((part, partIndex) => <Text key={partIndex} style={{ color: part.color }}>{part.text}</Text>)}{line ? '' : ' '}</Text></Pressable>)}</View></ScrollView></ScrollView>}
+  </KeyboardAvoidingView>;
+}
+function TerminalScreen({ route, navigation }: any) {
+  const hostId = route.params.hostId as string; const state = useMac(hostId); const root = route.params.root as string;
+  const [id, setId] = useState<number | null>(null);
+  useEffect(() => {
+    let terminal: number | null = null;
+    state.openTerminal(root).then(value => { terminal = value; setId(value); }).catch(error => Alert.alert('Terminal', String(error)));
+    return () => { if (terminal !== null) state.request('closeTerminal', { id: terminal }).catch(() => {}); };
+  }, [hostId, root]);
+  return <SafeAreaView edges={['left', 'right', 'bottom']} style={styles.page}><HeaderSpacer /><SwipeForward enabled={!!route.params.sessionId} onSwipe={() => navigation.navigate('PullRequest', { hostId, sessionId: route.params.sessionId })} onBack={() => navigation.goBack()}><TerminalView hostId={hostId} id={id} root={root} /></SwipeForward></SafeAreaView>;
+}
+type ReviewComment = { path: string; line: number; side: 'old' | 'new'; code: string; text: string };
+function patchLines(patch: string) {
+  let oldLine = 0, newLine = 0;
+  const lines: Array<{ old: number | null; next: number | null; text: string; kind: string }> = [];
+  for (const text of patch.split('\n')) {
+    const hunk = text.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)/);
+    if (hunk) { oldLine = Number(hunk[1]); newLine = Number(hunk[2]); lines.push({ old: null, next: null, text, kind: '@' }); continue; }
+    if (text.startsWith('+++') || text.startsWith('---') || text.startsWith('diff --git') || text.startsWith('index ')) continue;
+    if (text.startsWith('+')) { lines.push({ old: null, next: newLine++, text, kind: '+' }); continue; }
+    if (text.startsWith('-')) { lines.push({ old: oldLine++, next: null, text, kind: '-' }); continue; }
+    if (text.startsWith(' ')) { lines.push({ old: oldLine++, next: newLine++, text, kind: ' ' }); continue; }
+  }
+  return lines;
+}
+function ReviewDiff({ patch, path, onSelect }: { patch: string; path: string; onSelect: (line: ReturnType<typeof patchLines>[number]) => void }) {
+  const lines = useMemo(() => patchLines(patch), [patch]);
+  const highlighted = useMemo(() => highlightDiffLines(lines, path), [lines, path]);
+  return <ScrollView horizontal><View>{lines.map((line, index) => <Pressable key={index} onPress={() => onSelect(line)}>
+    <Text style={[styles.mono, styles.diffLine, line.kind === '+' && styles.addedLine, line.kind === '-' && styles.removedLine, line.kind === '@' && styles.hunkLine]}>
+      <Text style={line.kind === '+' ? styles.diffAdded : line.kind === '-' ? styles.diffRemoved : styles.diffGutter}>{String(line.old ?? '').padStart(3)} {String(line.next ?? '').padStart(3)} {line.kind === '@' ? '' : line.kind}</Text>
+      {line.kind === '@' ? line.text : highlighted[index].map((part, partIndex) => <Text key={partIndex} style={{ color: part.color }}>{part.text}</Text>)}
+    </Text>
+  </Pressable>)}</View></ScrollView>;
+}
+function ReviewScreen({ route, navigation }: any) {
+  const hostId = route.params.hostId as string; const state = useMac(hostId); const chat = state.snapshot?.sessions.find(x => x.id === route.params.sessionId);
+  const [committed, setCommitted] = useState(false);
+  const [files, setFiles] = useState<Array<{ path: string; status: string; additions: number; deletions: number; binary: boolean; patch: string }>>([]);
+  const [comments, setComments] = useState<ReviewComment[]>([]);
+  const [expandedPaths, setExpandedPaths] = useState<string[]>([]);
+  const [selected, setSelected] = useState<Omit<ReviewComment, 'text'> | null>(null);
+  const [commentText, setCommentText] = useState('');
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+  const refresh = () => { if (!chat) return; setError(''); state.request('review', { sessionId: chat.id, committed }).then(response => setFiles(response.review?._0 || [])).catch(reason => setError(String(reason.message || reason))); };
+  useEffect(() => { if (chat) refresh(); }, [hostId, chat?.id, committed]);
+  const decide = (path: string, accept: boolean) => Alert.alert(accept ? 'Accept change?' : 'Discard change?', path, [
+    { text: 'Cancel' }, { text: accept ? 'Accept into project' : 'Discard from worktree', style: accept ? 'default' : 'destructive', onPress: () => run(async () => { await state.request('reviewFile', { sessionId: chat!.id, path, committed, accept }); refresh(); }) }
+  ]);
+  const sendFeedback = () => run(async () => {
+    if (!chat || (!comments.length && !message.trim())) return;
+    const header = `Review attachment (${committed ? 'committed' : 'uncommitted'})\nCWD: ${chat.worktreePath || ''}`;
+    const attachment = comments.map((comment, index) => `\nComment ${index + 1}: ${comment.path}:${comment.side}:${comment.line}\n${comment.text}\n> ${comment.line} ${comment.code}`).join('\n');
+    const text = comments.length ? `${message.trim()}\n\n${header}\n${attachment}`.trim() : message.trim();
+    await state.request('send', { sessionId: chat.id, text });
+    setComments([]); setMessage('');
+  });
+  const additions = files.reduce((sum, file) => sum + file.additions, 0);
+  const deletions = files.reduce((sum, file) => sum + file.deletions, 0);
+  return <SwipeForward enabled={!!chat} onSwipe={() => navigation.navigate('Files', { hostId, root: chat && activeRoot(state, chat), sessionId: chat?.id })} onBack={() => navigation.goBack()}><View style={styles.page}>
+    <HeaderSpacer />
+    <View style={styles.paneToolbar}><NativeSelect label="Review mode" value={committed ? 'Committed' : 'Uncommitted'} align="left" choices={[{ id: 'uncommitted', title: 'Uncommitted', selected: !committed }, { id: 'committed', title: 'Committed', selected: committed }]} onSelect={id => { setCommitted(id === 'committed'); setExpandedPaths([]); }} /><Text style={styles.diffAdded}>+{additions}</Text><Text style={styles.diffRemoved}>−{deletions}</Text><Pressable style={styles.paneIconButton} accessibilityLabel="Refresh review" onPress={refresh}><Icon name="refresh" size={17} /></Pressable><MenuView actions={[{ id: 'expand', title: 'Expand all files' }, { id: 'collapse', title: 'Collapse all files' }]} onPressAction={({ nativeEvent }) => setExpandedPaths(nativeEvent.event === 'expand' ? files.map(file => file.path) : [])}><View style={styles.paneIconButton}><SymbolView name={{ ios: 'ellipsis', android: 'more_horiz' }} size={19} tintColor={muted} /></View></MenuView></View>
+    <KeyboardAwareScrollView style={{ flex: 1 }} contentContainerStyle={styles.paneContent}>
+      {error ? <View style={styles.paneEmpty}><Icon name="failed" size={22} color="#EF6461" /><Text style={styles.paneEmptyTitle}>Couldn't load changes</Text><Text style={styles.empty}>{error}</Text><Button title="Try again" secondary onPress={refresh} /></View> : null}
+      {files.map(file => { const expanded = expandedPaths.includes(file.path); return <View key={file.path} style={styles.reviewFile}>
+        <Pressable style={styles.reviewFileHeader} onPress={() => setExpandedPaths(expanded ? expandedPaths.filter(path => path !== file.path) : [...expandedPaths, file.path])}><Icon name="chevron" size={11} color={tertiary} /><FileIcon path={file.path} size={17} /><View style={{ flex: 1, minWidth: 0 }}><Text numberOfLines={1} style={styles.fileTreeTitle}>{file.path.split('/').at(-1)}</Text>{file.path.includes('/') && <Text numberOfLines={1} style={styles.fileTreeSubtitle}>{file.path.slice(0, file.path.lastIndexOf('/'))}</Text>}</View><Text style={styles.diffAdded}>+{file.additions}</Text><Text style={styles.diffRemoved}>−{file.deletions}</Text></Pressable>
+        {expanded && <View style={styles.reviewFileBody}>{file.binary ? <Text style={styles.mono}>Binary file</Text> : <ReviewDiff patch={file.patch} path={file.path} onSelect={line => { if (line.old !== null || line.next !== null) { setSelected({ path: file.path, line: line.next ?? line.old!, side: line.next !== null ? 'new' : 'old', code: line.text.slice(1) }); setCommentText(''); } }} />}<View style={styles.reviewFileActions}><ReviewFileButton title="Apply to project" onPress={() => decide(file.path, true)} />{!committed && <ReviewFileButton title="Discard changes" destructive onPress={() => decide(file.path, false)} />}</View></View>}
+      </View>; })}
+      {!files.length && !error && <View style={styles.paneEmpty}><Icon name="check" size={23} color={tertiary} /><Text style={styles.paneEmptyTitle}>No changes to display</Text><Text style={styles.empty}>{committed ? 'This branch has no committed changes.' : 'Nothing uncommitted in this worktree.'}</Text></View>}
+      {selected && <PaneSection title={`Comment on ${selected.path}:${selected.line}`}><Text style={styles.mono}>{selected.code}</Text><TextInput style={[styles.input, styles.multiline]} multiline value={commentText} onChangeText={setCommentText} placeholder="Review comment" placeholderTextColor={muted} /><View style={styles.reviewActions}><Button title="Add comment" onPress={() => { if (commentText.trim()) setComments([...comments, { ...selected, text: commentText.trim() }]); setSelected(null); setCommentText(''); }} />{state.snapshot?.codeHistory && selected.side === 'new' && chat && activeRoot(state, chat) && <Button title="Ask the chat that wrote this…" secondary onPress={() => askAboutLines(navigation, hostId, state, { root: activeRoot(state, chat), path: selected.path, lineStart: selected.line, lineEnd: selected.line, code: [selected.code], revision: committed ? 'HEAD' : null, sessionId: chat.id })} />}<Button title="Cancel" secondary onPress={() => setSelected(null)} /></View></PaneSection>}
+      {comments.length > 0 && <PaneSection title="Draft comments" detail={String(comments.length)}>{comments.map((comment, index) => <Row key={index} title={`${comment.path}:${comment.line}`} subtitle={comment.text} onPress={() => setComments(comments.filter((_, i) => i !== index))} trailing="Remove" />)}</PaneSection>}
+      {(files.length > 0 || comments.length > 0) && <PaneSection title="Send review to agent"><TextInput style={[styles.input, styles.multiline]} multiline value={message} onChangeText={setMessage} placeholder="Optional summary" placeholderTextColor={muted} /><Button title="Send review" onPress={sendFeedback} /></PaneSection>}
+    </KeyboardAwareScrollView>
+  </View></SwipeForward>;
+}
+function PullRequestScreen({ route, navigation }: any) {
+  const state = useMac(route.params.hostId); const sessionId = route.params.sessionId as string;
+  const blurTarget = useRef<View>(null);
+  const headerHeight = useHeaderHeight();
+  const chat = state.snapshot?.sessions.find(x => x.id === sessionId);
+  const pr = state.snapshot?.pullRequests?.[sessionId];
+  const [title, setTitle] = useState(chat?.name || ''); const [body, setBody] = useState('');
+  const [base, setBase] = useState(chat?.baseRef || ''); const [draft, setDraft] = useState(false);
+  const [message, setMessage] = useState('');
+  const [publishOpen, setPublishOpen] = useState(false);
+  const [working, setWorking] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const request = async (name: string, label: string, args: Record<string, unknown> = {}) => {
+    if (working) return;
+    setWorking(label);
+    setActionError(null);
+    try {
+      await state.request(name, { sessionId, ...args });
+      await state.refresh();
+      if (name === 'pushChanges') { setPublishOpen(false); setMessage(''); }
+    } catch (error) {
+      setActionError(String(error instanceof Error ? error.message : error));
+    } finally {
+      setWorking(null);
+    }
+  };
+  useEffect(() => {
+    navigation.setOptions({
+      headerTransparent: true,
+      headerStyle: { backgroundColor: 'transparent' },
+      headerBackground: () => <ProgressiveBlur edge="top" blurTarget={blurTarget} />,
+      headerRight: () => pr ? (working ? <View accessibilityLabel="GitHub actions unavailable" style={[styles.prNavigationIcon, styles.prButtonDisabled]}><SymbolView name={{ ios: 'ellipsis', android: 'more_horiz' }} size={19} tintColor={muted} /></View> :
+        <MenuView title="GitHub actions" actions={[
+          ...(pr.url ? [{ id: 'open', title: 'Open on GitHub', image: Platform.OS === 'ios' ? 'arrow.up.forward.square' : undefined }] : []),
+          ...(pr.state.toLowerCase() === 'open' ? [
+            ...(pr.isDraft ? [{ id: 'ready', title: 'Ready for review' }] : [{ id: 'merge', title: 'Merge pull request', attributes: { disabled: !!pr.hasConflicts }, subactions: [
+              { id: 'squash', title: 'Squash and merge' }, { id: 'mergeCommit', title: 'Create a merge commit' }, { id: 'rebase', title: 'Rebase and merge' },
+            ] }]),
+            { id: 'close', title: 'Close pull request', attributes: { destructive: true } },
+          ] : []),
+        ]} onPressAction={({ nativeEvent }) => {
+          const action = nativeEvent.event;
+          if (action === 'open' && pr.url) Linking.openURL(pr.url).catch(() => {});
+          else if (action === 'ready') request('markPullRequestReady', 'Marking ready…');
+          else if (action === 'close') Alert.alert('Close pull request?', pr.title, [{ text: 'Cancel' }, { text: 'Close', style: 'destructive', onPress: () => request('closePullRequest', 'Closing…') }]);
+          else if (['squash', 'mergeCommit', 'rebase'].includes(action)) Alert.alert('Merge pull request?', `Use ${action === 'mergeCommit' ? 'merge' : action} for #${pr.number}?`, [{ text: 'Cancel' }, { text: 'Merge', onPress: () => request('mergePullRequest', 'Merging…', { method: action === 'mergeCommit' ? 'merge' : action }) }]);
+        }}><View accessibilityRole="button" accessibilityLabel="GitHub actions" style={styles.prNavigationIcon}><SymbolView name={{ ios: 'ellipsis', android: 'more_horiz' }} size={19} tintColor={muted} /></View></MenuView>) : null,
+    });
+  }, [navigation, pr, working]);
+  const checkSummary = pr?.checks?.length ? [
+    `${pr.checks.filter(x => x.outcome === 'failed').length} failed`,
+    `${pr.checks.filter(x => x.outcome === 'pending').length} running`,
+    `${pr.checks.filter(x => x.outcome === 'passed').length} passed`,
+  ].filter(x => !x.startsWith('0 ')).join(' · ') : undefined;
+  return <View style={styles.page}>
+    <BlurTargetView ref={blurTarget} style={{ flex: 1 }}>
+    <KeyboardAwareScrollView style={{ flex: 1 }} contentContainerStyle={[styles.paneContent, { paddingTop: headerHeight }]}>
+    {actionError && <View style={styles.prActionError}><Text style={styles.error}>{actionError}</Text></View>}
+    {pr ? <>
+      <View style={styles.prHeader}>
+        <View style={styles.prStatusLine}><PullRequestIcon pr={pr} size={15} /><Text style={[styles.prState, { color: pr.state.toLowerCase() === 'merged' ? '#B79CF0' : pr.state.toLowerCase() === 'closed' ? '#F08A84' : pr.isDraft ? '#A0A8B2' : '#6BC98A' }]}>{pr.isDraft ? 'Draft' : pr.state}</Text><Text style={styles.prNumber}>#{pr.number}</Text></View>
+        <Text style={styles.prTitle}>{pr.title}</Text>
+        <View style={styles.prMetadata}>{pr.author && <Text style={styles.prAuthor}>{pr.author}</Text>}<BranchIcon size={11} color={tertiary} /><Text style={styles.prBranch} numberOfLines={1}>{pr.head || chat?.branch || 'Branch'} → {pr.base || chat?.baseRef || 'base'}</Text>{pr.additions != null && <Text style={styles.diffAdded}>+{pr.additions}</Text>}{pr.deletions != null && <Text style={styles.diffRemoved}>−{pr.deletions}</Text>}</View>
+        {pr.reviewDecision && <Text style={styles.prStanding}>{({ APPROVED: 'Approved', CHANGES_REQUESTED: 'Changes requested', REVIEW_REQUIRED: 'Review required' } as Record<string, string>)[pr.reviewDecision] || pr.reviewDecision}</Text>}
+        {pr.standing && <Text style={[styles.prStanding, pr.checks?.some(check => check.outcome === 'failed') && { color: '#EF6461' }]}>{pr.standing}</Text>}
+      </View>
+      {!!pr.checks?.length && <PaneSection title="Checks" detail={checkSummary}>{[...pr.checks].sort((a, b) => ({ failed: 0, pending: 1, passed: 2, skipped: 3 }[a.outcome] ?? 4) - ({ failed: 0, pending: 1, passed: 2, skipped: 3 }[b.outcome] ?? 4)).map(check => <Pressable key={`${check.workflow || ''}/${check.name}`} style={styles.prCheckRow} onPress={() => check.url && Linking.openURL(check.url).catch(() => {})}><Icon name={check.outcome === 'passed' ? 'check' : check.outcome === 'failed' ? 'failed' : check.outcome === 'pending' ? 'pending' : 'skipped'} size={14} color={check.outcome === 'failed' ? '#EF6461' : check.outcome === 'passed' ? '#4CC38A' : muted} /><View style={{ flex: 1 }}><Text style={styles.fileTreeTitle}>{check.name}</Text>{check.workflow && <Text style={styles.fileTreeSubtitle}>{check.workflow}</Text>}</View>{check.url && <SymbolView name={{ ios: 'arrow.up.right', android: 'open_in_new' }} size={12} tintColor={tertiary} />}</Pressable>)}</PaneSection>}
+      {!!pr.body && <PaneSection title="Description"><Text style={styles.prBody}>{pr.body}</Text></PaneSection>}
+      {!!((pr.reviews?.length || 0) + (pr.comments?.length || 0) + (pr.threads?.length || 0)) && <PaneSection title="Reviews" detail={pr.reviewDecision ? ({ APPROVED: 'Approved', CHANGES_REQUESTED: 'Changes requested', REVIEW_REQUIRED: 'Review required' } as Record<string, string>)[pr.reviewDecision] : undefined}>
+        {(pr.reviews || []).map((review, index) => <View key={`review-${index}`} style={styles.prConversation}><Text style={styles.prConversationAuthor}>{review.author} <Text style={styles.prConversationMeta}>{review.verdict.toLowerCase().replaceAll('_', ' ')}</Text></Text>{review.body ? <Text style={styles.prBody}>{review.body}</Text> : null}</View>)}
+        {(pr.threads || []).map(thread => <View key={thread.id} style={styles.prConversation}><Text style={styles.prConversationAuthor}>{thread.path}{thread.line ? `:${thread.line}` : ''} <Text style={styles.prConversationMeta}>{thread.isResolved ? 'Resolved' : thread.isOutdated ? 'Outdated' : 'Open thread'}</Text></Text>{thread.comments.map((comment, index) => <Text key={`${thread.id}-${index}`} style={styles.prBody}><Text style={styles.prConversationAuthor}>{comment.author}: </Text>{comment.body}</Text>)}</View>)}
+        {(pr.comments || []).filter(comment => !comment.isBot).map((comment, index) => <View key={`comment-${index}`} style={styles.prConversation}><Text style={styles.prConversationAuthor}>{comment.author}</Text><Text style={styles.prBody}>{comment.body}</Text></View>)}
+        {(pr.comments || []).filter(comment => comment.isBot).length > 0 && <Text style={styles.prConversationMeta}>{(pr.comments || []).filter(comment => comment.isBot).length} automated comments</Text>}
+      </PaneSection>}
+      {pr.state.toLowerCase() === 'open' && <PaneSection title="Publish changes">
+        <PRButton title="Commit and push" disabled={!!working} onPress={() => setPublishOpen(!publishOpen)} />
+        {pr.hasConflicts && !pr.isDraft && <Text style={styles.prHelp}>Resolve conflicts with {pr.base || 'the base branch'} before merging.</Text>}
+        {publishOpen && <View style={styles.prPublishForm}><TextInput style={styles.input} value={message} onChangeText={setMessage} placeholder="Commit message" placeholderTextColor={muted} editable={!working} /><PRButton title="Commit and push changes" kind="primary" disabled={!!working || !message.trim()} loading={working === 'Pushing…'} onPress={() => request('pushChanges', 'Pushing…', { message: message.trim() })} /></View>}
+      </PaneSection>}
+    </> : <PaneSection title="Create pull request">
+      <Text style={styles.prHelp}>Open a pull request for this chat’s branch.</Text>
+      <Text style={styles.label}>Title</Text><TextInput style={styles.input} value={title} onChangeText={setTitle} editable={!working} placeholder="Pull request title" placeholderTextColor={tertiary} />
+      <Text style={styles.label}>Description</Text><TextInput style={[styles.input, styles.multiline]} value={body} onChangeText={setBody} editable={!working} multiline placeholder="What changed, and why (optional)" placeholderTextColor={tertiary} />
+      <Text style={styles.label}>Base branch</Text><TextInput style={styles.input} value={base} onChangeText={setBase} editable={!working} autoCapitalize="none" placeholder="Default branch" placeholderTextColor={tertiary} />
+      <View style={styles.prCreateFooter}>
+        <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: draft, disabled: !!working }} disabled={!!working} onPress={() => setDraft(!draft)} style={styles.prDraftToggle}><View style={[styles.prDraftBox, draft && styles.prDraftBoxChecked]}>{draft && <Icon name="check" size={12} color={bg} />}</View><Text style={styles.prButtonText}>Draft</Text></Pressable>
+        <PRButton title="Create pull request" kind="primary" disabled={!!working || !title.trim()} loading={working === 'Creating…'} onPress={() => request('createPullRequest', 'Creating…', { title: title.trim(), body, base: base.trim() || null, draft, commitFirst: true })} />
+      </View>
+    </PaneSection>}
+    </KeyboardAwareScrollView>
+    </BlurTargetView>
+  </View>;
+}
+function AutomationsScreen({ navigation }: any) {
+  const macs = useRemote().macs();
+  return <HeaderScrollView style={styles.page} contentContainerStyle={styles.mobileListContent}>
+    {!macs.length && <Text style={styles.mobileEmpty}>Pair a Mac to schedule automations.</Text>}
+    {macs.map(mac => { const automations = mac.snapshot?.automations || []; return <View key={mac.id} style={styles.mobileGroup}>
+      <View style={styles.mobileGroupHeader}>
+        <View style={styles.mobileGroupHeading}><Text numberOfLines={1} style={styles.mobileGroupTitle}>{mac.name}</Text>{mac.state !== 'online' && <Text style={styles.mobileGroupStatus}>{macStatus(mac)}</Text>}</View>
+        <Pressable accessibilityRole="button" accessibilityLabel={`New automation on ${mac.name}`} onPress={() => navigation.navigate('Automation', { hostId: mac.id })} style={({ pressed }) => [styles.mobileAdd, pressed && styles.headerActionPressed]}>
+          <Icon name="plus" size={14} color={ink} /><Text style={styles.mobileAddText}>New</Text>
+        </Pressable>
+      </View>
+      {automations.map(a => <Pressable key={a.id} accessibilityRole="button" onPress={() => navigation.navigate('Automation', { hostId: mac.id, id: a.id })} style={({ pressed }) => [styles.mobileItem, pressed && styles.mobileItemPressed]}>
+        <View style={styles.mobileItemIcon}><SymbolView name={{ ios: 'clock.arrow.circlepath', android: 'schedule' }} size={18} tintColor={a.enabled ? ink : tertiary} /></View>
+        <View style={styles.mobileItemBody}><Text numberOfLines={1} style={styles.mobileItemTitle}>{a.name}</Text><Text numberOfLines={2} style={styles.mobileItemDetail}>{`${a.enabled ? 'Enabled' : 'Paused'} · ${a.providerId}${automationProfileName(a, mac.snapshot?.profiles) ? ` · ${automationProfileName(a, mac.snapshot?.profiles)}` : ''} · ${a.nextRunAt ? displayDate(a.nextRunAt) : 'Manual'}${a.deviceId ? ` · ${macs.find(m => m.id === a.deviceId)?.name || 'a paired Mac'}` : ''}`}</Text></View>
+        <Icon name="chevron" size={12} color={tertiary} />
+      </Pressable>)}
+      {!automations.length && <Text style={styles.mobileGroupEmpty}>No automations yet</Text>}
+    </View>; })}
+  </HeaderScrollView>;
+}
+function AutomationScreen({ route, navigation }: any) {
+  const hostId = route.params?.hostId as string | undefined;
+  const store = useRemote();
+  const state = useMac(hostId); const existing = state.snapshot?.automations?.find(x => x.id === route.params?.id);
+  const [name, setName] = useState(existing?.name || ''); const [prompt, setPrompt] = useState(existing?.prompt || '');
+  const [triggers, setTriggers] = useState<AutomationTrigger[]>(existing?.triggers || []);
+  const [provider, setProvider] = useState(existing?.providerId || state.snapshot?.providers[0] || 'claude');
+  const [projectId, setProjectId] = useState(existing?.projectId || null as string | null);
+  const [enabled, setEnabled] = useState(existing?.enabled ?? true);
+  const [workspaceMode, setWorkspaceModeState] = useState(existing?.workspaceMode || 'new_worktree');
+  const [pinnedSessionId, setPinnedSessionId] = useState(existing?.pinnedSessionId || null as string | null);
+  const [continueAgentSession, setContinueAgentSession] = useState(existing?.continueAgentSession || false);
+  const [initialPolicies] = useState(() => policiesOf(existing, existing?.workspaceMode || 'new_worktree'));
+  const [concurrency, setConcurrency] = useState(initialPolicies.concurrency);
+  const [missedRuns, setMissedRuns] = useState(initialPolicies.missedRuns);
+  const [onlyWhenChanged, setOnlyWhenChanged] = useState(initialPolicies.onlyWhenChanged);
+  const setWorkspaceMode = (mode: typeof workspaceMode) => { setConcurrency(concurrencyForWorkspace(concurrency, workspaceMode, mode)); setWorkspaceModeState(mode); };
+  const [policy, setPolicy] = useState(existing?.permissionPolicy || 'auto-edits');
+  const [modelName, setModelName] = useState(existing?.model || '');
+  const [effort, setEffort] = useState(existing?.effort || '');
+  const [profileId, setProfileId] = useState(existing?.profileId || null as string | null);
+  const profiles = sortedProfiles(state.snapshot?.profiles);
+  const chooseProfile = (id: string | null) => {
+    setProfileId(id);
+    const chosen = findProfile(profiles, id);
+    if (!chosen) return;
+    const filled = appliedProfile(chosen);
+    setProvider(filled.providerId); setModelName(filled.model || ''); setEffort(filled.effort || ''); setPolicy(filled.policy);
+  };
+  const [runs, setRuns] = useState<AutomationRun[]>([]);
+  // The Mac its runs start on, kept on the automation on its home Mac
+  // (deviceId, null = home). A new automation takes its project's default.
+  const [deviceId, setDeviceId] = useState<string | null>(existing?.deviceId || null);
+  const macs = store.macs();
+  const homeName = macs.find(mac => mac.id === hostId)?.name || 'This Mac';
+  const canRunElsewhere = state.snapshot?.automationDevice === true;
+  const deviceMac = deviceId ? macs.find(mac => mac.id === deviceId) : undefined;
+  const chooseDevice = (id: string | null) => {
+    if (id === deviceId) return;
+    setDeviceId(id); setModelName(''); setEffort('');
+    if (workspaceMode === 'pinned' && id) { setWorkspaceMode('new_worktree'); setPinnedSessionId(null); }
+  };
+  useEffect(() => { if (existing) state.request('automationRuns', { id: existing.id }).then(x => setRuns(x.automationRuns?._0 || [])).catch(() => {}); }, [existing?.id]);
+  const save = async () => {
+    if (!name.trim() || !prompt.trim()) throw Error('Name and prompt are required.');
+    const now = swiftDate();
+    const automation: Automation = {
+      id: existing?.id || uuid(), name, prompt, providerId: provider, projectId,
+      triggers: triggers.filter(x => x.rrule.trim()).map(x => ({ ...x, rrule: x.rrule.trim() })),
+      workspaceMode, pinnedSessionId: workspaceMode === 'pinned' ? pinnedSessionId : null,
+      continueAgentSession, permissionPolicy: policy, catchUp: catchUpOf(missedRuns), concurrency, missedRuns, onlyWhenChanged,
+      enabled, nextRunAt: existing?.nextRunAt || null, createdAt: existing?.createdAt || now, updatedAt: now, model: modelName || null, effort: effort || null, deviceId, profileId
+    };
+    await state.request('saveAutomation', { _0: automation }); navigation.goBack();
+  };
+  return <HeaderScrollView keyboardAware style={styles.page} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled"><Text style={styles.label}>Name</Text><TextInput style={styles.input} value={name} onChangeText={setName} placeholder="Automation name" placeholderTextColor={muted} />
+    <Text style={styles.label}>Prompt</Text><TextInput style={[styles.input, styles.multiline]} value={prompt} onChangeText={setPrompt} multiline placeholder="What should run?" placeholderTextColor={muted} />
+    {profiles.length > 0 && <><Text style={styles.label}>Profile</Text><View style={styles.choices}><Button title="No profile" secondary={profileId !== null} onPress={() => chooseProfile(null)} />{profiles.map(x => <Button key={x.id} title={x.name} secondary={profileId !== x.id} onPress={() => chooseProfile(x.id)} />)}</View><Text style={styles.hint}>Each run starts from the profile as it is then, instructions included.</Text></>}
+    <Text style={styles.label}>Agent</Text><View style={styles.choices}>{state.snapshot?.providers.map(x => <Button key={x} title={x} secondary={provider !== x} onPress={() => setProvider(x)} />)}</View>
+    <Text style={styles.label}>Project</Text><View style={styles.choices}><Button title="No project" secondary={projectId !== null} onPress={() => setProjectId(null)} />{state.snapshot?.projects.map(x => <Button key={x.id} title={x.name} secondary={projectId !== x.id} onPress={() => { setProjectId(x.id); if (!existing && canRunElsewhere) setDeviceId(x.defaultDeviceId || null); }} />)}</View>
+    <Text style={styles.label}>Runs on</Text>{canRunElsewhere ? <View style={styles.choices}><Button title={homeName} secondary={deviceId !== null} onPress={() => chooseDevice(null)} />{macs.filter(mac => mac.id !== hostId).map(mac => <Button key={mac.id} title={mac.name} secondary={deviceId !== mac.id} onPress={() => chooseDevice(mac.id)} />)}{!!deviceId && !deviceMac && <Button title="A paired Mac" onPress={() => {}} />}</View> : <Text style={styles.body}>{deviceId ? (deviceMac?.name || 'A paired Mac') : homeName}</Text>}
+    {deviceId && <Text style={styles.hint}>{`Each run starts on ${deviceMac?.name || 'a paired Mac'}, through ${homeName}, which must be paired with it.${deviceMac && deviceMac.state !== 'online' ? ` It isn't connected now; a run that comes due while it isn't is recorded as failed, with that reason.` : ''}`}</Text>}
+    <Text style={styles.label}>Workspace</Text><View style={styles.choices}><Button title="New worktree each run" secondary={workspaceMode !== 'new_worktree'} onPress={() => setWorkspaceMode('new_worktree')} /><Button title="Continue one chat" secondary={workspaceMode !== 'pinned'} onPress={() => setWorkspaceMode('pinned')} /></View>
+    {workspaceMode === 'pinned' && <Section title="Chat to continue">{(state.snapshot?.sessions || []).filter(x => x.projectId === projectId).map(chat => <Button key={chat.id} title={chat.name} secondary={pinnedSessionId !== chat.id} onPress={() => setPinnedSessionId(chat.id)} />)}<Text style={styles.hint}>Choose a chat, or leave this empty to create one on the first run.</Text></Section>}
+    {workspaceMode === 'pinned' && <Button title={continueAgentSession ? 'Continue agent session: on' : 'Continue agent session: off'} secondary={!continueAgentSession} onPress={() => setContinueAgentSession(!continueAgentSession)} />}
+    <Text style={styles.label}>Permissions</Text><View style={styles.choices}>{(['ask', 'auto-edits', 'bypass'] as const).map(value => <Button key={value} title={value} secondary={policy !== value} onPress={() => setPolicy(value)} />)}</View>
+    <Text style={styles.label}>Model (optional)</Text><TextInput style={styles.input} value={modelName} onChangeText={setModelName} autoCapitalize="none" />
+    <Text style={styles.label}>Reasoning effort (optional)</Text><TextInput style={styles.input} value={effort} onChangeText={setEffort} autoCapitalize="none" />
+    <Text style={styles.label}>Schedules (RRULE)</Text>{triggers.map((trigger, index) => <Section key={trigger.id} title={`Schedule ${index + 1}`}><TextInput style={styles.input} value={trigger.rrule} onChangeText={text => setTriggers(triggers.map(x => x.id === trigger.id ? { ...x, rrule: text } : x))} autoCapitalize="characters" placeholder="FREQ=DAILY;BYHOUR=9;BYMINUTE=0" placeholderTextColor={muted} /><TextInput style={styles.input} value={trigger.timezone} onChangeText={text => setTriggers(triggers.map(x => x.id === trigger.id ? { ...x, timezone: text } : x))} autoCapitalize="none" placeholder="IANA timezone" placeholderTextColor={muted} /><Button title="Remove schedule" secondary onPress={() => setTriggers(triggers.filter(x => x.id !== trigger.id))} /></Section>)}<Button title="Add schedule" secondary onPress={() => setTriggers([...triggers, { id: uuid(), rrule: 'FREQ=DAILY;BYHOUR=9;BYMINUTE=0', timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, dtstart: swiftDate() }])} />
+    {triggers.length ? <Section title="When it runs">
+      <Text style={styles.label}>If the last run is still going,</Text><View style={styles.choices}>{CONCURRENCY_OPTIONS.map(o => <Button key={o.value} title={o.label} secondary={concurrency !== o.value} onPress={() => setConcurrency(o.value)} />)}</View>
+      <Text style={styles.label}>If runs were missed while Abstract was closed,</Text><View style={styles.choices}>{MISSED_OPTIONS.map(o => <Button key={o.value} title={o.label} secondary={missedRuns !== o.value} onPress={() => setMissedRuns(o.value)} />)}</View>
+      {showsChanged({ projectId, deviceId: existing?.deviceId }) && <><Text style={styles.label}>It runs</Text><View style={styles.choices}>{CHANGED_OPTIONS.map(o => <Button key={o.label} title={o.label} secondary={onlyWhenChanged !== o.value} onPress={() => setOnlyWhenChanged(o.value)} />)}</View></>}
+    </Section> : null}
+    <View style={styles.actions}><Button title={enabled ? 'Enabled' : 'Paused'} secondary={!enabled} onPress={() => setEnabled(!enabled)} /><Button title="Save" onPress={() => run(save)} /></View>
+    {existing && <Section title="Actions"><Button title="Run now" secondary onPress={() => run(() => state.request('runAutomation', { id: existing.id }))} /><Button title="Delete" danger onPress={() => Alert.alert('Delete automation?', existing.name, [{ text: 'Cancel' }, { text: 'Delete', style: 'destructive', onPress: () => run(async () => { await state.request('deleteAutomation', { id: existing.id }); navigation.goBack(); }) }])} /></Section>}
+    {runs.length ? <Section title="Recent runs">{runs.map(x => <View key={x.id}><Text style={styles.body}>{displayDate(x.firedAt)} · {runStatusLabel(x)}</Text>{runDetail(x) ? <Text style={styles.hint}>{runDetail(x)}</Text> : null}</View>)}</Section> : null}
+  </HeaderScrollView>;
+}
+function ProfilesScreen({ route, navigation }: any) {
+  const hostId = route.params.hostId as string;
+  const state = useMac(hostId);
+  const profiles = sortedProfiles(state.snapshot?.profiles);
+  const supported = state.snapshot?.profiles !== undefined;
+  const add = () => run(async () => {
+    const profile = newProfile(state.snapshot?.profiles, uuid());
+    await state.request('saveProfile', { _0: profile });
+    navigation.navigate('Profile', { hostId, id: profile.id, profile });
+  });
+  useLayoutEffect(() => {
+    navigation.setOptions({ headerRight: () => supported ? <HeaderAction label="Add profile" icon="plus" onPress={add} /> : null });
+  }, [navigation, hostId, supported, state.snapshot?.profiles]);
+  return <HeaderScrollView style={styles.page} contentContainerStyle={styles.mobileListContent}>
+    <View style={styles.mobileGroup}>
+      <View style={styles.mobileGroupHeader}><Text numberOfLines={1} style={styles.mobileGroupTitle}>{remote.mac(hostId)?.name || 'Profiles'}</Text><Text style={styles.mobileGroupCount}>{profiles.length}</Text></View>
+      {!supported && <Text style={styles.mobileGroupEmpty}>Update Abstract on this Mac to see its profiles here.</Text>}
+      {supported && profiles.map(profile => <Pressable key={profile.id} accessibilityRole="button" onPress={() => navigation.navigate('Profile', { hostId, id: profile.id })} style={({ pressed }) => [styles.mobileItem, pressed && styles.mobileItemPressed]}>
+        <View style={styles.mobileItemIcon}><ProfileIcon profile={profile} imageData={state.snapshot?.profileIcons?.[profile.id]} size={20} /></View>
+        <View style={styles.mobileItemBody}><Text numberOfLines={1} style={styles.mobileItemTitle}>{profile.name || 'Profile'}</Text><Text numberOfLines={1} style={styles.mobileItemDetail}>{`${profile.providerId}${profile.model ? ` · ${profile.model}` : ''}${profile.effort ? ` · ${profile.effort}` : ''}`}</Text></View>
+        <Icon name="chevron" size={12} color={tertiary} />
+      </Pressable>)}
+      {supported && !profiles.length && <Text style={styles.mobileGroupEmpty}>No profiles yet. Tap + to add one.</Text>}
+    </View>
+    {supported && <Text style={styles.mobileFootnote}>Profiles set up new chats and automations. Edits affect future chats.</Text>}
+  </HeaderScrollView>;
+}
+function ProfileScreen({ route, navigation }: any) {
+  const hostId = route.params.hostId as string;
+  const state = useMac(hostId);
+  const existing = findProfile(state.snapshot?.profiles, route.params.id);
+  // A just-added profile may not be in the snapshot yet; it travels as a param.
+  const [draft] = useState<AgentProfile | undefined>(() => existing || route.params.profile);
+  const [name, setName] = useState(draft?.name || '');
+  const [iconSymbol, setIconSymbol] = useState(draft?.iconSymbol || 'person.crop.circle');
+  const [provider, setProvider] = useState(draft?.providerId || 'claude');
+  const [modelName, setModelName] = useState(draft?.model || '');
+  const [customModel, setCustomModel] = useState(false);
+  const [effort, setEffort] = useState(draft?.effort || '');
+  const [policy, setPolicy] = useState<string>(draft?.permissionPolicy || 'ask');
+  const [instructions, setInstructions] = useState(draft?.instructions || '');
+  if (!draft) return <View style={styles.content}><Empty text="Profile unavailable." /></View>;
+  const catalog = state.snapshot?.modelCatalogs?.[provider];
+  const modelOption = [...(catalog?.models || []), ...(catalog?.versions || [])].find(x => x.id === modelName);
+  const effortLevels = modelOption?.efforts || catalog?.accountDefault?.efforts || [];
+  const icons = profileIcons.includes(iconSymbol) ? profileIcons : [...profileIcons, iconSymbol];
+  const providers = state.snapshot?.providers.includes(provider) ? state.snapshot.providers : [provider, ...(state.snapshot?.providers || [])];
+  const policies: Array<[string, string]> = [['ask', 'Ask before acting'], ['auto-edits', 'Accept edits'], ['bypass', 'Full autonomy']];
+  if (!policies.some(([id]) => id === policy)) policies.push([policy, policy]);
+  const save = async () => {
+    if (!name.trim()) throw Error('Name is required.');
+    const chosenSymbol = iconSymbol === (draft.iconSymbol || 'person.crop.circle') ? (draft.iconSymbol ?? null) : iconSymbol;
+    const profile: AgentProfile = { ...draft, name: name.trim(), iconSymbol: chosenSymbol, providerId: provider, model: modelName || null, effort: effort || null, permissionPolicy: policy as Policy, instructions };
+    await state.request('saveProfile', { _0: profile });
+    navigation.goBack();
+  };
+  return <HeaderScrollView keyboardAware style={styles.page} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+    <Text style={styles.label}>Name</Text><TextInput style={styles.input} value={name} onChangeText={setName} placeholder="e.g. Reviewer" placeholderTextColor={muted} />
+    <Text style={styles.label}>Icon</Text><View style={styles.choices}>{icons.map(symbol => <Pressable key={symbol} accessibilityRole="button" accessibilityLabel={symbol} accessibilityState={{ selected: iconSymbol === symbol }} onPress={() => setIconSymbol(symbol)} style={[styles.profileIconChoice, iconSymbol === symbol && styles.profileIconChoiceSelected]}><SymbolView name={{ ios: symbol, android: 'account_circle' } as any} size={19} tintColor={iconSymbol === symbol ? ink : muted} /></Pressable>)}</View>
+    <Text style={styles.label}>Agent</Text><View style={styles.choices}>{providers.map(x => <Button key={x} title={x} secondary={provider !== x} onPress={() => { setProvider(x); setModelName(''); setEffort(''); setCustomModel(false); }} />)}</View>
+    <Text style={styles.label}>Model</Text><LauncherPicker label="Model" value={modelOption?.label || modelName || 'Agent default'} choices={[{ id: '', title: 'Agent default', selected: !modelName }, ...(catalog?.models || []).map(x => ({ id: x.id, title: x.label, selected: modelName === x.id })), ...(catalog?.versions || []).map(x => ({ id: x.id, title: x.label, selected: modelName === x.id })), { id: '__other__', title: 'Other Model…' }]} onSelect={id => { if (id === '__other__') setCustomModel(true); else { setModelName(id); setEffort(''); setCustomModel(false); } }} />
+    {customModel && <TextInput autoFocus style={styles.input} value={modelName} onChangeText={value => { setModelName(value); setEffort(''); }} autoCapitalize="none" autoCorrect={false} placeholder="Model name" placeholderTextColor={muted} />}
+    {effortLevels.length > 0 && <><Text style={styles.label}>Effort</Text><LauncherPicker label="Effort" value={effort ? effort.replace(/^./, x => x.toUpperCase()) : 'Agent default'} choices={[{ id: '', title: 'Agent default', selected: !effort }, ...effortLevels.map(id => ({ id, title: id.replace(/^./, x => x.toUpperCase()), selected: effort === id }))]} onSelect={setEffort} /></>}
+    <Text style={styles.label}>Permissions</Text><View style={styles.choices}>{policies.map(([id, title]) => <Button key={id} title={title} secondary={policy !== id} onPress={() => setPolicy(id)} />)}</View>
+    <Text style={styles.label}>Instructions</Text><TextInput style={[styles.input, styles.multiline]} value={instructions} onChangeText={setInstructions} multiline placeholder="Given to the agent every time a chat or run starts from this profile" placeholderTextColor={muted} />
+    <View style={styles.actions}><Button title="Save" onPress={() => run(save)} /></View>
+    <Section title="Delete"><Button title="Delete profile" danger onPress={() => Alert.alert('Delete profile?', draft.name, [{ text: 'Cancel' }, { text: 'Delete', style: 'destructive', onPress: () => run(async () => { await state.request('deleteProfile', { id: draft.id }); navigation.goBack(); }) }])} /></Section>
+  </HeaderScrollView>;
+}
+// Reduce Motion swaps the stack's slides for a short cross-fade.
+function useReduceMotion() {
+  const [reduced, setReduced] = useState(false);
+  useEffect(() => {
+    AccessibilityInfo.isReduceMotionEnabled().then(setReduced).catch(() => {});
+    const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduced);
+    return () => subscription.remove();
+  }, []);
+  return reduced;
+}
+export default function App() {
+  const reduceMotion = useReduceMotion();
+  const stack = useRef<StackRoute[]>([]);
+  const [sidebarReturn, setSidebarReturn] = useState<SidebarReturn>(null);
+  const sidebarReturnRef = useRef<SidebarReturn>(null);
+  const followStack = (routes: StackRoute[]) => {
+    const next = nextSidebarReturn(stack.current, routes, sidebarReturnRef.current);
+    stack.current = routes;
+    if (next !== sidebarReturnRef.current) { sidebarReturnRef.current = next; setSidebarReturn(next); }
+  };
+  const [fontsLoaded] = useFonts({ Inter: require('../assets/fonts/InterVariable.ttf'), JetBrainsMono: require('../assets/fonts/JetBrainsMono-Regular.ttf'), JetBrainsMonoMedium: require('../assets/fonts/JetBrainsMono-Medium.ttf') });
+  useEffect(() => {
+    remote.load();
+    const appState = AppState.addEventListener('change', value => {
+      if (value === 'active') remote.resume().catch(() => {});
+    });
+    return () => appState.remove();
+  }, []);
+  if (!fontsLoaded) return null;
+  return <SafeAreaProvider><StatusBar style="light" /><SidebarReturnContext.Provider value={sidebarReturn}><NavigationContainer onStateChange={state => followStack((state?.routes || []) as StackRoute[])} theme={{ dark: true, colors: { primary: accent, background: bg, card: panel, text: ink, border, notification: accent }, fonts: { regular: { fontFamily: 'Inter', fontWeight: '400' }, medium: { fontFamily: 'Inter', fontWeight: '500' }, bold: { fontFamily: 'Inter', fontWeight: '700' }, heavy: { fontFamily: 'Inter', fontWeight: '900' } } }}>
+      <Stack.Navigator initialRouteName="Sidebar" screenOptions={({ navigation }: any) => ({ headerTransparent: true, headerStyle: { backgroundColor: 'transparent' }, headerBackground: () => <ProgressiveBlur edge="top" />, headerTitleStyle: { fontFamily: 'Inter', fontSize: 15 }, headerTintColor: ink, contentStyle: { backgroundColor: bg }, headerShadowVisible: false, headerBackVisible: false, headerLeft: () => <ScreenNavigation navigation={navigation} />, scrollEdgeEffects: Platform.OS === 'ios' ? { top: 'soft' } : undefined, animation: reduceMotion ? 'fade' : 'slide_from_right', animationDuration: reduceMotion ? 200 : undefined, gestureEnabled: true, fullScreenGestureEnabled: true, animationMatchesGesture: true })}>
+        <Stack.Screen name="Sidebar" component={SidebarScreen} options={{ headerShown: true, title: '', headerLeft: () => null, headerBackground: () => <ProgressiveBlur edge="top" surfaceColor={sidebar} /> }} />
+        <Stack.Screen name="Settings" component={SettingsScreen} options={{ title: 'Settings' }} />
+        <Stack.Screen name="Projects" component={ProjectsScreen} />
+        <Stack.Screen name="Chats" component={ChatsScreen} />
+        <Stack.Screen name="Project" component={ProjectScreen} />
+        <Stack.Screen name="NewChat" component={NewChatScreen} options={{ title: 'New chat' }} />
+        <Stack.Screen name="Chat" component={ChatWorkspace} options={{ title: '', headerShown: true }} />
+        <Stack.Screen name="Worktrees" component={WorktreesScreen} />
+        <Stack.Screen name="Files" component={FilesScreen} />
+        <Stack.Screen name="File" component={FileScreen} />
+        <Stack.Screen name="Terminal" component={TerminalScreen} />
+        <Stack.Screen name="Review" component={ReviewScreen} />
+        <Stack.Screen name="PullRequests" component={PullRequestsScreen} options={{ title: 'Pull requests' }} />
+        <Stack.Screen name="PullRequest" component={PullRequestScreen} options={{ title: 'Pull request' }} />
+        <Stack.Screen name="Kanban" component={KanbanBoardScreen} options={{ title: 'Kanban' }} />
+        <Stack.Screen name="Automations" component={AutomationsScreen} />
+        <Stack.Screen name="Automation" component={AutomationScreen} />
+        <Stack.Screen name="Profiles" component={ProfilesScreen} options={{ title: 'Agent profiles' }} />
+        <Stack.Screen name="Profile" component={ProfileScreen} options={{ title: 'Profile' }} />
+        <Stack.Screen name="Plugins" component={PluginsScreen} options={{ title: 'Plugins' }} />
+        <Stack.Screen name="Plugin" component={PluginScreen} />
+      </Stack.Navigator>
+    </NavigationContainer></SidebarReturnContext.Provider></SafeAreaProvider>;
+}
+const styles = StyleSheet.create({
+  launcherContent: { paddingHorizontal: 18, paddingTop: 30, paddingBottom: 48, alignItems: 'center' },
+  launcherIntro: { width: '100%', maxWidth: 680, alignItems: 'center', gap: 10, marginBottom: 32 },
+  launcherTitle: { color: ink, fontFamily: 'Inter', fontSize: 26, fontWeight: '600', textAlign: 'center' },
+  launcherDescription: { color: muted, fontFamily: 'Inter', fontSize: 13.5, lineHeight: 20, textAlign: 'center', maxWidth: 460 },
+  launcherBox: { width: '100%', maxWidth: 680, backgroundColor: panel, borderWidth: 1, borderColor: '#424249', borderRadius: 10, overflow: 'hidden' },
+  launcherPrompt: { color: ink, fontFamily: 'Inter', fontSize: 15, lineHeight: 22, minHeight: 138, maxHeight: 260, paddingHorizontal: 18, paddingTop: 17, paddingBottom: 12 },
+  launcherAttachments: { flexDirection: 'row', flexWrap: 'wrap', gap: 5, paddingHorizontal: 12, paddingBottom: 8 },
+  launcherAttachment: { maxWidth: '100%', paddingHorizontal: 9, paddingVertical: 6, borderRadius: 6, backgroundColor: raised },
+  launcherControls: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 3, rowGap: 2, paddingHorizontal: 8 },
+  launcherPicker: { height: 32, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 7, borderRadius: 6 },
+  profileIconChoice: { width: 40, height: 40, borderRadius: 8, backgroundColor: raised, alignItems: 'center', justifyContent: 'center' },
+  profileIconChoiceSelected: { borderWidth: 1, borderColor: ink },
+  launcherPickerText: { color: muted, fontFamily: 'Inter', fontSize: 12.5, fontWeight: '500', maxWidth: 150 },
+  launcherBase: { height: 32, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 7, gap: 5 },
+  launcherBaseLabel: { color: tertiary, fontFamily: 'Inter', fontSize: 12.5 },
+  launcherBaseInput: { minWidth: 85, maxWidth: 130, color: muted, fontFamily: 'JetBrainsMono', fontSize: 12.5, padding: 0 },
+  launcherCustomModel: { color: ink, fontFamily: 'JetBrainsMono', fontSize: 13, marginHorizontal: 15, marginTop: 7, paddingHorizontal: 9, minHeight: 38, borderRadius: 6, backgroundColor: inset },
+  launcherWarning: { color: muted, fontFamily: 'Inter', fontSize: 12, lineHeight: 18, paddingHorizontal: 17, paddingTop: 8 },
+  launcherFooter: { flexDirection: 'row', justifyContent: 'flex-end', paddingHorizontal: 12, paddingTop: 2, paddingBottom: 12 },
+  launcherStart: { minHeight: 36, flexDirection: 'row', alignItems: 'center', gap: 7, paddingHorizontal: 13, borderRadius: 7, backgroundColor: ink },
+  launcherStartDisabled: { opacity: 0.4 },
+  launcherStartText: { color: bg, fontFamily: 'Inter', fontSize: 13, fontWeight: '600' },
+  launcherRecent: { width: '100%', maxWidth: 680, marginTop: 35 },
+  launcherRecentLabel: { color: tertiary, fontFamily: 'Inter', fontSize: 11, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 8 },
+  launcherRecentRow: { minHeight: 38, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 8 },
+  launcherRecentName: { flex: 1, color: ink, fontFamily: 'Inter', fontSize: 14 },
+  launcherRecentMeta: { color: tertiary, fontFamily: 'Inter', fontSize: 11, maxWidth: 110 },
+  headerAction: { width: 42, height: 44, alignItems: 'center', justifyContent: 'center' }, headerActionPressed: { opacity: 0.45 }, headerActions: { flexDirection: 'row', alignItems: 'center' },
+  page: { flex: 1, backgroundColor: bg }, content: { padding: 18, gap: 16, paddingBottom: 32 }, title: { color: ink, fontFamily: 'Inter', fontSize: 25, fontWeight: '600' }, lead: { color: muted, fontFamily: 'Inter', fontSize: 14, lineHeight: 21 }, section: { backgroundColor: panel, borderRadius: 8, padding: 14, gap: 9, borderWidth: StyleSheet.hairlineWidth, borderColor: border }, sectionTitle: { color: muted, fontFamily: 'Inter', fontSize: 13.5, fontWeight: '600' }, label: { color: muted, fontFamily: 'Inter', fontSize: 12, fontWeight: '600', marginTop: 8 }, value: { color: ink, fontFamily: 'Inter', fontSize: 15 }, row: { minHeight: 56, paddingVertical: 11, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border, flexDirection: 'row', alignItems: 'center', gap: 10 }, rowTitle: { color: ink, fontFamily: 'Inter', fontSize: 15.5, fontWeight: '500' }, subtitle: { color: muted, fontFamily: 'Inter', fontSize: 12.5, marginTop: 4 }, subtitleRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4 }, subtitleText: { marginTop: 0, flexShrink: 1 }, trailing: { color: tertiary, fontFamily: 'Inter', fontSize: 11 }, button: { backgroundColor: accent, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 11, alignSelf: 'flex-start', marginRight: 5, marginBottom: 5 }, buttonText: { color: bg, fontFamily: 'Inter', fontSize: 14, fontWeight: '600' }, secondary: { backgroundColor: inset }, danger: { backgroundColor: '#9B3F43' }, input: { backgroundColor: inset, color: ink, borderRadius: 7, borderWidth: StyleSheet.hairlineWidth, borderColor: border, paddingHorizontal: 12, paddingVertical: 10, fontFamily: 'Inter', fontSize: 15, minHeight: 48 }, multiline: { minHeight: 120, textAlignVertical: 'top' }, actions: { flexDirection: 'row', flexWrap: 'wrap', marginVertical: 5 }, choices: { flexDirection: 'row', flexWrap: 'wrap' }, empty: { color: muted, fontFamily: 'Inter', fontSize: 14, lineHeight: 21 }, error: { color: '#EF6461' }, callout: { backgroundColor: raised, borderRadius: 8, borderColor: border, borderWidth: StyleSheet.hairlineWidth, padding: 15 }, code: { color: ink, fontFamily: 'JetBrainsMonoMedium', fontSize: 32, letterSpacing: 3 }, bubble: { backgroundColor: raised, padding: 13, borderRadius: 8, marginBottom: 8 }, bubbleLabel: { color: muted, fontFamily: 'Inter', fontSize: 11, marginBottom: 5 }, body: { color: ink, fontFamily: 'Inter', fontSize: 14.5, lineHeight: 22 }, mono: { color: ink, fontSize: 11, fontFamily: 'JetBrainsMono', lineHeight: 17 }, hint: { color: tertiary, fontFamily: 'Inter', fontSize: 11 }, composer: { backgroundColor: panel, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: border, padding: 10, flexDirection: 'row', alignItems: 'flex-end' }, codeScroll: { padding: 16 }, codeText: { color: ink, fontFamily: 'JetBrainsMono', fontSize: 11, textAlignVertical: 'top', minHeight: 500 },
+  mobileListContent: { paddingTop: 8, paddingBottom: 36 },
+  mobileGroup: { marginBottom: 18 },
+  mobileGroupHeader: { minHeight: 46, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  mobileGroupHeading: { flex: 1, minWidth: 0 },
+  mobileGroupTitle: { color: muted, fontFamily: 'Inter', fontSize: 13, fontWeight: '600', flexShrink: 1 },
+  mobileGroupStatus: { color: tertiary, fontFamily: 'Inter', fontSize: 11, marginTop: 2 },
+  mobileGroupCount: { color: tertiary, fontFamily: 'Inter', fontSize: 12 },
+  mobileAdd: { minHeight: 44, minWidth: 58, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 5 },
+  mobileAddText: { color: ink, fontFamily: 'Inter', fontSize: 13, fontWeight: '600' },
+  mobileItem: { minHeight: 68, marginHorizontal: 16, paddingHorizontal: 4, flexDirection: 'row', alignItems: 'center', gap: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border },
+  mobileItemPressed: { backgroundColor: raised, borderRadius: 8 },
+  mobileItemIcon: { width: 34, height: 34, borderRadius: 9, backgroundColor: raised, alignItems: 'center', justifyContent: 'center' },
+  mobileItemBody: { flex: 1, minWidth: 0, paddingVertical: 10 },
+  mobileItemTitle: { color: ink, fontFamily: 'Inter', fontSize: 15, fontWeight: '500' },
+  mobileItemDetail: { color: muted, fontFamily: 'Inter', fontSize: 12, lineHeight: 17, marginTop: 3 },
+  mobileGroupEmpty: { color: tertiary, fontFamily: 'Inter', fontSize: 13, paddingHorizontal: 20, paddingVertical: 16 },
+  mobileEmpty: { color: muted, fontFamily: 'Inter', fontSize: 14, paddingHorizontal: 20, paddingVertical: 20 },
+  mobileFootnote: { color: tertiary, fontFamily: 'Inter', fontSize: 12, lineHeight: 18, paddingHorizontal: 20, marginTop: 3 },
+  rail: { flex: 1, backgroundColor: sidebar }, railContent: { paddingTop: 10, paddingBottom: 24 }, railDetail: { color: tertiary, fontFamily: 'Inter', fontSize: 12 }, railHost: { marginTop: 18, marginHorizontal: 14, height: 48, paddingHorizontal: 5, flexDirection: 'row', alignItems: 'center', gap: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: border }, railHostTitle: { color: muted, fontFamily: 'Inter', fontSize: 12, fontWeight: '600', flex: 1 }, railGroup: { paddingTop: 12 }, railGroupHeader: { paddingHorizontal: 18, height: 38, flexDirection: 'row', alignItems: 'center', gap: 6 }, railGroupTitle: { color: muted, fontFamily: 'Inter', fontSize: 14, fontWeight: '600', flex: 1 }, railMacStatus: { color: tertiary, fontFamily: 'Inter', fontSize: 12, marginHorizontal: 19, marginTop: -6, marginBottom: 4 }, unreachable: { opacity: 0.45 }, pauseBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(232,179,74,0.12)', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border, paddingHorizontal: 14, paddingVertical: 8 }, pauseBannerText: { color: ink, fontFamily: 'Inter', fontSize: 13, lineHeight: 18, flex: 1 }, pauseBannerButton: { paddingHorizontal: 8, paddingVertical: 4 }, pauseBannerButtonDisabled: { opacity: 0.45 }, pauseBannerButtonText: { color: ink, fontFamily: 'Inter', fontSize: 13, fontWeight: '600' }, pausedLabel: { color: '#E8B34A', fontFamily: 'Inter', fontSize: 11, fontWeight: '600' }, railPause: { marginHorizontal: 14 }, railEmpty: { color: muted, fontFamily: 'Inter', fontSize: 12, lineHeight: 18, margin: 18 }, railFooter: { minHeight: 60, paddingHorizontal: 18, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: border, flexDirection: 'row', alignItems: 'center', gap: 10 }, railFooterPressed: { backgroundColor: raised }, railFooterTitle: { color: ink, fontFamily: 'Inter', fontSize: 15, flex: 1 }, connectionDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#4CC38A' },
+  paneToolbar: { height: 45, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border, backgroundColor: bg },
+  paneIconButton: { width: 42, height: 42, alignItems: 'center', justifyContent: 'center' },
+  paneContent: { paddingBottom: 30 },
+  paneSection: { paddingHorizontal: 15, paddingTop: 18, paddingBottom: 12, gap: 9, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border },
+  paneSectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 2 },
+  paneSectionTitle: { flex: 1, color: muted, fontFamily: 'Inter', fontWeight: '600', fontSize: 13.5 },
+  paneSectionDetail: { color: tertiary, fontFamily: 'Inter', fontSize: 11 },
+  paneEmpty: { flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 220, padding: 25, gap: 10 },
+  paneEmptyTitle: { color: ink, fontFamily: 'Inter', fontSize: 15, fontWeight: '600' },
+  paneMenuButton: { height: 42, paddingHorizontal: 10, backgroundColor: inset, borderRadius: 6, flexDirection: 'row', alignItems: 'center', gap: 8, alignSelf: 'flex-start' },
+  paneMenuLabel: { color: ink, fontFamily: 'Inter', fontSize: 13.5, fontWeight: '500' },
+  filesFilterSection: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 13, gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border },
+  filesFilterHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  filesFilterTitle: { color: tertiary, fontFamily: 'Inter', fontSize: 10, fontWeight: '700', letterSpacing: 0.8 },
+  filesFilterCount: { color: tertiary, fontFamily: 'Inter', fontSize: 11 },
+  filesFilterRow: { flexDirection: 'row', alignItems: 'center', gap: 9 },
+  fileFilter: { flex: 1, height: 44, backgroundColor: panel, borderRadius: 9, borderWidth: StyleSheet.hairlineWidth, borderColor: '#45454D', flexDirection: 'row', alignItems: 'center', gap: 9, paddingHorizontal: 12 },
+  fileFilterInput: { flex: 1, minWidth: 0, color: ink, fontFamily: 'Inter', fontSize: 14, paddingVertical: 0 },
+  fileFilterClear: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center' },
+  fileRefreshButton: { width: 44, height: 44, backgroundColor: panel, borderRadius: 9, borderWidth: StyleSheet.hairlineWidth, borderColor: '#45454D', alignItems: 'center', justifyContent: 'center' },
+  breadcrumb: { minHeight: 34, marginHorizontal: 16, marginTop: 10, marginBottom: 4, paddingHorizontal: 10, backgroundColor: panel, borderRadius: 7, flexDirection: 'row', alignItems: 'center', gap: 7 },
+  breadcrumbText: { flex: 1, color: muted, fontFamily: 'JetBrainsMono', fontSize: 11 },
+  fileList: { paddingTop: 4, paddingBottom: 24 },
+  fileTreeRow: { minHeight: 50, paddingHorizontal: 16, paddingVertical: 7, flexDirection: 'row', alignItems: 'center', gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border },
+  fileTreeTitle: { color: ink, fontFamily: 'Inter', fontSize: 14.5, fontWeight: '500' },
+  fileTreeSubtitle: { color: tertiary, fontFamily: 'Inter', fontSize: 10, marginTop: 2 },
+  diffAdded: { color: '#4CC38A', fontFamily: 'JetBrainsMono', fontSize: 11 },
+  diffRemoved: { color: '#EF6461', fontFamily: 'JetBrainsMono', fontSize: 11 },
+  reviewFile: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border },
+  reviewFileHeader: { minHeight: 60, paddingHorizontal: 13, paddingVertical: 7, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  reviewFileBody: { backgroundColor: panel, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: border, paddingTop: 4 },
+  diffLine: { minHeight: 19, paddingHorizontal: 12, lineHeight: 19 },
+  diffGutter: { color: tertiary },
+  hunkLine: { color: '#91B8F6', backgroundColor: 'rgba(145,184,246,0.06)' },
+  addedLine: { color: '#8FCBAB', backgroundColor: 'rgba(76,195,138,0.08)' },
+  removedLine: { color: '#E9A09D', backgroundColor: 'rgba(239,100,97,0.08)' },
+  reviewFileActions: { flexDirection: 'row', gap: 8, paddingHorizontal: 12, paddingVertical: 10, marginTop: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: border },
+  reviewFileButton: { flex: 1, minHeight: 42, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, borderRadius: 8, borderWidth: StyleSheet.hairlineWidth },
+  reviewFileButtonApply: { backgroundColor: 'rgba(76,195,138,0.12)', borderColor: 'rgba(76,195,138,0.3)' },
+  reviewFileButtonDiscard: { backgroundColor: 'rgba(239,100,97,0.08)', borderColor: 'rgba(239,100,97,0.28)' },
+  reviewFileButtonPressed: { opacity: 0.7 },
+  reviewFileButtonText: { fontFamily: 'Inter', fontSize: 12.5, fontWeight: '600' },
+  reviewActions: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', paddingTop: 7 },
+  prButton: { minHeight: 38, paddingHorizontal: 13, borderRadius: 7, backgroundColor: inset, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 },
+  prButtonPrimary: { backgroundColor: accent },
+  prButtonDisabled: { opacity: 0.45 },
+  prButtonText: { color: ink, fontFamily: 'Inter', fontSize: 13, fontWeight: '600' },
+  prButtonTextPrimary: { color: bg },
+  prNavigationIcon: { width: 34, height: 40, alignItems: 'center', justifyContent: 'center' },
+  prPublishForm: { gap: 10, marginTop: 5, alignItems: 'flex-start', alignSelf: 'stretch' },
+  prCreateFooter: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginTop: 9 },
+  prDraftToggle: { minHeight: 38, flexDirection: 'row', alignItems: 'center', gap: 9 },
+  prDraftBox: { width: 18, height: 18, borderRadius: 4, borderWidth: 1, borderColor: muted, alignItems: 'center', justifyContent: 'center' },
+  prDraftBoxChecked: { backgroundColor: ink, borderColor: ink },
+  prHelp: { color: muted, fontFamily: 'Inter', fontSize: 12, lineHeight: 18 },
+  prActionError: { paddingHorizontal: 16, paddingVertical: 10, backgroundColor: 'rgba(239,100,97,0.10)' },
+  prHeader: { paddingHorizontal: 16, paddingTop: 18, paddingBottom: 17, gap: 7, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border },
+  prStatusLine: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  prState: { color: '#4CC38A', fontFamily: 'Inter', fontSize: 12, fontWeight: '600', textTransform: 'capitalize' },
+  prNumber: { color: tertiary, fontFamily: 'Inter', fontSize: 12 },
+  prTitle: { color: ink, fontFamily: 'Inter', fontSize: 18, fontWeight: '600', lineHeight: 22 },
+  prMetadata: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  prAuthor: { color: muted, fontFamily: 'Inter', fontSize: 11 },
+  prBranch: { flex: 1, minWidth: 0, color: tertiary, fontFamily: 'JetBrainsMono', fontSize: 10 },
+  prStanding: { color: muted, fontFamily: 'Inter', fontSize: 12 },
+  prCheckRow: { minHeight: 46, flexDirection: 'row', alignItems: 'center', gap: 9, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border, paddingVertical: 5 },
+  prBody: { color: ink, fontFamily: 'Inter', fontSize: 14, lineHeight: 21 },
+  prConversation: { gap: 4, paddingVertical: 7, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border },
+  prConversationAuthor: { color: ink, fontFamily: 'Inter', fontSize: 12, fontWeight: '600' },
+  prConversationMeta: { color: tertiary, fontFamily: 'Inter', fontSize: 11, fontWeight: '400' },
+  editorMeta: { color: tertiary, fontFamily: 'Inter', fontSize: 11 },
+  editorAction: { minWidth: 35, height: 32, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5 },
+  editorActionText: { color: ink, fontFamily: 'Inter', fontSize: 12, fontWeight: '600' },
+  editorCode: { paddingVertical: 14, paddingRight: 20 },
+  editorLineNumbers: { color: '#676770', fontFamily: 'JetBrainsMono', fontSize: 11, lineHeight: 18, textAlign: 'right', paddingHorizontal: 11, minWidth: 48 },
+  editorLineRow: { flexDirection: 'row', alignItems: 'flex-start' },
+  editorLineSelected: { backgroundColor: 'rgba(255,255,255,0.07)' },
+  editorLineNumber: { color: '#676770', fontFamily: 'JetBrainsMono', fontSize: 11, lineHeight: 18, textAlign: 'right', paddingHorizontal: 11, minWidth: 48 },
+  editorLineText: { fontFamily: 'JetBrainsMono', fontSize: 11, lineHeight: 18, color: '#ABB2BF' },
+  editorCodeText: { color: ink, fontFamily: 'JetBrainsMono', fontSize: 11, lineHeight: 18, paddingRight: 12 },
+  editorInput: { flex: 1, minHeight: 500, color: ink, fontFamily: 'JetBrainsMono', fontSize: 11, lineHeight: 18, padding: 14 },
+});

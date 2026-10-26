@@ -39,6 +39,31 @@ public enum GitRemote {
         return GitText.trimmed(a) == GitText.trimmed(b)
     }
 
+    /// The remote's host, lowercased: what picks its code host (ABS-139).
+    public static func host(_ remote: String) -> String? {
+        hostAndPath(remote).map { $0.host.lowercased() }
+    }
+
+    /// Resolve an SSH alias before selecting a code host. Keep the original
+    /// remote for git; this URL is only for code-host matching and gh.
+    public static func codeHostRemote(_ remote: String, executor: any Executor) async -> String {
+        let ssh = remote.lowercased().hasPrefix("ssh://") || (!remote.contains("://") && remote.contains("@"))
+        guard ssh, let (alias, path) = hostAndPath(remote) else { return remote }
+        let output = try? await executor.run("ssh", ["-G", alias], cwd: nil)
+        let resolved = output.flatMap { $0.ok ? sshHostname($0.stdout) : nil } ?? alias
+        let host = resolved.lowercased() == "ssh.github.com" ? "github.com" : resolved.lowercased()
+        guard PluginManifest.isExactHost(host) else { return remote }
+        return "https://\(host)/\(path)"
+    }
+
+    public static func sshHostname(_ configuration: String) -> String? {
+        configuration.split(separator: "\n").first { $0.lowercased().hasPrefix("hostname ") }?
+            .split(whereSeparator: \.isWhitespace).dropFirst().first.map(String.init)
+    }
+
+    /// Owner and repository without the transport or `.git` suffix.
+    public static func repository(_ remote: String) -> String? { hostAndPath(remote)?.path }
+
     /// Host and `owner/repo` path, without `.git` or trailing slashes.
     private static func hostAndPath(_ remote: String) -> (host: String, path: String)? {
         let text = GitText.trimmed(remote)

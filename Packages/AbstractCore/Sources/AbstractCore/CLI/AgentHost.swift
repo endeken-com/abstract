@@ -69,10 +69,15 @@ final class AgentHost: @unchecked Sendable {
     private var exitCode: Int32?
     private var stderrTail: [String] = []
     private var status: (SessionStatus, String?)?
+    /// The agent's own session id, for follow-ups that must name it.
+    private var providerSessionId: String?
     private var lastActivity = Date()
     private var stopRequested = false
     /// The app asked for the chat (SIGUSR1): it's the app's once the agent is idle.
     private var handOver = false
+    /// Keeps each turn's record (`TurnRecord`); the host waits for them before it goes.
+    private let turns: TurnRecorder
+    private let recording = DispatchGroup()
 
     private var sessionId: String { session.id }
 
@@ -89,6 +94,7 @@ final class AgentHost: @unchecked Sendable {
         agent = AgentRecord(id: request.agentId, sessionId: sessionId, providerId: provider.id)
         engine = SessionEngine(executor: LocalExecutor.shared, logDirectory: SessionEngine.defaultLogDirectory())
         stream = ChatStream(providerId: provider.id)
+        turns = TurnRecorder(store: store)
     }
 
     // MARK: - Starting one (the command's side)
@@ -183,12 +189,41 @@ final class AgentHost: @unchecked Sendable {
         }
         engine.recordInput(sessionId: sessionId, text: request.prompt)
         let executor = LocalExecutor.shared
-        let settings = LaunchSettings(store: store, dataDirectory: URL(fileURLWithPath: storePath).deletingLastPathComponent())
+        var settings = LaunchSettings(store: store, dataDirectory: URL(fileURLWithPath: storePath).deletingLastPathComponent())
+        if let automationId = session.automationId,
+           (try? store.automation(automationId))?.workspaceMode == .newWorktree {
+            settings.branchCommand = Bundle.main.executablePath
+        }
+        // The chat's agent gets the code-history tool (ABS-61) unless its
+        // project has it off; this program itself serves it.
+        if let project = try? session.projectId.flatMap({ try store.project($0) }), project.agentHistoryEnabled,
+           let executable = Bundle.main.executablePath {
+            let directory = URL(fileURLWithPath: storePath).deletingLastPathComponent().path + "/code-history"
+            settings.codeHistory = CodeHistorySettings(
+                command: executable, instructionFile: CodeHistorySettings.instructionFile(in: directory))
+        }
+        // The project's MCP servers (ABS-123), as the app gives them.
+        settings.toolServers = (try? session.projectId.map { try store.toolServers(projectId: $0) }) ?? []
+        // Its library skills (ABS-122), as the app gives them.
+        let dataDirectory = URL(fileURLWithPath: storePath).deletingLastPathComponent().path
+        settings.addSkills(for: session, project: try? session.projectId.flatMap { try store.project($0) },
+                           profile: try? store.profiles().first { $0.id == session.profileId },
+                           sources: store.setting(SkillLibrary.sourcesKey, as: [SkillSource].self) ?? [],
+                           dataDirectory: dataDirectory)
+        // Its tracker links (ABS-143), as the app gives them.
+        settings.addIssueTrackers(for: session, plugins: PluginManager(store: store))
+        if let note = SkillLibrary.unsupportedNote(provider: provider, skills: settings.skills) {
+            engine.record(sessionId: sessionId, OutputLine(stream: .note, line: note))
+        }
         let spec = AgentLaunch.spec(for: session, provider: provider, prompt: request.prompt, resumeId: nil,
                                     settings: settings, home: executor.homeDirectory)
+        let launchRecord = LaunchInspection.record(spec: spec, prompt: request.prompt,
+                                                   model: session.model ?? settings.agentDefaults[provider.id]?.model
+                                                       ?? provider.configuredDefaultModel(home: executor.homeDirectory),
+                                                   effort: session.effort ?? settings.agentDefaults[provider.id]?.effort)
         do {
             try engine.launch(sessionId: sessionId, spec: spec,
-                              enricher: provider.makeLineEnricher(executor: executor, cwd: spec.cwd))
+                              enricher: provider.makeLineEnricher(executor: executor, cwd: spec.cwd), launchRecord: launchRecord)
         } catch {
             fail(error.localizedDescription)
         }
@@ -221,6 +256,7 @@ final class AgentHost: @unchecked Sendable {
         stopWhenIdle()
 
         exitSignal.wait()
+        _ = recording.wait(timeout: .now() + 30)
         // The socket first: once the lock is free, a respawn's host may make its own.
         unlink(HostSocket.name(sessionId))
         lock.release()
@@ -264,6 +300,7 @@ final class AgentHost: @unchecked Sendable {
             lastActivity = Date()
             if line.stream == .stderr { stderrTail = Array((stderrTail + [line.line]).suffix(5)) }
             let events = stream.feed(line)
+            for reply in stream.takePendingInput() { try? engine.write(sessionId: sessionId, reply) }
             // Only the agent's own output says how it's doing, never the prompt logged for it.
             if !up, startFailure == nil, line.stream == .stdout,
                let outcome = AgentStart.outcome(of: events, agentName: provider.name) {
@@ -295,8 +332,16 @@ final class AgentHost: @unchecked Sendable {
 
     private func apply(_ event: AgentEvent, asked: Bool) {
         switch event {
-        case let .permissionRequest(requestId, _, _):
-            if let line = provider.buildPermissionResponse(requestId: requestId, allow: false, input: nil) {
+        case let .permissionRequest(requestId, toolName, input):
+            // A remembered answer for the chat's project still answers here;
+            // anything else is refused, as nobody is there to ask.
+            var allow = false
+            if session.permissionPolicy != .bypass, let projectId = session.projectId,
+               let rules = try? store.permissionRules(projectId: projectId),
+               let rule = PermissionRule.answer(rules, toolName: toolName, input: input, root: session.worktreePath) {
+                allow = rule.decision == .allow
+            }
+            if let line = provider.buildPermissionResponse(requestId: requestId, allow: allow, input: allow ? input : nil) {
                 try? engine.write(sessionId: sessionId, line)
             }
         case .status(.waitingInput, _) where asked:
@@ -305,6 +350,7 @@ final class AgentHost: @unchecked Sendable {
         case let .status(status, detail):
             setStatus(status, detail)
         case let .sessionId(id):
+            providerSessionId = id
             try? store.updateProviderSessionId(sessionId, id)
             StoreChanges.post(storePath: storePath)
         case let .usage(totals, cost, duration, turns):
@@ -318,7 +364,18 @@ final class AgentHost: @unchecked Sendable {
     private func setStatus(_ new: SessionStatus, _ detail: String?) {
         if let status, status == (new, detail) { return }
         try? store.updateSessionStatus(sessionId, new, detail: detail)
+        let wasWorking = [.running, .provisioning, .waitingInput].contains(status?.0)
         status = (new, detail)
+        // Each turn's record, as the app keeps them (AppModel.setStatus).
+        if new == .running { turns.begin(sessionId, worktree: session.worktreePath, exec: LocalExecutor.shared) }
+        if wasWorking, [.idle, .finished, .errored].contains(new) {
+            let session = (try? store.session(sessionId)) ?? session
+            recording.enter()
+            Task { [turns, engine, recording] in
+                await turns.end(session, engine: engine, exec: LocalExecutor.shared)
+                recording.leave()
+            }
+        }
         StoreChanges.post(storePath: storePath)
         stopIfHandedOver()
     }
@@ -354,7 +411,12 @@ final class AgentHost: @unchecked Sendable {
         guard request.agentId == agent.id, !exited, engine.isAlive(sessionId) else {
             return .failed(CLIError(.agentNotRunning, "Agent \(request.agentId) isn't running."))
         }
-        guard request.op == "send", let text = request.text, let line = provider.buildUserMessage(text) else {
+        if request.op == "note", let note = request.text {
+            engine.record(sessionId: sessionId, OutputLine(stream: .note, line: note))
+            return .ok
+        }
+        guard request.op == "send", let text = request.text,
+              let line = provider.buildUserMessage(text, images: [], sessionId: providerSessionId ?? session.providerSessionId) else {
             return .failed(CLIError(.invalidArguments, "The agent's host doesn't understand “\(request.op)”."))
         }
         lastActivity = Date()

@@ -4,7 +4,7 @@ import AppKit
 import AbstractCore
 
 /// Accounts and their plan limits, then what the agents used: every Claude
-/// Code profile and Codex, from their own logs, priced at API rates.
+/// Code profile, Codex and OpenCode, from their own logs, priced at API rates.
 struct UsageSettingsPane: View {
     @Environment(AppModel.self) private var model
     @AppStorage("usage.hideEmails") private var hideEmails = false
@@ -16,9 +16,11 @@ struct UsageSettingsPane: View {
                 Hairline()
                 TokenUsageSection()
             }
-            .padding(.horizontal, Space.xl)
+            // The same column the settings title and forms keep.
+            .padding(.horizontal, SettingsLayout.margin + SettingsLayout.textInset)
             .padding(.vertical, Space.lg)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: SettingsLayout.rowWidth + 2 * SettingsLayout.margin, alignment: .leading)
+            .frame(maxWidth: .infinity)
         }
         .task {
             // Limits move as agents work; re-read every few minutes while this is open.
@@ -33,7 +35,12 @@ struct UsageSettingsPane: View {
 
 extension Color {
     fileprivate static func provider(_ provider: LocalUsage.Provider?) -> Color {
-        provider == .codex ? .btUsageCodex : .btUsageClaude
+        switch provider {
+        case .codex: .btUsageCodex
+        case .opencode: .btUsageOpenCode
+        case .muse: .btUsageMuse
+        case .claude, nil: .btUsageClaude
+        }
     }
 }
 
@@ -49,7 +56,7 @@ private struct AccountsSection: View {
         let accounts = model.accounts
         VStack(alignment: .leading, spacing: Space.xl) {
             HStack(spacing: Space.md) {
-                Text("Accounts").font(.btTitle).foregroundStyle(Color.btText)
+                Text("Accounts").font(.btHeadline).foregroundStyle(Color.btText)
                 Spacer(minLength: Space.md)
                 Text(accounts.refreshedAt.map { "Limits as each agent last reported them, checked \(RelativeTime.short($0)) ago" } ?? "Checking accounts…")
                     .font(.btCaption).foregroundStyle(Color.btTextTertiary)
@@ -392,7 +399,7 @@ private struct TokenUsageSection: View {
 
     private func header(_ report: UsageReport) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: Space.md) {
-            Text("Token usage").font(.btTitle).foregroundStyle(Color.btText)
+            Text("Token usage").font(.btHeadline).foregroundStyle(Color.btText)
             Text("\(report.start.formatted(.dateTime.month(.abbreviated).day())) – \(report.end.formatted(.dateTime.month(.abbreviated).day())), API-rate estimate from local session logs")
                 .font(.btCaption).foregroundStyle(Color.btTextTertiary)
             Spacer(minLength: Space.md)
@@ -431,8 +438,12 @@ private struct TokenUsageSection: View {
                             ProviderLogo(providerId: row.provider?.rawValue ?? "claude", size: 14)
                             Text(row.name).font(.btBody).foregroundStyle(Color.btText)
                             Spacer(minLength: Space.md)
-                            Text(metric == .cost ? UsageFormat.cost(row.cost) : UsageFormat.tokens(row.tokens.total))
-                                .font(.btBody).monospacedDigit().foregroundStyle(Color.btText)
+                            if metric == .cost, !row.hasCost {
+                                Text("Muse reports no cost").font(.btCallout).foregroundStyle(Color.btTextTertiary)
+                            } else {
+                                Text(metric == .cost ? UsageFormat.cost(row.cost) : UsageFormat.tokens(row.tokens.total))
+                                    .font(.btBody).monospacedDigit().foregroundStyle(Color.btText)
+                            }
                             Text(UsageFormat.percent(share(row, report))).font(.btCallout).monospacedDigit()
                                 .foregroundStyle(Color.btTextTertiary).frame(width: 40, alignment: .trailing)
                         }
@@ -499,7 +510,8 @@ private struct UsageChart: View {
                 .interpolationMethod(.catmullRom)
                 .lineStyle(StrokeStyle(lineWidth: 1.6))
         }
-        .chartForegroundStyleScale(["claude": Color.btUsageClaude, "codex": Color.btUsageCodex])
+        .chartForegroundStyleScale(["claude": Color.btUsageClaude, "codex": Color.btUsageCodex, "opencode": Color.btUsageOpenCode,
+                                    "muse": Color.btUsageMuse])
         .chartLegend(.hidden)
         .chartXAxis {
             // First, middle and last day, the ends anchored inward so neither clips.
@@ -532,8 +544,10 @@ private struct ModelTable: View {
                         Text(row.name).font(.btBody).foregroundStyle(Color.btText).lineLimit(1)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    Text(UsageFormat.cost(row.cost) + (row.estimated ? "*" : "")).monospacedDigit().frame(width: 84, alignment: .trailing)
-                        .help(row.estimated ? "No published price for this model is known here; estimated at GPT-5 rates." : "")
+                    Text(row.hasCost ? UsageFormat.cost(row.cost) + (row.estimated ? "*" : "") : "–").monospacedDigit()
+                        .foregroundStyle(row.hasCost ? Color.btText : Color.btTextTertiary).frame(width: 84, alignment: .trailing)
+                        .help(!row.hasCost ? "Muse reports no cost, so none is shown."
+                              : row.estimated ? "No published price for this model is known here; estimated at GPT-5 rates." : "")
                     Text(UsageFormat.percent(report.cost > 0 ? row.cost / report.cost : 0)).monospacedDigit().frame(width: 64, alignment: .trailing)
                         .foregroundStyle(Color.btTextSecondary)
                     Text(UsageFormat.tokens(row.tokens.total)).monospacedDigit().frame(width: 84, alignment: .trailing)

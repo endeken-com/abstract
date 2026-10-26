@@ -1,16 +1,22 @@
 import Foundation
 
-/// How much an agent may do without asking.
+/// How much an agent may do without asking. The last two are the
+/// composer's read-only modes (ABS-104): Plan writes a plan for your
+/// approval before anything changes, Ask only looks and answers.
 public enum PermissionPolicy: String, Sendable, Codable, CaseIterable {
     case ask
     case autoEdits = "auto-edits"
     case bypass
+    case plan
+    case readOnly = "read-only"
 
     public var title: String {
         switch self {
         case .ask: "Ask before acting"
         case .autoEdits: "Accept edits"
         case .bypass: "Full autonomy"
+        case .plan: "Plan"
+        case .readOnly: "Ask (read-only)"
         }
     }
 
@@ -19,8 +25,81 @@ public enum PermissionPolicy: String, Sendable, Codable, CaseIterable {
         case .ask: "You approve each tool call in the chat."
         case .autoEdits: "File edits go through; commands still ask."
         case .bypass: "Nothing asks. Only for trusted tasks."
+        case .plan: "The agent explores and writes a plan. Nothing changes until you approve it."
+        case .readOnly: "The agent can look and answer, but can't change anything."
         }
     }
+
+    /// It may look, but it changes nothing.
+    public var isReadOnly: Bool { self == .plan || self == .readOnly }
+
+    /// The levels of autonomy a chat, project or automation runs at.
+    /// Plan and Ask are picked per message in the composer instead.
+    public static let autonomyCases: [PermissionPolicy] = [.ask, .autoEdits, .bypass]
+}
+
+/// The code-history tool handed to one chat's agent (ABS-61): the
+/// `abstract` command that serves it, for this chat only.
+public struct HistoryToolLaunch: Sendable, Hashable {
+    /// The `abstract` executable on the agent's Mac.
+    public var command: String
+    public var chatId: String
+    /// A file holding `CodeHistory.instruction`, for agents whose
+    /// instructions are files (OpenCode).
+    public var instructionFile: String?
+
+    public init(command: String, chatId: String, instructionFile: String? = nil) {
+        self.command = command; self.chatId = chatId; self.instructionFile = instructionFile
+    }
+
+    /// What runs the server: `abstract mcp --chat <id>`.
+    public var serverArgs: [String] { ["mcp", "--chat", chatId] }
+    public var serverCommand: [String] { [command] + serverArgs }
+}
+
+public struct BranchToolLaunch: Sendable, Hashable {
+    public var command: String
+    public var chatId: String
+
+    public init(command: String, chatId: String) { self.command = command; self.chatId = chatId }
+    public var serverCommand: [String] { [command, "mcp", "--chat", chatId, "--branch"] }
+}
+
+/// How an agent takes skills from Abstract (ABS-122), each checked
+/// against the CLI: a folder laid out where it already looks, so the
+/// user's own skills folder is never written to.
+public enum SkillDelivery: Sendable, Hashable {
+    /// `<folder>/.claude/skills/<name>`, the folder added with `--add-dir`.
+    case addedDirectory
+    /// `<folder>/skills/<name>` in a stand-in for `~/.codex` given as
+    /// `CODEX_HOME`, whose every other entry links to the real one.
+    case codexHome
+    /// `<folder>/<name>`, named in the agent's config for this run.
+    case skillsPath
+}
+
+/// The skills one chat's agent gets (ABS-122), already laid out the way
+/// its `SkillDelivery` says.
+public struct SkillsLaunch: Sendable, Hashable {
+    public var folder: String
+
+    public init(folder: String) { self.folder = folder }
+}
+
+/// The plugin tools handed to one chat's agent (ABS-97): the `abstract`
+/// command that serves them, for this chat only. Which tools it lists is
+/// the app's to say, call by call.
+public struct PluginToolsLaunch: Sendable, Hashable {
+    public var command: String
+    public var chatId: String
+
+    public init(command: String, chatId: String) {
+        self.command = command; self.chatId = chatId
+    }
+
+    /// What runs the server: `abstract mcp --chat <id> --plugins`.
+    public var serverArgs: [String] { ["mcp", "--chat", chatId, "--plugins"] }
+    public var serverCommand: [String] { [command] + serverArgs }
 }
 
 public struct LaunchContext: Sendable {
@@ -40,15 +119,57 @@ public struct LaunchContext: Sendable {
     public var images: [String]
     /// Folders outside the worktree the agent may read without asking (attachments).
     public var readableDirs: [String]
+    /// The code-history tool for this chat; nil when the project has it off.
+    public var historyTool: HistoryToolLaunch?
+    /// The explicit branch-name tool for a fresh-worktree automation chat.
+    public var branchTool: BranchToolLaunch?
+    /// The chat's plugin tools; nil when no plugin offers any.
+    public var pluginTools: PluginToolsLaunch?
+    /// The instructions of the profile this chat started from (ABS-101),
+    /// as they were at the start; nil when it started from none.
+    public var instructions: String?
+    /// The project's MCP servers this agent gets (ABS-123), already
+    /// narrowed to it, with each tool's access.
+    public var toolServers: [MCPServerLaunch]
+    /// This chat's own folder for the files its agent is started with
+    /// (Claude's MCP config, OpenCode's instructions); nil passes them
+    /// inline instead.
+    public var configDirectory: String?
+    /// The library skills this chat gets (ABS-122); nil when it gets none.
+    public var skills: SkillsLaunch?
 
     public init(cwd: String, prompt: String, resumeId: String? = nil, permissionPolicy: PermissionPolicy,
                 extraArgs: [String] = [], binaryOverride: String? = nil, model: String? = nil, effort: String? = nil,
-                outputStyle: OutputStyle = .default, images: [String] = [], readableDirs: [String] = []) {
+                outputStyle: OutputStyle = .default, images: [String] = [], readableDirs: [String] = [],
+                historyTool: HistoryToolLaunch? = nil, branchTool: BranchToolLaunch? = nil, instructions: String? = nil,
+                pluginTools: PluginToolsLaunch? = nil, toolServers: [MCPServerLaunch] = [], configDirectory: String? = nil,
+                skills: SkillsLaunch? = nil) {
         self.cwd = cwd; self.prompt = prompt; self.resumeId = resumeId; self.permissionPolicy = permissionPolicy
         self.extraArgs = extraArgs; self.binaryOverride = binaryOverride; self.outputStyle = outputStyle
-        self.images = images; self.readableDirs = readableDirs
+        self.images = images; self.readableDirs = readableDirs; self.historyTool = historyTool; self.branchTool = branchTool
+        self.pluginTools = pluginTools; self.toolServers = toolServers; self.configDirectory = configDirectory
+        self.skills = skills
         self.model = Self.nonBlank(model)
         self.effort = Self.nonBlank(effort)
+        self.instructions = instructions.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
+    }
+
+    /// Every MCP server the agent gets: Abstract's own code-history and
+    /// plugin-tools servers first, every tool allowed, then the project's.
+    public var mcpServers: [MCPServerLaunch] {
+        let history = historyTool.map {
+            MCPServerLaunch(name: CodeHistory.serverName, connection: .command($0.serverCommand, env: [:]),
+                            allowsEverything: true)
+        }
+        let plugins = pluginTools.map {
+            MCPServerLaunch(name: PluginTools.serverName, connection: .command($0.serverCommand, env: [:]),
+                            allowsEverything: true)
+        }
+        let branch = branchTool.map {
+            MCPServerLaunch(name: BranchMCPServer.serverName, connection: .command($0.serverCommand, env: [:]),
+                            allowsEverything: true)
+        }
+        return [history, plugins, branch].compactMap { $0 } + toolServers
     }
 
     private static func nonBlank(_ value: String?) -> String? {
@@ -118,6 +239,8 @@ public struct LaunchSpec: Sendable, Hashable, Codable {
 
 public enum OutputStreamKind: String, Sendable, Codable {
     case stdout, stderr
+    /// Abstract's hidden, redacted process invocation for a turn.
+    case launch
     /// What you sent the agent, kept in the log beside its output: agents
     /// don't echo it, and a transcript rebuilt from the log (after a relaunch,
     /// or on another device) needs it.
@@ -125,6 +248,9 @@ public enum OutputStreamKind: String, Sendable, Codable {
     /// A chat passing from one agent to another (`HandoffMarker`): the
     /// replay switches parsers here.
     case handoff
+    /// A line of Abstract's own about the chat (its branch renamed, say),
+    /// shown quietly between the agent's output.
+    case note
     /// A compaction Abstract ran or started (`CompactionMarker`).
     case compaction
 }
@@ -170,12 +296,35 @@ public struct EditPreview: Sendable, Hashable, Codable {
     }
 }
 
+/// File changes reported with a shell command's result. Some paths have no
+/// diff because the provider limits how many it sends.
+public struct ToolFileChanges: Sendable, Hashable {
+    public var previews: [EditPreview]
+    public var remainingPaths: [String]
+    public var moreFiles: Int
+    public var incomplete: Bool
+
+    public init(previews: [EditPreview], remainingPaths: [String], moreFiles: Int, incomplete: Bool) {
+        self.previews = previews; self.remainingPaths = remainingPaths
+        self.moreFiles = moreFiles; self.incomplete = incomplete
+    }
+}
+
+/// A picture in a tool's result, as its bytes.
+public struct ToolImage: Sendable, Hashable {
+    /// "image/png", as the agent labelled it.
+    public var mediaType: String
+    public var data: Data
+    public init(mediaType: String, data: Data) { self.mediaType = mediaType; self.data = data }
+}
+
 public enum TextRole: String, Sendable, Codable { case assistant, user }
 
 /// Normalised agent output. Every provider parser produces only these.
 public enum AgentEvent: Sendable, Hashable {
     case status(SessionStatus, detail: String?)
     case sessionId(String)
+    case launch(LaunchRecord)
     case system(model: String?, cwd: String?, permissionMode: String?, sessionId: String?)
     /// `partial` chunks share `blockId` and are appended; the final block
     /// (partial == false) with the same id replaces them.
@@ -183,10 +332,16 @@ public enum AgentEvent: Sendable, Hashable {
     case thinking(text: String, blockId: String?, partial: Bool)
     case toolUse(id: String, name: String, input: JSONValue, edit: EditPreview?)
     case toolResult(toolUseId: String, output: String, isError: Bool, edit: EditPreview?)
+    case toolFileChanges(toolUseId: String, changes: ToolFileChanges)
+    /// Pictures a tool's result carried, as when Claude reads an image.
+    case toolImages(toolUseId: String, images: [ToolImage])
     case permissionRequest(requestId: String, toolName: String, input: JSONValue)
     case turnEnd(durationMs: Int?, costUsd: Double?, usage: UsageTotals?, summary: String?)
     case usage(UsageTotals, costUsd: Double?, durationMs: Int?, turns: Int?)
     case error(String)
+    /// How the work is going, beside the conversation: a retry, a usage
+    /// limit, a problem the agent carries on past.
+    case notice(AgentNotice)
     case raw(line: String, stream: OutputStreamKind)
     /// What the agent predicts you'll say next, offered in the reply box.
     case promptSuggestion(String)
@@ -231,6 +386,16 @@ public protocol OutputParser: AnyObject {
     /// One raw line from the agent. Must never throw or crash on bad input.
     func feed(_ line: String, stream: OutputStreamKind) -> [AgentEvent]
     func onExit(code: Int32?) -> [AgentEvent]
+}
+
+/// A parser that also drives the agent: some protocols must answer one
+/// message before the next may be sent, which a launch-time stdin payload
+/// cannot sequence. Whoever feeds a live process's lines drains these after
+/// each line and writes them to its stdin. Replay never drains, and the
+/// parser's events must not depend on its writes being sent, so a log still
+/// folds to the same chat everywhere.
+public protocol InputDrivingParser: OutputParser {
+    func takePendingInput() -> [String]
 }
 
 /// Fills in what an agent's output leaves out, before the line is logged, so
@@ -324,6 +489,10 @@ public protocol ProviderDefinition: Sendable {
     func buildUserMessage(_ text: String) -> String?
     /// The same with images, as files on the agent's Mac.
     func buildUserMessage(_ text: String, images: [String]) -> String?
+    /// The same again, naming the conversation: protocols whose follow-up
+    /// must say which session it belongs to get the chat's own session id
+    /// (nil before the agent has reported one).
+    func buildUserMessage(_ text: String, images: [String], sessionId: String?) -> String?
     /// stdin line answering a permission request (stdin mode only).
     func buildPermissionResponse(requestId: String, allow: Bool, input: JSONValue?) -> String?
     /// A stdin line that switches a running agent's permission mode, when the
@@ -331,6 +500,9 @@ public protocol ProviderDefinition: Sendable {
     func buildPermissionModeChange(_ policy: PermissionPolicy, requestId: String) -> String?
     /// A stdin line that stops one of the agent's tasks. nil: it can't.
     func buildStopTask(_ taskId: String, requestId: String) -> String?
+    /// A stdin line that ends the turn under way and keeps the agent alive
+    /// for the next message. nil: Stop ends its process.
+    func buildInterrupt(requestId: String) -> String?
     /// A stdin line that moves running work into the background, as Ctrl+B
     /// does in Claude Code: one tool call's, or all of it. nil: it can't.
     func buildBackground(toolUseId: String?, requestId: String) -> String?
@@ -346,9 +518,30 @@ public protocol ProviderDefinition: Sendable {
     func configuredDefaultEffort(home: String) -> String?
     /// What `policy` means for this agent, shown under the permissions menu.
     func permissionDetail(_ policy: PermissionPolicy) -> String
+    /// How the agent takes library skills (ABS-122). nil: it can't, and
+    /// the chat says so.
+    var skillDelivery: SkillDelivery? { get }
     /// App commands only this agent gets in the `/` menu, and its own
     /// commands they take over.
     var commands: ProviderCommands { get }
+    /// How much of a project's MCP servers (ABS-123) this agent can take.
+    var toolServerSupport: ToolServerSupport { get }
+    /// A one-off call answering `prompt` (Abstract's naming request) on the
+    /// agent's fastest model, with no tools that change anything. `model` is
+    /// the chat's. nil: this agent can't name chats.
+    func namingLaunch(prompt: String, home: String, binary: String?, model: String?) -> LaunchSpec?
+    /// The answer's text in that call's output. nil when it holds none, or
+    /// says the call failed.
+    func namingAnswer(_ output: String) -> String?
+    /// Why that call failed, in the agent's words, when its output says.
+    func namingError(_ output: String) -> String?
+    /// Run before the naming call when its limits are set in a way the
+    /// agent could ignore: shows how the agent will really run. nil: the
+    /// limits are flags the CLI refuses to run without.
+    func namingCheck(home: String, binary: String?) -> LaunchSpec?
+    /// Whether that check's output shows the naming call can't act on
+    /// anything (no tools, nothing permitted). False asks nothing.
+    func namingCheckPasses(_ output: String) -> Bool
     /// How it compacts; nil: it can't, and `/compact` isn't offered.
     var compaction: Compaction? { get }
 }
@@ -357,10 +550,21 @@ public extension ProviderDefinition {
     func makeLineEnricher(executor: any Executor, cwd: String) -> (any LineEnricher)? { nil }
     func configuredDefaultEffort(home: String) -> String? { nil }
     func buildUserMessage(_ text: String, images: [String]) -> String? { buildUserMessage(text) }
+    func buildUserMessage(_ text: String, images: [String], sessionId: String?) -> String? {
+        buildUserMessage(text, images: images)
+    }
     func buildPermissionModeChange(_ policy: PermissionPolicy, requestId: String) -> String? { nil }
     func buildStopTask(_ taskId: String, requestId: String) -> String? { nil }
+    func buildInterrupt(requestId: String) -> String? { nil }
     func buildBackground(toolUseId: String?, requestId: String) -> String? { nil }
     func permissionDetail(_ policy: PermissionPolicy) -> String { policy.detail }
+    var skillDelivery: SkillDelivery? { nil }
     var commands: ProviderCommands { .none }
+    var toolServerSupport: ToolServerSupport { .none }
+    func namingLaunch(prompt: String, home: String, binary: String?, model: String?) -> LaunchSpec? { nil }
+    func namingAnswer(_ output: String) -> String? { nil }
+    func namingError(_ output: String) -> String? { nil }
+    func namingCheck(home: String, binary: String?) -> LaunchSpec? { nil }
+    func namingCheckPasses(_ output: String) -> Bool { true }
     var compaction: Compaction? { nil }
 }

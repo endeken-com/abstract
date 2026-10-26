@@ -1,0 +1,1 @@
+✗ Failed to get user info: No API key configured. Set LINEAR_API_KEY, add api_key to .linear.toml, or run `linear auth login`.

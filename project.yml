@@ -16,6 +16,8 @@ settings:
     MARKETING_VERSION: "0.0.0"
     CURRENT_PROJECT_VERSION: "1"
 packages:
+  AbstractInternet:
+    path: Packages/AbstractInternet
   AbstractCore:
     path: Packages/AbstractCore
   Textual:
@@ -35,8 +37,20 @@ targets:
     platform: macOS
     sources:
       - path: Abstract
+        # The app icon's source art; scripts/make-icons.sh makes AppIcon.icon from it.
+        excludes:
+          - Resources/Brand
+          - Resources/Plugins
+          - Resources/PluginKit
+      # Bundled plugins keep their folder shape inside the app.
+      - path: Abstract/Resources/Plugins
+        type: folder
+      # The design kit every plugin can link (ABS-134), served from the host's scheme.
+      - path: Abstract/Resources/PluginKit
+        type: folder
     dependencies:
       - package: AbstractCore
+      - package: AbstractInternet
       - package: Textual
       - package: SwiftTerm
       - package: Sparkle

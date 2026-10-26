@@ -19,6 +19,14 @@ struct RootView: View {
     @AppStorage(EditorFontChoice.ligaturesKey) private var ligatures = EditorFontChoice.defaults.ligatures
     @AppStorage(EditorFontChoice.lineHeightKey) private var lineHeight = EditorFontChoice.defaults.lineHeight
 
+    /// The side panel's tabs and buttons are in its own header in the title
+    /// band, not in this toolbar (see `PanelWorkspace`).
+    private var sidePanelUsesItsHeader: Bool {
+        guard case .session(let id) = model.destination else { return false }
+        return SidePanelChrome.usesPanelHeader(mainColumnWidth: model.mainColumnWidth,
+                                               sideIsOpen: model.layout(for: id).side.isOpen)
+    }
+
     /// Fonts are read where text is drawn, not observed, so a new choice
     /// rebuilds the window's views; Settings stays as it is over them.
     private var fonts: String {
@@ -28,7 +36,9 @@ struct RootView: View {
 
     var body: some View {
         @Bindable var model = model
-        HStack(spacing: 0) {
+        VStack(spacing: 0) {
+            PauseBanner()
+            HStack(spacing: 0) {
             if !sidebarHidden {
                 SidebarView()
                     .frame(width: sidebarWidth)
@@ -41,16 +51,20 @@ struct RootView: View {
                 .frame(minWidth: 560, maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color.btCanvas)
         }
+        }
         .frame(minHeight: 480)
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .toolbar(removing: .title)
         // The window's one toolbar. Every screen shares it, so its items never
-        // change set and the sidebar toggle never moves when you switch.
+        // change set and the sidebar toggle never moves when you switch. One
+        // exception: while the side panel's header sits in the title band, the
+        // flexible spacer would lie over it and take its clicks, so it steps
+        // aside until the panel's controls are back in the toolbar.
         .toolbar {
             PlainToolbarItem(placement: .navigation) {
                 TitlebarLeading(sidebarHidden: $sidebarHidden, sidebarWidth: sidebarWidth)
             }
-            if #available(macOS 26, *) { ToolbarSpacer(.flexible) }
+            if #available(macOS 26, *), !sidePanelUsesItsHeader { ToolbarSpacer(.flexible) }
             PlainToolbarItem(placement: .automatic) { DetailToolbarControls() }
         }
         .id(fonts)
@@ -78,7 +92,7 @@ struct RootView: View {
                             titleVisibility: .visible) {
             Button("Archive", role: .destructive) {
                 if let id = model.requestArchive {
-                    if model.isAlive(id) { model.stop(id) }
+                    if model.isAlive(id) { model.stopAgent(id) }
                     model.setArchived(id, true)
                 }
                 model.requestArchive = nil
@@ -111,6 +125,7 @@ struct DetailView: View {
         case .worktrees: "Worktrees"
         case .pullRequests: "Pull Requests"
         case .projectSettings(let id): model.project(id)?.name ?? ""
+        case .plugin(let id, _): model.plugins.plugin(id)?.view?.title ?? model.plugins.plugin(id)?.record.name ?? ""
         }
     }
 
@@ -136,7 +151,45 @@ struct DetailView: View {
             PullRequestsView()
         case .projectSettings(let id):
             ProjectSettingsView(projectId: id).id(id)
+        case .plugin(let id, let viewId):
+            PluginHostView(pluginId: id, viewId: viewId).id("\(id)/\(viewId)")
         }
+    }
+}
+
+/// Across the top of the window while everything, or a project, is paused:
+/// agents are stopped and automations are off until you resume.
+struct PauseBanner: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if model.everythingPaused {
+                row("Everything is paused. Agents are stopped and automations are off.", button: "Resume everything") {
+                    model.resumeEverything()
+                }
+            } else {
+                ForEach(model.pausedProjects) { project in
+                    row("“\(project.name)” is paused. Its agents are stopped and its automations are off.", button: "Resume") {
+                        model.resumeProject(project.id)
+                    }
+                }
+            }
+        }
+    }
+
+    private func row(_ text: String, button: String, action: @escaping () -> Void) -> some View {
+        HStack(spacing: Space.sm) {
+            Image(systemName: "pause.circle.fill").foregroundStyle(Color.btWarning)
+            Text(text).font(.btBody).foregroundStyle(Color.btText).lineLimit(1)
+            Button(button, action: action).font(.btBody)
+            Spacer()
+        }
+        .padding(.horizontal, Space.lg)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity)
+        .background(Color.btWarning.opacity(0.12))
+        .overlay(alignment: .bottom) { Rectangle().fill(Color.btBorder).frame(height: 1) }
     }
 }
 
@@ -239,6 +292,7 @@ private struct WindowTitle: View {
         case .worktrees: "Worktrees"
         case .pullRequests: "Pull Requests"
         case .projectSettings(let id): model.project(id)?.name ?? ""
+        case .plugin(let id, _): model.plugins.plugin(id)?.view?.title ?? model.plugins.plugin(id)?.record.name ?? ""
         default: ""
         }
     }
@@ -283,7 +337,14 @@ private struct DetailToolbarControls: View {
         switch model.destination {
         case .session(let id):
             if let session = model.session(id) {
-                ChatToolbarControls(session: session)
+                if SidePanelChrome.usesPanelHeader(mainColumnWidth: model.mainColumnWidth,
+                                                  sideIsOpen: model.layout(for: id).side.isOpen) {
+                    // Nothing here: even a clear placeholder would sit over
+                    // the panel header's buttons and take their clicks.
+                    EmptyView()
+                } else {
+                    ChatToolbarControls(session: session)
+                }
             } else {
                 Color.clear.frame(width: 1, height: Chrome.button)
             }

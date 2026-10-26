@@ -1,0 +1,12 @@
+/* Chat panel on Abstract's plugin kit (/_abstract/abstract-ui.css). */
+
+.content {
+  max-width: 620px;
+  padding: var(--ab-space-lg);
+}
+.ab-section-title {
+  margin-top: var(--ab-space-lg);
+}
+#empty .ab-empty {
+  padding: 28px 16px;
+}

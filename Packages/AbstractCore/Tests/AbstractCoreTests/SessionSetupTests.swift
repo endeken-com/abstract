@@ -147,6 +147,8 @@ private struct Remote {
     }
 
     @Test func cancellingStopsIt() async throws {
+        // A slow login shell (its first lookup) isn't what's measured.
+        _ = await exec.searchPath
         let started = ContinuousClock.now
         let task = Task { try await SetupScript.run("sleep 30", in: dir, executor: exec, shell: "/bin/sh") { _ in } }
         try await Task.sleep(for: .milliseconds(200))

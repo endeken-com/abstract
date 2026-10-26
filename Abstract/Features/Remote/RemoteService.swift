@@ -2,6 +2,7 @@ import Foundation
 import Network
 import CryptoKit
 import AbstractCore
+import AbstractInternet
 
 /// Abstract on other Macs on the local network: finding them, pairing once,
 /// then driving their agents from here (as a controller) or letting paired
@@ -16,6 +17,7 @@ final class RemoteService {
         var lastSeen: Date?
         /// "host:port" for a Mac paired by address, reached directly rather than found on the network.
         var address: String?
+        var internetAddress: InternetAddress?
         var id: String { peer.id }
     }
 
@@ -40,8 +42,21 @@ final class RemoteService {
         didSet {
             save()
             hosting ? startListening() : stopListening()
+            updateInternetHosting()
         }
     }
+    var internetHosting: Bool { didSet { save(); updateInternetHosting() } }
+    private(set) var internetAddress: InternetAddress?
+    private(set) var invitation: InternetInvitation?
+    @ObservationIgnored private var internet: InternetEndpoint?
+    @ObservationIgnored private var internetStarting: Task<InternetEndpoint, any Error>?
+    @ObservationIgnored private var internetAccepting: Task<Void, Never>?
+    @ObservationIgnored private var internetChannels: [UUID: RemoteChannel] = [:]
+    @ObservationIgnored private var outgoingPair: RemoteChannel?
+    @ObservationIgnored private var pairingTask: Task<Void, Never>?
+    /// Uploaded project icons read for snapshots, by path, until the file changes.
+    @ObservationIgnored private var projectIconCache: [String: (modified: Date?, data: Data?)] = [:]
+
     private(set) var identity: DeviceIdentity
     private(set) var paired: [PairedDevice] { didSet { save() } }
 
@@ -75,6 +90,7 @@ final class RemoteService {
     @ObservationIgnored private var listener: NWListener?
     @ObservationIgnored private var browser: NWBrowser?
     @ObservationIgnored private var decision: CheckedContinuation<Bool, Never>?
+    @ObservationIgnored private var incomingPairingChannel: RemoteChannel?
     @ObservationIgnored private var pushTask: Task<Void, Never>?
     /// Hosting and paired Macs, beside the identity they belong to.
     @ObservationIgnored private let settingsURL: URL
@@ -85,6 +101,7 @@ final class RemoteService {
         var name: String?
         var port: UInt16?
         var peerToPeer: Bool?
+        var internetHosting: Bool?
     }
 
     init(dataDirectory: URL) {
@@ -93,6 +110,7 @@ final class RemoteService {
         let stored = Self.loadIdentity(in: dataDirectory)
         identity = DeviceIdentity(id: stored.id, name: Self.name(settings.name), signingKey: stored.signingKey)
         hosting = settings.hosting
+        internetHosting = settings.internetHosting ?? false
         paired = settings.paired
         customName = settings.name
         fixedPort = settings.port
@@ -112,6 +130,7 @@ final class RemoteService {
         if hosting { startListening() }
         if !paired.isEmpty { startBrowsing() }
         startReachingByAddress()
+        updateInternetHosting()
     }
 
     // MARK: Identity
@@ -135,11 +154,12 @@ final class RemoteService {
 
     private func save() {
         guard let data = try? JSONEncoder().encode(Settings(hosting: hosting, paired: paired, name: customName, port: fixedPort,
-                                                            peerToPeer: peerToPeer)) else { return }
+                                                            peerToPeer: peerToPeer, internetHosting: internetHosting)) else { return }
         try? data.write(to: settingsURL, options: .atomic)
     }
 
     func unpair(_ id: String) {
+        if prompt?.peer.id == id { dismissPrompt() }
         links[id]?.disconnect()
         links[id] = nil
         hosted[id]?.channel.close()
@@ -180,10 +200,12 @@ final class RemoteService {
     }
 
     private func stopListening() {
+        pushTask?.cancel(); pushTask = nil
         listener?.cancel()
         listener = nil
         listening = false
         listeningPort = nil
+        answerPairing(false)
         for peer in hosted.values { peer.channel.close() }
         hosted = [:]
     }
@@ -191,23 +213,43 @@ final class RemoteService {
     /// A Mac connecting to this one: a paired Mac straight in, a new one only after you accept its code.
     private func accept(_ connection: NWConnection) async {
         guard hosting else { connection.cancel(); return }
-        let channel = RemoteChannel(connection: connection)
+        await accept(RemoteChannel(connection: connection))
+    }
+
+    private func accept(_ channel: RemoteChannel, internetPeer: PeerInfo? = nil) async {
         let pins = Dictionary(uniqueKeysWithValues: paired.map { ($0.id, $0.peer) })
+        let watchdog = Task {
+            do { try await Task.sleep(for: .seconds(10)); channel.close() } catch {}
+        }
+        defer { watchdog.cancel() }
         do {
             try await channel.open()
             let outcome = try await channel.accept(as: identity, lookup: { pins[$0] })
+            watchdog.cancel()
+            guard hosting, internetPeer == nil || (internetHosting && internetPeer == outcome.peer) else { channel.close(); return }
             if outcome.pairing {
                 // One pairing at a time; a second knock waits for none.
                 guard prompt == nil else { channel.close(); return }
+                incomingPairingChannel = channel
+                defer { if incomingPairingChannel === channel { incomingPairingChannel = nil } }
                 prompt = PairingPrompt(peer: outcome.peer, code: outcome.code, incoming: true)
-                let accepted = await withCheckedContinuation { decision = $0 }
+                let promptID = prompt?.id
+                let expiry = Task { [weak self] in
+                    do { try await Task.sleep(for: .seconds(60)) } catch { return }
+                    if self?.prompt?.id == promptID { self?.answerPairing(false) }
+                }
+                let approved = await withCheckedContinuation { decision = $0 }
+                let accepted = approved && hosting && (internetPeer == nil || internetHosting)
+                expiry.cancel()
                 prompt = nil
                 try await channel.send(.event(.paired(accepted)))
                 guard accepted else { channel.close(); return }
                 remember(outcome.peer)
                 startBrowsing()
             } else {
-                touch(outcome.peer.id)
+                // Revocation or disabling sharing may have happened during the handshake.
+                guard paired.contains(where: { $0.peer.id == outcome.peer.id && $0.peer.publicKey == outcome.peer.publicKey }) else { channel.close(); return }
+                touch(outcome.peer)
             }
             let peer = HostedPeer(channel: channel, peer: outcome.peer, service: self)
             hosted[outcome.peer.id]?.channel.close()
@@ -227,15 +269,121 @@ final class RemoteService {
     private func remember(_ peer: PeerInfo, address: String? = nil) {
         let known = paired.first { $0.id == peer.id }
         paired.removeAll { $0.id == peer.id }
-        paired.append(PairedDevice(peer: peer, pairedAt: Date(), lastSeen: Date(), address: address ?? known?.address))
+        paired.append(PairedDevice(peer: peer, pairedAt: Date(), lastSeen: Date(), address: address ?? known?.address, internetAddress: known?.internetAddress))
     }
 
-    private func touch(_ id: String) {
-        if let i = paired.firstIndex(where: { $0.id == id }) { paired[i].lastSeen = Date() }
+    private func touch(_ peer: PeerInfo) {
+        if let i = paired.firstIndex(where: { $0.id == peer.id }) {
+            paired[i].lastSeen = Date()
+            // A paired phone can change its name without changing its identity.
+            paired[i].peer.name = peer.name
+        }
+    }
+
+    func rememberInternet(_ address: InternetAddress?, for id: String) {
+        guard address == nil || address?.isValid == true,
+              let index = paired.firstIndex(where: { $0.id == id }), paired[index].internetAddress != address else { return }
+        paired[index].internetAddress = address
+    }
+
+    private func internetEndpoint() async throws -> InternetEndpoint {
+        if let internet { return internet }
+        if let internetStarting { return try await internetStarting.value }
+        let key = InternetEndpoint.networkKey(signingKey: identity.signingKey.rawRepresentation)
+        let starting = Task { try await InternetEndpoint.bind(key: key) }
+        internetStarting = starting
+        defer { internetStarting = nil }
+        let endpoint = try await starting.value
+        internet = endpoint
+        return endpoint
+    }
+
+    func internetChannel(to address: InternetAddress, invitation: String? = nil) async throws -> RemoteChannel {
+        guard address.isValid else { throw SecureChannelError.malformed }
+        let endpoint = try await internetEndpoint()
+        let stream = try await withThrowingTaskGroup(of: InternetStream.self) { group in
+            group.addTask { try await endpoint.connect(to: address.endpointId) }
+            group.addTask {
+                try await Task.sleep(for: .seconds(15))
+                throw InternetError.relayUnavailable
+            }
+            defer { group.cancelAll() }
+            return try await group.next()!
+        }
+        guard !Task.isCancelled else { stream.close(); throw CancellationError() }
+        let channel = RemoteChannel(transport: IrohRemoteTransport(stream: stream))
+        do {
+            let hello = try InternetHello(identity: identity, host: address.endpointId, client: endpoint.id, invitation: invitation)
+            try await channel.sendPlain(JSONEncoder().encode(hello))
+            return channel
+        } catch { channel.close(); throw error }
+    }
+
+    private func updateInternetHosting() {
+        guard hosting && internetHosting else {
+            internetAddress = nil; invitation = nil
+            if let incomingPairingChannel, internetChannels.values.contains(where: { $0 === incomingPairingChannel }) {
+                answerPairing(false)
+            }
+            for channel in internetChannels.values { channel.close() }
+            internetChannels.removeAll()
+            // The endpoint may still be used to control another Mac. The accept loop
+            // keeps rejecting incoming connections until hosting is enabled again.
+            return
+        }
+        guard internetAccepting == nil else {
+            if let internet { internetAddress = InternetAddress(endpointId: internet.id) }
+            return
+        }
+        internetAccepting = Task { [weak self] in
+            guard let self else { return }
+            defer { self.internetAccepting = nil }
+            do {
+                let endpoint = try await internetEndpoint()
+                if hosting && internetHosting { internetAddress = InternetAddress(endpointId: endpoint.id) }
+                while !Task.isCancelled {
+                    // Failed or abandoned incoming handshakes must not stop the listener.
+                    let stream: InternetStream
+                    do {
+                        guard let next = try await endpoint.accept() else { return }
+                        stream = next
+                    } catch { continue }
+                    guard hosting && internetHosting, internetChannels.count < 16 else { stream.close(); continue }
+                    let channel = RemoteChannel(transport: IrohRemoteTransport(stream: stream))
+                    let id = UUID(); internetChannels[id] = channel
+                    Task {
+                        let timeout = Task {
+                            do { try await Task.sleep(for: .seconds(10)); channel.close() } catch {}
+                        }
+                        defer {
+                            timeout.cancel()
+                            if !hosted.values.contains(where: { $0.channel === channel }) { internetChannels[id] = nil }
+                        }
+                        do {
+                            let data = try await channel.receivePlain(maximumLength: 4096)
+                            let hello = try JSONDecoder().decode(InternetHello.self, from: data)
+                            guard hello.verify(host: endpoint.id, client: stream.remoteID) else { throw SecureChannelError.badSignature }
+                            let known = paired.contains { $0.peer.id == hello.peer.id && $0.peer.publicKey == hello.peer.publicKey }
+                            let invited = invitation.map { $0.expires > Int(Date().timeIntervalSince1970) && $0.token == hello.invitation } ?? false
+                            guard known || invited else { throw SecureChannelError.unknownPeer }
+                            if !known { invitation = nil } // One invitation permits one pairing attempt.
+                            timeout.cancel()
+                            await accept(channel, internetPeer: hello.peer)
+                        } catch { channel.close() }
+                    }
+                }
+            } catch { lastError = error.localizedDescription; internetAddress = nil }
+        }
+    }
+
+    func makeInvitation() {
+        guard let internetAddress else { return }
+        invitation = InternetInvitation(peer: identity.peer, address: internetAddress)
     }
 
     func hostedPeerEnded(_ peer: HostedPeer) {
         if hosted[peer.peer.id] === peer { hosted[peer.peer.id] = nil }
+        internetChannels = internetChannels.filter { $0.value !== peer.channel }
     }
 
     /// Keeps connected Macs' view of projects and chats current.
@@ -252,15 +400,135 @@ final class RemoteService {
 
     func snapshot() -> RemoteSnapshot? {
         guard let model else { return nil }
-        return RemoteSnapshot(projects: model.projects.filter { $0.archivedAt == nil },
-                              sessions: model.sessions.filter { !$0.id.hasPrefix(Self.mirrorPrefix) },
+        let sharedProjects = model.projects.filter { $0.archivedAt == nil }
+        let sharedProfiles = model.profiles
+        return RemoteSnapshot(projects: sharedProjects.map { item in
+                                  var safe = item; safe.iconImagePath = nil; return safe
+                              },
+                              sessions: model.sessions.filter { !$0.id.hasPrefix(Self.mirrorPrefix) }.map { session in
+                                  var safe = session
+                                  if var progress = safe.workflow {
+                                      progress.workflow.icon?.imagePath = nil
+                                      for index in progress.workflow.steps.indices {
+                                          progress.workflow.steps[index].profile?.iconImagePath = nil
+                                      }
+                                      safe.workflow = progress
+                                  }
+                                  return safe
+                              },
                               providers: ProviderRegistry.all.map(\.id).filter { model.providerStatus[$0]?.available ?? false },
                               alive: Array(model.alive),
                               home: model.executor.homeDirectory, modelCatalogs: model.modelCatalogs,
-                              pullRequests: model.pullRequests.mapValues {
-                                  RemotePullRequest(number: $0.number, title: $0.title, state: $0.state.rawValue,
-                                                    isDraft: $0.isDraft, url: $0.url)
-                              })
+                              defaultModelNames: Dictionary(uniqueKeysWithValues: ProviderRegistry.all.compactMap { provider in
+                                  model.defaultModelName(for: provider.id).map { (provider.id, $0) }
+                              }),
+                              pullRequests: model.pullRequests.mapValues { pr in
+                                  RemotePullRequest(number: pr.number, title: pr.title, state: pr.state.rawValue,
+                                                    isDraft: pr.isDraft, url: pr.url, standing: pr.standing,
+                                                    reviewDecision: pr.reviewDecision?.rawValue, hasConflicts: pr.hasConflicts,
+                                                    checks: pr.checks.map { check in
+                                      let outcome: String = switch check.outcome {
+                                      case .passed: "passed"
+                                      case .failed: "failed"
+                                      case .pending: "pending"
+                                      case .skipped: "skipped"
+                                      }
+                                      return RemotePullRequestCheck(name: check.name, workflow: check.workflow,
+                                                                    outcome: outcome, url: check.url)
+                                  }, head: pr.head, base: pr.base, author: pr.author,
+                                                    additions: pr.additions, deletions: pr.deletions, body: pr.body,
+                                                    reviews: pr.reviews.map { review in
+                                      RemotePullRequestReview(author: review.author, verdict: review.verdict.rawValue,
+                                                              body: review.body, submittedAt: review.submittedAt)
+                                  }, comments: pr.comments.map { comment in
+                                      RemotePullRequestComment(author: comment.author, body: comment.body,
+                                                               createdAt: comment.createdAt, isBot: comment.isBot)
+                                  }, threads: pr.threads.map { thread in
+                                      RemotePullRequestThread(id: thread.id, path: thread.path, line: thread.line,
+                                                              isResolved: thread.isResolved, isOutdated: thread.isOutdated,
+                                                              comments: thread.comments.map { comment in
+                                          RemotePullRequestComment(author: comment.author, body: comment.body,
+                                                                   createdAt: comment.createdAt, isBot: false)
+                                      })
+                                  })
+                              }, automations: model.automations,
+                              pendingPermissions: Dictionary(uniqueKeysWithValues: model.sessions.map { session in
+                                  (session.id, model.pendingPermissions(session.id).map {
+                                      RemotePendingPermission(requestId: $0.requestId, toolName: $0.toolName, input: $0.input)
+                                  })
+                              }), turnStartedAt: model.turnStarts, pagedHistory: true, execInput: true,
+                              internetAddress: internetAddress,
+                              backgroundTasks: model.alive.filter { model.runningBackgroundTasks($0) > 0 }.sorted(),
+                              unmergedWork: model.branchStates.mapValues(\.hasUnmergedWork),
+                              projectIcons: projectIcons(sharedProjects),
+                              profileIcons: profileIcons(sharedProfiles),
+                              workflowIcons: workflowIcons(model.workflows),
+                              automationDevice: true, projectDefaultDevice: true,
+                              profiles: sharedProfiles.map { item in
+                                  var safe = item; safe.iconImagePath = nil; return safe
+                              },
+                              everythingPaused: model.pauseState.everythingPaused,
+                              pausedProjectIds: model.pauseState.pausedProjectIds.sorted(),
+                              pauseControl: true,
+                              stalls: model.stallStates.compactMapValues(RemoteStall.init),
+                              codeHistory: true,
+                              plans: model.plans.filter { $0.value.current != nil }.mapValues(RemotePlan.init),
+                              planApproval: true,
+                              permissionRules: Dictionary(uniqueKeysWithValues: model.projects.filter { $0.archivedAt == nil }.map {
+                                  ($0.id, model.permissionRules(for: $0.id))
+                              }),
+                              queuedMessages: model.queues.filter { !$0.key.hasPrefix(Self.mirrorPrefix) },
+                              messageQueue: true,
+                              steerAgents: ProviderRegistry.all.filter { $0.followUpMode == .stdin }.map(\.id),
+                              workflows: true,
+                              plugins: model.plugins.installed.map(RemotePlugin.init),
+                              pluginProjects: model.pluginProjectChoices().map {
+                                  RemotePluginProject(key: $0.key, name: $0.name)
+                              },
+                              pluginsSupported: true)
+    }
+
+    /// Each project's uploaded icon as bytes, so a viewing Mac can show it
+    /// without reading a file that only exists here. Missing or oversized
+    /// icons are left out; the viewing Mac falls back to the symbol tile.
+    private func projectIcons(_ projects: [Project]) -> [String: Data]? {
+        var icons: [String: Data] = [:]
+        for project in projects {
+            guard let path = project.iconImagePath else { continue }
+            let modified = (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date
+            let data: Data?
+            if let cached = projectIconCache[path], cached.modified == modified {
+                data = cached.data
+            } else {
+                let read = try? Data(contentsOf: URL(fileURLWithPath: path))
+                data = read.flatMap { $0.count <= RemoteSnapshot.maxProjectIconBytes ? $0 : nil }
+                projectIconCache[path] = (modified, data)
+            }
+            if let data { icons[project.id] = data }
+        }
+        return icons.isEmpty ? nil : icons
+    }
+
+    private func profileIcons(_ profiles: [AgentProfile]) -> [String: Data]? {
+        var icons: [String: Data] = [:]
+        for profile in profiles {
+            guard let path = profile.iconImagePath,
+                  let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+                  data.count <= RemoteSnapshot.maxProjectIconBytes else { continue }
+            icons[profile.id] = data
+        }
+        return icons.isEmpty ? nil : icons
+    }
+
+    private func workflowIcons(_ workflows: [Workflow]) -> [String: Data]? {
+        var icons: [String: Data] = [:]
+        for workflow in workflows {
+            guard let path = workflow.iconImagePath,
+                  let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+                  data.count <= RemoteSnapshot.maxProjectIconBytes else { continue }
+            icons[workflow.id] = data
+        }
+        return icons.isEmpty ? nil : icons
     }
 
     /// A chat's new output, to the Macs watching it.
@@ -303,7 +571,7 @@ final class RemoteService {
             guard let pairing = paired.first(where: { $0.id == device.id }) else { continue }
             let link = links[device.id] ?? RemoteLink(device: pairing, service: self)
             links[device.id] = link
-            if !link.isConnected { link.connect(to: device.endpoint, as: identity) }
+            if !link.isConnected { reconnect(device.id) }
         }
         for (id, link) in links where !nearby.contains(where: { $0.id == id }) {
             link.markOffline()
@@ -317,6 +585,7 @@ final class RemoteService {
     /// Pairs with a Mac by "host:port", for when it can't be found on the
     /// network (another subnet, a VPN). It's reached there from then on.
     func pair(address: String) {
+        if address.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("abstract://") { pair(invitation: address); return }
         guard let endpoint = RemoteNetwork.endpoint(address) else {
             lastError = "Use an address like 192.168.1.20:52000, or name.local:52000."
             return
@@ -326,26 +595,55 @@ final class RemoteService {
     }
 
     private func pair(at endpoint: NWEndpoint, address: String?) {
-        guard prompt == nil else { return }
-        Task {
-            let channel = RemoteChannel(connection: NWConnection(to: endpoint, using: parameters))
+        beginPair(address: address, invitation: nil) {
+            RemoteChannel(connection: NWConnection(to: endpoint, using: self.parameters))
+        }
+    }
+
+    func pair(invitation text: String) {
+        do {
+            let invite = try InternetInvitation.parse(text)
+            beginPair(address: nil, invitation: invite) {
+                try await self.internetChannel(to: invite.address, invitation: invite.token)
+            }
+        } catch { lastError = "This invitation is invalid or expired. Copy a new one from the host Mac." }
+    }
+
+    private func beginPair(address: String?, invitation: InternetInvitation?, makeChannel: @escaping () async throws -> RemoteChannel) {
+        guard prompt == nil, pairingTask == nil else { return }
+        pairingTask = Task {
+            defer { pairingTask = nil; outgoingPair = nil }
             do {
+                let channel = try await makeChannel()
+                guard !Task.isCancelled else { channel.close(); return }
+                outgoingPair = channel
+                let timeout = Task {
+                    do { try await Task.sleep(for: .seconds(70)); channel.close() } catch {}
+                }
+                defer { timeout.cancel() }
                 try await channel.open()
                 let outcome = try await channel.handshake(as: identity, pairing: true, expected: nil)
+                if let invitation, outcome.peer.id != invitation.peer.id || outcome.peer.publicKey != invitation.peer.publicKey {
+                    throw SecureChannelError.keyChanged
+                }
                 prompt = PairingPrompt(peer: outcome.peer, code: outcome.code, incoming: false)
                 guard case .event(.paired(let accepted)) = try await channel.receive(), accepted else {
                     prompt?.declined = true
                     channel.close()
                     return
                 }
+                guard !Task.isCancelled else { channel.close(); return }
                 prompt = nil
                 remember(outcome.peer, address: address)
-                let link = RemoteLink(device: PairedDevice(peer: outcome.peer, pairedAt: Date(), lastSeen: Date(), address: address), service: self)
+                if let invitation { rememberInternet(invitation.address, for: outcome.peer.id) }
+                let link = RemoteLink(device: paired.first { $0.id == outcome.peer.id }!, service: self)
                 links[outcome.peer.id] = link
                 link.adopt(channel)
             } catch {
-                if prompt != nil { prompt?.declined = true } else { lastError = error.localizedDescription }
-                channel.close()
+                if !Task.isCancelled {
+                    if prompt != nil { prompt?.declined = true } else { lastError = error.localizedDescription }
+                }
+                outgoingPair?.close()
             }
         }
     }
@@ -369,6 +667,7 @@ final class RemoteService {
     }
 
     func reconnectAll() {
+        if hosting && internetHosting && internetAccepting == nil { updateInternetHosting() }
         for device in paired { reconnect(device.id) }
     }
 
@@ -376,20 +675,10 @@ final class RemoteService {
     func reconnect(_ id: String) {
         guard let device = paired.first(where: { $0.id == id }) else { return }
         let endpoint = nearby.first { $0.id == id }?.endpoint ?? device.address.flatMap(RemoteNetwork.endpoint)
-        guard let endpoint else { return }
+        guard endpoint != nil || device.internetAddress != nil else { return }
         let link = links[id] ?? RemoteLink(device: device, service: self)
         links[id] = link
-        if !link.isConnected { link.connect(to: endpoint, as: identity) }
-    }
-
-    /// The link to a chat's Mac when it's up; otherwise says so, starts
-    /// reconnecting, and returns nil, so nothing is lost without a word.
-    func onlineLink(for id: String) -> RemoteLink? {
-        guard let link = link(for: id) else { return nil }
-        if link.state == .online { return link }
-        reconnect(link.device.id)
-        model?.flash("\(link.device.peer.name) isn't connected. Reconnecting…", isError: true)
-        return nil
+        if !link.isConnected { link.connect(to: endpoint, internet: device.internetAddress, as: identity) }
     }
 
     // MARK: Changing settings
@@ -426,6 +715,7 @@ final class RemoteService {
     }
 
     func dismissPrompt() {
+        pairingTask?.cancel(); outgoingPair?.close(); outgoingPair = nil
         if prompt?.incoming == true { answerPairing(false) }
         prompt = nil
     }
@@ -453,7 +743,13 @@ final class RemoteService {
 
     func isAlive(_ id: String) -> Bool {
         guard let (device, session) = Self.split(id) else { return false }
-        return links[device]?.snapshot?.alive.contains(session) ?? false
+        guard let link = links[device], link.state == .online else { return false }
+        return link.snapshot?.alive.contains(session) ?? false
+    }
+
+    func unreachableMessage(_ id: String) -> String? {
+        guard let link = link(for: id), link.state != .online else { return nil }
+        return link.unreachableMessage
     }
 
     func link(for id: String) -> RemoteLink? { Self.split(id).flatMap { links[$0.device] } }
@@ -464,13 +760,13 @@ final class RemoteService {
     }
 
     /// Files go along with the message, for the other Mac to keep beside its own.
-    func send(_ id: String, text: String, attachments: [PromptAttachment] = []) throws {
+    func send(_ id: String, text: String, attachments: [PromptAttachment] = []) async throws {
         guard let (_, session) = Self.split(id) else { return }
         guard let link = link(for: id), link.state == .online else {
             reconnectAll()
-            throw AbstractError.message("\(self.link(for: id)?.device.peer.name ?? "That Mac") isn't connected, so your message wasn't sent. Reconnecting…")
+            throw AbstractError.message("\(self.link(for: id)?.device.peer.name ?? "That Mac") isn't reachable, so your message wasn't sent. Reconnecting…")
         }
-        guard !attachments.isEmpty else { link.fire(.send(sessionId: session, text: text)); return }
+        guard !attachments.isEmpty else { try await link.perform(.send(sessionId: session, text: text)); return }
         var files: [String: Data] = [:]
         for a in attachments where a.kind == .file || a.kind == .image {
             guard let path = a.path else { continue }
@@ -479,26 +775,13 @@ final class RemoteService {
         guard files.values.reduce(0, { $0 + $1.count }) <= 10 << 20 else {
             throw AbstractError.message("Attachments can go to another Mac up to 10 MB at a time.")
         }
-        link.fire(.sendAttachments(sessionId: session, text: text, attachments: attachments, files: files))
+        try await link.perform(.sendAttachments(sessionId: session, text: text, attachments: attachments, files: files))
     }
 
-    func stop(_ id: String) {
-        guard let (_, session) = Self.split(id) else { return }
-        onlineLink(for: id)?.fire(.stop(sessionId: session))
-    }
-
-    @discardableResult
-    func answer(_ id: String, requestId: String, allow: Bool) -> Bool {
-        guard let (_, session) = Self.split(id), let link = onlineLink(for: id) else { return false }
-        link.fire(.answer(sessionId: session, requestId: requestId, allow: allow))
-        return true
-    }
-
-    @discardableResult
-    func answerQuestion(_ id: String, requestId: String, answers: [String: String]) -> Bool {
-        guard let (_, session) = Self.split(id), let link = onlineLink(for: id) else { return false }
-        link.fire(.answerQuestion(sessionId: session, requestId: requestId, answers: answers))
-        return true
+    func perform(_ id: String, _ request: RemoteRequest) async throws {
+        guard let link = link(for: id) else { throw AbstractError.message("That Mac isn't paired anymore.") }
+        if link.state != .online { reconnect(link.device.id) }
+        try await link.perform(request)
     }
 
     /// Starts a chat on another Mac and returns its id here.
@@ -529,6 +812,17 @@ final class RemoteService {
         default: throw AbstractError.message("The other Mac didn't say which chat it started.")
         }
     }
+
+    /// Starts one run of an automation kept here on another Mac, and
+    /// returns its chat's id here.
+    func startAutomationRun(on device: String, _ start: RemoteRunStart) async throws -> String {
+        guard let link = links[device] else { throw AbstractError.message("That Mac isn't connected.") }
+        switch try await link.request(.startRun(start)) {
+        case .started(let session): return Self.mirrorId(device: device, session: session)
+        case .failed(let message): throw AbstractError.message(message)
+        default: throw AbstractError.message("The other Mac didn't say which chat it started.")
+        }
+    }
 }
 
 // MARK: - A paired Mac using this one
@@ -543,6 +837,8 @@ final class HostedPeer {
     var processes: [Int: RunningProcess] = [:]
     var watchers: [Int: WorktreeWatcher] = [:]
     var terminals: [Int: HostTerminal] = [:]
+    /// Plugin bridges for screens this device is showing, by plugin id.
+    var pluginBridges: [String: PluginBridge] = [:]
     private var subscriptions: Set<String> = []
     private var lastSnapshot: RemoteSnapshot?
     private let outbox = AsyncStream<RemoteMessage>.makeStream()
@@ -602,6 +898,17 @@ final class HostedPeer {
             // would never show there).
             for batch in RemoteLine.batches(lines, bytes: 2 << 20) { post(.event(.lines(sessionId: session, batch))) }
             return .ok
+        case let .subscribeRecent(session, limit):
+            subscriptions.insert(session)
+            let page = model.engine.replayPage(sessionId: session, limit: limit)
+            let lines = page.lines.map { RemoteLine(seq: $0.seq, line: $0.line) }
+            for batch in RemoteLine.batches(lines, bytes: 2 << 20) { post(.event(.lines(sessionId: session, batch))) }
+            return .historyPage(beforeSeq: page.beforeSeq, hasMore: page.hasMore)
+        case let .history(session, before, limit):
+            let page = model.engine.replayPage(sessionId: session, beforeSeq: before, limit: limit)
+            let lines = page.lines.map { RemoteLine(seq: $0.seq, line: $0.line) }
+            for batch in RemoteLine.batches(lines, bytes: 2 << 20) { post(.event(.lines(sessionId: session, batch))) }
+            return .historyPage(beforeSeq: page.beforeSeq, hasMore: page.hasMore)
         case .unsubscribe(let session):
             subscriptions.remove(session)
             return .ok
@@ -616,6 +923,14 @@ final class HostedPeer {
             } catch {
                 return .failed(error.localizedDescription)
             }
+        case let .steer(session, text):
+            do { try await model.steer(session, text: text); return .ok } catch { return .failed(error.localizedDescription) }
+        case let .interrupt(session, text):
+            do { try await model.interrupt(session, text: text); return .ok } catch { return .failed(error.localizedDescription) }
+        case let .editQueued(session, id, text):
+            return model.editQueued(session, id: id, text: text) ? .ok : .failed("That message has already been sent.")
+        case let .removeQueued(session, id):
+            return model.removeQueued(session, id: id) == nil ? .failed("That message has already been sent.") : .ok
         case let .start(project, provider, prompt, policy):
             do {
                 let id = try await model.startChat(projectId: project, providerId: RetiredAgents.current(provider), prompt: prompt, baseRef: nil,
@@ -638,13 +953,36 @@ final class HostedPeer {
                 let id = try await model.startChat(projectId: start.projectId, providerId: agent, prompt: start.prompt,
                                                    attachments: kept, baseRef: start.baseRef, policy: start.policy,
                                                    model: retired ? nil : start.model, effort: retired ? nil : start.effort,
-                                                   existing: existing, select: false)
+                                                   existing: existing, profile: start.profile, workflow: start.workflow,
+                                                   select: false)
                 return .started(sessionId: id)
             } catch {
                 return .failed(error.localizedDescription)
             }
+        case let .startStandalone(provider, prompt, policy):
+            do {
+                let id = try await model.startChat(projectId: nil, providerId: RetiredAgents.current(provider),
+                                                   prompt: prompt, baseRef: nil, policy: policy, select: false)
+                return .started(sessionId: id)
+            } catch { return .failed(error.localizedDescription) }
+        case let .startStandaloneConfigured(provider, prompt, policy, attachments, files, name, effort, profile):
+            do {
+                let kept = try attachments.map { a in try files[a.id].map { try AttachmentStore.keep($0, for: a) } ?? a }
+                let agent = RetiredAgents.current(provider)
+                let id = try await model.startChat(projectId: nil, providerId: agent,
+                                                   prompt: prompt, attachments: kept, baseRef: nil,
+                                                   policy: policy, model: agent == provider ? name : nil,
+                                                   effort: agent == provider ? effort : nil, profile: profile, select: false)
+                return .started(sessionId: id)
+            } catch { return .failed(error.localizedDescription) }
         case .stop(let session):
             model.stop(session)
+            return .ok
+        case .keepWaiting(let session):
+            model.keepWaiting(session)
+            return .ok
+        case .stopAndRetry(let session):
+            model.stopAndRetry(session)
             return .ok
         case let .answer(session, requestId, allow):
             model.answerPermission(session, requestId: requestId, allow: allow)
@@ -652,12 +990,35 @@ final class HostedPeer {
         case let .answerQuestion(session, requestId, answers):
             model.answerQuestion(session, requestId: requestId, answers: answers)
             return .ok
+        case .savePermissionRule(var rule):
+            rule.pattern = rule.pattern.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard model.project(rule.projectId) != nil else { return .failed("Project not found.") }
+            guard !rule.pattern.isEmpty else { return .failed("A rule needs a pattern.") }
+            model.savePermissionRule(rule)
+            return .ok
+        case .deletePermissionRule(let id):
+            guard let rule = model.permissionRules.values.lazy.flatMap({ $0 }).first(where: { $0.id == id })
+            else { return .failed("Rule not found.") }
+            model.deletePermissionRule(rule)
+            return .ok
         case let .setAgent(session, provider, name, effort):
             let agent = RetiredAgents.current(provider)
             model.setAgent(session, providerId: agent, model: agent == provider ? name : nil, effort: agent == provider ? effort : nil)
             return .ok
         case let .setPolicy(session, policy):
             model.setPolicy(session, policy)
+            return .ok
+        case .approvePlan(let session):
+            guard model.plans[session]?.current != nil else { return .failed("That chat has no plan waiting.") }
+            model.approvePlan(session)
+            return .ok
+        case .requestPlanChanges(let session):
+            guard model.plans[session]?.current != nil else { return .failed("That chat has no plan waiting.") }
+            model.requestPlanChanges(session)
+            return .ok
+        case .discardPlan(let session):
+            guard model.plans[session]?.current != nil else { return .failed("That chat has no plan waiting.") }
+            model.discardPlan(session)
             return .ok
         case let .stopTask(session, taskId):
             model.stopTask(session, taskId: taskId)
@@ -674,8 +1035,150 @@ final class HostedPeer {
         case let .setArchived(session, archived):
             model.setArchived(session, archived)
             return .ok
-        case let .exec(command, args, cwd):
-            return await exec(command, args, cwd: cwd)
+        case .continueWorkflow(let session):
+            model.continueWorkflow(session)
+            return .ok
+        case .stopWorkflow(let session):
+            model.stopWorkflow(session)
+            return .ok
+        case let .deleteChat(session, removeWorktree):
+            guard model.session(session) != nil else { return .failed("Chat not found.") }
+            await model.delete(session, removeWorktree: removeWorktree)
+            return .ok
+        case let .removeWorktree(projectId, path, deleteBranch):
+            guard let project = model.project(projectId),
+                  let worktree = await model.reusableWorktrees(projectId: projectId).first(where: {
+                      AppModel.canonical($0.path) == AppModel.canonical(path)
+                  }) else { return .failed("That worktree is unavailable.") }
+            for session in model.sessions where session.worktreePath.map({ AppModel.canonical($0) }) == AppModel.canonical(path) {
+                model.stopAgent(session.id)
+            }
+            await model.runTeardownScript(project, worktree: worktree.path)
+            do {
+                try await Git.removeWorktree(model.executor, root: project.rootPath, path: worktree.path,
+                                             deleteBranch: deleteBranch ? worktree.branch : nil)
+                return .ok
+            } catch { return .failed(error.localizedDescription) }
+        case let .setProjectDefaultDevice(projectId, deviceId):
+            // Only this Mac's own records carry a default Mac; a mirrored
+            // project from another Mac is changed through that Mac.
+            guard var project = model.projects.first(where: { $0.id == projectId }) else { return .failed("Project not found.") }
+            project.defaultDeviceId = deviceId
+            model.updateProject(project)
+            return .ok
+        case .saveAutomation(let automation):
+            do { return .automation(try model.saveAutomation(automation)) }
+            catch { return .failed(error.localizedDescription) }
+        case .deleteAutomation(let id):
+            guard model.automations.contains(where: { $0.id == id }) else { return .failed("Automation not found.") }
+            model.deleteAutomation(id)
+            return .ok
+        case .saveProfile(let profile):
+            var profile = profile
+            // A viewer never receives the host's path. Keep its image when
+            // editing other fields, and clear it when the symbol changes.
+            if let old = model.profile(profile.id), old.iconSymbol == profile.iconSymbol {
+                profile.iconImagePath = old.iconImagePath
+            } else {
+                profile.iconImagePath = nil
+            }
+            model.saveProfile(profile)
+            return .ok
+        case .deleteProfile(let id):
+            guard model.profile(id) != nil else { return .failed("Profile not found.") }
+            model.deleteProfile(id)
+            return .ok
+        case .pauseEverything:
+            model.pauseEverything()
+            return .ok
+        case .resumeEverything:
+            model.resumeEverything()
+            return .ok
+        case .pauseProject(let projectId):
+            guard model.projects.contains(where: { $0.id == projectId }) else { return .failed("Project not found.") }
+            model.pauseProject(projectId)
+            return .ok
+        case .resumeProject(let projectId):
+            guard model.projects.contains(where: { $0.id == projectId }) else { return .failed("Project not found.") }
+            model.resumeProject(projectId)
+            return .ok
+        case .runAutomation(let id):
+            guard let automation = model.automations.first(where: { $0.id == id }) else { return .failed("Automation not found.") }
+            guard let run = await model.runAutomationNow(automation) else { return .failed("Automations are not running yet.") }
+            return .automationRuns([run])
+        case .automationRuns(let id):
+            return .automationRuns(model.automationRuns(id))
+        case .startRun(let start):
+            do {
+                // As with a new chat from there, a retired agent's runs go
+                // to OpenCode on its own default model.
+                let agent = RetiredAgents.current(start.providerId)
+                let retired = agent != start.providerId
+                let id = try await model.startChat(projectId: start.projectId, providerId: agent, prompt: start.prompt,
+                                                   baseRef: nil, policy: start.policy,
+                                                   model: retired ? nil : start.model, effort: retired ? nil : start.effort,
+                                                   name: start.name, nameSource: start.nameSource, slug: start.slug,
+                                                   automationId: start.automationId, profile: start.profile,
+                                                   workflow: start.workflow, select: false)
+                return .started(sessionId: id)
+            } catch {
+                return .failed(error.localizedDescription)
+            }
+        case let .review(session, committed):
+            do {
+                let files = try await reviewFiles(session: session, committed: committed, model: model)
+                return .review(files.map { file in
+                    let patch = Diff.buildPatch(file, hunks: [])
+                    return RemoteReviewFile(path: file.path, status: file.status.rawValue, additions: file.additions,
+                                            deletions: file.deletions, binary: file.isBinary,
+                                            patch: String(patch.prefix(128_000)))
+                })
+            } catch { return .failed(error.localizedDescription) }
+        case let .reviewFile(session, path, committed, accept):
+            do {
+                guard !committed || accept else { return .failed("Committed changes cannot be discarded from review.") }
+                guard case .ready(let context) = model.diffAvailability(session) else { return .failed("The chat's worktree is unavailable.") }
+                guard let file = try await reviewFiles(session: session, committed: committed, model: model).first(where: { $0.path == path })
+                else { return .failed("That changed file is no longer in the review. Refresh and try again.") }
+                let repoRoot = file.repo.isEmpty ? context.root : context.root + "/" + file.repo
+                let repoWorktree = file.repo.isEmpty ? context.worktree : context.worktree + "/" + file.repo
+                if accept {
+                    guard !file.isBinary else { return .failed("Accept this binary file in the Mac app.") }
+                    _ = try await Diff.accept(context.executor, root: repoRoot, patch: Diff.buildPatch(file, hunks: []))
+                } else {
+                    try await Diff.discard(context.executor, worktree: repoWorktree,
+                                           paths: [file.repoPath] + (file.repoOldPath.map { [$0] } ?? []))
+                }
+                return .ok
+            } catch { return .failed(error.localizedDescription) }
+        case let .createPullRequest(session, title, body, base, draft, commitFirst):
+            do {
+                try await model.createPullRequest(session, title: title, body: body, base: base,
+                                                  draft: draft, commitFirst: commitFirst)
+                return .ok
+            } catch { return .failed(error.localizedDescription) }
+        case let .pushChanges(session, message):
+            do { try await model.pushChanges(session, message: message); return .ok }
+            catch { return .failed(error.localizedDescription) }
+        case let .mergePullRequest(session, method):
+            guard let method = MergeMethod(rawValue: method) else { return .failed("Unknown merge method.") }
+            do { try await model.mergePullRequest(session, method: method); return .ok }
+            catch { return .failed(error.localizedDescription) }
+        case .markPullRequestReady(let session):
+            do { try await model.markPullRequestReady(session); return .ok }
+            catch { return .failed(error.localizedDescription) }
+        case .closePullRequest(let session):
+            do { try await model.closePullRequest(session); return .ok }
+            catch { return .failed(error.localizedDescription) }
+        case let .setAgentHistory(projectId, enabled):
+            guard model.projects.contains(where: { $0.id == projectId }) else { return .failed("Project not found.") }
+            model.updateProject(projectId) { $0.agentHistory = enabled }
+            return .ok
+        case let .askAuthor(root, path, lineStart, lineEnd, code, revision, session):
+            return await askAuthor(root: root, path: path, lineStart: lineStart, lineEnd: lineEnd, code: code,
+                                   revision: revision, sessionId: session, model: model)
+        case let .exec(command, args, cwd, stdin):
+            return await exec(command, args, cwd: cwd, stdin: stdin)
         case .spawn(let spec):
             return spawn(id, spec)
         case .stopProcess(let process):
@@ -705,7 +1208,190 @@ final class HostedPeer {
         case .closeTerminal(let terminal):
             terminals.removeValue(forKey: terminal)?.close()
             return .ok
+        case let .setPluginEnabled(pluginId, enabled, transcriptProjectKeys):
+            guard let plugin = model.plugins.plugin(pluginId) else { return .failed("Plugin not found.") }
+            if enabled, let problem = plugin.problem { return .failed(problem) }
+            if enabled, plugin.manifest == nil { return .failed("Its files couldn't be read, so it's off.") }
+            if let transcriptProjectKeys {
+                let allowed = Set(model.pluginProjectChoices().map(\.key))
+                guard transcriptProjectKeys.allSatisfy(allowed.contains) else {
+                    return .failed("One of those projects isn't on this Mac.")
+                }
+            }
+            model.setPluginEnabled(pluginId, enabled, transcriptProjectKeys: transcriptProjectKeys)
+            if enabled { model.plugins.noteError(pluginId, nil) } else { pluginBridges[pluginId] = nil }
+            return .ok
+        case let .setPluginTranscriptProjects(pluginId, keys):
+            guard model.plugins.plugin(pluginId) != nil else { return .failed("Plugin not found.") }
+            let allowed = Set(model.pluginProjectChoices().map(\.key))
+            guard keys.allSatisfy(allowed.contains) else { return .failed("One of those projects isn't on this Mac.") }
+            model.plugins.setTranscriptProjectKeys(pluginId, keys)
+            return .ok
+        case let .pluginPackage(pluginId):
+            guard let plugin = model.plugins.plugin(pluginId), plugin.isUsable, let manifest = plugin.manifest
+            else { return .failed("That plugin is off.") }
+            do {
+                let files = try PluginPackage.packageFiles(in: plugin.packageURL,
+                                                           sizeLimit: RemotePluginPackage.maxBytes)
+                guard files[manifest.entry] != nil else { return .failed("Its files couldn't be read, so it's off.") }
+                return .pluginPackage(RemotePluginPackage(entry: manifest.entry, files: files))
+            } catch PluginValidationError.tooLarge {
+                return .failed("That plugin is too large to show on a phone. Open it on this Mac.")
+            } catch { return .failed("Its files couldn't be read, so it's off.") }
+        case let .pluginContext(pluginId, place, contributionId, chatId):
+            guard let envelopes = pluginEnvelopes(pluginId: pluginId, place: place,
+                                                  contributionId: contributionId, chatId: chatId, model: model)
+            else { return .failed("That plugin is off.") }
+            return .pluginMessages(messages: envelopes, openChatId: nil)
+        case let .pluginMessage(pluginId, text, place, contributionId, chatId):
+            return await pluginMessage(pluginId: pluginId, text: text, place: place,
+                                       contributionId: contributionId, chatId: chatId, model: model)
         }
+    }
+
+    /// Where a showing sits, or nil for a place this host doesn't know.
+    private func pluginPlacement(_ place: String, _ contributionId: String, _ chatId: String?) -> PluginPlacement? {
+        guard let place = PluginPlace(rawValue: place), !contributionId.isEmpty else { return nil }
+        return PluginPlacement(place: place, contributionId: contributionId, chatId: chatId)
+    }
+
+    /// The context and snapshot envelopes for one showing, the way the Mac's
+    /// own plugin screen receives them.
+    private func pluginEnvelopes(pluginId: String, place: String, contributionId: String,
+                                 chatId: String?, model: AppModel) -> [String]? {
+        guard let plugin = model.plugins.plugin(pluginId), plugin.isUsable, let manifest = plugin.manifest,
+              let placement = pluginPlacement(place, contributionId, chatId) else { return nil }
+        let caps = plugin.record.grantedCapabilities
+        let chat = placement.chatId.flatMap { model.pluginChatRow(chatId: $0, capabilities: caps) }
+        let context = PluginContext.jsonValue(appearance: model.pluginAppearance(), locale: Locale.current.identifier,
+                                              pluginId: manifest.id, pluginVersion: manifest.version,
+                                              capabilities: caps, placement: placement, chat: chat)
+        let snapshot = model.pluginSnapshot(capabilities: caps, revision: model.plugins.nextRevision())
+        pluginBridges[pluginId, default: PluginBridge(capabilities: caps)].knownChatIds =
+            Set(snapshot.chats?.map(\.id) ?? []).union(placement.chatId.map { [$0] } ?? [])
+        pluginBridges[pluginId]?.knownProjectKeys = Set(snapshot.projects?.map(\.key) ?? [])
+        return [PluginBridge.encode(type: "context", payload: context),
+                PluginBridge.encode(type: "snapshot", payload: snapshot.jsonValue())]
+    }
+
+    /// One bridge message from a plugin showing on a paired device. Every
+    /// message goes through the same `PluginBridge` the Mac's screen uses;
+    /// `openChat` comes back for the device to show, not opened here.
+    private func pluginMessage(pluginId: String, text: String, place: String, contributionId: String,
+                               chatId: String?, model: AppModel) async -> RemoteResponse {
+        guard let plugin = model.plugins.plugin(pluginId), plugin.isUsable else { return .failed("That plugin is off.") }
+        if text.contains("\"__error\"") {
+            model.plugins.noteError(pluginId, "It stopped working.")
+            return .failed("It stopped working.")
+        }
+        var bridge = pluginBridges[pluginId] ?? PluginBridge(capabilities: plugin.record.grantedCapabilities)
+        bridge.capabilities = plugin.record.grantedCapabilities
+        bridge.allowedHosts = Set(plugin.record.grantedNetworkHosts.map { $0.lowercased() })
+        bridge.secretNames = Set(plugin.record.grantedSecretNames)
+        bridge.alwaysAllowedActions = plugin.record.alwaysAllowedActions
+        bridge.cli = nil // A phone showing cannot approve or run a Mac command.
+        let storage = model.plugins.manager.storage(for: pluginId)
+        let outcome = bridge.handle(text, storage: storage)
+        pluginBridges[pluginId] = bridge
+        func messages(_ envelopes: [String], openChatId: String? = nil) -> RemoteResponse {
+            .pluginMessages(messages: envelopes, openChatId: openChatId)
+        }
+        func reply(_ id: String?, _ payload: JSONValue) -> RemoteResponse {
+            messages([PluginBridge.encode(type: "reply", id: id, payload: payload)])
+        }
+        func errorResponse(_ id: String?, _ reason: String) -> RemoteResponse {
+            messages([PluginBridge.encode(type: "error", id: id,
+                                          payload: .object(["message": .string(reason)]))])
+        }
+        switch outcome {
+        case .reply(let id, let value):
+            return reply(id, value)
+        case .getSnapshot:
+            guard let envelopes = pluginEnvelopes(pluginId: pluginId, place: place,
+                                                  contributionId: contributionId, chatId: chatId, model: model)
+            else { return .failed("That plugin is off.") }
+            return messages(Array(envelopes.suffix(1)))
+        case .openChat(let id, let chat):
+            return messages([PluginBridge.encode(type: "reply", id: id,
+                                                 payload: .object(["opened": .bool(true)]))], openChatId: chat)
+        case .getUsage(let id, let view, let page, let chat):
+            return reply(id, await model.pluginUsage(view: view, page: page, chatId: chat))
+        case .getTurns(let id, let page, let chat):
+            return reply(id, model.pluginTurns(page: page, chatId: chat))
+        case .getTranscript(let id, let page, let chat):
+            let keys = model.plugins.plugin(pluginId)?.record.transcriptProjectKeys ?? []
+            return reply(id, model.pluginTranscript(page: page, chatId: chat, allowedProjectKeys: keys))
+        case .getAutomations(let id, let page):
+            return reply(id, model.pluginAutomations(page: page))
+        case .fetch(let id, let request):
+            do {
+                let value = try await model.plugins.fetchService(for: plugin).perform(request)
+                model.plugins.noteNetworkActivity()
+                return reply(id, value.jsonValue())
+            } catch {
+                model.plugins.noteNetworkActivity()
+                return errorResponse(id, String(describing: error))
+            }
+        case .getPullRequest(let id, let chat):
+            return reply(id, model.pluginPullRequest(chatId: chat))
+        case .getPermissions(let id):
+            let visible = Set(model.pluginSnapshot(capabilities: plugin.record.grantedCapabilities,
+                                                   revision: 0).chats?.map(\.id) ?? [])
+            let pending = PluginPermissions.visible(model.pluginPendingRequests(), chatIds: visible)
+            for chat in Set(pending.map(\.chatId)) { pluginBridges[pluginId]?.know(chatId: chat) }
+            return reply(id, PluginPermissions.list(pending))
+        case .badge(let id, let count):
+            model.plugins.setBadge(pluginId, count)
+            return reply(id, .object(["count": .number(Double(count))]))
+        case .addReviewComments(let id, let chat, let author, let comments):
+            let added = model.addPluginReviewComments(chat, author: author, comments)
+            return reply(id, .object(["added": .number(Double(added))]))
+        case .notice(let id, let text):
+            model.flash("\(plugin.manifest?.name ?? pluginId): \(text)")
+            return reply(id, .object(["shown": .bool(true)]))
+        case .projectLinkSaved(let id, _, let value):
+            model.noteTrackerLinksChanged()
+            return reply(id, value)
+        case .action(let id, _), .askAction(let id, _), .runCLI(let id, _),
+             .actionRateLimited(let id):
+            return errorResponse(id, "That plugin action is available on the Mac.")
+        case .iconGet(let id, _), .iconChoose(let id, _, _):
+            return errorResponse(id, "The icon picker is available on the Mac.")
+        case .subscribe(let id, _), .scheduleJob(let id, _, _, _), .cancelJob(let id, _),
+             .codeHostHosts(let id, _):
+            return errorResponse(id, "That plugin feature is available on the Mac.")
+        case .jobDone, .toolResult, .linkResult, .trackerResult, .codeHostResult:
+            return errorResponse(nil, "That plugin feature is available on the Mac.")
+        case .refused(let id, let reason):
+            model.plugins.noteError(pluginId, reason)
+            return errorResponse(id, reason)
+        case .flooded:
+            pluginBridges[pluginId] = nil
+            model.plugins.noteError(pluginId, "It sent too many messages, so it was stopped.")
+            return .failed("It sent too many messages, so it was stopped.")
+        }
+    }
+
+    private func reviewFiles(session: String, committed: Bool, model: AppModel) async throws -> [FileDiff] {
+        guard case .ready(let context) = model.diffAvailability(session) else {
+            throw AbstractError.message("The chat's worktree is unavailable.")
+        }
+        let repos = await Submodules.list(context.reader, worktree: context.worktree)
+        var files: [FileDiff] = []
+        for repo in repos {
+            let compare: DiffCompare
+            if committed {
+                let state = await RepoReview.state(context.reader, worktree: context.worktree, repo: repo,
+                                                   preferredBase: repo.isSubmodule ? nil : context.baseRef)
+                guard let base = state.base else { continue }
+                compare = .committed(base: base)
+            } else {
+                compare = .uncommitted
+            }
+            files += try await RepoReview.changes(context.reader, worktree: context.worktree, repo: repo, repos: repos,
+                                                  exclude: context.exclude, compare: compare).files
+        }
+        return files
     }
 }
 
@@ -726,6 +1412,7 @@ final class RemoteLink {
     @ObservationIgnored private var outbox = AsyncStream<RemoteMessage>.makeStream()
     @ObservationIgnored private var nextId = 1
     @ObservationIgnored private var waiting: [Int: CheckedContinuation<RemoteResponse, any Error>] = [:]
+    @ObservationIgnored private var timeouts: [Int: Task<Void, Never>] = [:]
     @ObservationIgnored private var subscribed: Set<String> = []
     @ObservationIgnored private var lastSeq: [String: Int] = [:]
     @ObservationIgnored private var streams: [String: ChatStream] = [:]
@@ -733,6 +1420,17 @@ final class RemoteLink {
     @ObservationIgnored var processes: [Int: (line: @Sendable (OutputLine) -> Void, exit: @Sendable (Int32?) -> Void)] = [:]
     @ObservationIgnored var watchers: [Int: () -> Void] = [:]
     @ObservationIgnored var terminals: [Int: (output: (Data) -> Void, exit: (Int32?) -> Void)] = [:]
+    @ObservationIgnored var watchPaths: [Int: [String]] = [:]
+    @ObservationIgnored var terminalSpecs: [Int: (cwd: String, cols: Int, rows: Int)] = [:]
+    private(set) var lastConnectedAt: Date?
+
+    var unreachableMessage: String {
+        let seen = lastConnectedAt ?? device.lastSeen
+        let date = seen.map { " Last seen \($0.formatted(date: .abbreviated, time: .shortened))." } ?? ""
+        let reason: String
+        if case .failed(let error) = state { reason = " \(error)" } else { reason = "" }
+        return "\(device.peer.name) isn't reachable.\(date)\(reason)"
+    }
 
     init(device: RemoteService.PairedDevice, service: RemoteService) {
         self.device = device; self.service = service
@@ -740,22 +1438,52 @@ final class RemoteLink {
 
     var isConnected: Bool { state == .online || state == .connecting }
 
-    func connect(to endpoint: NWEndpoint, as identity: DeviceIdentity) {
+    @ObservationIgnored private var dial: Task<Void, Never>?
+    @ObservationIgnored private var dialChannel: RemoteChannel?
+    @ObservationIgnored private var generation = UUID()
+
+    func connect(to endpoint: NWEndpoint?, internet: InternetAddress?, as identity: DeviceIdentity) {
+        guard !isConnected else { return }
         state = .connecting
-        let channel = RemoteChannel(connection: NWConnection(to: endpoint, using: RemoteNetwork.parameters(peerToPeer: service?.peerToPeer ?? true)))
-        // A try that hangs (a Mac asleep, a stale address) gives way to the next.
-        Task { [weak self] in
-            try? await Task.sleep(for: .seconds(12))
-            if self?.channel !== channel, self?.state == .connecting { channel.close() }
-        }
-        Task {
+        let attempt = UUID(); generation = attempt
+        dial = Task {
             do {
-                try await channel.open()
-                _ = try await channel.handshake(as: identity, pairing: false, expected: device.peer)
-                adopt(channel)
+                var connected: RemoteChannel?
+                if let endpoint {
+                    let local = RemoteChannel(connection: NWConnection(to: endpoint, using: RemoteNetwork.parameters(peerToPeer: service?.peerToPeer ?? true)))
+                    dialChannel = local
+                    let timeout = Task {
+                        do { try await Task.sleep(for: .seconds(3)); local.close() } catch {}
+                    }
+                    do {
+                        try await local.open()
+                        _ = try await local.handshake(as: identity, pairing: false, expected: device.peer)
+                        connected = local
+                    } catch {
+                        local.close()
+                        if error is SecureChannelError { throw error }
+                    }
+                    timeout.cancel()
+                }
+                guard generation == attempt, !Task.isCancelled else { connected?.close(); return }
+                if connected == nil, let internet, let service {
+                    let remote = try await service.internetChannel(to: internet)
+                    dialChannel = remote
+                    let timeout = Task {
+                        do { try await Task.sleep(for: .seconds(10)); remote.close() } catch {}
+                    }
+                    defer { timeout.cancel() }
+                    do {
+                        _ = try await remote.handshake(as: identity, pairing: false, expected: device.peer)
+                        connected = remote
+                    } catch { remote.close(); throw error }
+                }
+                guard let connected else { throw RemoteChannel.Failure.closed }
+                guard generation == attempt, !Task.isCancelled else { connected.close(); return }
+                dialChannel = nil
+                adopt(connected)
             } catch {
-                channel.close()
-                state = .failed(error.localizedDescription)
+                if generation == attempt { dialChannel?.close(); dialChannel = nil; state = .failed(error.localizedDescription) }
             }
         }
     }
@@ -765,6 +1493,8 @@ final class RemoteLink {
         self.channel = channel
         outbox = AsyncStream<RemoteMessage>.makeStream()
         state = .online
+        lastConnectedAt = Date()
+        firstSnapshot = true
         let stream = outbox.stream
         Task {
             for await message in stream {
@@ -774,7 +1504,7 @@ final class RemoteLink {
         }
         Task {
             while true {
-                guard let message = try? await channel.receive() else { break }
+                guard let message = try? await channel.receive(), self.channel === channel else { break }
                 handle(message)
             }
             if self.channel === channel { ended() }
@@ -783,6 +1513,8 @@ final class RemoteLink {
         fire(.snapshot)
         // Chats already open here pick up where they left off.
         for session in subscribed { outbox.continuation.yield(.request(id: take(), .subscribe(sessionId: session, afterSeq: lastSeq[session] ?? 0))) }
+        for (id, paths) in watchPaths { fire(.watch(id: id, paths: paths)) }
+        for (id, spec) in terminalSpecs { fire(.openTerminal(id: id, cwd: spec.cwd, cols: spec.cols, rows: spec.rows)) }
     }
 
     /// A link that went quiet without closing (a Mac that slept, Wi-Fi that
@@ -806,21 +1538,26 @@ final class RemoteLink {
     }
 
     func disconnect() {
+        generation = UUID(); dial?.cancel(); dial = nil
+        dialChannel?.close(); dialChannel = nil
         channel?.close()
         ended()
     }
 
     func markOffline() {
-        guard state != .online else { return }
+        guard !isConnected else { return }
         state = .offline
     }
 
     private func ended() {
+        guard channel != nil || state == .connecting || state == .online else { return }
         channel = nil
         outbox.continuation.finish()
         if state == .online || state == .connecting { state = .offline }
         for (_, waiter) in waiting { waiter.resume(throwing: RemoteChannel.Failure.closed) }
         waiting = [:]
+        for task in timeouts.values { task.cancel() }
+        timeouts = [:]
         dropStreams()
     }
 
@@ -843,8 +1580,18 @@ final class RemoteLink {
         let id = take()
         return try await withCheckedThrowingContinuation { continuation in
             waiting[id] = continuation
+            timeouts[id] = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(30))
+                guard !Task.isCancelled, let self, let waiter = self.waiting.removeValue(forKey: id) else { return }
+                self.timeouts[id] = nil
+                waiter.resume(throwing: AbstractError.message("\(self.device.peer.name) did not respond."))
+            }
             outbox.continuation.yield(.request(id: id, request))
         }
+    }
+
+    func perform(_ request: RemoteRequest) async throws {
+        if case .failed(let message) = try await self.request(request) { throw AbstractError.message(message) }
     }
 
     func subscribe(_ session: String) {
@@ -855,10 +1602,14 @@ final class RemoteLink {
     private func handle(_ message: RemoteMessage) {
         switch message {
         case let .response(id, response):
+            timeouts.removeValue(forKey: id)?.cancel()
             if let waiter = waiting.removeValue(forKey: id) { waiter.resume(returning: response) } else { spawnAnswered(id, response) }
         case .event(.snapshot(let snapshot)):
             self.snapshot = snapshot
-            service?.model?.remoteSnapshotChanged(device: device.id, snapshot)
+            lastConnectedAt = Date()
+            service?.rememberInternet(snapshot.internetAddress, for: device.id)
+            service?.model?.remoteSnapshotChanged(device: device.id, snapshot, fresh: firstSnapshot)
+            firstSnapshot = false
             for (session, lines) in early where snapshot.sessions.contains(where: { $0.id == session }) {
                 early[session] = nil
                 deliver(session, lines)
@@ -875,6 +1626,10 @@ final class RemoteLink {
         }
     }
 
+    /// The next snapshot is the first since connecting: what happened while
+    /// the link was down shouldn't notify as if it just had.
+    @ObservationIgnored private var firstSnapshot = true
+
     /// Output that arrived before the host said which agent the chat runs.
     @ObservationIgnored private var early: [String: [RemoteLine]] = [:]
 
@@ -887,11 +1642,20 @@ final class RemoteLink {
         // A chat handed over reads each agent's part with its own parser.
         let stream = streams[session] ?? ChatStream(providerId: ChatStream.firstProvider(in: lines.map(\.line), current: providerId))
         streams[session] = stream
-        var events: [AgentEvent] = []
         for line in lines where line.seq > (lastSeq[session] ?? 0) {
             lastSeq[session] = line.seq
-            events += stream.feed(line.line)
+            service?.model?.applyRemote(stream.feed(line.line), at: line.line.at,
+                                        to: RemoteService.mirrorId(device: device.id, session: session))
         }
-        service?.model?.applyRemote(events, to: RemoteService.mirrorId(device: device.id, session: session))
+    }
+}
+
+private struct IrohRemoteTransport: RemoteTransport {
+    let stream: InternetStream
+    nonisolated func open() async throws {}
+    nonisolated func close() { stream.close() }
+    nonisolated func read(_ count: Int) async throws -> Data { try await stream.read(count) }
+    nonisolated func write(_ data: Data, completion: @escaping @Sendable ((any Error)?) -> Void) {
+        stream.write(data, completion: completion)
     }
 }

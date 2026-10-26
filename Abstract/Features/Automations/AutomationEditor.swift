@@ -103,7 +103,17 @@ struct AutomationDraft: Equatable {
     var name = ""
     var prompt = ""
     var projectId: String?
+    /// The paired Mac its runs start on; nil is this one.
+    var deviceId: String?
     var triggers: [TriggerDraft]
+    /// The profile each run starts from; choosing one fills the agent,
+    /// model, effort and permissions below, which can still change.
+    var profileId: String?
+    /// The workflow each run's chat follows; takes over from the profile.
+    var workflowId: String?
+    /// What happens in Abstract that starts a run, beside the schedules.
+    var events: [AutomationEvent] = []
+    var eventTarget: AutomationEventTarget = .triggeringChat
     var providerId: String
     var modelId: String?
     var effort: String?
@@ -111,7 +121,9 @@ struct AutomationDraft: Equatable {
     var workspaceMode: WorkspaceMode = .newWorktree
     /// The chat every run continues; nil with `.pinned` is a chat of its own, made on the first run.
     var pinnedSessionId: String?
-    var catchUp = false
+    var concurrency: AutomationConcurrency = .startAnother
+    var missedRuns: AutomationMissedRuns = .skip
+    var onlyWhenChanged = false
     /// Only read for a new automation: an existing one's switch saves at once.
     var enabled = true
 
@@ -132,14 +144,21 @@ struct AutomationDraft: Equatable {
         name = a.name
         prompt = a.prompt
         projectId = a.projectId
+        deviceId = a.deviceId
         triggers = a.triggers.map(TriggerDraft.init)
+        profileId = a.profileId
+        workflowId = a.workflowId
+        events = a.events
+        eventTarget = a.eventTarget
         providerId = a.providerId
         modelId = a.model
         effort = a.effort
         policy = a.permissionPolicy
         workspaceMode = a.workspaceMode
         pinnedSessionId = a.pinnedSessionId
-        catchUp = a.catchUp
+        concurrency = a.concurrency
+        missedRuns = a.missedRuns
+        onlyWhenChanged = a.onlyWhenChanged
         enabled = a.enabled
     }
 
@@ -151,12 +170,24 @@ struct AutomationDraft: Equatable {
     /// Every run continues one chat, rather than starting a new one.
     var isPinned: Bool { workspaceMode == .pinned }
 
+    /// Switch where runs happen. A still-going choice nobody changed
+    /// follows to the new place's default; one they picked stays.
+    mutating func setWorkspaceMode(_ mode: WorkspaceMode) {
+        if concurrency == .defaults(for: workspaceMode) { concurrency = .defaults(for: mode) }
+        workspaceMode = mode
+    }
+
     func automation(base: Automation?, now: Date = Date()) -> Automation {
         var a = base ?? Automation(name: "", prompt: "", providerId: providerId, projectId: nil, triggers: [], enabled: enabled)
         a.name = displayName
         a.prompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         a.projectId = projectId
+        a.deviceId = deviceId
         a.triggers = triggers.map { $0.trigger(now: now) }
+        a.profileId = workflowId == nil ? profileId : nil
+        a.workflowId = workflowId
+        a.events = events
+        a.eventTarget = eventTarget
         a.providerId = providerId
         a.model = modelId
         a.effort = effort
@@ -164,7 +195,9 @@ struct AutomationDraft: Equatable {
         a.workspaceMode = workspaceMode
         a.pinnedSessionId = isPinned ? pinnedSessionId : nil
         a.continueAgentSession = isPinned
-        a.catchUp = catchUp
+        a.concurrency = concurrency
+        a.missedRuns = missedRuns
+        a.onlyWhenChanged = onlyWhenChanged
         return a
     }
 
@@ -175,7 +208,7 @@ struct AutomationDraft: Equatable {
         prompt = proposal.instructions
         triggers = proposal.schedules.map { TriggerDraft(AutomationTrigger(rrule: $0, timezone: timezone)) }
         if let drafted { projectId = drafted }
-        workspaceMode = proposal.continuesOwnChat ? .pinned : .newWorktree
+        setWorkspaceMode(proposal.continuesOwnChat ? .pinned : .newWorktree)
         pinnedSessionId = nil
         policy = proposal.policy
     }
@@ -184,16 +217,21 @@ struct AutomationDraft: Equatable {
     /// how the page holds it, so switching a preset away and back is no change.
     func differs(from a: Automation) -> Bool {
         let saved = automation(base: a)
-        return saved.name != a.name || saved.prompt != a.prompt || saved.projectId != a.projectId
+        return saved.name != a.name || saved.prompt != a.prompt || saved.projectId != a.projectId || saved.deviceId != a.deviceId
+            || saved.profileId != a.profileId || saved.workflowId != a.workflowId
+            || saved.events != a.events || saved.eventTarget != a.eventTarget
             || saved.providerId != a.providerId || saved.model != a.model || saved.effort != a.effort
             || saved.permissionPolicy != a.permissionPolicy || saved.workspaceMode != a.workspaceMode
-            || saved.pinnedSessionId != a.pinnedSessionId || saved.catchUp != a.catchUp
+            || saved.pinnedSessionId != a.pinnedSessionId || saved.concurrency != a.concurrency
+            || saved.missedRuns != a.missedRuns || saved.onlyWhenChanged != a.onlyWhenChanged
             || triggers.count != a.triggers.count || zip(triggers, a.triggers).contains { !$0.matches($1) }
     }
 
     /// Why Save is off, in a few words.
     var blocker: String? {
         if prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "Instructions are empty" }
+        if workflowId != nil, deviceId != nil, isPinned { return "A workflow runs on this Mac in a chat it continues" }
+        if !events.isEmpty, deviceId != nil { return "Events start runs only on This Mac" }
         if triggers.contains(where: { !TriggerCheck($0).isValid }) { return "A trigger needs fixing" }
         return nil
     }
@@ -211,10 +249,15 @@ struct AutomationSettings: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            AutoSectionLabel(title: "Triggers")
-            TriggerList(triggers: $draft.triggers, catchUp: $draft.catchUp, active: active,
+            AutoSectionLabel(title: "When it runs")
+            TriggerList(triggers: $draft.triggers, concurrency: $draft.concurrency, missedRuns: $draft.missedRuns,
+                        onlyWhenChanged: $draft.onlyWhenChanged,
+                        showsChanged: draft.projectId != nil && draft.deviceId == nil, active: active,
+                        hasEvents: !draft.events.isEmpty,
                         defaultTimezone: model.defaultTimezone)
                 .padding(.top, Space.xxs)
+            EventList(draft: $draft)
+                .padding(.top, Space.xs)
 
             ScopeSentence(draft: $draft)
                 .padding(.top, Space.xl)
@@ -238,8 +281,14 @@ struct AutomationSettings: View {
 
 private struct TriggerList: View {
     @Binding var triggers: [TriggerDraft]
-    @Binding var catchUp: Bool
+    @Binding var concurrency: AutomationConcurrency
+    @Binding var missedRuns: AutomationMissedRuns
+    @Binding var onlyWhenChanged: Bool
+    /// A project on this Mac is what "changed since the last run" reads.
+    let showsChanged: Bool
     let active: Bool
+    /// Events start it too, so no schedule doesn't mean by hand only.
+    let hasEvents: Bool
     let defaultTimezone: String
 
     var body: some View {
@@ -257,28 +306,58 @@ private struct TriggerList: View {
                         triggers.append(TriggerDraft(timezone: triggers.last?.timezone ?? defaultTimezone))
                     }
                 }
-                if triggers.isEmpty {
+                if triggers.isEmpty, !hasEvents {
                     Text("With no triggers it runs only when you start it with Run now.")
                         .font(.btCallout)
                         .foregroundStyle(Color.btTextTertiary)
                         .padding(.top, Space.xxs)
-                } else {
-                    HStack(spacing: 1) {
-                        Text("If Abstract is closed when a run is due,")
-                            .font(.btBody)
-                            .foregroundStyle(Color.btTextTertiary)
-                        SentenceMenu(title: catchUp ? "run it once when it opens" : "skip that run", quiet: true) {
-                            Picker("Missed runs", selection: $catchUp) {
-                                Text("Skip That Run").tag(false)
-                                Text("Run It Once When Abstract Opens").tag(true)
+                } else if !triggers.isEmpty {
+                    VStack(alignment: .leading, spacing: 2) {
+                        sentence("If the last run is still going,") {
+                            SentenceMenu(title: concurrency.phrase, quiet: true) {
+                                Picker("If the last run is still going", selection: $concurrency) {
+                                    ForEach(AutomationConcurrency.allCases, id: \.self) { Text($0.option).tag($0) }
+                                }
+                                .pickerStyle(.inline)
+                                .labelsHidden()
                             }
-                            .pickerStyle(.inline)
-                            .labelsHidden()
+                        }
+                        sentence("If runs were missed while Abstract was closed,") {
+                            SentenceMenu(title: missedRuns.phrase, quiet: true) {
+                                Picker("Missed runs", selection: $missedRuns) {
+                                    ForEach(AutomationMissedRuns.allCases, id: \.self) { Text($0.option).tag($0) }
+                                }
+                                .pickerStyle(.inline)
+                                .labelsHidden()
+                            }
+                        }
+                        if showsChanged {
+                            sentence("It runs") {
+                                SentenceMenu(title: onlyWhenChanged ? "only when the project changed since the last run"
+                                                                    : "whether or not the project changed", quiet: true) {
+                                    Picker("Only when the project changed", selection: $onlyWhenChanged) {
+                                        Text("Whether or Not the Project Changed").tag(false)
+                                        Text("Only When the Project Changed Since the Last Run").tag(true)
+                                    }
+                                    .pickerStyle(.inline)
+                                    .labelsHidden()
+                                }
+                            }
                         }
                     }
                     .padding(.top, Space.xs)
                 }
             }
+        }
+    }
+
+    /// One of the sentences under the triggers: its words, then its menu.
+    private func sentence<Menu: View>(_ words: String, @ViewBuilder menu: () -> Menu) -> some View {
+        HStack(spacing: 1) {
+            Text(words)
+                .font(.btBody)
+                .foregroundStyle(Color.btTextTertiary)
+            menu()
         }
     }
 }
@@ -431,6 +510,134 @@ private struct AddTriggerRow: View {
     }
 }
 
+// MARK: Events
+
+/// Things that happen to chats that start a run, as sentences like the
+/// schedules above: "When a chat [is archived]", and where its run goes.
+private struct EventList: View {
+    @Environment(AppModel.self) private var model
+    @Binding var draft: AutomationDraft
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(draft.events) { event in
+                EventRow(event: event, others: draft.events, replace: { new in
+                    if let i = draft.events.firstIndex(of: event) { draft.events[i] = new }
+                }, remove: {
+                    withAnimation(.snappy(duration: 0.18)) { draft.events.removeAll { $0 == event } }
+                })
+            }
+            if draft.events.count < AutomationEvent.allCases.count {
+                AddEventRow(available: AutomationEvent.allCases.filter { !draft.events.contains($0) }) { event in
+                    withAnimation(.snappy(duration: 0.18)) { draft.events.append(event) }
+                }
+            }
+            if !draft.events.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 1) {
+                        Text("A run an event starts")
+                            .font(.btBody)
+                            .foregroundStyle(Color.btTextTertiary)
+                        SentenceMenu(title: draft.eventTarget.phrase, quiet: true) {
+                            Picker("Where", selection: $draft.eventTarget) {
+                                ForEach(AutomationEventTarget.allCases, id: \.self) { Text($0.option).tag($0) }
+                            }
+                            .pickerStyle(.inline)
+                            .labelsHidden()
+                        }
+                    }
+                    Text(scopeNote)
+                        .font(.btCallout)
+                        .foregroundStyle(Color.btTextTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 2)
+                }
+                .padding(.top, Space.xs)
+            }
+        }
+    }
+
+    private var scopeNote: String {
+        let project = model.project(draft.projectId)?.name
+        let whose = project.map { "Chats in \($0)" } ?? "Chats in any project"
+        return "\(whose) count, here on this Mac. What a run leads to never starts the same automation again, so automations can't keep starting each other."
+    }
+}
+
+private struct EventRow: View {
+    let event: AutomationEvent
+    let others: [AutomationEvent]
+    let replace: (AutomationEvent) -> Void
+    let remove: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Image(systemName: event.symbol)
+                .font(.system(size: 12, weight: .regular))
+                .foregroundStyle(Color.btTextTertiary)
+                .frame(width: AutoPage.gutter, alignment: .leading)
+            HStack(spacing: 1) {
+                SentenceWord("When a chat")
+                SentenceMenu(title: event.phrase) {
+                    ForEach(AutomationEvent.allCases.filter { $0 == event || !others.contains($0) }) { option in
+                        Toggle(isOn: Binding(get: { option == event }, set: { _ in replace(option) })) {
+                            Text(option.title)
+                            Text(option.detail)
+                        }
+                    }
+                }
+            }
+            Spacer(minLength: Space.md)
+            Button(action: remove) {
+                Image(systemName: "xmark").font(.system(size: 9.5, weight: .semibold))
+            }
+            .buttonStyle(.icon(size: 22))
+            .help("Remove event")
+            .opacity(hovering ? 1 : 0)
+            .allowsHitTesting(hovering)
+        }
+        .frame(minHeight: 32)
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .accessibilityElement(children: .contain)
+        .accessibilityAction(named: "Remove event", remove)
+    }
+}
+
+private struct AddEventRow: View {
+    let available: [AutomationEvent]
+    let add: (AutomationEvent) -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Menu {
+            ForEach(available) { event in
+                Button { add(event) } label: {
+                    Text(event.title)
+                    Text(event.detail)
+                }
+            }
+        } label: {
+            HStack(spacing: 0) {
+                Image(systemName: "bolt")
+                    .font(.system(size: 11, weight: .medium))
+                    .frame(width: AutoPage.gutter, alignment: .leading)
+                Text("Add event").font(.btBody)
+            }
+            .foregroundStyle(hovering ? Color.btText : Color.btTextSecondary)
+            .frame(height: 32)
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .onHover { hovering = $0 }
+        .help("Start a run when something happens to a chat")
+    }
+}
+
 // MARK: Scope
 
 /// Which chat each run happens in, and how, as one sentence of choices:
@@ -454,16 +661,17 @@ private struct ScopeSentence: View {
                     projectMenu
                 }
                 SentenceWord("on")
-                SentenceMenu(title: "This Mac") {
-                    Picker("Device", selection: .constant("local")) {
-                        Label("This Mac", systemImage: "laptopcomputer").tag("local")
+                deviceMenu
+                if chat == nil || draft.workflowId != nil {
+                    if !model.profiles.isEmpty || !model.workflows.isEmpty {
+                        SentenceWord(draft.workflowId == nil ? "as" : "following")
+                        profileMenu
                     }
-                    .pickerStyle(.inline)
-                    .labelsHidden()
                 }
-                if chat == nil {
+                // A workflow's steps bring their own agent and permissions.
+                if chat == nil, draft.workflowId == nil {
                     SentenceWord("using")
-                    AgentChip(providerId: $draft.providerId, modelId: $draft.modelId, effort: $draft.effort)
+                    AgentChip(providerId: $draft.providerId, modelId: $draft.modelId, effort: $draft.effort, device: draft.deviceId)
                     SentenceWord("with")
                     policyMenu
                 }
@@ -477,12 +685,12 @@ private struct ScopeSentence: View {
             item("Starts a New Chat",
                  detail: draft.projectId == nil ? "A standalone chat each run" : "Each in its own worktree, fetched and set up fresh",
                  selected: !draft.isPinned) {
-                draft.workspaceMode = .newWorktree
+                draft.setWorkspaceMode(.newWorktree)
                 draft.pinnedSessionId = nil
             }
             item("Continues a Chat of Its Own", detail: "Made by the first run; every run after is its next message",
                  selected: draft.isPinned && chat == nil) {
-                draft.workspaceMode = .pinned
+                draft.setWorkspaceMode(.pinned)
                 draft.pinnedSessionId = nil
             }
             Section("Continues a Chat") {
@@ -490,9 +698,10 @@ private struct ScopeSentence: View {
                 ForEach(chats) { s in
                     item(s.name, detail: [model.project(s.projectId)?.name ?? "Standalone", s.branch].compactMap { $0 }.joined(separator: " · "),
                          selected: chat?.id == s.id) {
-                        draft.workspaceMode = .pinned
+                        draft.setWorkspaceMode(.pinned)
                         draft.pinnedSessionId = s.id
                         draft.projectId = s.projectId
+                        draft.deviceId = RemoteService.split(s.id)?.device
                     }
                 }
             }
@@ -535,9 +744,109 @@ private struct ScopeSentence: View {
         }
     }
 
+    /// Which Mac runs start on: this one, or a paired Mac. Choosing one
+    /// the continued chat isn't on starts a chat of its own there instead.
+    private var deviceMenu: some View {
+        SentenceMenu(title: deviceName) {
+            Picker("Device", selection: Binding(get: { draft.deviceId }, set: { chooseDevice($0) })) {
+                Label("This Mac", systemImage: "laptopcomputer").tag(String?.none)
+                ForEach(model.remote.paired) { device in
+                    Label(device.peer.name, systemImage: "desktopcomputer").tag(Optional(device.id))
+                }
+                if let id = draft.deviceId, !model.remote.paired.contains(where: { $0.id == id }) {
+                    Label("A Mac that isn't paired anymore", systemImage: "desktopcomputer").tag(Optional(id))
+                }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+            Divider()
+            Text("Each run starts on this Mac; you work on it from here.")
+        }
+    }
+
+    private func chooseDevice(_ id: String?) {
+        guard id != draft.deviceId else { return }
+        draft.deviceId = id
+        draft.modelId = nil
+        draft.effort = nil
+        if let chat, RemoteService.split(chat.id)?.device != id { draft.pinnedSessionId = nil }
+    }
+
+    private var deviceName: String {
+        guard let id = draft.deviceId else { return "This Mac" }
+        return model.remote.paired.first { $0.id == id }?.peer.name ?? "A paired Mac"
+    }
+
+    /// The chosen Mac's last word on itself, when it's connected now.
+    private var deviceSnapshot: RemoteSnapshot? {
+        guard let id = draft.deviceId, let link = model.remote.links[id], link.state == .online else { return nil }
+        return link.snapshot
+    }
+
+    /// The profile each run starts from, above the agent it fills in:
+    /// choosing one sets the agent, model, effort and permissions, and
+    /// its instructions go to the agent at every run.
+    private var profileMenu: some View {
+        SentenceMenu(title: model.workflow(draft.workflowId).map { "the “\($0.name)” workflow" }
+                     ?? model.profile(draft.profileId)?.name ?? "no profile") {
+            Picker("Profile", selection: Binding(get: { draft.workflowId == nil ? draft.profileId : nil },
+                                                 set: { chooseProfile($0) })) {
+                Text("No Profile").tag(String?.none)
+                ForEach(model.profiles) { profile in
+                    Label {
+                        Text(profile.name)
+                    } icon: {
+                        IconTile(value: profile.iconValue, name: profile.name, context: .profile, size: 18)
+                    }
+                        .tag(Optional(profile.id))
+                }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+            if !model.workflows.isEmpty {
+                Section("Follows a Workflow") {
+                    Picker("Workflow", selection: Binding(get: { draft.workflowId }, set: { chooseWorkflow($0) })) {
+                        ForEach(model.workflows) { workflow in
+                            Label {
+                                Text(workflow.name)
+                            } icon: {
+                                IconTile(value: workflow.iconValue, name: workflow.name, context: .workflow, size: 18)
+                            }
+                                .tag(Optional(workflow.id))
+                        }
+                    }
+                    .pickerStyle(.inline)
+                    .labelsHidden()
+                }
+            }
+            Divider()
+            Text("Each run starts from the profile as it is then, instructions included; a workflow hands its chat from step to step. Manage them in Settings.")
+        }
+    }
+
+    private func chooseWorkflow(_ id: String?) {
+        draft.workflowId = id
+        draft.profileId = nil
+        guard let first = model.workflow(id)?.steps.first, let profile = model.profile(first.profileId) else { return }
+        draft.providerId = profile.providerId
+        draft.modelId = profile.model
+        draft.effort = profile.effort
+        draft.policy = profile.permissionPolicy
+    }
+
+    private func chooseProfile(_ id: String?) {
+        draft.workflowId = nil
+        draft.profileId = id
+        guard let profile = model.profile(id) else { return }
+        draft.providerId = profile.providerId
+        draft.modelId = profile.model
+        draft.effort = profile.effort
+        draft.policy = profile.permissionPolicy
+    }
+
     private var policyMenu: some View {
         SentenceMenu(title: draft.policy.phrase) {
-            ForEach(PermissionPolicy.allCases, id: \.self) { p in
+            ForEach(PermissionPolicy.autonomyCases, id: \.self) { p in
                 Toggle(isOn: Binding(get: { draft.policy == p }, set: { _ in draft.policy = p })) {
                     Text(p.title)
                     Text(p.detail)
@@ -548,11 +857,21 @@ private struct ScopeSentence: View {
 
     @ViewBuilder
     private var notes: some View {
-        if chat == nil, model.providerStatus[draft.providerId]?.available == false {
+        if chat == nil, draft.deviceId == nil, model.providerStatus[draft.providerId]?.available == false {
             Label("\(ProviderRegistry.name(draft.providerId)) wasn't found on this Mac. Set its path in Settings › Agents.",
                   systemImage: "exclamationmark.triangle")
                 .font(.btCallout)
                 .foregroundStyle(Color.btWarning)
+        }
+        if draft.deviceId != nil {
+            if deviceSnapshot == nil {
+                note("\(deviceName) isn't connected now. A run that comes due while it isn't is recorded as failed, with that reason.",
+                     warning: true)
+            } else if let snapshot = deviceSnapshot, chat == nil, let project = model.projects.first(where: { $0.id == draft.projectId }),
+                      !AutomationDeviceRun.hasProject(project, in: snapshot) {
+                note("\(deviceName) doesn't have a project called “\(project.name)”, so runs there fail until it does.",
+                     warning: true)
+            }
         }
         if draft.isPinned, draft.pinnedSessionId != nil, chat == nil {
             note("Its chat was deleted, so the next run starts a new one of its own.", warning: true)
@@ -561,9 +880,20 @@ private struct ScopeSentence: View {
             note("Each run arrives in “\(chat.name)” as your next message would, and its agent picks up where it left off, "
                  + "with the chat's own agent and permissions.")
         }
+        if !draft.isPinned, draft.projectId != nil {
+            note("Each run gets its own branch, renamed for its work once the agent starts.")
+        }
         if draft.isPinned {
             note("Its agent can start chats of their own, each in its own worktree, with the abstract command line "
                  + "(Settings › General › Command line).")
+        }
+        if let workflow = model.workflow(draft.workflowId) {
+            if let problem = workflow.problem(profiles: model.profiles) {
+                note("“\(workflow.name)”: \(problem) Runs fail until it's fixed in Settings › Workflows.", warning: true)
+            } else {
+                note("Each run's chat goes through \(workflow.steps.compactMap { model.profile($0.profileId)?.name }.joined(separator: ", then ")), "
+                     + "with the instructions as its task. The agent, model and permissions are each step's own.")
+            }
         }
         if chat == nil, draft.policy == .ask {
             note("Nobody is there to answer while it runs: a run stops at its first tool call until you answer in its chat.")
@@ -585,6 +915,9 @@ private struct AgentChip: View {
     @Binding var providerId: String
     @Binding var modelId: String?
     @Binding var effort: String?
+    /// The paired Mac runs start on; nil is this one. Its agents and
+    /// models are the ones on offer.
+    var device: String? = nil
     @State private var typing = false
     @State private var typed = ""
     @FocusState private var fieldFocused: Bool
@@ -593,16 +926,16 @@ private struct AgentChip: View {
         Group {
             if typing { field } else { menu }
         }
-        .onChange(of: modelId) { _, new in effort = model.supportedEffort(effort, providerId: providerId, model: new) }
+        .onChange(of: modelId) { _, new in effort = model.supportedEffort(effort, providerId: providerId, model: new, on: device) }
     }
 
     private var menu: some View {
-        let catalog = model.models(for: providerId)
-        let efforts = model.efforts(providerId: providerId, model: modelId)
+        let catalog = model.models(for: providerId, on: device)
+        let efforts = model.efforts(providerId: providerId, model: modelId, on: device)
         return SentenceMenu(title: title(catalog, efforts), logo: providerId) {
             Section("Agent") {
                 Picker("Agent", selection: Binding(get: { providerId }, set: { select($0) })) {
-                    ForEach(model.pickableAgents(keeping: providerId), id: \.id) { p in
+                    ForEach(model.pickableAgents(on: device, keeping: providerId), id: \.id) { p in
                         Label {
                             Text(p.name)
                         } icon: {
@@ -615,7 +948,7 @@ private struct AgentChip: View {
                 .labelsHidden()
             }
             Section("Model") {
-                row(model.defaultModelName(for: providerId).map { "Default (\($0))" } ?? "Default", detail: nil, id: nil)
+                row(model.defaultModelName(for: providerId, on: device).map { "Default (\($0))" } ?? "Default", detail: nil, id: nil)
                 ForEach(catalog.models) { row($0) }
                 if let custom = modelId, catalog.option(custom) == nil { row(custom, detail: nil, id: custom) }
             }
@@ -658,7 +991,7 @@ private struct AgentChip: View {
 
     private func title(_ catalog: ModelCatalog, _ efforts: (levels: [String], defaultLevel: String?)) -> String {
         var parts = [ProviderRegistry.name(providerId)]
-        parts.append(modelId.map { catalog.option($0)?.label ?? $0 } ?? model.defaultModelName(for: providerId) ?? "Default model")
+        parts.append(modelId.map { catalog.option($0)?.label ?? $0 } ?? model.defaultModelName(for: providerId, on: device) ?? "Default model")
         if !efforts.levels.isEmpty, let level = effort ?? efforts.defaultLevel { parts.append(ModelOption.effortTitle(level)) }
         return parts.joined(separator: " · ")
     }

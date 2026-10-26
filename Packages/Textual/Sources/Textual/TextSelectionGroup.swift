@@ -58,6 +58,11 @@ public struct SelectableText: View {
     content = AttributedString(string)
   }
 
+  // Added for Abstract: text with marks of its own (find matches).
+  public init(_ content: AttributedString) {
+    self.content = content
+  }
+
   public var body: some View {
     TextFragment(content)
       .modifier(TextSelectionInteraction())
@@ -74,6 +79,11 @@ public struct SelectableLines: View {
 
   public init(_ lines: [String], spacing: CGFloat = 0) {
     self.lines = lines.map { AttributedString($0.isEmpty ? " " : $0) }
+    self.spacing = spacing
+  }
+
+  public init(_ lines: [AttributedString], spacing: CGFloat = 0) {
+    self.lines = lines.map { $0.characters.isEmpty ? AttributedString(" ") : $0 }
     self.spacing = spacing
   }
 

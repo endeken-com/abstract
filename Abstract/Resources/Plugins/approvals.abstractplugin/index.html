@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:">
+<link rel="stylesheet" href="/_abstract/abstract-ui.css">
+<link rel="stylesheet" href="style.css">
+<title>Approvals</title>
+</head>
+<body>
+<div class="ab-page">
+  <header class="ab-header">
+    <div class="ab-header-title">
+      <h1>Approvals</h1>
+      <span id="summary" class="ab-tertiary ab-small"></span>
+    </div>
+    <span class="ab-spacer"></span>
+    <div id="tabs"></div>
+  </header>
+  <main class="content">
+    <p id="error" class="ab-notice ab-error" role="alert" hidden></p>
+    <div id="panel"></div>
+  </main>
+</div>
+<script src="/_abstract/abstract-ui.js"></script>
+<script src="queue.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

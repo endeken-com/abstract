@@ -13,15 +13,25 @@ public enum AppLink {
         public var replacing: String?
         /// A new chat, not a respawned one: its transcript starts empty.
         public var fresh: Bool
+        /// An explicit branch request, in place of starting an agent.
+        public var rename: RenameRequest? = nil
+    }
+
+    public struct RenameRequest: Codable, Sendable {
+        public var worktree: String
+        public var name: String
+
+        public init(worktree: String, name: String) { self.worktree = worktree; self.name = name }
     }
 
     /// The agent the app started, or why it didn't.
     public struct StartReply: Codable, Sendable {
         public var agent: AgentRecord?
         public var message: String?
+        public var branch: String?
 
-        public init(agent: AgentRecord?, message: String?) {
-            self.agent = agent; self.message = message
+        public init(agent: AgentRecord?, message: String?, branch: String? = nil) {
+            self.agent = agent; self.message = message; self.branch = branch
         }
     }
 
@@ -87,5 +97,11 @@ public enum AppLink {
             throw CLIError(.agentStartFailed, "Abstract stopped answering before the agent started.")
         }
         return reply
+    }
+
+    static func rename(sessionId: String, worktree: String, name: String, storePath: String) throws -> StartReply? {
+        var request = StartRequest(sessionId: sessionId, prompt: "", replacing: nil, fresh: false)
+        request.rename = RenameRequest(worktree: worktree, name: name)
+        return try start(request, storePath: storePath)
     }
 }

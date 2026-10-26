@@ -62,6 +62,7 @@ struct CodeTextView: NSViewRepresentable {
         scroll.rulersVisible = true
 
         c.textView = text
+        document.textView = text
         c.ruler = ruler
         c.show(document.text, editable: isEditable)
         c.startAtFirstColumn(scroll)
@@ -95,6 +96,10 @@ struct CodeTextView: NSViewRepresentable {
         private(set) var lineStarts: [Int] = [0]
         private var highlight: Task<Void, Never>?
         private var popover: NSPopover?
+        /// The lines the menu last offered to ask about, and a lookup of
+        /// the caret's line waiting to name who would be asked.
+        var askLines: ClosedRange<Int>?
+        private var askPrepare: Task<Void, Never>?
 
         /// Settings › Appearance › Editor font, as it was when the editor opened.
         let fonts = EditorFontChoice.stored
@@ -135,8 +140,10 @@ struct CodeTextView: NSViewRepresentable {
         func goToLine() {
             guard let line = document.goToLine, firstColumn == nil, revision == document.revision,
                   let textView, line >= 1, line <= lineStarts.count else { return }
-            let location = lineStarts[line - 1]
-            textView.setSelectedRange(NSRange(location: location, length: 0))
+            let length = (textView.string as NSString).length
+            let selection = document.goToSelection ?? 0..<0
+            let location = min(lineStarts[line - 1] + selection.lowerBound, length)
+            textView.setSelectedRange(NSRange(location: location, length: min(selection.count, length - location)))
             if let layout = textView.layoutManager {
                 let glyph = layout.glyphIndexForCharacter(at: min(location, max((textView.string as NSString).length - 1, 0)))
                 let rect = layout.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
@@ -145,7 +152,7 @@ struct CodeTextView: NSViewRepresentable {
             }
             textView.window?.makeFirstResponder(textView)
             let document = document
-            DispatchQueue.main.async { document.goToLine = nil }
+            DispatchQueue.main.async { document.goToLine = nil; document.goToSelection = nil }
         }
 
         init(document: EditorDocument, sessionId: String, model: AppModel) {
@@ -183,6 +190,48 @@ struct CodeTextView: NSViewRepresentable {
             document.line = line
             document.column = location - lineStarts[line - 1] + 1
             ruler?.needsDisplay = true
+            // Look the caret's line up once it settles, so its menu can
+            // name the chat that wrote it (or a new one).
+            askPrepare?.cancel()
+            let range = textView.selectedRange()
+            askPrepare = Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(400))
+                guard !Task.isCancelled, let self else { return }
+                model.prepareAsk(askKey(lines(at: range)), projectId: model.session(sessionId)?.projectId,
+                                 exec: model.reader(for: sessionId))
+            }
+        }
+
+        /// The lines a range of the text touches; an empty range is its line.
+        func lines(at range: NSRange) -> ClosedRange<Int> {
+            let first = line(at: range.location)
+            let last = range.length > 0 ? line(at: max(range.location, NSMaxRange(range) - 1)) : first
+            return first...last
+        }
+
+        func askKey(_ lines: ClosedRange<Int>) -> AskAuthorKey {
+            AskAuthorKey(repo: document.root, path: document.path, lines: lines, revision: "HEAD")
+        }
+
+        /// The text of one line, without its newline.
+        func lineText(_ line: Int) -> String {
+            guard let textView, line - 1 < lineStarts.count else { return "" }
+            let ns = textView.string as NSString
+            let start = lineStarts[line - 1]
+            let end = line < lineStarts.count ? lineStarts[line] - 1 : ns.length
+            return ns.substring(with: NSRange(location: start, length: max(0, end - start)))
+        }
+
+        /// Ask about the menu's lines: the chat that wrote them answers,
+        /// in its own session, or a new chat gets their history.
+        func askAboutLines() {
+            guard let lines = askLines else { return }
+            let code = lines.map(lineText)
+            let key = askKey(lines)
+            Task {
+                await model.askAbout(key, code: code, projectId: model.session(sessionId)?.projectId,
+                                     exec: model.reader(for: sessionId))
+            }
         }
 
         private func indexLines(_ string: String) {
@@ -297,12 +346,25 @@ final class EditorTextView: NSTextView {
         item.target = self
         item.tag = line
         menu.insertItem(item, at: 0)
-        menu.insertItem(.separator(), at: 1)
+        // A selection the click is inside is asked about as a whole.
+        let selection = selectedRange()
+        let lines = selection.length > 0 && NSLocationInRange(index, selection)
+            ? coordinator.lines(at: selection) : line...line
+        coordinator.askLines = lines
+        let title = coordinator.model.askTargets[coordinator.askKey(lines)]?.menuTitle ?? "Ask the chat that wrote this…"
+        let ask = NSMenuItem(title: title, action: #selector(askFromMenu(_:)), keyEquivalent: "")
+        ask.target = self
+        menu.insertItem(ask, at: 1)
+        menu.insertItem(.separator(), at: 2)
         return menu
     }
 
     @objc private func commentFromMenu(_ sender: NSMenuItem) {
         coordinator?.comment(onLine: sender.tag)
+    }
+
+    @objc private func askFromMenu(_ sender: NSMenuItem) {
+        coordinator?.askAboutLines()
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {

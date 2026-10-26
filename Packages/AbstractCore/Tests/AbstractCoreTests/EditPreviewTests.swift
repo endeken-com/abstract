@@ -16,6 +16,29 @@ import Testing
         #expect(preview.filePath == "/a.swift")
     }
 
+    @Test func museEditAndWriteFilesReadFromTheirOwnFields() throws {
+        let edit = try #require(EditPreview.fromToolInput(name: "edit_file", input: input(
+            #"{"path":"hello.txt","find":"second line","replace":"changed line"}"#)))
+        #expect(edit.filePath == "hello.txt")
+        #expect(edit.lines.map(\.origin) == [.removed, .added])
+        #expect(edit.lines.map(\.content) == ["second line", "changed line"])
+        let write = try #require(EditPreview.fromToolInput(name: "write_file", input: input(
+            #"{"path":"made.txt","content":"made"}"#)))
+        #expect(write.filePath == "made.txt")
+        #expect(write.lines.map(\.origin) == [.added])
+        #expect(write.lines.map(\.content) == ["made"])
+    }
+
+    @Test func readsCamelCaseFieldNames() throws {
+        let edit = try #require(EditPreview.fromToolInput(name: "edit", input: input(
+            #"{"filePath":"/a.swift","oldString":"a","newString":"b"}"#)))
+        #expect(edit.filePath == "/a.swift")
+        #expect((edit.additions, edit.deletions) == (1, 1))
+        let multi = try #require(EditPreview.fromToolInput(name: "multiedit", input: input(
+            #"{"filePath":"/a","edits":[{"oldString":"a","newString":"b"}]}"#)))
+        #expect(multi.lines.map(\.content) == ["a", "b"])
+    }
+
     @Test func removalsReadBeforeAdditions() {
         let lines = EditPreview.lineDiff("x\ny", "p\nq\nr")
         #expect(lines.map(\.origin) == [.removed, .removed, .added, .added, .added])

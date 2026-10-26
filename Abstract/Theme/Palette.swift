@@ -1,114 +1,191 @@
+import AbstractCore
 import AppKit
+import Observation
 import SwiftUI
+import Synchronization
 
-/// The two themes Abstract ships with, plus following the system.
-enum ThemeChoice: String, CaseIterable, Identifiable {
-    case system
-    case graphite
-    case paper
-
-    var id: String { rawValue }
-
+extension ThemeChoice {
     var title: String {
         switch self {
         case .system: "Match System"
         case .graphite: "Graphite"
         case .paper: "Paper"
+        case .ink: "Ink"
         }
     }
 
     var colorScheme: ColorScheme? {
-        switch self {
-        case .system: nil
-        case .graphite: .dark
-        case .paper: .light
-        }
+        isDark.map { $0 ? .dark : .light }
     }
 }
 
-/// Semantic colours. Each resolves per appearance, so a view written once
-/// reads well in Graphite (dark gray) and Paper (white) alike. `nonisolated`
-/// because AppKit resolves dynamic colours on whatever thread draws.
+/// The theme picked in Settings, readable from any thread: AppKit resolves
+/// dynamic colours on whatever thread draws. SwiftUI views that read a
+/// colour observe it, so they redraw when it changes even when the
+/// appearance doesn't (Graphite and Ink are both dark).
+nonisolated final class ThemeState: Observable, Sendable {
+    static let shared = ThemeState()
+
+    private let registrar = ObservationRegistrar()
+    private let stored = Mutex(ThemeChoice(rawValue: UserDefaults.standard.string(forKey: "theme") ?? "") ?? .graphite)
+
+    var choice: ThemeChoice {
+        get {
+            registrar.access(self, keyPath: \.choice)
+            return stored.withLock { $0 }
+        }
+        set {
+            guard newValue != current else { return }
+            registrar.withMutation(of: self, keyPath: \.choice) { stored.withLock { $0 = newValue } }
+        }
+    }
+
+    /// Posted when the choice changes, for AppKit views that hold resolved colours.
+    static let didChange = Notification.Name("ThemeState.didChange")
+
+    /// Takes a new choice: SwiftUI views follow by themselves; AppKit views
+    /// redraw, since Graphite to Ink leaves the appearance as it was.
+    @MainActor static func apply(_ choice: ThemeChoice) {
+        guard choice != shared.current else { return }
+        shared.choice = choice
+        NotificationCenter.default.post(name: didChange, object: nil)
+        for window in NSApp.windows {
+            guard let root = window.contentView?.superview ?? window.contentView else { continue }
+            var views = [root]
+            while let view = views.popLast() {
+                view.needsDisplay = true
+                views.append(contentsOf: view.subviews)
+            }
+        }
+    }
+
+    /// The choice, without observing it: for drawing.
+    var current: ThemeChoice { stored.withLock { $0 } }
+
+    /// The palette an appearance draws in under the current choice.
+    func theme(for appearance: NSAppearance) -> Theme {
+        let look = Self.look(of: appearance)
+        return current.theme(dark: look.dark, increasedContrast: look.increasedContrast)
+    }
+
+    static func look(of appearance: NSAppearance) -> (dark: Bool, increasedContrast: Bool) {
+        let names: [NSAppearance.Name] = [.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua]
+        let match = appearance.bestMatch(from: names)
+        return (match == .darkAqua || match == .accessibilityHighContrastDarkAqua,
+                match == .accessibilityHighContrastAqua || match == .accessibilityHighContrastDarkAqua)
+    }
+}
+
+/// Semantic colours. Each resolves per appearance and per the theme picked,
+/// so a view written once reads well in Graphite (dark gray), Paper (white)
+/// and Ink (black) alike. The values live in `PaletteRole`.
 nonisolated extension Color {
     // Surfaces, back to front.
-    static let btCanvas = dynamic(light: 0xFFFFFF, dark: 0x1E1E21)
-    static let btSidebar = dynamic(light: 0xF5F5F7, dark: 0x19191C)
-    static let btSurface = dynamic(light: 0xF6F6F8, dark: 0x252529)
-    static let btSurfaceRaised = dynamic(light: 0xFFFFFF, dark: 0x2B2B30)
-    static let btCode = dynamic(light: 0xFAFAFB, dark: 0x18181B)
-    static let btInset = dynamic(light: 0xEFEFF2, dark: 0x303036)
+    static var btCanvas: Color { themed(.canvas) }
+    static var btSidebar: Color { themed(.sidebar) }
+    static var btSurface: Color { themed(.surface) }
+    static var btSurfaceRaised: Color { themed(.surfaceRaised) }
+    static var btCode: Color { themed(.code) }
+    static var btInset: Color { themed(.inset) }
 
     // Interaction washes.
-    static let btHover = dynamic(light: 0x000000, dark: 0xFFFFFF, lightAlpha: 0.04, darkAlpha: 0.05)
-    static let btSelection = dynamic(light: 0x000000, dark: 0xFFFFFF, lightAlpha: 0.065, darkAlpha: 0.085)
+    static var btHover: Color { themed(.hover) }
+    static var btSelection: Color { themed(.selection) }
 
     // Text inputs: a steady fill; only the border answers focus.
-    static let btField = dynamic(light: 0xFFFFFF, dark: 0x232327)
-    static let btFieldBorder = dynamic(light: 0x000000, dark: 0xFFFFFF, lightAlpha: 0.13, darkAlpha: 0.11)
-    static let btFieldBorderFocused = dynamic(light: 0x000000, dark: 0xFFFFFF, lightAlpha: 0.38, darkAlpha: 0.34)
+    static var btField: Color { themed(.field) }
+    static var btFieldBorder: Color { themed(.fieldBorder) }
+    static var btFieldBorderFocused: Color { themed(.fieldBorderFocused) }
 
     // Hairlines.
-    static let btBorder = dynamic(light: 0x000000, dark: 0xFFFFFF, lightAlpha: 0.08, darkAlpha: 0.075)
-    static let btBorderStrong = dynamic(light: 0x000000, dark: 0xFFFFFF, lightAlpha: 0.13, darkAlpha: 0.12)
+    static var btBorder: Color { themed(.border) }
+    static var btBorderStrong: Color { themed(.borderStrong) }
 
     // Text.
-    static let btText = dynamic(light: 0x1D1D1F, dark: 0xECECEF)
+    static var btText: Color { themed(.text) }
     /// Long-form prose: a touch softer than `btText` so paragraphs don't glare.
-    static let btProse = dynamic(light: 0x242428, dark: 0xDCDCE1)
-    static let btTextSecondary = dynamic(light: 0x5C5C66, dark: 0xA4A4AD)
-    static let btTextTertiary = dynamic(light: 0x8C8C96, dark: 0x75757E)
+    static var btProse: Color { themed(.prose) }
+    static var btTextSecondary: Color { themed(.textSecondary) }
+    static var btTextTertiary: Color { themed(.textTertiary) }
 
-    // Usage chart series: Claude's clay, and a quiet slate for Codex.
-    static let btUsageClaude = dynamic(light: 0xC2613F, dark: 0xD97757)
-    static let btUsageCodex = dynamic(light: 0x5B6B82, dark: 0x8E9DB5)
+    // Usage chart series: Claude's clay, a quiet slate for Codex, a muted teal for OpenCode.
+    static var btUsageClaude: Color { themed(.usageClaude) }
+    static var btUsageCodex: Color { themed(.usageCodex) }
+    static var btUsageOpenCode: Color { themed(.usageOpenCode) }
+    static var btUsageMuse: Color { themed(.usageMuse) }
 
     // Pull request states, as GitHub colours them (only the title's menu uses these, as a wash).
-    static let btPullRequestOpen = dynamic(light: 0x1F883D, dark: 0x238636)
-    static let btPullRequestDraft = dynamic(light: 0x6E7781, dark: 0x6E7681)
-    static let btPullRequestMerged = dynamic(light: 0x8250DF, dark: 0x8957E5)
-    static let btPullRequestClosed = dynamic(light: 0xCF222E, dark: 0xDA3633)
+    static var btPullRequestOpen: Color { themed(.pullRequestOpen) }
+    static var btPullRequestDraft: Color { themed(.pullRequestDraft) }
+    static var btPullRequestMerged: Color { themed(.pullRequestMerged) }
+    static var btPullRequestClosed: Color { themed(.pullRequestClosed) }
     /// Text on those colours' washes: the same hue, readable on the canvas.
-    static let btPullRequestOpenInk = dynamic(light: 0x1A7F37, dark: 0x6BC98A)
-    static let btPullRequestDraftInk = dynamic(light: 0x59636E, dark: 0xA0A8B2)
-    static let btPullRequestMergedInk = dynamic(light: 0x7A48C9, dark: 0xB79CF0)
-    static let btPullRequestClosedInk = dynamic(light: 0xC0262E, dark: 0xF08A84)
+    static var btPullRequestOpenInk: Color { themed(.pullRequestOpenInk) }
+    static var btPullRequestDraftInk: Color { themed(.pullRequestDraftInk) }
+    static var btPullRequestMergedInk: Color { themed(.pullRequestMergedInk) }
+    static var btPullRequestClosedInk: Color { themed(.pullRequestClosedInk) }
 
     // Syntax: One Dark on Graphite, One Light on Paper, as Paseo colours code
-    // (see `SyntaxStyle`).
-    static let btSyntaxKeyword = dynamic(light: 0xA626A4, dark: 0xC678DD)
-    static let btSyntaxString = dynamic(light: 0x50A14F, dark: 0x98C379)
-    static let btSyntaxLiteral = dynamic(light: 0x986801, dark: 0xD19A66)
-    static let btSyntaxType = dynamic(light: 0xC18401, dark: 0xE5C07B)
-    static let btSyntaxFunction = dynamic(light: 0x4078F2, dark: 0x61AFEF)
-    static let btSyntaxComment = dynamic(light: 0xA0A1A7, dark: 0x5C6370)
-    static let btSyntaxOperator = dynamic(light: 0x0184BC, dark: 0x56B6C2)
-    static let btSyntaxTag = dynamic(light: 0xE45649, dark: 0xE06C75)
-    static let btSyntaxPlain = dynamic(light: 0x383A42, dark: 0xABB2BF)
+    // (see `SyntaxStyle`), and a brightened One Dark on Ink.
+    static var btSyntaxKeyword: Color { themed(.syntaxKeyword) }
+    static var btSyntaxString: Color { themed(.syntaxString) }
+    static var btSyntaxLiteral: Color { themed(.syntaxLiteral) }
+    static var btSyntaxType: Color { themed(.syntaxType) }
+    static var btSyntaxFunction: Color { themed(.syntaxFunction) }
+    static var btSyntaxComment: Color { themed(.syntaxComment) }
+    static var btSyntaxOperator: Color { themed(.syntaxOperator) }
+    static var btSyntaxTag: Color { themed(.syntaxTag) }
+    static var btSyntaxPlain: Color { themed(.syntaxPlain) }
 
     /// The single emphasis colour: near-black on Paper, near-white on
-    /// Graphite. Primary buttons, the working spinner, focus, selection marks.
-    static let btAccent = dynamic(light: 0x1D1D1F, dark: 0xECECEF)
+    /// Graphite, white on Ink. Primary buttons, the working spinner, focus,
+    /// selection marks.
+    static var btAccent: Color { themed(.accent) }
     /// Text and icons drawn on `btAccent`.
-    static let btOnAccent = dynamic(light: 0xFFFFFF, dark: 0x1E1E21)
+    static var btOnAccent: Color { themed(.onAccent) }
 
     // Meaning. Tuned per theme instead of raw system colours, so diffs and
-    // status stay legible on both white and gray.
-    static let btAdded = dynamic(light: 0x1A7F37, dark: 0x4CC38A)
-    static let btRemoved = dynamic(light: 0xCF222E, dark: 0xEF6461)
+    // status stay legible on white, gray and black.
+    static var btAdded: Color { themed(.added) }
+    static var btRemoved: Color { themed(.removed) }
     /// Caution, as a strong neutral: warnings carry an icon and plain words,
     /// never orange.
-    static let btWarning = dynamic(light: 0x3A3A40, dark: 0xD2D2D8)
+    static var btWarning: Color { themed(.warning) }
     /// "Needs you": the strongest neutral, not a colour. Abstract uses no
     /// orange or blue; emphasis comes from contrast and weight.
-    static let btAttention = dynamic(light: 0x1D1D1F, dark: 0xF2F2F4)
-    static let btAddedWash = dynamic(light: 0x1A7F37, dark: 0x4CC38A, lightAlpha: 0.07, darkAlpha: 0.10)
-    static let btRemovedWash = dynamic(light: 0xCF222E, dark: 0xEF6461, lightAlpha: 0.06, darkAlpha: 0.10)
+    static var btAttention: Color { themed(.attention) }
+    static var btAddedWash: Color { themed(.addedWash) }
+    static var btRemovedWash: Color { themed(.removedWash) }
+    /// Every match of the words being found, and, brighter, the one you're on:
+    /// find's yellow, the one place it's used, because that's how a Mac shows it.
+    static var btFindMatch: Color { themed(.findMatch) }
+    static var btFindCurrent: Color { themed(.findCurrent) }
 
-    private static func dynamic(light: UInt32, dark: UInt32, lightAlpha: CGFloat = 1, darkAlpha: CGFloat = 1) -> Color {
+    /// A colour as one theme draws it, whatever is picked: the settings previews.
+    static func bt(_ role: PaletteRole, in theme: Theme) -> Color {
+        Color(nsColor: NSColor(role.swatch(in: theme)))
+    }
+
+    /// Reading the choice here is what makes a view observe it. Each choice has
+    /// its own copy of every colour, so a change hands SwiftUI a different
+    /// value to resolve; all copies resolve from the current choice, so a
+    /// colour AppKit already holds is right the next time it draws.
+    private static func themed(_ role: PaletteRole) -> Color {
+        ThemedColors.all[ThemeState.shared.choice]![role]!
+    }
+}
+
+nonisolated private enum ThemedColors {
+    static let all: [ThemeChoice: [PaletteRole: Color]] = Dictionary(uniqueKeysWithValues: ThemeChoice.allCases.map { choice in
+        (choice, Dictionary(uniqueKeysWithValues: PaletteRole.allCases.map { ($0, dynamic($0)) }))
+    })
+
+    private static func dynamic(_ role: PaletteRole) -> Color {
         Color(nsColor: NSColor(name: nil) { @Sendable appearance in
-            let isDark = appearance.bestMatch(from: [.darkAqua, .vibrantDark, .aqua, .vibrantLight]) == .darkAqua
-                || appearance.bestMatch(from: [.darkAqua, .vibrantDark, .aqua, .vibrantLight]) == .vibrantDark
-            return NSColor(hex: isDark ? dark : light, alpha: isDark ? darkAlpha : lightAlpha)
+            let look = ThemeState.look(of: appearance)
+            let choice = ThemeState.shared.current
+            let theme = choice.theme(dark: look.dark, increasedContrast: look.increasedContrast)
+            return NSColor(role.swatch(in: theme, strongerBorders: choice.strongerBorders(dark: look.dark, increasedContrast: look.increasedContrast)))
         })
     }
 }
@@ -121,5 +198,9 @@ nonisolated extension NSColor {
             blue: CGFloat(hex & 0xFF) / 255,
             alpha: alpha
         )
+    }
+
+    convenience init(_ swatch: Swatch) {
+        self.init(hex: swatch.hex, alpha: swatch.alpha)
     }
 }

@@ -27,32 +27,37 @@ extension AppModel {
 
     /// A symbol and/or colour; either clears a custom image.
     func setProjectIcon(_ id: String, symbol: String?, color: String?) {
-        let old = project(id)?.iconImagePath
-        updateProject(id) { p in
-            p.iconSymbol = symbol
-            p.iconColor = color
-            p.iconImagePath = nil
-        }
-        ProjectIconStore.discard(old)
+        guard var item = project(id) else { return }
+        let old = item.iconImagePath
+        item.iconSymbol = symbol
+        item.iconColor = color
+        item.iconImagePath = nil
+        do {
+            try store.save(item)
+            reload()
+            ProjectIconStore.discard(old)
+        } catch { flash(error.localizedDescription, isError: true) }
     }
 
     func resetProjectIcon(_ id: String) {
-        let old = project(id)?.iconImagePath
-        updateProject(id) { p in
-            p.iconSymbol = nil
-            p.iconColor = nil
-            p.iconImagePath = nil
-        }
-        ProjectIconStore.discard(old)
+        setProjectIcon(id, symbol: nil, color: nil)
     }
 
     /// Copies the image (squared and scaled down) into Application Support.
     func importProjectIcon(_ id: String, from url: URL) {
         do {
             let path = try ProjectIconStore.save(url, projectId: id)
-            let old = project(id)?.iconImagePath
-            updateProject(id) { $0.iconImagePath = path }
-            if old != path { ProjectIconStore.discard(old) }
+            guard var item = project(id) else { ProjectIconStore.discard(path); return }
+            let old = item.iconImagePath
+            item.iconImagePath = path
+            do {
+                try store.save(item)
+                reload()
+                ProjectIconStore.discard(old)
+            } catch {
+                ProjectIconStore.discard(path)
+                throw error
+            }
         } catch {
             flash(error.localizedDescription, isError: true)
         }
@@ -102,14 +107,26 @@ extension AppModel {
 extension AppModel {
     static let runLabel = "Run"
 
-    /// Ask the chat's provider for a short title. A project's naming
-    /// instructions can also guide the branch; a failed naming call leaves a
-    /// readable fallback.
-    func suggestedNaming(instructions: String?, providerId: String, model: String?, prompt: String) async -> ChatNaming.Suggestion? {
+    /// Ask the chat's agent for a short title and branch, following the
+    /// project's naming instructions; an agent that can't name chats has the
+    /// first installed one that can do it. A failed call is tried again
+    /// `attempts - 1` times, and says why it failed.
+    func suggestedNaming(instructions: String?, providerId: String, model: String?, prompt: String,
+                         focus: String = "", attempts: Int = 2) async -> Result<ChatNaming.Suggestion, ChatNaming.Failure> {
+        guard !isDemo else { return .failure(ChatNaming.Failure("The demo doesn't name chats.")) }
+        guard let namer = ChatNaming.namer(for: providerId, installed: { providerStatus[$0]?.available != false }) else {
+            return .failure(ChatNaming.Failure("No installed agent can name chats."))
+        }
+        let binary = providerOverrides[namer.id]?.path.flatMap { $0.isEmpty ? nil : $0 }
+        return await ChatNaming.suggest(executor: executor, provider: namer, binary: binary, model: namer.id == providerId ? model : nil,
+                                        instructions: instructions ?? "", task: prompt, focus: focus, attempts: attempts)
+    }
+
+    /// What a chat its naming call failed for says, in place of a name from the model.
+    func namingFailureNote(_ failure: ChatNaming.Failure, project: Project?) -> String? {
         guard !isDemo else { return nil }
-        let binary = providerOverrides[providerId]?.path.flatMap { $0.isEmpty ? nil : $0 }
-        return await ChatNaming.suggest(executor: executor, binary: binary, providerId: providerId, model: model,
-                                        instructions: instructions ?? "", task: prompt)
+        return Project.nonBlank(project?.namingInstructions) == nil ? "Couldn't name this chat: \(failure.reason)"
+            : "Couldn't name this chat from the project's naming instructions: \(failure.reason)"
     }
 
     /// The chat toolbar's Run: the project's run script in the chat's Run
@@ -195,8 +212,31 @@ enum ProjectIconStore {
         URL(fileURLWithPath: Store.defaultPath()).deletingLastPathComponent().appendingPathComponent("ProjectIcons", isDirectory: true)
     }
 
+    enum Owner {
+        case profile, workflow, plugin(String)
+
+        var directory: URL {
+            let root = URL(fileURLWithPath: Store.defaultPath()).deletingLastPathComponent()
+            switch self {
+            case .profile: return root.appendingPathComponent("ProfileIcons", isDirectory: true)
+            case .workflow: return root.appendingPathComponent("WorkflowIcons", isDirectory: true)
+            case .plugin(let id):
+                let safe = id.data(using: .utf8)!.map { String(format: "%02x", $0) }.joined()
+                return root.appendingPathComponent("PluginIcons", isDirectory: true).appendingPathComponent(safe, isDirectory: true)
+            }
+        }
+    }
+
     /// A 256 pt square PNG of the image's centre; returns its path.
     static func save(_ source: URL, projectId: String) throws -> String {
+        try save(source, in: directory, prefix: projectId)
+    }
+
+    static func save(_ source: URL, owner: Owner) throws -> String {
+        try save(source, in: owner.directory, prefix: UUID().uuidString)
+    }
+
+    private static func save(_ source: URL, in targetDirectory: URL, prefix: String) throws -> String {
         guard let image = NSImage(contentsOf: source), image.size.width > 0, image.size.height > 0 else {
             throw AbstractError.message("That file isn't an image Abstract can read.")
         }
@@ -217,8 +257,8 @@ enum ProjectIconStore {
         guard let png = rep.representation(using: .png, properties: [:]) else {
             throw AbstractError.message("Couldn't save the icon.")
         }
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let file = directory.appendingPathComponent("\(projectId)-\(UUID().uuidString.prefix(8)).png")
+        try FileManager.default.createDirectory(at: targetDirectory, withIntermediateDirectories: true)
+        let file = targetDirectory.appendingPathComponent("\(prefix)-\(UUID().uuidString.prefix(8)).png")
         try png.write(to: file)
         cache.removeAllObjects()
         return file.path
@@ -226,9 +266,29 @@ enum ProjectIconStore {
 
     /// Delete an icon Abstract copied in; never a file elsewhere.
     static func discard(_ path: String?) {
-        guard let path, path.hasPrefix(directory.path + "/") else { return }
-        try? FileManager.default.removeItem(atPath: path)
+        guard let path else { return }
+        let normalized = URL(fileURLWithPath: path).standardizedFileURL.path
+        let root = URL(fileURLWithPath: Store.defaultPath()).deletingLastPathComponent()
+        let allowed = ["ProjectIcons", "ProfileIcons", "WorkflowIcons", "PluginIcons"]
+            .map { root.appendingPathComponent($0).standardizedFileURL.path + "/" }
+        guard allowed.contains(where: { normalized.hasPrefix($0) }) else { return }
+        try? FileManager.default.removeItem(atPath: normalized)
         cache.removeObject(forKey: path as NSString)
+    }
+
+    static func sweep(keeping paths: Set<String>) {
+        let root = URL(fileURLWithPath: Store.defaultPath()).deletingLastPathComponent()
+        for name in ["ProjectIcons", "ProfileIcons", "WorkflowIcons", "PluginIcons"] {
+            let directory = root.appendingPathComponent(name, isDirectory: true)
+            guard let files = FileManager.default.enumerator(at: directory, includingPropertiesForKeys: [.isRegularFileKey],
+                                                             options: [.skipsHiddenFiles]) else { continue }
+            for case let file as URL in files {
+                guard file.pathExtension.lowercased() == "png",
+                      (try? file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true,
+                      !paths.contains(file.path) else { continue }
+                discard(file.path)
+            }
+        }
     }
 
     private static let cache = NSCache<NSString, NSImage>()

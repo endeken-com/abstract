@@ -1,0 +1,123 @@
+name: Deploy relay
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - infra/relay/**
+      - scripts/tests/test_relay_deploy.py
+      - .github/workflows/deploy-relay.yml
+
+permissions:
+  contents: read
+
+# Never interrupt a deployment or allow two runs to update the same service.
+concurrency:
+  group: relay-${{ github.event_name == 'workflow_dispatch' && 'deploy' || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: infra/relay/requirements.txt
+      - name: Install smoke test dependencies
+        run: python3 -m pip install -r infra/relay/requirements.txt
+      - name: Test deployment safeguards
+        run: python3 -m unittest discover -s scripts/tests -p test_relay_deploy.py -v
+      - name: Build the relay image
+        run: docker build --platform linux/amd64 -t abstract-relay:ci infra/relay
+      - name: Test relay authorization and forwarding
+        run: bash infra/relay/test-container.sh
+      - name: Save the tested image
+        if: github.event_name == 'workflow_dispatch'
+        run: docker save abstract-relay:ci -o "$RUNNER_TEMP/relay.tar"
+      - uses: actions/upload-artifact@v7
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          name: relay-image
+          path: ${{ runner.temp }}/relay.tar
+          retention-days: 1
+
+  deploy:
+    if: github.event_name == 'workflow_dispatch'
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment:
+      name: lightsail-relay
+      url: ${{ steps.deploy.outputs.url }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN || secrets.AWS_ROLE_ARN }}
+      LIGHTSAIL_SERVICE_NAME: ${{ vars.LIGHTSAIL_SERVICE_NAME || 'abstract-relay' }}
+      RELAY_DOMAIN: ${{ vars.RELAY_DOMAIN }}
+      LIGHTSAIL_CERTIFICATE_NAME: ${{ vars.LIGHTSAIL_CERTIFICATE_NAME }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Validate environment configuration
+        env:
+          IROH_RELAY_ACCESS_TOKEN: ${{ secrets.IROH_RELAY_ACCESS_TOKEN }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          python3 infra/relay/deploy.py --validate-only
+          if [ -z "$AWS_ROLE_ARN" ] && { [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ]; }; then
+            echo '::error::Set AWS_ROLE_ARN for OIDC, or AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY secrets in lightsail-relay.'
+            exit 1
+          fi
+      - name: Authenticate with an AWS role
+        if: env.AWS_ROLE_ARN != ''
+        uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          role-session-name: abstract-relay-${{ github.run_id }}
+      - name: Authenticate with AWS access keys
+        if: env.AWS_ROLE_ARN == ''
+        uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: infra/relay/requirements.txt
+      - name: Install deployment tools
+        run: |
+          python3 -m pip install -r infra/relay/requirements.txt
+          mkdir -p "$RUNNER_TEMP/lightsail-bin"
+          curl -fsSL --retry 3 https://s3.us-west-2.amazonaws.com/lightsailctl/latest/linux-amd64/lightsailctl \
+            -o "$RUNNER_TEMP/lightsail-bin/lightsailctl"
+          # Fail if AWS replaces this binary; review and update the digest explicitly.
+          echo "d0b7659b8c8832e2d5a6e36ddb2e78e66d9be27859088c2799b50d62e8575aed  $RUNNER_TEMP/lightsail-bin/lightsailctl" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/lightsail-bin/lightsailctl"
+          echo "$RUNNER_TEMP/lightsail-bin" >> "$GITHUB_PATH"
+      - uses: actions/download-artifact@v8
+        with:
+          name: relay-image
+          path: ${{ runner.temp }}/relay-image
+      - name: Load the tested image
+        run: docker load -i "$RUNNER_TEMP/relay-image/relay.tar"
+      - name: Deploy and verify the public relay
+        id: deploy
+        env:
+          IROH_RELAY_ACCESS_TOKEN: ${{ secrets.IROH_RELAY_ACCESS_TOKEN }}
+          IMAGE_LABEL: relay-${{ github.run_id }}-${{ github.run_attempt }}
+        run: python3 infra/relay/deploy.py --label "$IMAGE_LABEL"

@@ -4,8 +4,8 @@ import UniformTypeIdentifiers
 import AbstractCore
 
 /// A project's settings as one quiet document: the header, then General,
-/// Branches & naming, Location & checkout, Lifecycle scripts and the danger
-/// zone. Every change is stored at once; text is stored after a pause.
+/// Branches & naming, New chats, Skills, Permissions, Tools (MCP), Issue tracker, Location & checkout,
+/// Lifecycle scripts and the danger zone. Every change is stored at once; text is stored after a pause.
 struct ProjectSettingsView: View {
     @Environment(AppModel.self) private var model
     let projectId: String
@@ -20,6 +20,11 @@ struct ProjectSettingsView: View {
                     ProjectHeader(project: project, owner: owner)
                     GeneralSection(project: project, origin: origin, owner: owner)
                     BranchSection(project: project)
+                    NewChatSection(project: project)
+                    SkillsSection(project: project)
+                    PermissionsSection(project: project)
+                    ToolsSection(project: project)
+                    IssueTrackerSection(project: project)
                     LocationSection(project: project)
                     ScriptsSection(project: project)
                     DangerSection(project: project)
@@ -54,7 +59,7 @@ enum ProjectPage {
 // MARK: - Layout pieces
 
 /// A section: its small label, an optional sentence, then its rows.
-private struct PageSection<Content: View>: View {
+struct PageSection<Content: View>: View {
     let title: String
     var detail: String? = nil
     @ViewBuilder var content: () -> Content
@@ -130,7 +135,7 @@ private struct RowLabel: View {
 }
 
 /// A path or remote as it reads: mono, muted, cut in the middle when long.
-private struct PathText: View {
+struct PathText: View {
     let text: String
     var quiet = false
 
@@ -239,6 +244,7 @@ private func chooseFolder(message: String, prompt: String, startingAt path: Stri
 // MARK: - Header
 
 private struct ProjectHeader: View {
+    @Environment(AppModel.self) private var model
     let project: Project
     let owner: String?
 
@@ -250,27 +256,54 @@ private struct ProjectHeader: View {
                 .foregroundStyle(Color.btText)
                 .lineLimit(1)
                 .truncationMode(.tail)
+            // The tracker projects it links to (ABS-143).
+            ForEach(model.projectIssueTrackers(project.id).linked) { item in
+                HStack(spacing: 5) {
+                    TrackerGlyph(pluginId: item.tracker.pluginId, size: 13)
+                    Text(item.link.title).font(.btCallout).lineLimit(1)
+                }
+                .foregroundStyle(Color.btTextSecondary)
+                .help("Linked to \(item.link.title) in \(item.tracker.title)")
+            }
             Spacer(minLength: Space.lg)
-            DeviceMenu()
+            DeviceMenu(project: project)
         }
     }
 }
 
-/// Where the project's agents run. This Mac is the only place today.
+/// Where the project's new chats run: this Mac, or a paired Mac. The
+/// Launcher pre-selects it; a Mac that isn't connected falls back to
+/// this one there, with a note saying so.
 private struct DeviceMenu: View {
+    @Environment(AppModel.self) private var model
+    let project: Project
     @State private var hovering = false
+
+    private var name: String {
+        guard let id = project.defaultDeviceId else { return "This Mac" }
+        return model.remote.paired.first { $0.id == id }?.peer.name ?? "A paired Mac"
+    }
 
     var body: some View {
         Menu {
-            Picker("Device", selection: .constant("local")) {
-                Label("This Mac", systemImage: "laptopcomputer").tag("local")
+            Picker("Device", selection: Binding(get: { project.defaultDeviceId },
+                                                set: { id in model.updateProject(project.id) { $0.defaultDeviceId = id } })) {
+                Label("This Mac", systemImage: "laptopcomputer").tag(String?.none)
+                ForEach(model.remote.paired) { device in
+                    Label(device.peer.name, systemImage: "desktopcomputer").tag(Optional(device.id))
+                }
+                if let id = project.defaultDeviceId, !model.remote.paired.contains(where: { $0.id == id }) {
+                    Label("A Mac that isn't paired anymore", systemImage: "desktopcomputer").tag(Optional(id))
+                }
             }
             .pickerStyle(.inline)
             .labelsHidden()
+            Divider()
+            Text("New chats for this project start on this Mac.")
         } label: {
             HStack(spacing: 5) {
-                Image(systemName: "laptopcomputer").font(.system(size: 11, weight: .regular))
-                Text("This Mac").font(.btCallout.weight(.medium))
+                Image(systemName: project.defaultDeviceId == nil ? "laptopcomputer" : "desktopcomputer").font(.system(size: 11, weight: .regular))
+                Text(name).font(.btCallout.weight(.medium))
                 Image(systemName: "chevron.down").font(.system(size: 7.5, weight: .bold)).foregroundStyle(Color.btTextTertiary)
             }
             .foregroundStyle(Color.btTextSecondary)
@@ -285,7 +318,7 @@ private struct DeviceMenu: View {
         .fixedSize()
         .onHover { hovering = $0 }
         .padding(.trailing, -7)
-        .help("Where this project's agents run")
+        .help("Where this project's new chats run")
     }
 }
 
@@ -402,7 +435,7 @@ private struct BranchSection: View {
                 }
             }
             StackedSetting(title: "Naming instructions",
-                           detail: "Guides AI-generated chat titles and branch names. Default worktree folders keep city names.") {
+                           detail: "Guides chat titles and branch names for every agent. Commit messages come from your agent's own instructions (AGENTS.md or CLAUDE.md) and from the chat title.") {
                 GrowingEditor(text: $instructions,
                              placeholder: "e.g. Start branches with fix/ or feat/. Keep titles short, in sentence case.",
                              minHeight: 76)
@@ -440,6 +473,177 @@ private struct BranchSection: View {
     }
 }
 
+// MARK: - New chats
+
+/// What a new chat in this project starts with; the Launcher fills these in.
+private struct NewChatSection: View {
+    @Environment(AppModel.self) private var model
+    let project: Project
+    @State private var baseRef: String
+
+    init(project: Project) {
+        self.project = project
+        _baseRef = State(initialValue: project.defaultBaseRef)
+    }
+
+    var body: some View {
+        PageSection(title: "New chats", detail: "What a chat started in this project begins with. You can still change each one when you start it.") {
+            SettingRow(title: "Agent") {
+                VStack(alignment: .leading, spacing: Space.xs) {
+                    SentenceMenu(title: ProviderRegistry.name(project.defaultProviderId), logo: project.defaultProviderId) {
+                        Picker("Agent", selection: Binding(get: { project.defaultProviderId },
+                                                           set: { id in model.updateProject(project.id) { $0.defaultProviderId = id } })) {
+                            ForEach(model.pickableAgents(keeping: project.defaultProviderId), id: \.id) { p in
+                                Label {
+                                    Text(p.name)
+                                } icon: {
+                                    if let icon = ProviderRegistry.menuImage(p.id) { Image(nsImage: icon) }
+                                }
+                                .tag(p.id)
+                            }
+                        }
+                        .pickerStyle(.inline)
+                        .labelsHidden()
+                    }
+                    .padding(.leading, -Chip.inset)
+                    .frame(minHeight: ProjectPage.controlHeight)
+                    if model.providerStatus[project.defaultProviderId]?.available == false {
+                        Label("\(ProviderRegistry.name(project.defaultProviderId)) wasn't found on this Mac. Set its path in Settings › Agents.",
+                              systemImage: "exclamationmark.triangle")
+                            .font(.btCallout)
+                            .foregroundStyle(Color.btWarning)
+                    }
+                }
+            }
+            SettingRow(title: "Permissions", detail: project.defaultPermissionPolicy.detail) {
+                SentenceMenu(title: project.defaultPermissionPolicy.title) {
+                    ForEach(PermissionPolicy.autonomyCases, id: \.self) { p in
+                        Toggle(isOn: Binding(get: { project.defaultPermissionPolicy == p },
+                                             set: { _ in model.updateProject(project.id) { $0.defaultPermissionPolicy = p } })) {
+                            Text(p.title)
+                            Text(p.detail)
+                        }
+                    }
+                }
+                .padding(.leading, -Chip.inset)
+                .frame(minHeight: ProjectPage.controlHeight)
+            }
+            if !model.profiles.isEmpty {
+                SettingRow(title: "Profiles", detail: "The saved setups the New Chat window offers in this project. Manage them in Settings › Profiles.") {
+                    VStack(alignment: .leading, spacing: Space.xs) {
+                        ForEach(model.profiles) { profile in
+                            Toggle(profile.name, isOn: Binding(
+                                get: { project.profileIds?.contains(profile.id) ?? true },
+                                set: { on in offer(profile.id, on) }))
+                        }
+                    }
+                    .frame(minHeight: ProjectPage.controlHeight)
+                }
+            }
+            SettingRow(title: "Code history",
+                       detail: project.agentHistoryEnabled
+                           ? "Before changing code, an agent can look up what earlier chats in this project were asked, corrected and decided about it, and is told to follow those decisions."
+                           : "Agents get no history of earlier chats in this project.") {
+                Toggle("Give agents the history of the code they change", isOn: Binding(
+                    get: { project.agentHistoryEnabled },
+                    set: { on in model.updateProject(project.id) { $0.agentHistory = on } }))
+                    .frame(minHeight: ProjectPage.controlHeight)
+            }
+            let tools = model.pluginTools(in: project)
+            if !tools.isEmpty {
+                SettingRow(title: "Plugin tools",
+                           detail: "Tools your plugins give this project's agents. Ask first shows each call in the chat for you to allow; Off leaves it out from the agent's next turn.") {
+                    VStack(alignment: .leading, spacing: Space.xs) {
+                        ForEach(tools, id: \.key) { tool in
+                            SentenceMenu(title: "\(tool.label): \(tool.mode.title)") {
+                                ForEach(PluginToolMode.allCases, id: \.self) { mode in
+                                    Toggle(isOn: Binding(get: { tool.mode == mode },
+                                                         set: { _ in model.setPluginToolMode(project.id, tool, mode) })) {
+                                        Text(mode.title)
+                                        Text(mode.detail)
+                                    }
+                                }
+                            }
+                            .help(tool.tool.description)
+                            .padding(.leading, -Chip.inset)
+                        }
+                    }
+                    .frame(minHeight: ProjectPage.controlHeight)
+                }
+            }
+            SettingRow(title: "Branch from", detail: "The branch or commit each new chat's worktree starts from.") {
+                BTTextField("Branch from", text: $baseRef, prompt: "HEAD", mono: true)
+                    .frame(maxWidth: 240)
+                    .autosave($baseRef, stored: project.defaultBaseRef, normalize: trimmed) { value in
+                        guard let ref = Project.baseRef(typed: value) else { return }
+                        model.updateProject(project.id) { $0.defaultBaseRef = ref }
+                    }
+            }
+        }
+    }
+
+    /// Offer a profile in this project, or stop offering it. Every
+    /// profile on is kept as no choice at all, so a profile added later
+    /// shows here too.
+    private func offer(_ profileId: String, _ on: Bool) {
+        let all = model.profiles.map(\.id)
+        model.updateProject(project.id) { p in
+            var picked = Set(p.profileIds ?? all)
+            if on { picked.insert(profileId) } else { picked.remove(profileId) }
+            p.profileIds = picked == Set(all) ? nil : all.filter { picked.contains($0) }
+        }
+    }
+}
+
+/// The library skills this project's chats get (ABS-122), chosen from
+/// Settings › Skills, and the ones its own files hold.
+private struct SkillsSection: View {
+    @Environment(AppModel.self) private var model
+    let project: Project
+
+    var body: some View {
+        PageSection(title: "Skills", detail: detail) {
+            let sources = model.skillSources.map { ($0, model.skills(in: $0.id)) }.filter { !$0.1.isEmpty }
+            if sources.isEmpty {
+                Text("The skill library is empty. Add a folder or a GitHub repository of skills in Settings › Skills.")
+                    .font(.btCallout)
+                    .foregroundStyle(Color.btTextTertiary)
+            }
+            ForEach(sources, id: \.0.id) { source, skills in
+                SettingRow(title: source.title,
+                           detail: source.kind == .github ? "GitHub, pinned to \(source.commit.map { String($0.prefix(7)) } ?? "?")" : "A folder on this Mac") {
+                    VStack(alignment: .leading, spacing: Space.xs) {
+                        ForEach(skills) { skill in
+                            Toggle(skill.name, isOn: Binding(
+                                get: { project.assignedSkills.contains(skill.id) },
+                                set: { on in model.setSkill(skill.id, assigned: on, projectId: project.id) }))
+                                .help(skill.description ?? skill.name)
+                        }
+                    }
+                    .frame(minHeight: ProjectPage.controlHeight)
+                }
+            }
+            let own = model.projectSkills(project.id)
+            if !own.isEmpty {
+                SettingRow(title: "In this project", detail: "Kept in the project's own files. Agents that read their folder already use them.") {
+                    Text(own.map(\.name).joined(separator: ", "))
+                        .font(.btBody)
+                        .foregroundStyle(Color.btTextSecondary)
+                        .frame(minHeight: ProjectPage.controlHeight, alignment: .leading)
+                }
+            }
+        }
+        .onAppear { model.reloadSkills() }
+    }
+
+    /// Who gets them, and who can't.
+    private var detail: String {
+        let unable = ProviderRegistry.all.filter { $0.skillDelivery == nil }.map(\.name)
+        let base = "Every chat in this project gets the skills chosen here when its agent starts; a profile can add more. Removing one leaves it out of chats that start after."
+        return unable.isEmpty ? base : base + " \(unable.joined(separator: ", ")) can't take skills, so its chats run without them."
+    }
+}
+
 /// What git won't take in a branch prefix.
 enum BranchPrefixCheck {
     static func warning(_ prefix: String) -> String? {
@@ -448,6 +652,57 @@ enum BranchPrefixCheck {
             return "Git doesn't allow .., ~, ^, : or \\ in branch names."
         }
         return nil
+    }
+}
+
+// MARK: - Permissions
+
+/// The permission answers remembered for this project. Each rule answers
+/// matching requests in every chat; deleting one brings the card back.
+private struct PermissionsSection: View {
+    @Environment(AppModel.self) private var model
+    let project: Project
+    /// The rule being edited, or a new one being written.
+    @State private var editing: PermissionRule?
+    @State private var adding = false
+
+    var body: some View {
+        PageSection(title: "Permissions",
+                    detail: "Answers you've told Abstract to remember for this project. A request matching a rule is answered for you, and its row in the chat names the rule. A deny rule beats an allow rule.") {
+            let rules = model.permissionRules(for: project.id)
+            if rules.isEmpty {
+                Text("No rules yet. When an agent asks for permission, choose “Always Allow in This Project…” or “Always Deny in This Project…” from its menu.")
+                    .font(.btBody).foregroundStyle(Color.btTextTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            ForEach(rules) { rule in
+                HStack(spacing: Space.sm) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        PathText(text: rule.pattern)
+                        Text(detail(rule)).font(.btCallout).foregroundStyle(Color.btTextTertiary)
+                    }
+                    Spacer(minLength: Space.md)
+                    Button("Edit") { editing = rule }.buttonStyle(.bt(.ghost, size: .small))
+                    Button("Delete") { model.deletePermissionRule(rule) }.buttonStyle(.bt(.ghost, size: .small))
+                }
+            }
+            Button("Add a Rule…") { adding = true }.buttonStyle(.bt(.ghost, size: .small))
+        }
+        .sheet(isPresented: $adding) {
+            PermissionRuleSheet(projectId: project.id, seed: PermissionRuleSeed())
+        }
+        .sheet(item: $editing) { rule in
+            PermissionRuleSheet(projectId: project.id, existing: rule, seed: PermissionRuleSeed(rule: rule))
+        }
+    }
+
+    private func detail(_ rule: PermissionRule) -> String {
+        var text = "\(rule.decision.title) · \(rule.kind.title)"
+        if let expiresAt = rule.expiresAt {
+            text += rule.isExpired() ? " · expired \(expiresAt.formatted(date: .abbreviated, time: .shortened))"
+                                      : " · expires \(expiresAt.formatted(date: .abbreviated, time: .shortened))"
+        }
+        return text
     }
 }
 

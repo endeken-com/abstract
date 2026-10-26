@@ -71,8 +71,30 @@ jobs:
           curl -fsSL "https://github.com/sparkle-project/Sparkle/releases/download/$SPARKLE_VERSION/Sparkle-$SPARKLE_VERSION.tar.xz" |
             tar -xJ -C "$RUNNER_TEMP/sparkle" ./bin/sign_update
 
+      - uses: actions/cache/restore@v4
+        id: iroh-cache
+        with:
+          path: Packages/Iroh/Iroh.xcframework
+          key: iroh-apple-${{ hashFiles('scripts/prepare-iroh.sh') }}
+      - name: Prepare internet transport
+        run: scripts/prepare-iroh.sh apple
+      - uses: actions/cache/save@v4
+        if: steps.iroh-cache.outputs.cache-hit != 'true'
+        with:
+          path: Packages/Iroh/Iroh.xcframework
+          key: ${{ steps.iroh-cache.outputs.cache-primary-key }}
+
       - name: Generate the project
         run: xcodegen generate
+
+      - name: Sign and package first-party plugins
+        env:
+          SPARKLE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          if [ -f scripts/package-plugin-catalog.py ]; then
+            python3 scripts/package-plugin-catalog.py --output "$RUNNER_TEMP/plugin-catalog" \
+              --signer "$RUNNER_TEMP/sparkle/bin/sign_update" --tag "$TAG"
+          fi
 
       - name: Import the Developer ID certificate
         env:
@@ -180,6 +202,10 @@ jobs:
         id: publish
         run: |
           ASSET=$(basename "$DMG")
+          PLUGIN_ASSETS=()
+          if [ -d "$RUNNER_TEMP/plugin-catalog" ]; then
+            PLUGIN_ASSETS=("$RUNNER_TEMP/plugin-catalog/"*)
+          fi
           if [ "$CHANNEL" = nightly ]; then
             # One nightly release whose tag moves. The new DMG goes up beside the old one;
             # the appcast job deletes the old one once the feed points at the new one.
@@ -189,16 +215,16 @@ jobs:
               gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref=refs/tags/nightly -f sha="$REF" >/dev/null
             fi
             if gh release view nightly >/dev/null 2>&1; then
-              gh release upload nightly "$DMG" --clobber
+              gh release upload nightly "$DMG" "${PLUGIN_ASSETS[@]}" --clobber
               gh release edit nightly --prerelease --title "Abstract Nightly $VERSION" --notes-file "$RUNNER_TEMP/notes.md"
             else
-              gh release create nightly "$DMG" --verify-tag --prerelease --title "Abstract Nightly $VERSION" --notes-file "$RUNNER_TEMP/notes.md"
+              gh release create nightly "$DMG" "${PLUGIN_ASSETS[@]}" --verify-tag --prerelease --title "Abstract Nightly $VERSION" --notes-file "$RUNNER_TEMP/notes.md"
             fi
           else
             DRAFT=$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null || echo none)
             if [ "$DRAFT" = false ]; then
               # A re-run after the release was published: refresh its DMG only.
-              gh release upload "$TAG" "$DMG" --clobber
+              gh release upload "$TAG" "$DMG" "${PLUGIN_ASSETS[@]}" --clobber
               echo "url=https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$ASSET" >> "$GITHUB_OUTPUT"
               exit 0
             fi
@@ -207,7 +233,7 @@ jobs:
             if [ "$DRAFT" = true ]; then gh release delete "$TAG" --yes; fi
             LATEST=false
             if [ "$VERSION" = "$(scripts/next-version.sh latest)" ]; then LATEST=true; fi
-            gh release create "$TAG" "$DMG" --verify-tag --title "Abstract $VERSION" \
+            gh release create "$TAG" "$DMG" "${PLUGIN_ASSETS[@]}" --verify-tag --title "Abstract $VERSION" \
               --notes-file "$RUNNER_TEMP/notes.md" --latest="$LATEST"
           fi
           echo "url=https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$ASSET" >> "$GITHUB_OUTPUT"

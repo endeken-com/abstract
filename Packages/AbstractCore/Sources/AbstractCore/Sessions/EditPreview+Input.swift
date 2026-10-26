@@ -3,18 +3,19 @@ import Foundation
 extension EditPreview {
     /// The change a file tool is about to make, read from its input alone, so
     /// the diff shows while the tool runs or waits for approval. Covers
-    /// Claude's Edit, MultiEdit and Write; nil for anything else.
+    /// Edit, MultiEdit and Write, with Claude's snake_case or OpenCode's
+    /// camelCase field names, and Muse Code's edit_file/write_file
+    /// (`find`/`replace`, `content`); nil for anything else.
     public static func fromToolInput(name: String, input: JSONValue) -> EditPreview? {
         guard let o = input.object else { return nil }
-        let path = o["file_path"]?.string ?? o["path"]?.string ?? ""
+        let path = o["file_path"]?.string ?? o["filePath"]?.string ?? o["path"]?.string ?? ""
         switch name.lowercased() {
-        case "edit":
-            guard let old = o["old_string"]?.string, let new = o["new_string"]?.string else { return nil }
+        case "edit", "edit_file":
+            guard let (old, new) = replacement(input) else { return nil }
             return make(path, lineDiff(old, new))
         case "multiedit":
             let parts = (o["edits"]?.array ?? []).compactMap { edit -> [Line]? in
-                guard let old = edit["old_string"]?.string, let new = edit["new_string"]?.string else { return nil }
-                return lineDiff(old, new)
+                replacement(edit).map { lineDiff($0, $1) }
             }
             let lines = parts.enumerated().flatMap { index, part in
                 part.enumerated().map { i, line in
@@ -24,7 +25,7 @@ extension EditPreview {
                 }
             }
             return lines.isEmpty ? nil : make(path, lines)
-        case "write":
+        case "write", "write_file":
             guard let content = o["content"]?.string else { return nil }
             return make(path, splitLines(content).enumerated().map { i, text in Line(origin: .added, content: text, newLine: i + 1) })
         default:
@@ -33,6 +34,13 @@ extension EditPreview {
     }
 
     private static let maxLines = 200
+
+    /// The text an edit replaces and its replacement.
+    private static func replacement(_ edit: JSONValue) -> (String, String)? {
+        guard let old = edit["old_string"]?.string ?? edit["oldString"]?.string ?? edit["find"]?.string,
+              let new = edit["new_string"]?.string ?? edit["newString"]?.string ?? edit["replace"]?.string else { return nil }
+        return (old, new)
+    }
 
     private static func make(_ path: String, _ lines: [Line]) -> EditPreview {
         EditPreview(filePath: path,

@@ -18,10 +18,13 @@ let package = Package(
         ),
         // `abstract`, the command line. The app embeds it too (project.yml).
         .executableTarget(name: "AbstractCLI", dependencies: ["AbstractCore"]),
+        // Sets up the test process itself: it ignores SIGPIPE, so one stray
+        // write to a closed pipe fails its test instead of ending the run.
+        .target(name: "TestProcess", path: "Tests/TestProcess"),
         .testTarget(
             name: "AbstractCoreTests",
             // The CLI tests run the built `abstract`.
-            dependencies: ["AbstractCore", "AbstractCLI"],
+            dependencies: ["AbstractCore", "AbstractCLI", "TestProcess"],
             resources: [.copy("Fixtures")]
         ),
     ]

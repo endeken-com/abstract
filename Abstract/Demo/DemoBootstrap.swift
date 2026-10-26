@@ -71,6 +71,10 @@ final class DemoBootstrap {
         // A long recorded chat as a chat's history, for scrolling tests.
         if let path = ProcessInfo.processInfo.environment["ABSTRACT_DEMO_HISTORY"] { Task { await self.loadHistory(path, model) } }
         RemoteProbe.runIfRequested(model)
+        FindProbe.runIfRequested(model)
+        FileSearchProbe.runIfRequested(model)
+        ReviewFindProbe.runIfRequested(model)
+        IssueTrackerProbe.runIfRequested(model)
 
         let running = abstract.map { p in Task { await self.chat(model, p, "Add a command palette with fuzzy search", .autoEdits) } }
         _ = running
@@ -104,6 +108,23 @@ final class DemoBootstrap {
                                             status: .created, sessionId: done?.id))
         try? model.store.save(AutomationRun(automationId: nightly.id, firedAt: Date().addingTimeInterval(-3_600), trigger: .manual,
                                             status: .created, sessionId: done?.id))
+        // Workflows: both ready-made ones, a chat waiting between steps of
+        // one, and an automation that follows it when a pull request merges.
+        model.reload()
+        let design = model.addWorkflow(from: WorkflowTemplate.all[0])
+        model.addWorkflow(from: WorkflowTemplate.all[1])
+        if var chat = model.session(done?.id) {
+            chat.workflow = WorkflowProgress(workflow: design.snapshot(profiles: model.profiles), step: 0, state: .waiting)
+            try? model.store.save(chat)
+        }
+        var qa = Automation(name: "Check merged work", prompt: "Test what this chat's pull request changed, end to end.",
+                            providerId: "claude", projectId: abstract?.id, triggers: [], workspaceMode: .newWorktree)
+        qa.events = [.pullRequestMerged, .workflowFinished]
+        qa.eventTarget = .triggeringChat
+        qa.workflowId = model.workflows.last?.id
+        try? model.store.save(qa)
+        try? model.store.save(AutomationRun(automationId: qa.id, firedAt: Date().addingTimeInterval(-7_200), trigger: .event,
+                                            status: .created, sessionId: done?.id, event: .pullRequestMerged, sourceSessionId: done?.id))
         model.reload()
         // Project settings for payments-api, set after its chats started so
         // none of them ran the setup script.
@@ -116,6 +137,7 @@ final class DemoBootstrap {
                 p.runScript = "echo \"payments-api running on :8080\""
                 p.teardownScript = "docker compose down"
             }
+            await checkCodeHost(model, payments)
         }
 
         guard let snapshotDir else { return }
@@ -135,6 +157,25 @@ final class DemoBootstrap {
             model.open(first.id)
             log("demo: history of \(timeline.entries.count) events in “\(first.name)”")
         }
+    }
+
+    /// A 128 × 128 PNG, transparent around a rounded square.
+    private static func logo() -> Data {
+        let image = NSImage(size: NSSize(width: 128, height: 128), flipped: false) { rect in
+            NSColor(srgbRed: 0.36, green: 0.42, blue: 0.95, alpha: 1).setFill()
+            NSBezierPath(roundedRect: rect.insetBy(dx: 12, dy: 12), xRadius: 24, yRadius: 24).fill()
+            NSColor.white.setFill()
+            NSBezierPath(ovalIn: rect.insetBy(dx: 44, dy: 44)).fill()
+            return true
+        }
+        let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 128, pixelsHigh: 128, bitsPerSample: 8, samplesPerPixel: 4,
+                                      hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
+        guard let bitmap else { return Data() }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+        image.draw(in: NSRect(x: 0, y: 0, width: 128, height: 128))
+        NSGraphicsContext.restoreGraphicsState()
+        return bitmap.representation(using: .png, properties: [:]) ?? Data()
     }
 
     private func makeRepo(_ name: String, _ model: AppModel) async -> Project? {
@@ -177,6 +218,9 @@ final class DemoBootstrap {
             try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? text.write(to: url, atomically: true, encoding: .utf8)
         }
+        // An image, for Files' preview and the links and thumbnails in the chat.
+        try? FileManager.default.createDirectory(at: dir.appendingPathComponent("assets"), withIntermediateDirectories: true)
+        try? Self.logo().write(to: dir.appendingPathComponent("assets/logo.png"))
         let exec = model.executor
         for args in [["init", "-q", "-b", "main"], ["config", "user.email", "demo@abstract.local"], ["config", "user.name", "Abstract Demo"],
                      ["add", "-A"], ["commit", "-qm", "Initial commit"]] {
@@ -204,6 +248,24 @@ final class DemoBootstrap {
         let deadline = Date().addingTimeInterval(timeout)
         while !condition(model), Date() < deadline { try? await Task.sleep(for: .milliseconds(200)) }
     }
+
+    /// payments-api's origin is on github.com: its code host is the bundled
+    /// GitHub plugin, on by default (ABS-139), asked through its script and
+    /// `gh` as a real project would be. marketing-site has no origin, so none.
+    private func checkCodeHost(_ model: AppModel, _ payments: Project) async {
+        for _ in 0..<40 where model.codeHostsStarting { try? await Task.sleep(for: .milliseconds(250)) }
+        // Its origin was only just added.
+        model.projectOrigins[payments.id] = nil
+        guard let host = await model.codeHost(for: payments) else {
+            log("demo: code host for payments-api: none (\(model.plugins.usable.map(\.id).sorted()))")
+            return
+        }
+        let access = await host.access()
+        log("demo: code host for payments-api: \(host.title) via \(host.pluginId), gh \(access.isReady ? "signed in" : "\(access)")")
+        if let marketing = model.projects.first(where: { $0.name == "marketing-site" }) {
+            log("demo: code host for marketing-site: \(await model.codeHost(for: marketing)?.title ?? "none")")
+        }
+    }
 }
 
 /// Walks the app through its screens and writes a PNG of each.
@@ -228,11 +290,19 @@ struct Snapshotter {
         let idle = model.sessions.first { $0.status == .idle }
         let needsYou = model.sessions.first { $0.status == .waitingInput }
 
-        let themes: [ThemeChoice] = ProcessInfo.processInfo.arguments.contains("--quick") ? [.graphite] : [.graphite, .paper]
+        shootAppIcon()
+
+        let themes: [ThemeChoice] = ProcessInfo.processInfo.arguments.contains("--quick") ? [.graphite] : [.graphite, .paper, .ink]
+        // `--plugins-only`: just the bundled plugins, in each theme.
+        let pluginsOnly = ProcessInfo.processInfo.arguments.contains("--plugins-only")
         for theme in themes {
             UserDefaults.standard.set(theme.rawValue, forKey: "theme")
             try? await Task.sleep(for: .milliseconds(500))
             let t = theme.rawValue
+            if pluginsOnly {
+                await shootPlugins(theme: t, beside: idle?.id)
+                continue
+            }
 
             model.destination = .home
             await shot("\(t)-01-home")
@@ -250,6 +320,11 @@ struct Snapshotter {
                 }
                 seedPullRequests(model, for: idle)
                 await shot("\(t)-03-chat-done", settle: 1.2)
+                if t != "ink" { await shootNarrowSidePanel(in: idle.id, theme: t) }
+                // The sidebar groups chats by what they need; then by project, as it used to.
+                UserDefaults.standard.set(SidebarChats.Arrangement.project.rawValue, forKey: "sidebar.arrangement")
+                await shot("\(t)-37-sidebar-by-project", settle: 0.8)
+                UserDefaults.standard.set(SidebarChats.Arrangement.status.rawValue, forKey: "sidebar.arrangement")
                 // Every tool row opens at once: rows must grow into their new height.
                 UserDefaults.standard.set(TranscriptMode.verbose.rawValue, forKey: "chat.transcript")
                 await shot("\(t)-03b-chat-verbose", settle: 1.2)
@@ -275,6 +350,11 @@ struct Snapshotter {
                 model.openFile("Dockerfile", in: idle.id)
                 model.showPane(.files, in: idle.id)
                 await shot("\(t)-04-files", settle: 1.5)
+                // An image previews, fitted and then at its actual size.
+                model.openFile("assets/logo.png", in: idle.id, preview: true)
+                await shot("\(t)-04c-image-fit", settle: 1.0)
+                model.activeImageDocument?.zoomToActualSize()
+                await shot("\(t)-04d-image-actual", settle: 0.6)
                 model.showPane(.review, in: idle.id)
                 await shot("\(t)-23-pull-request", settle: 1.2)
                 model.showPane(.terminal, in: idle.id)
@@ -299,8 +379,13 @@ struct Snapshotter {
             await shot("\(t)-07-palette", settle: 0.6)
             model.isPaletteOpen = false
 
+            UserDefaults.standard.set("general", forKey: "settingsTab")
             model.isSettingsOpen = true
             await shot("\(t)-14-settings", settle: 0.8)
+            UserDefaults.standard.set("profiles", forKey: "settingsTab")
+            await shot("\(t)-29-icons-profiles", settle: 0.8)
+            UserDefaults.standard.set("workflows", forKey: "settingsTab")
+            await shot("\(t)-29-icons-workflows", settle: 0.8)
             if t == "graphite" {
                 // The usage pane reads the agents' real logs: the first read takes a while.
                 UserDefaults.standard.set("usage", forKey: "settingsTab")
@@ -313,8 +398,14 @@ struct Snapshotter {
                 await tallShot("\(t)-27-appearance-full")
                 UserDefaults.standard.set("integrations", forKey: "settingsTab")
                 await shot("\(t)-28-integrations", settle: 1.5)
+                // Every other pane, whole.
+                for tab in SettingsTab.allCases where ![.usage, .appearance, .integrations].contains(tab) {
+                    UserDefaults.standard.set(tab.rawValue, forKey: "settingsTab")
+                    await tallShot("\(t)-29-settings-\(tab.rawValue)")
+                }
                 UserDefaults.standard.set("general", forKey: "settingsTab")
             }
+            UserDefaults.standard.set("general", forKey: "settingsTab")
             model.isSettingsOpen = false
             if t == "graphite", let idle { await shootFonts(model, in: idle.id) }
 
@@ -332,6 +423,15 @@ struct Snapshotter {
                 await shot("\(t)-16-automation-page", settle: 1.0)
                 UserDefaults.standard.set("", forKey: "automations.open")
             }
+            if t == "graphite", let onEvents = model.automations.first(where: { !$0.events.isEmpty }) {
+                UserDefaults.standard.set(onEvents.id, forKey: "automations.open")
+                await shot("\(t)-16b-automation-events", settle: 1.0)
+                UserDefaults.standard.set("", forKey: "automations.open")
+            }
+            // A new automation's page, opening on its describe box. Leaving
+            // Automations below drops the page, so the next theme starts on the list.
+            model.newAutomationRequest += 1
+            await shot("\(t)-36-new-automation", settle: 1.0)
             model.destination = .worktrees
             await shot("\(t)-09-worktrees", settle: 1.2)
             model.destination = .pullRequests
@@ -341,9 +441,96 @@ struct Snapshotter {
                 await shot("\(t)-17-project-settings", settle: 1.5)
                 await tallShot("\(t)-18-project-settings-full")
             }
+            await shootPlugins(theme: t, beside: idle?.id)
         }
         UserDefaults.standard.set(ThemeChoice.graphite.rawValue, forKey: "theme")
         await projectLifecycleCheck()
+    }
+
+    /// Every bundled plugin, on (ABS-134): each screen, Kanban's three tabs,
+    /// and each tab beside a chat. A theme's plugins must draw in it from
+    /// the first frame, whatever the Mac is set to.
+    private func shootPlugins(theme t: String, beside sessionId: String?) async {
+        for folder in model.plugins.bundledFolders {
+            guard let inspection = try? PluginPackage.inspect(folder: folder),
+                  model.plugins.plugin(inspection.manifest.id) == nil else { continue }
+            _ = try? model.plugins.install(from: folder, sourceKind: .bundled, enable: true)
+        }
+        if let sessionId { seedPluginStorage(beside: sessionId) }
+        let kanban = "sh.abstract.kanban"
+        for plugin in model.plugins.usable.sorted(by: { $0.id < $1.id }) {
+            guard let view = plugin.manifest?.view else { continue }
+            let name = plugin.id.split(separator: ".").last.map(String.init) ?? plugin.id
+            let views = plugin.id == kanban ? ["board", "list", "mine"] : [""]
+            for tab in views {
+                if !tab.isEmpty { _ = try? model.plugins.manager.storage(for: kanban).set(.string(tab), forKey: "view") }
+                // Away and back, so the screen opens fresh, as it would.
+                model.destination = .home
+                try? await Task.sleep(for: .milliseconds(200))
+                model.destination = .plugin(plugin.id, view.id)
+                await shot("\(t)-40-plugin-\(name)\(tab.isEmpty ? "" : "-\(tab)")", settle: 1.6)
+            }
+        }
+        _ = try? model.plugins.manager.storage(for: kanban).set(.string("board"), forKey: "view")
+        guard let sessionId else { return }
+        model.open(sessionId)
+        for contribution in model.plugins.contributions(.chatPanel) {
+            let name = contribution.pluginId.split(separator: ".").last.map(String.init) ?? contribution.pluginId
+            model.showPluginPanelTab(contribution, in: sessionId)
+            await shot("\(t)-41-panel-\(name)", settle: 1.6)
+        }
+        model.resetLayout(sessionId)
+        await shootLinkStatus(theme: t, in: sessionId)
+    }
+
+    /// Link status (ABS-126): a reply naming a merged pull request, an open
+    /// issue and a Linear ticket, each with its status after it. The
+    /// statuses are seeded, so nothing is asked of GitHub or Linear.
+    private func shootLinkStatus(theme t: String, in sessionId: String) async {
+        let plugin = "sh.abstract.link-status"
+        guard model.plugins.plugin(plugin)?.isUsable == true else { return }
+        let seeded: [(String, String, PluginLinkStatus)] = [
+            ("github", "https://github.com/acme/shop/pull/43", PluginLinkStatus(label: "Merged", tone: .merged)),
+            ("github", "https://github.com/acme/shop/pull/44", PluginLinkStatus(label: "Open · Checks failing", tone: .failing)),
+            ("github", "https://github.com/acme/shop/issues/12", PluginLinkStatus(label: "Open", tone: .open)),
+            ("linear", "https://linear.app/acme/issue/SHOP-7", PluginLinkStatus(label: "In Progress · ada", tone: .open)),
+        ]
+        for (decorator, url, status) in seeded {
+            model.pluginLinks.seed(PluginLinks.Match(pluginId: plugin, contributionId: decorator, url: url), status)
+        }
+        let feed = model.feed(sessionId)
+        let before = feed.timeline
+        var shown = before
+        shown.append(.text(role: .user, text: "Where are we with https://linear.app/acme/issue/SHOP-7/empty-carts?", blockId: nil, partial: false))
+        shown.append(.text(role: .assistant, text: """
+            The discount fix landed in https://github.com/acme/shop/pull/43, which closes \
+            [the empty-cart issue](https://github.com/acme/shop/issues/12) once it ships.
+
+            - The follow-up, https://github.com/acme/shop/pull/44, still has a failing lint check.
+            - https://linear.app/acme/issue/SHOP-7 stays in progress until both are out.
+            """, blockId: nil, partial: false))
+        feed.reset(shown)
+        model.open(sessionId)
+        await shot("\(t)-42-link-status", settle: 1.6)
+        feed.reset(before)
+    }
+
+    /// What Follow PR and Second opinion would have stored for a chat, so
+    /// their tabs show something to read. Nothing in it is due, so neither
+    /// background script acts on it.
+    private func seedPluginStorage(beside sessionId: String) {
+        let at = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-3_000))
+        let follow = JSONValue(any: [
+            "follows": [sessionId: ["number": 42, "seen": [], "failing": [], "pending": [], "dueAt": NSNull(),
+                                    "waiting": false, "day": "", "sent": 0]],
+            "history": [sessionId: [["at": at, "number": 42, "count": 3, "kinds": ["code", "code", "check"]]]],
+        ] as [String: Any])
+        for (key, value) in follow.object ?? [:] {
+            _ = try? model.plugins.manager.storage(for: "sh.abstract.follow-pr").set(value, forKey: key)
+        }
+        let review = JSONValue(any: [sessionId: ["agentId": "codex", "agentName": "Codex", "scope": "uncommitted",
+                                                 "reviewerId": "none", "round": 1, "phase": "waiting"]] as [String: Any])
+        _ = try? model.plugins.manager.storage(for: "sh.abstract.second-opinion").set(review, forKey: "reviews")
     }
 
     /// The whole settings page: the window made tall enough, then put back.
@@ -353,6 +540,25 @@ struct Snapshotter {
         window.setFrame(NSRect(x: frame.minX, y: frame.maxY - 1500, width: frame.width, height: 1500), display: true)
         await shot(name, settle: 1.2)
         window.setFrame(frame, display: true)
+    }
+
+    /// Keep a screenshot of the side panel at the smallest useful window width.
+    /// The Run action is available in this demo project, and Review makes a
+    /// third tab so the strip must scroll while New tab stays in view.
+    private func shootNarrowSidePanel(in sessionId: String, theme: String) async {
+        guard let window = NSApp.windows.first(where: { $0.canBecomeMain && $0.isVisible }) else { return }
+        let frame = window.frame
+        let targetId = model.sessions.first { session in
+            session.worktreePath != nil && Project.nonBlank(model.project(session.projectId)?.runScript) != nil
+        }?.id ?? sessionId
+        let activeId = model.layout(for: targetId).side.active?.id
+        model.open(targetId)
+        model.showPane(.review, in: targetId)
+        window.setFrame(NSRect(x: frame.minX, y: frame.minY, width: 820, height: frame.height), display: true)
+        await shot("\(theme)-03c-chat-narrow", settle: 1.2)
+        window.setFrame(frame, display: true)
+        if let activeId { model.updateLayout(targetId) { $0.activate(activeId) } }
+        model.open(sessionId)
     }
 
     /// A new chat in payments-api is set up before its agent starts (its
@@ -368,7 +574,9 @@ struct Snapshotter {
         model.destination = .projectSettings(p.id)
         await shot("graphite-19-project-icon", settle: 1.0)
         if let current = model.project(p.id) {
-            let renderer = ImageRenderer(content: ProjectIconPicker(project: current, dismiss: {})
+            let renderer = ImageRenderer(content: IconPicker(
+                value: IconValue(symbol: current.iconSymbol, color: current.iconColor, imagePath: current.iconImagePath),
+                name: current.name, onChange: { _ in }, onUpload: { _ in }, dismiss: {})
                 .environment(model).environment(\.colorScheme, .dark))
             renderer.scale = 2
             if let tiff = renderer.nsImage?.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
@@ -461,42 +669,43 @@ struct Snapshotter {
     }
 
     /// A pull request for the finished chat (one check failing, a review
-    /// asking for changes) and a merged one for another, as `gh` reports them.
+    /// asking for changes) and a merged one for another, as a code host
+    /// answers them (ABS-139).
     private func seedPullRequests(_ model: AppModel, for chat: Session) {
         guard let branch = chat.branch, let projectId = chat.projectId else { return }
+        func ago(_ seconds: TimeInterval) -> String { ISO8601DateFormatter().string(from: Date().addingTimeInterval(-seconds)) }
         let open = #"""
-        {"number": 128, "title": "\#(chat.name)", "state": "OPEN", "isDraft": false,
-         "url": "https://github.com/acme/abstract/pull/128", "headRefName": "\#(branch)", "baseRefName": "main",
-         "author": {"login": "wes"}, "reviewDecision": "CHANGES_REQUESTED", "mergeable": "MERGEABLE", "mergeStateStatus": "BLOCKED",
-         "additions": 10, "deletions": 2, "changedFiles": 2, "updatedAt": "\#(ISO8601DateFormatter().string(from: Date().addingTimeInterval(-600)))",
-         "statusCheckRollup": [
-           {"name": "unit tests", "workflowName": "CI", "status": "COMPLETED", "conclusion": "SUCCESS", "detailsUrl": "https://github.com/acme/abstract/actions/runs/1"},
-           {"name": "lint", "workflowName": "CI", "status": "COMPLETED", "conclusion": "FAILURE", "detailsUrl": "https://github.com/acme/abstract/actions/runs/2"},
-           {"name": "ui snapshots", "workflowName": "CI", "status": "IN_PROGRESS", "conclusion": ""}
+        {"number": 128, "title": "\#(chat.name)", "state": "open", "isDraft": false,
+         "url": "https://github.com/acme/abstract/pull/128", "head": "\#(branch)", "base": "main",
+         "author": "wes", "reviewDecision": "changesRequested", "mergeable": "MERGEABLE", "mergeState": "BLOCKED",
+         "additions": 10, "deletions": 2, "changedFiles": 2, "updatedAt": "\#(ago(600))",
+         "checks": [
+           {"name": "unit tests", "workflow": "CI", "outcome": "passed", "url": "https://github.com/acme/abstract/actions/runs/1"},
+           {"name": "lint", "workflow": "CI", "outcome": "failed", "url": "https://github.com/acme/abstract/actions/runs/2"},
+           {"name": "ui snapshots", "workflow": "CI", "outcome": "pending"}
          ],
-         "reviews": [{"author": {"login": "ana"}, "state": "CHANGES_REQUESTED", "body": "Archived chats have no process, so `derivedStatus` would call them errored. Keep the stored status for those."}],
-         "comments": [{"author": {"login": "vercel"}, "authorAssociation": "NONE", "body": "Preview deployed."}]}
+         "reviews": [{"author": "ana", "verdict": "changesRequested", "body": "Archived chats have no process, so `derivedStatus` would call them errored. Keep the stored status for those."}],
+         "comments": [{"author": "vercel", "association": "NONE", "isBot": true, "body": "Preview deployed."}],
+         "threads": [
+          {"id": "T1", "isResolved": false, "isOutdated": false, "path": "src/sessions/SessionRow.swift", "line": 11,
+           "diffHunk": "@@ -9,6 +9,6 @@ struct SessionRow: View {\n     var body: some View {\n-    let status = session.status\n+    let status = session.derivedStatus",
+           "comments": [
+             {"id": "C1", "author": "ana", "body": "This reads liveness on every redraw. Can the registry publish changes instead?", "createdAt": "\#(ago(3_000))"},
+             {"id": "C2", "author": "wes", "body": "It's a set lookup, so it's cheap, but a published value would avoid the redraws. I'll change it.", "createdAt": "\#(ago(2_400))"},
+             {"id": "C3", "author": "ana", "body": "Thanks.", "createdAt": "\#(ago(2_000))"}
+           ]},
+          {"id": "T2", "isResolved": true, "isOutdated": false, "path": "src/sessions/SessionStatus+Derived.swift", "line": 4,
+           "comments": [{"id": "C4", "author": "ana", "body": "Nit: document the archived case.", "createdAt": "\#(ago(2_900))"}]}
+         ]}
         """#
         let merged = #"""
-        {"number": 121, "title": "Retry idempotent webhook deliveries", "state": "MERGED", "isDraft": false,
-         "headRefName": "abstract/retry-webhooks", "baseRefName": "main", "author": {"login": "wes"},
-         "updatedAt": "\#(ISO8601DateFormatter().string(from: Date().addingTimeInterval(-86_400)))"}
+        {"number": 121, "title": "Retry idempotent webhook deliveries", "state": "merged", "isDraft": false,
+         "head": "abstract/retry-webhooks", "base": "main", "author": "wes", "updatedAt": "\#(ago(86_400))"}
         """#
-        let threads = #"""
-        {"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": [
-          {"id": "T1", "isResolved": false, "isOutdated": false, "path": "src/sessions/SessionRow.swift", "line": 11,
-           "comments": {"nodes": [
-             {"id": "C1", "author": {"login": "ana"}, "body": "This reads liveness on every redraw. Can the registry publish changes instead?", "createdAt": "\#(ISO8601DateFormatter().string(from: Date().addingTimeInterval(-3_000)))",
-              "diffHunk": "@@ -9,6 +9,6 @@ struct SessionRow: View {\n     var body: some View {\n-    let status = session.status\n+    let status = session.derivedStatus"},
-             {"id": "C2", "author": {"login": "wes"}, "body": "It's a set lookup, so it's cheap, but a published value would avoid the redraws. I'll change it.", "createdAt": "\#(ISO8601DateFormatter().string(from: Date().addingTimeInterval(-2_400)))"},
-             {"id": "C3", "author": {"login": "ana"}, "body": "Thanks.", "createdAt": "\#(ISO8601DateFormatter().string(from: Date().addingTimeInterval(-2_000)))"}
-           ]}},
-          {"id": "T2", "isResolved": true, "isOutdated": false, "path": "src/sessions/SessionStatus+Derived.swift", "line": 4,
-           "comments": {"nodes": [{"id": "C4", "author": {"login": "ana"}, "body": "Nit: document the archived case.", "createdAt": "\#(ISO8601DateFormatter().string(from: Date().addingTimeInterval(-2_900)))"}]}}
-        ]}}}}}
-        """#
-        guard var pr = try? GitHub.decode(Data(open.utf8)), let old = try? GitHub.decode(Data(merged.utf8)) else { return }
-        pr.threads = (try? GitHub.decodeThreads(Data(threads.utf8))) ?? []
+        func decode(_ text: String) -> PullRequest? {
+            (try? JSONDecoder().decode(JSONValue.self, from: Data(text.utf8))).flatMap(PullRequest.init(contract:))
+        }
+        guard let pr = decode(open), let old = decode(merged) else { return }
         model.pullRequests[chat.id] = pr
         model.projectPullRequests[projectId] = [pr, old]
         if let other = model.sessions.first(where: { $0.id != chat.id && $0.status != .running && $0.projectId != nil }) {
@@ -523,15 +732,19 @@ struct Snapshotter {
         try? model.sendFollowUp(sessionId, text: "This is the bug from the issue; the screenshot shows it.",
                                 attachments: [issue] + (screenshot.map { [$0] } ?? []))
         model.draftAttachments[sessionId] = [
-            PromptAttachment(kind: .linearIssue, title: "Status dot for archived chats", reference: "ENG-318",
-                             url: "https://linear.app/acme/issue/ENG-318", details: ["State: In Progress"]),
+            PromptAttachment(kind: .trackerIssue, title: "Status dot for archived chats", reference: "ENG-318",
+                             url: "https://linear.app/acme/issue/ENG-318", details: ["State: In Progress"],
+                             tracker: PromptAttachment.linearTrackerId, trackerName: "Linear"),
             PromptAttachment(kind: .pullRequest, title: "Derive status from the process", reference: "#57",
                              url: "https://github.com/acme/app/pull/57"),
             PromptAttachment(kind: .file, title: "SessionRow.swift", path: "/tmp/SessionRow.swift"),
         ]
-        UserDefaults.standard.set(true, forKey: LinearAccount.connectedKey)
+        // The Linear plugin puts its issue search beside Send (ABS-141).
+        if model.plugins.plugin(PromptAttachment.linearTrackerId) == nil,
+           let folder = model.plugins.bundledFolders.first(where: { $0.lastPathComponent == "linear.abstractplugin" }) {
+            _ = try? model.plugins.install(from: folder, sourceKind: .bundled, enable: true)
+        }
         await shot("graphite-03c-attachments", settle: 2.5)
-        UserDefaults.standard.removeObject(forKey: LinearAccount.connectedKey)
         model.draftAttachments[sessionId] = nil
     }
 
@@ -583,6 +796,29 @@ struct Snapshotter {
         }
         log("demo: background tasks " + model.backgroundTasks(sessionId).map { "\($0.description)=\($0.status.rawValue)" }.joined(separator: ", "))
         model.tasksOpen = nil
+    }
+
+    /// The app's icon as Finder and the Dock draw it, at Dock and list sizes. macOS
+    /// picks its version from the icon style in System Settings › Appearance (lunar
+    /// for Default, planetario for Dark), not from the app's appearance, so a run
+    /// captures whichever that Mac is set to.
+    private func shootAppIcon() {
+        let icon = NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath)
+        let sizes: [CGFloat] = [256, 64, 32, 16]
+        let image = NSImage(size: NSSize(width: sizes.reduce(0, +) + 24 * CGFloat(sizes.count + 1), height: 304), flipped: false) { rect in
+            NSColor.windowBackgroundColor.setFill()
+            rect.fill()
+            var x: CGFloat = 24
+            for size in sizes {
+                icon.draw(in: NSRect(x: x, y: (rect.height - size) / 2, width: size, height: size))
+                x += size + 24
+            }
+            return true
+        }
+        guard let tiff = image.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { return }
+        let url = URL(fileURLWithPath: directory).appendingPathComponent("00-app-icon.png")
+        try? png.write(to: url)
+        log("snapshot: \(url.path)")
     }
 
     /// Other interface and editor fonts, applied to a file tab.
@@ -704,4 +940,3 @@ enum WindowCapture {
 func log(_ message: String) {
     FileHandle.standardError.write(Data((message + "\n").utf8))
 }
-

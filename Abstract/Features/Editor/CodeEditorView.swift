@@ -14,7 +14,8 @@ struct CodeEditorView: View {
         if let root = model.session(sessionId)?.worktreePath, !root.isEmpty {
             let document = EditorStore.shared.document(root: root, path: path, in: sessionId, model: model)
             VStack(spacing: 0) {
-                EditorBar(document: document)
+                // An image's footer says what the bar would.
+                if case .image = document.content {} else { EditorBar(document: document) }
                 if document.status == .conflict || document.status == .deleted {
                     EditorConflictBar(document: document)
                 }
@@ -38,14 +39,13 @@ struct CodeEditorView: View {
         case .text:
             let commented = Set(model.comments(sessionId).filter { $0.ref.path == path }.map(\.ref.line))
             CodeTextView(document: document, sessionId: sessionId, commented: commented)
-        case .image(let image):
-            ScrollView([.horizontal, .vertical]) {
-                Image(nsImage: image).resizable().aspectRatio(contentMode: .fit)
-                    .frame(maxWidth: min(image.size.width, 1600), maxHeight: min(image.size.height, 1600))
-                    .padding(Space.xl)
-            }
+        case .image(let preview):
+            ImagePreviewView(document: document, preview: preview)
         case .binary:
-            EmptyStateView(symbol: "doc", title: "Binary preview unavailable", message: EditorDocument.format(document.size))
+            // Finder only reaches files on this Mac.
+            let local = model.remoteLink(for: sessionId) == nil
+            EmptyStateView(symbol: "doc", title: "Binary preview unavailable", message: EditorDocument.format(document.size),
+                           action: local ? ("Reveal in Finder", { FileActions.reveal(document.absolute) }) : nil)
         case .tooLarge:
             EmptyStateView(symbol: "doc", title: "This file is too large to display", message: EditorDocument.format(document.size))
         case .missing:

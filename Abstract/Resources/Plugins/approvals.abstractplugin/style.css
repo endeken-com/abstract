@@ -1,0 +1,67 @@
+/* Approvals on Abstract's plugin kit (/_abstract/abstract-ui.css). */
+
+.content {
+  max-width: 880px;
+  padding: var(--ab-space-lg);
+}
+.content > .ab-notice {
+  margin-bottom: var(--ab-space-md);
+}
+.requests {
+  display: grid;
+  gap: var(--ab-space-sm);
+}
+.request {
+  display: grid;
+  gap: 6px;
+  animation: ab-fade-in var(--ab-medium) var(--ab-ease);
+}
+.request-head {
+  display: flex;
+  align-items: center;
+  gap: var(--ab-space-sm);
+  min-width: 0;
+}
+.summary {
+  flex: 1;
+  min-width: 0;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.summary.ab-mono {
+  font-size: var(--ab-text-sm);
+}
+.age {
+  flex: none;
+}
+.meta {
+  padding-left: 15px;
+  color: var(--ab-text-3);
+  font-size: var(--ab-text-sm);
+}
+pre {
+  margin: 2px 0 0 15px;
+  padding: 8px 10px;
+  max-height: 160px;
+  overflow: auto;
+  border-radius: var(--ab-radius-sm);
+  background: var(--ab-code);
+  border: 1px solid var(--ab-border);
+  white-space: pre-wrap;
+}
+.questions {
+  display: grid;
+  gap: var(--ab-space-sm);
+  padding-left: 15px;
+}
+.question-text {
+  margin-bottom: 6px;
+}
+.actions {
+  align-items: center;
+  margin-top: 4px;
+  padding-left: 15px;
+}
+.answered {
+  opacity: 0.85;
+}

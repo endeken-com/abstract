@@ -55,19 +55,56 @@ private extension View {
 
 // MARK: - List
 
+/// Every automation, grouped by project in the sidebar's order, under a
+/// filter bar whose choices are kept across launches.
 private struct AutomationList: View {
     @Environment(AppModel.self) private var model
     let open: (String) -> Void
+    @AppStorage("automations.filter.project") private var projectChoice = ""
+    @AppStorage("automations.filter.agent") private var agentChoice = ""
+    @AppStorage("automations.filter.state") private var stateChoice: AutomationFilter.State = .all
+
+    /// The stored choices; a project or agent that's gone counts as all.
+    private var filter: AutomationFilter {
+        var project = AutomationFilter.ProjectChoice(stored: projectChoice)
+        if case .only(let id) = project, !model.projects.contains(where: { $0.id == id }) { project = .all }
+        let agent = ProviderRegistry.provider(agentChoice)?.id
+        return AutomationFilter(project: project, providerId: agent, state: stateChoice)
+    }
 
     var body: some View {
+        let filter = filter
+        let sections = AutomationListing.sections(model.automations, projects: model.projects,
+                                                  sessions: model.sessions, filter: filter)
         ScrollView {
             TimelineView(.everyMinute) { context in
                 VStack(alignment: .leading, spacing: 0) {
-                    AutoSectionLabel(title: model.automations.count == 1 ? "1 automation" : "\(model.automations.count) automations")
+                    AutoSectionLabel(title: heading(shown: sections.reduce(0) { $0 + $1.automations.count }, filter: filter)) {
+                        filterBar(filter)
+                    }
+                    if sections.isEmpty {
+                        VStack(alignment: .leading, spacing: Space.md) {
+                            Text("No automations match these filters.")
+                                .font(.btBody)
+                                .foregroundStyle(Color.btTextSecondary)
+                            Button("Clear Filters", action: clearFilters)
+                                .buttonStyle(.bt(.secondary, size: .small))
+                        }
+                        .padding(.top, Space.xl)
+                    }
+                    ForEach(sections) { section in
+                        AutoSectionLabel(title: section.project?.name ?? "No project") {
+                            Text("\(section.automations.count)")
+                                .font(.btCallout)
+                                .foregroundStyle(Color.btTextTertiary)
+                                .monospacedDigit()
+                        }
+                        .padding(.top, Space.lg)
                         .padding(.bottom, Space.xs)
-                    ForEach(model.automations) { a in
-                        AutomationListRow(automation: a, place: place(of: a), now: context.date) {
-                            open(a.id)
+                        ForEach(section.automations) { a in
+                            AutomationListRow(automation: a, chat: chat(of: a), device: device(of: a), now: context.date) {
+                                open(a.id)
+                            }
                         }
                     }
                 }
@@ -78,16 +115,83 @@ private struct AutomationList: View {
         }
     }
 
-    /// The chat it continues, or where its new chats start.
-    private func place(of a: Automation) -> String {
-        if a.workspaceMode == .pinned, let chat = model.session(a.pinnedSessionId) { return "in “\(chat.name)”" }
-        return model.project(a.projectId)?.name ?? "No project"
+    /// "12 automations", or "3 of 12 automations" while a filter is on.
+    private func heading(shown: Int, filter: AutomationFilter) -> String {
+        let total = model.automations.count
+        let noun = total == 1 ? "automation" : "automations"
+        return filter.isOn ? "\(shown) of \(total) \(noun)" : "\(total) \(noun)"
+    }
+
+    private func filterBar(_ filter: AutomationFilter) -> some View {
+        HStack(spacing: Space.xs) {
+            SentenceMenu(title: projectTitle(filter.project), quiet: filter.project == .all) {
+                Picker("Project", selection: Binding(get: { filter.project.stored }, set: { projectChoice = $0 })) {
+                    Text("All Projects").tag("")
+                    ForEach(model.projects) { Text($0.name).tag($0.id) }
+                    Text("No Project").tag(AutomationFilter.ProjectChoice.noProject.stored)
+                }
+                .pickerStyle(.inline)
+                .labelsHidden()
+            }
+            SentenceMenu(title: filter.providerId.map(ProviderRegistry.name) ?? "All agents",
+                         logo: filter.providerId, quiet: filter.providerId == nil) {
+                Picker("Agent", selection: Binding(get: { filter.providerId ?? "" }, set: { agentChoice = $0 })) {
+                    Text("All Agents").tag("")
+                    ForEach(ProviderRegistry.all, id: \.id) { Text($0.name).tag($0.id) }
+                }
+                .pickerStyle(.inline)
+                .labelsHidden()
+            }
+            SentenceMenu(title: Self.stateTitle(filter.state), quiet: filter.state == .all) {
+                Picker("State", selection: $stateChoice) {
+                    ForEach(AutomationFilter.State.allCases, id: \.self) { Text(Self.stateTitle($0)).tag($0) }
+                }
+                .pickerStyle(.inline)
+                .labelsHidden()
+            }
+        }
+        .padding(.trailing, -Chip.inset)
+    }
+
+    private func projectTitle(_ choice: AutomationFilter.ProjectChoice) -> String {
+        switch choice {
+        case .all: "All projects"
+        case .noProject: "No project"
+        case .only(let id): model.project(id)?.name ?? "All projects"
+        }
+    }
+
+    private static func stateTitle(_ state: AutomationFilter.State) -> String {
+        switch state {
+        case .all: "Any state"
+        case .active: "Active"
+        case .paused: "Paused"
+        case .manual: "Runs by hand only"
+        }
+    }
+
+    private func clearFilters() {
+        projectChoice = ""
+        agentChoice = ""
+        stateChoice = .all
+    }
+
+    /// The chat a pinned automation continues; the section already says the project.
+    private func chat(of a: Automation) -> String? {
+        guard a.workspaceMode == .pinned, let chat = model.session(a.pinnedSessionId) else { return nil }
+        return "in “\(chat.name)”"
+    }
+
+    private func device(of a: Automation) -> String? {
+        guard let id = a.deviceId else { return nil }
+        return "on \(model.remote.paired.first { $0.id == id }?.peer.name ?? "a paired Mac")"
     }
 }
 
 private struct AutomationListRow: View {
     let automation: Automation
-    let place: String
+    let chat: String?
+    let device: String?
     let now: Date
     let action: () -> Void
 
@@ -107,7 +211,7 @@ private struct AutomationListRow: View {
                     .foregroundStyle(Color.btText)
                     .lineLimit(1)
                     .layoutPriority(1)
-                Text([AutomationText.schedule(automation), place].joined(separator: " · "))
+                Text([AutomationText.schedule(automation), chat, device].compactMap { $0 }.joined(separator: " · "))
                     .font(.btCallout)
                     .foregroundStyle(Color.btTextTertiary)
                     .lineLimit(1)
@@ -393,24 +497,33 @@ private struct DescribeAutomation: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.xs) {
-            HStack(alignment: .bottom, spacing: Space.sm) {
-                GrowingTextEditor(text: $text, placeholder: "Describe it and AI drafts the rest, e.g. “Every weekday at 9, triage new issues in payments-api”",
-                                  font: .btInput, lineSpacing: 0, lines: 1...6, focused: focused)
+            // A text area like the chat composer: a description is several
+            // sentences, so it opens three lines tall, with its button inside.
+            VStack(alignment: .leading, spacing: Space.xs) {
+                GrowingTextEditor(text: $text, placeholder: "Describe it and AI drafts the rest: what to run, where, how often, and what to report. For example, “Every weekday at 9, triage new issues in payments-api and summarise what needs me.”",
+                                  font: .btInput, lineSpacing: 2, lines: 3...12, focused: focused)
                     .returnBreaksLine(commandReturn: run)
-                    .padding(.vertical, 5)
-                Button(action: run) {
-                    HStack(spacing: 5) {
-                        if drafting { ProgressView().controlSize(.mini) } else { Image(systemName: "sparkles") }
-                        Text(drafting ? "Drafting" : drafted ? "Draft Again" : "Draft with AI")
+                    .padding(.trailing, Field.inset - 5)
+                HStack(spacing: Space.sm) {
+                    Spacer(minLength: 0)
+                    Text("⌘↩ to draft")
+                        .font(.btCallout)
+                        .foregroundStyle(Color.btTextTertiary)
+                    Button(action: run) {
+                        HStack(spacing: 5) {
+                            if drafting { ProgressView().controlSize(.mini) } else { Image(systemName: "sparkles") }
+                            Text(drafting ? "Drafting" : drafted ? "Draft Again" : "Draft with AI")
+                        }
                     }
+                    .buttonStyle(.bt(.secondary, size: .small))
+                    .disabled(!canDraft)
+                    .help("Draft the automation from your description (⌘↩)")
                 }
-                .buttonStyle(.bt(.secondary, size: .small))
-                .disabled(!canDraft)
-                .help("Draft the automation from your description (⌘↩)")
             }
             .padding(.leading, Field.inset)
             .padding(.trailing, 5)
-            .padding(.vertical, 3)
+            .padding(.top, 8)
+            .padding(.bottom, 5)
             .btFieldChrome(focused: focused.wrappedValue)
             if let error {
                 Text(error)

@@ -39,6 +39,47 @@ struct GitActionsTests {
         #expect(!state.dirty && state.aheadOfBase == 1 && state.behindBase == 0)
     }
 
+    @Test func stateReadsTheSameInsideTheBackgroundBudget() async throws {
+        let (root, wt) = try await makeRepo()
+        defer { try? FileManager.default.removeItem(atPath: (root as NSString).deletingLastPathComponent) }
+        try "two\n".write(toFile: wt + "/b.txt", atomically: true, encoding: .utf8)
+        try await git(wt, ["add", "-A"])
+        try await git(wt, ["commit", "-qm", "Add b"])
+        try "three\n".write(toFile: wt + "/c.txt", atomically: true, encoding: .utf8)
+        let reader = BudgetedExecutor(exec, budget: GitBudget(log: { _ in }))
+        let budgeted = await GitActions.state(reader, worktree: wt, preferredBase: "main")
+        #expect(budgeted == (await GitActions.state(exec, worktree: wt, preferredBase: "main")))
+        #expect(budgeted.dirty && budgeted.aheadOfBase == 1)
+    }
+
+    @Test func aChatFollowsItsWorktreeOntoAnotherBranch() async throws {
+        let (root, wt) = try await makeRepo()
+        defer { try? FileManager.default.removeItem(atPath: (root as NSString).deletingLastPathComponent) }
+        var state = await GitActions.state(exec, worktree: wt, preferredBase: "main")
+        #expect(state.branch == "work" && state.movedBranch(from: "work") == nil)
+        try await git(wt, ["branch", "-m", "feature-x"])
+        state = await GitActions.state(exec, worktree: wt, preferredBase: "main")
+        #expect(state.movedBranch(from: "work") == "feature-x")
+        try await git(wt, ["switch", "-q", "-c", "other"])
+        #expect(await GitActions.state(exec, worktree: wt, preferredBase: "main").movedBranch(from: "feature-x") == "other")
+    }
+
+    @Test func aChatNeverFollowsItsWorktreeOntoTheBase() {
+        #expect(!BranchState.mayFollow("main", bases: ["origin/main", nil]))
+        #expect(!BranchState.mayFollow("main", bases: [nil, "main"]))
+        #expect(!BranchState.mayFollow("develop", bases: ["refs/heads/develop"]))
+        #expect(BranchState.mayFollow("feature-x", bases: ["origin/main", "main"]))
+        #expect(BranchState.mayFollow("main-fix", bases: ["origin/main"]))
+    }
+
+    @Test func aDetachedHeadKeepsTheRecordedBranch() async throws {
+        let (root, wt) = try await makeRepo()
+        defer { try? FileManager.default.removeItem(atPath: (root as NSString).deletingLastPathComponent) }
+        try await git(wt, ["switch", "-q", "--detach"])
+        let state = await GitActions.state(exec, worktree: wt, preferredBase: "main")
+        #expect(state.branch == nil && state.movedBranch(from: "work") == nil)
+    }
+
     @Test func updateFromBaseThenMergeLocally() async throws {
         let (root, wt) = try await makeRepo()
         defer { try? FileManager.default.removeItem(atPath: (root as NSString).deletingLastPathComponent) }

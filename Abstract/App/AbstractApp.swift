@@ -19,6 +19,7 @@ struct AbstractApp: App {
                 .environment(delegate.model)
                 .environment(delegate.updater)
                 .preferredColorScheme(theme.colorScheme)
+                .onChange(of: theme, initial: true) { ThemeState.apply(theme) }
         }
         .windowToolbarStyle(.unified)
         // Abstract draws its own title band, so the toolbar's Icon and Text /
@@ -71,6 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Notifier.shared.onOpenSession { [model] id in model.open(id) }
+        Notifier.shared.onStallAction { [model] id, action in model.stallAction(id, action) }
         Task {
             await model.bootstrap()
             if let demo = DemoBootstrap.current { await demo.run(model) }
@@ -113,6 +115,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         TerminalRegistry.shared.closeAll()
         model.appLink?.stop()
+        model.pluginToolLink?.stop()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -126,6 +129,9 @@ struct AbstractCommands: Commands {
     let updater: Updater
 
     var body: some Commands {
+        // While an image shows, ⌘0 and ⌘1 zoom it, as in Preview, instead of
+        // starting a chat and opening the first one.
+        let image = model.activeImageDocument
         CommandGroup(after: .appInfo) {
             CheckForUpdatesButton(updater: updater)
         }
@@ -156,12 +162,50 @@ struct AbstractCommands: Commands {
             Button("Show Previous Tab") { model.cycleTab(-1) }
                 .keyboardShortcut("[", modifiers: [.command, .shift])
         }
+        CommandGroup(after: .textEditing) {
+            // Each goes where it's chosen: the chat, file or review in front, or
+            // the terminal while it has the keyboard, which the menu can't watch.
+            let noChat = model.selectedSessionId == nil
+            Button("Find…") { model.performFind(.find) }
+                .keyboardShortcut("f")
+                .disabled(noChat)
+            Button("Find and Replace…") { model.performFind(.replace) }
+                .keyboardShortcut("f", modifiers: [.command, .option])
+                .disabled(noChat)
+            Button("Search in Files…") { if let s = model.selectedSession { model.searchInFiles(s.id) } }
+                .keyboardShortcut("f", modifiers: [.command, .shift])
+                .disabled(model.selectedSession == nil)
+            Button("Find Next") { model.performFind(.next) }
+                .keyboardShortcut("g")
+                .disabled(noChat)
+            Button("Find Previous") { model.performFind(.previous) }
+                .keyboardShortcut("g", modifiers: [.command, .shift])
+                .disabled(noChat)
+            Button("Use Selection for Find") { model.performFind(.useSelection) }
+                .keyboardShortcut("e")
+                .disabled(noChat)
+        }
+        CommandGroup(after: .toolbar) {
+            Button("Actual Size") { image?.zoomToActualSize() }
+                .keyboardShortcut(image == nil ? nil : KeyboardShortcut("1"))
+                .disabled(image == nil)
+            Button("Zoom to Fit") { image?.zoomToFit() }
+                .keyboardShortcut(image == nil ? nil : KeyboardShortcut("0"))
+                .disabled(image == nil)
+            Button("Zoom In") { image?.zoom(in: true) }
+                .keyboardShortcut("=")
+                .disabled(image == nil)
+            Button("Zoom Out") { image?.zoom(in: false) }
+                .keyboardShortcut("-")
+                .disabled(image == nil)
+            Divider()
+        }
         CommandMenu("Go") {
             Button("Jump To…") { model.isPaletteOpen.toggle() }
                 .keyboardShortcut("k")
             Divider()
             Button("New") { model.startNew() }
-                .keyboardShortcut("0")
+                .keyboardShortcut(image == nil ? KeyboardShortcut("0") : nil)
             Button("Automations") { model.destination = .automations }
                 .keyboardShortcut("a", modifiers: [.command, .shift])
             Button("Worktrees") { model.destination = .worktrees }
@@ -169,7 +213,7 @@ struct AbstractCommands: Commands {
             Divider()
             ForEach(Array(model.sessions.filter { $0.archivedAt == nil }.prefix(9).enumerated()), id: \.element.id) { i, s in
                 Button(s.name) { model.open(s.id) }
-                    .keyboardShortcut(KeyEquivalent(Character("\(i + 1)")))
+                    .keyboardShortcut(i == 0 && image != nil ? nil : KeyboardShortcut(KeyEquivalent(Character("\(i + 1)"))))
             }
         }
         CommandMenu("Chat") {
@@ -201,6 +245,12 @@ struct AbstractCommands: Commands {
                 .disabled(model.selectedSession.map { !model.isAlive($0.id) && !model.isCompactingAside($0.id) } ?? true)
             Button("Resume Agent") { if let s = model.selectedSession { model.resume(s.id) } }
                 .disabled(model.selectedSession.map { model.isAlive($0.id) || model.isCompactingAside($0.id) } ?? true)
+            Divider()
+            if model.everythingPaused {
+                Button("Resume Everything") { model.resumeEverything() }
+            } else {
+                Button("Pause Everything") { model.pauseEverything() }
+            }
             // As Ctrl+B in Claude Code: the command or subagent at work carries on while the chat does.
             Button("Run in Background") { if let s = model.selectedSession { model.moveToBackground(s.id) } }
                 .keyboardShortcut("b", modifiers: .control)

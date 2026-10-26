@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:">
+<link rel="stylesheet" href="/_abstract/abstract-ui.css">
+<link rel="stylesheet" href="style.css">
+<title>Lessons</title>
+</head>
+<body>
+<div class="ab-page">
+  <header class="ab-header">
+    <div class="ab-header-title">
+      <h1>Save what we learned</h1>
+    </div>
+  </header>
+  <main class="content">
+    <div id="idle"></div>
+    <form id="form" hidden>
+      <p id="about" class="ab-secondary ab-small about"></p>
+      <fieldset>
+        <legend class="ab-section-title">Where should the lessons go?</legend>
+        <div id="targets" class="targets"></div>
+      </fieldset>
+      <label id="skill-row" class="ab-field" hidden>
+        <span>Skill name</span>
+        <input id="skill" class="ab-input" type="text" maxlength="80" autocomplete="off" spellcheck="false">
+      </label>
+      <details>
+        <summary class="ab-small">What the agent is asked</summary>
+        <pre id="request" class="ab-selectable"></pre>
+      </details>
+      <p id="said" class="ab-notice" role="status" hidden></p>
+      <div class="ab-buttons actions">
+        <button type="submit" id="send" class="ab-button ab-primary">Ask the Agent</button>
+      </div>
+    </form>
+  </main>
+</div>
+<script src="/_abstract/abstract-ui.js"></script>
+<script src="lessons.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+{
+  "api": 2,
+  "id": "sh.abstract.second-opinion",
+  "name": "Second opinion",
+  "version": "1.1.0",
+  "description": "Ask another agent to review a chat's changes. It reads them without changing anything, and its findings arrive as comments in Review for you to send or delete.",
+  "entry": "index.html",
+  "capabilities": ["chats.read", "turns.read", "transcripts.read", "storage.own", "chats.create", "chats.message", "review.comment"],
+  "background": "background.js",
+  "contributes": {
+    "reviewActions": [
+      { "id": "ask", "title": "Ask {agent} to Review", "symbol": "person.2" },
+      { "id": "send", "title": "Send All and Re-review" }
+    ],
+    "chatPanelTabs": [
+      { "id": "review", "title": "Second opinion", "symbol": "person.2", "needs": ["chats.read", "storage.own"] }
+    ]
+  }
+}

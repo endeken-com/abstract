@@ -4,7 +4,7 @@ import AbstractCore
 
 // A chat on another Mac works here as it does there: its review, files,
 // editor, git actions and pull request read and change its worktree on that
-// Mac, through a `RemoteExecutor` that runs git, gh and revund and reads and
+// Mac, through a `RemoteExecutor` that runs git, revund and plugins' tools and reads and
 // writes files over the pairing link.
 
 /// Runs commands and reads files in a paired Mac's worktrees.
@@ -31,8 +31,10 @@ final class RemoteExecutor: Executor, @unchecked Sendable {
         return response
     }
 
-    func run(_ command: String, _ args: [String], cwd: String?) async throws -> ExecResult {
-        guard case .exec(let result) = try await ask(.exec(command: command, args: args, cwd: cwd)) else {
+    func run(_ command: String, _ args: [String], cwd: String?, stdin: Data?) async throws -> ExecResult {
+        // An older Mac would run it with no input at all.
+        if stdin != nil, let why = await MainActor.run(body: { service?.inputRefusal(device) }) { throw AbstractError.message(why) }
+        guard case .exec(let result) = try await ask(.exec(command: command, args: args, cwd: cwd, stdin: stdin)) else {
             throw AbstractError.message("The other Mac didn't run \(command).")
         }
         return result
@@ -59,7 +61,9 @@ final class RemoteExecutor: Executor, @unchecked Sendable {
     func removeItem(_ path: String) throws { throw AbstractError.message("Files on another Mac are removed there.") }
     /// The commands that run on the other Mac, when they're there.
     func which(_ binary: String) async -> String? {
-        guard ["git", "gh", "revund"].contains(binary), let out = try? await run(binary, ["--version"], cwd: nil), out.ok else { return nil }
+        // The other Mac refuses any it doesn't run for us: git, gh, revund
+        // and its plugins' tools (ABS-139).
+        guard PluginCLI.isProgramName(binary), let out = try? await run(binary, ["--version"], cwd: nil), out.ok else { return nil }
         return binary
     }
 
@@ -139,9 +143,11 @@ extension RemoteLink {
     func watch(_ paths: [String], onChange: @escaping () -> Void) -> RemoteWatch {
         let id = nextRequestId()
         watchers[id] = onChange
+        watchPaths[id] = paths
         fire(.watch(id: id, paths: paths))
         return RemoteWatch { [weak self] in
             guard let self, self.watchers.removeValue(forKey: id) != nil else { return }
+            self.watchPaths[id] = nil
             self.fire(.unwatch(id: id))
         }
     }
@@ -165,7 +171,9 @@ extension RemoteLink {
         case let .processExit(id, code): processes.removeValue(forKey: id)?.exit(code)
         case .changed(let id): watchers[id]?()
         case let .terminalOutput(id, data): terminals[id]?.output(data)
-        case let .terminalExit(id, code): terminals.removeValue(forKey: id)?.exit(code)
+        case let .terminalExit(id, code):
+            terminalSpecs[id] = nil
+            terminals.removeValue(forKey: id)?.exit(code)
         default: break
         }
     }
@@ -174,8 +182,9 @@ extension RemoteLink {
     func dropStreams() {
         for (_, process) in processes { process.exit(nil) }
         processes = [:]
-        for (_, terminal) in terminals { terminal.exit(nil) }
-        terminals = [:]
+        for (_, terminal) in terminals {
+            terminal.output(Data("\r\nConnection dropped. Earlier processes ended; a new shell will start when the Mac reconnects.\r\n".utf8))
+        }
     }
 }
 
@@ -193,14 +202,14 @@ extension HostedPeer {
         }
     }
 
-    func refusal(_ command: String, _ args: [String], cwd: String?) -> String? {
-        RemoteAccess.refusal(command, args, cwd: cwd, allowed: allowed)
+    func refusal(_ command: String, _ args: [String], cwd: String?, input: Bool = false) -> String? {
+        RemoteAccess.refusal(command, args, cwd: cwd, input: input, plugins: service?.model?.pluginCLIs ?? [], allowed: allowed)
     }
 
-    func exec(_ command: String, _ args: [String], cwd: String?) async -> RemoteResponse {
-        if let why = refusal(command, args, cwd: cwd) { return .failed(why) }
+    func exec(_ command: String, _ args: [String], cwd: String?, stdin: Data?) async -> RemoteResponse {
+        if let why = refusal(command, args, cwd: cwd, input: stdin != nil) { return .failed(why) }
         guard let model = service?.model else { return .failed("This Mac stopped sharing its agents.") }
-        do { return .exec(try await model.executor.run(command, args, cwd: cwd)) } catch { return .failed(error.localizedDescription) }
+        do { return .exec(try await model.executor.run(command, args, cwd: cwd, stdin: stdin)) } catch { return .failed(error.localizedDescription) }
     }
 
     func spawn(_ id: Int, _ spec: LaunchSpec) -> RemoteResponse {
@@ -222,6 +231,41 @@ extension HostedPeer {
             return .ok
         } catch {
             return .failed(error.localizedDescription)
+        }
+    }
+
+    /// Ask the chat that wrote some lines, for a phone: the same blame
+    /// and pre-filled prompt as Files and Review here, without opening
+    /// anything on this Mac. The chat is unarchived, as asking here does.
+    func askAuthor(root: String, path: String, lineStart: Int, lineEnd: Int, code: [String],
+                   revision: String?, sessionId: String?, model: AppModel) async -> RemoteResponse {
+        guard allowed(root) else { return .failed("That folder isn't one of this Mac's projects.") }
+        guard lineStart >= 1, lineEnd >= lineStart, lineEnd - lineStart < 500,
+              !path.hasPrefix("/"), !path.split(separator: "/").contains("..")
+        else { return .failed("Those lines can't be asked about.") }
+        let projectId = sessionId.flatMap { model.session($0)?.projectId }
+            ?? model.sessions.first { $0.worktreePath.map { AppModel.canonical($0) } == AppModel.canonical(root) }?.projectId
+            ?? model.projects.first { AppModel.canonical($0.rootPath) == AppModel.canonical(root) }?.id
+        let key = AskAuthorKey(repo: root, path: path, lines: lineStart...lineEnd, revision: revision)
+        let (target, origins) = await model.resolveAsk(key, projectId: projectId, exec: model.reader(for: sessionId))
+        switch target {
+        case let .originalChat(turn, archived, canEdit):
+            if archived { model.setArchived(turn.sessionId, false) }
+            return .askAuthor(RemoteAskAuthor(
+                sessionId: turn.sessionId, projectId: projectId,
+                draft: AskAuthor.quote(path: path, lines: key.lines, code: code,
+                                        commit: origins.last?.commit?.sha, turn: turn),
+                notice: canEdit ? nil
+                    : "This chat's worktree is gone, so it can answer questions but can't edit files there."))
+        case .newChat:
+            let turns = origins.flatMap(\.turns)
+            return .askAuthor(RemoteAskAuthor(
+                sessionId: nil, projectId: projectId,
+                draft: AskAuthor.newChatMessage(
+                    path: path, lines: key.lines, code: code,
+                    origin: origins.last?.commit ?? origins.first?.commit,
+                    deletedTurn: turns.last.flatMap { model.session($0.sessionId) == nil ? $0 : nil }),
+                notice: nil))
         }
     }
 
@@ -285,6 +329,14 @@ extension RemoteService {
         return executor
     }
 
+    /// Why commands given input can't run on a paired Mac yet: one running
+    /// an older Abstract would run them without it. Nil when they can.
+    func inputRefusal(_ device: String) -> String? {
+        // Not connected yet: the request itself will say so.
+        guard let link = links[device], let snapshot = link.snapshot, snapshot.execInput != true else { return nil }
+        return "Update Abstract on \(link.device.peer.name) to accept from here."
+    }
+
     /// A project on a paired Mac.
     func project(_ id: String) -> Project? {
         for link in links.values { if let p = link.snapshot?.projects.first(where: { $0.id == id }) { return p } }
@@ -305,6 +357,14 @@ extension AppModel {
         return remote.executor(for: device)
     }
 
+    /// Where a chat's background git reads run: on this Mac, inside the
+    /// app-wide budget, so views keeping up to date can't pile up processes.
+    /// A chat on another Mac reads there, as before.
+    func reader(for sessionId: String?) -> any Executor {
+        let exec = executor(for: sessionId)
+        return exec is RemoteExecutor ? exec : BudgetedExecutor(exec)
+    }
+
     /// Where a project's commands run: here, or on the Mac it lives on.
     func executor(forProject id: String?) -> any Executor {
         guard let id, !projects.contains(where: { $0.id == id }), let device = remote.device(ofProject: id) else { return executor }
@@ -319,9 +379,12 @@ extension AppModel {
 
     /// Calls `onChange` when something under `paths` changes, wherever the
     /// chat's worktree is. Kept alive by holding the returned object.
-    func watch(_ paths: [String], for sessionId: String, onChange: @escaping () -> Void) -> AnyObject? {
+    /// `matters` picks the events that count on this Mac; the other Mac's
+    /// watcher reports all of them.
+    func watch(_ paths: [String], for sessionId: String, matters: @escaping (String) -> Bool = { _ in true },
+               onChange: @escaping () -> Void) -> AnyObject? {
         if let link = remoteLink(for: sessionId) { return link.watch(paths, onChange: onChange) }
-        return WorktreeWatcher(paths: paths, onChange: onChange)
+        return WorktreeWatcher(paths: paths, matters: matters, onChange: onChange)
     }
 }
 

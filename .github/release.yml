@@ -1,0 +1,23 @@
+# Groups the generated release notes by pull request label. A pull request goes under
+# the first section whose labels it has; `internal` work only ever shows under
+# "Under the hood", even when it carries another label too.
+changelog:
+  categories:
+    - title: New
+      labels: [feature]
+      exclude:
+        labels: [internal]
+    - title: Fixed
+      labels: [fix]
+      exclude:
+        labels: [internal]
+    - title: Agents
+      labels: [agents]
+      exclude:
+        labels: [internal]
+    - title: Other changes
+      labels: ["*"]
+      exclude:
+        labels: [internal]
+    - title: Under the hood
+      labels: [internal]

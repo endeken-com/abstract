@@ -11,7 +11,15 @@ public struct ExecResult: Sendable, Hashable, Codable {
 public struct OutputLine: Sendable, Hashable, Codable {
     public var stream: OutputStreamKind
     public var line: String
-    public init(stream: OutputStreamKind, line: String) { self.stream = stream; self.line = line }
+    /// When it was logged, on the Mac that ran the agent. Lines logged before
+    /// times were kept have none.
+    public var at: Date?
+    /// A message you sent from the queue: the queued messages it delivered,
+    /// so a relaunch never sends them again.
+    public var queued: [String]?
+    public init(stream: OutputStreamKind, line: String, at: Date? = nil, queued: [String]? = nil) {
+        self.stream = stream; self.line = line; self.at = at; self.queued = queued
+    }
 }
 
 public enum AbstractError: Error, LocalizedError, Sendable, Equatable {
@@ -42,7 +50,9 @@ public protocol RunningProcess: AnyObject, Sendable {
 /// the same protocol so git and session code never change.
 public protocol Executor: Sendable {
     var homeDirectory: String { get }
-    func run(_ command: String, _ args: [String], cwd: String?) async throws -> ExecResult
+    /// Run to completion. `stdin`, when given, is the command's whole input;
+    /// otherwise it reads nothing.
+    func run(_ command: String, _ args: [String], cwd: String?, stdin: Data?) async throws -> ExecResult
     /// Spawn with line-buffered output. Callbacks arrive on a background queue.
     func spawn(
         _ spec: LaunchSpec,
@@ -77,6 +87,12 @@ public struct FileInfo: Sendable, Hashable, Codable {
         guard let a = try? FileManager.default.attributesOfItem(atPath: path) else { return nil }
         return FileInfo(size: (a[.size] as? NSNumber)?.int64Value ?? 0, modified: a[.modificationDate] as? Date,
                         isDirectory: a[.type] as? FileAttributeType == .typeDirectory)
+    }
+}
+
+public extension Executor {
+    func run(_ command: String, _ args: [String], cwd: String?) async throws -> ExecResult {
+        try await run(command, args, cwd: cwd, stdin: nil)
     }
 }
 

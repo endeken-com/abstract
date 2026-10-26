@@ -1,0 +1,197 @@
+import Foundation
+
+/// The whole snapshot a plugin may see (ABS-84 §4). Sections appear only
+/// under their capability; no field outside this allowlist is ever encoded.
+public struct PluginSnapshot: Sendable, Hashable, Codable {
+    public var revision: Int
+    public var generatedAt: String
+    public var macs: [Mac]
+    public var projects: [Project]?
+    public var chats: [Chat]?
+
+    public struct Mac: Sendable, Hashable, Codable {
+        public var id: String
+        public var name: String
+        public var isThisMac: Bool
+        public var reachable: Bool
+        public init(id: String, name: String, isThisMac: Bool, reachable: Bool) {
+            self.id = id; self.name = name; self.isThisMac = isThisMac; self.reachable = reachable
+        }
+    }
+
+    public struct Project: Sendable, Hashable, Codable {
+        /// Opaque, stable per Mac + project.
+        public var key: String
+        public var name: String
+        public var macId: String
+        public var archived: Bool
+        /// The trackers it links to (ABS-143), when it links any.
+        public var issueTrackers: [ProjectIssueTracker]?
+        public init(key: String, name: String, macId: String, archived: Bool,
+                    issueTrackers: [ProjectIssueTracker] = []) {
+            self.key = key; self.name = name; self.macId = macId; self.archived = archived
+            self.issueTrackers = issueTrackers.isEmpty ? nil : issueTrackers
+        }
+    }
+
+    /// One tracker a project links to: "Jira" and "PROJ", or "Linear",
+    /// "Core" and its team "ENG".
+    public struct ProjectIssueTracker: Sendable, Hashable, Codable {
+        public var tracker: String
+        public var project: String
+        public var team: String?
+        public init(tracker: String, project: String, team: String? = nil) {
+            self.tracker = tracker; self.project = project; self.team = team
+        }
+    }
+
+    public enum Progress: String, Sendable, Hashable, Codable, CaseIterable {
+        case needsYou, working, readyToReview, done
+    }
+
+    public struct PullRequest: Sendable, Hashable, Codable {
+        public var number: Int
+        public var state: String
+        public var isDraft: Bool
+        public var checks: String?
+        public var changesRequested: Bool
+        /// How many reviews and comments are known, and how many checks
+        /// failed (ABS-109): a change in either is news. The words
+        /// themselves are pulled with `getPullRequest`.
+        public var comments: Int
+        public var failedChecks: Int
+        public init(number: Int, state: String, isDraft: Bool, checks: String?, changesRequested: Bool,
+                    comments: Int = 0, failedChecks: Int = 0) {
+            self.number = number; self.state = state; self.isDraft = isDraft
+            self.checks = checks; self.changesRequested = changesRequested
+            self.comments = comments; self.failedChecks = failedChecks
+        }
+        public init(_ facts: SidebarChats.PullRequestFacts) {
+            self.init(number: facts.number, state: facts.state.rawValue.lowercased(), isDraft: facts.isDraft,
+                      checks: facts.checks?.rawValue, changesRequested: facts.changesRequested,
+                      comments: facts.comments, failedChecks: facts.failedChecks)
+        }
+    }
+
+    public struct Chat: Sendable, Hashable, Codable {
+        public var id: String
+        public var title: String
+        public var projectKey: String?
+        public var agentId: String
+        public var branch: String?
+        public var status: String
+        public var progress: Progress
+        public var pinned: Bool
+        public var archived: Bool
+        public var createdAt: String
+        public var lastActivityAt: String
+        public var hasChanges: Bool?
+        public var backgroundTasks: Int
+        public var pullRequest: PullRequest?
+        public var macId: String
+    }
+
+    /// One chat the host knows, before the allowlist is applied.
+    public struct ChatInput: Sendable {
+        public var chat: SidebarChats.Chat
+        public var projectKey: String?
+        public var macId: String
+        public init(chat: SidebarChats.Chat, projectKey: String?, macId: String) {
+            self.chat = chat; self.projectKey = projectKey; self.macId = macId
+        }
+    }
+
+    /// A project key that tells same-named projects on two Macs apart and
+    /// carries no path.
+    public static func projectKey(macId: String, projectId: String) -> String {
+        "\(macId):\(projectId)"
+    }
+
+    public static func build(revision: Int, now: Date = Date(), capabilities: Set<PluginCapability>,
+                             macs: [Mac], projects: [Project], chats: [ChatInput]) -> PluginSnapshot {
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime]
+        let projectRows = capabilities.contains(.projectsRead) ? projects : nil
+        let chatRows: [Chat]? = capabilities.contains(.chatsRead) ? chats.map { input in
+            let session = input.chat.session
+            // Progress is host-derived, pins aside, the way the sidebar groups.
+            let progress: Progress = switch SidebarChats.status(of: input.chat) {
+            case .needsYou: .needsYou
+            case .working: .working
+            case .readyToReview: .readyToReview
+            default: .done
+            }
+            return Chat(id: session.id, title: session.name, projectKey: input.projectKey,
+                        agentId: session.providerId, branch: session.branch, status: session.status.rawValue,
+                        progress: progress, pinned: session.pinnedAt != nil, archived: session.archivedAt != nil,
+                        createdAt: iso.string(from: session.createdAt),
+                        lastActivityAt: iso.string(from: input.chat.activeAt),
+                        hasChanges: input.chat.hasChanges, backgroundTasks: input.chat.backgroundTasks,
+                        pullRequest: input.chat.pullRequest.map(PullRequest.init), macId: input.macId)
+        } : nil
+        return PluginSnapshot(revision: revision, generatedAt: iso.string(from: now),
+                              macs: macs, projects: projectRows, chats: chatRows)
+    }
+
+    public func jsonValue() -> JSONValue {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        guard let data = try? encoder.encode(self),
+              let object = try? JSONSerialization.jsonObject(with: data) else { return .object([:]) }
+        return JSONValue(any: object)
+    }
+}
+
+extension PluginSnapshot.Chat {
+    public func jsonValue() -> JSONValue {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        guard let data = try? encoder.encode(self),
+              let object = try? JSONSerialization.jsonObject(with: data) else { return .object([:]) }
+        return JSONValue(any: object)
+    }
+}
+
+/// Theme and locale handed to every plugin without a grant (ABS-84 §4).
+public enum PluginContext {
+    public static func jsonValue(theme: Theme, locale: String, pluginId: String, pluginVersion: String,
+                                 capabilities: Set<PluginCapability>,
+                                 placement: PluginPlacement? = nil,
+                                 chat: PluginSnapshot.Chat? = nil) -> JSONValue {
+        jsonValue(appearance: PluginAppearance(theme: theme), locale: locale, pluginId: pluginId,
+                  pluginVersion: pluginVersion, capabilities: capabilities, placement: placement, chat: chat)
+    }
+
+    /// The environment every plugin gets: the theme picked in Abstract and
+    /// all its colours (ABS-134), locale, and the plugin's own id/version.
+    public static func jsonValue(appearance: PluginAppearance, locale: String, pluginId: String, pluginVersion: String,
+                                 capabilities: Set<PluginCapability>,
+                                 placement: PluginPlacement? = nil,
+                                 chat: PluginSnapshot.Chat? = nil) -> JSONValue {
+        var object = appearance.jsonValue()
+        object["locale"] = .string(locale)
+        object["pluginId"] = .string(pluginId)
+        object["pluginVersion"] = .string(pluginVersion)
+        object["capabilities"] = .array(capabilities.map(\.rawValue).sorted().map(JSONValue.string))
+        // Where this showing sits (ABS-96). The chat's id is the user's own
+        // target; its snapshot row is included only under `chats.read`, and
+        // only for the chat this place sits beside.
+        if let placement {
+            object["place"] = .string(placement.place.rawValue)
+            object["contributionId"] = .string(placement.contributionId)
+            if let projectKey = placement.projectKey { object["projectKey"] = .string(projectKey) }
+            if let chatId = placement.chatId {
+                object["chatId"] = .string(chatId)
+                if capabilities.contains(.chatsRead), let chat, chat.id == chatId {
+                    object["chat"] = chat.jsonValue()
+                }
+            }
+        }
+        return .object(object)
+    }
+
+    static func css(_ swatch: Swatch) -> String {
+        let hex = String(format: "%06x", swatch.hex)
+        return swatch.alpha >= 1 ? "#\(hex)" : "#\(hex)\(String(format: "%02x", Int((swatch.alpha * 255).rounded())))"
+    }
+}

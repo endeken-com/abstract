@@ -30,7 +30,10 @@ struct AutomationRunHistory: View {
     private var emptyMessage: String {
         guard let automation else { return "Runs show here once the automation is saved." }
         guard automation.enabled else { return "No runs yet. This automation is paused." }
-        guard !automation.triggers.isEmpty else { return "No runs yet. With no triggers it runs only when you start it with Run now." }
+        guard !automation.triggers.isEmpty else {
+            if let events = AutomationEvents.summary(automation.events) { return "No runs yet. \(events), it runs." }
+            return "No runs yet. With no triggers it runs only when you start it with Run now."
+        }
         guard let next = automation.nextRunAt else { return "No runs yet, and none coming up." }
         return "No runs yet. The first is \(AutomationText.moment(next))."
     }
@@ -61,9 +64,10 @@ private struct RunRow: View {
                     .foregroundStyle(Color.btText)
                     .monospacedDigit()
                     .frame(minWidth: 150, alignment: .leading)
-                Text(run.trigger.label)
+                Text(triggerLabel)
                     .font(.btBody)
                     .foregroundStyle(Color.btTextSecondary)
+                    .lineLimit(1)
                 Spacer(minLength: Space.md)
                 Text(outcome(session))
                     .font(.btCallout)
@@ -81,9 +85,24 @@ private struct RunRow: View {
                     .padding(.leading, AutoPage.gutter)
                     .padding(.bottom, Space.sm)
             }
+            if run.status == .skipped, let reason = run.reason, !reason.isEmpty {
+                Text(reason.prefix(1).uppercased() + reason.dropFirst() + ".")
+                    .font(.btCaption)
+                    .foregroundStyle(Color.btTextTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, AutoPage.gutter)
+                    .padding(.bottom, Space.sm)
+            }
         }
         .padding(.horizontal, AutoPage.hang)
         .contentShape(Rectangle())
+    }
+
+    /// "Scheduled", or for an event "“Fix login” was archived".
+    private var triggerLabel: String {
+        guard let event = run.event else { return run.trigger.label }
+        let chat = run.sourceSessionId.flatMap { model.chatName($0) }.map { "“\($0)”" } ?? "A chat"
+        return "\(chat) \(event.phrase)"
     }
 
     @ViewBuilder
@@ -100,6 +119,7 @@ private struct RunRow: View {
         switch run.status {
         case .creating: "Starting…"
         case .failed: "Failed"
+        case .skipped: "Skipped"
         case .created: session?.status.label ?? "Chat deleted"
         }
     }
