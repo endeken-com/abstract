@@ -56,7 +56,11 @@ struct ComposerView: View {
     private var providerCommands: ProviderCommands { ProviderRegistry.provider(session.providerId)?.commands ?? .none }
     /// App commands that make no sense right now.
     private var unavailable: Set<AppCommand> {
-        var out = AppCommand.unavailable(working: working, remote: remote)
+        var out = AppCommand.unavailable(working: working || model.compacting.contains(session.id), remote: remote,
+                                         hasConversation: session.providerSessionId != nil)
+        // A pending permission or question isn't "working", but compacting then
+        // would race the turn it's blocked on.
+        if session.status == .waitingInput { out.insert(.compact) }
         if model.efforts(providerId: session.providerId, model: session.model, on: device).levels.isEmpty { out.insert(.effort) }
         return out
     }
@@ -243,9 +247,10 @@ struct ComposerView: View {
     }
 
     private func send() {
-        // A whole app command (`/model`) runs here instead of going to the agent.
+        // A whole app command (`/model`) runs here instead of going to the agent;
+        // `/compact` even when it can't, so `compact` says why instead.
         if !readOnly, !settingUp,
-           let command = SlashCommands.appCommand(forDraft: draft, provider: providerCommands, excluding: unavailable) {
+           let command = SlashCommands.appCommand(forDraft: draft, provider: providerCommands, excluding: unavailable.subtracting([.compact])) {
             run(command)
             return
         }
@@ -350,6 +355,7 @@ struct ComposerView: View {
         case .tasks:
             if model.backgroundTasks(session.id).isEmpty { model.flash("No background tasks") }
             else { model.tasksOpen = TasksFocus(sessionId: session.id) }
+        case .compact: model.compact(session.id)
         }
         draft = ""
     }
@@ -402,7 +408,7 @@ struct ComposerView: View {
                        detail: ProviderRegistry.provider(session.providerId)?.permissionDetail(policy) ?? policy.detail,
                        checked: session.permissionPolicy == policy) { model.setPolicy(session.id, policy) }
             }
-        case .stop, .diff, .rename, .attach, .tasks:
+        case .stop, .diff, .rename, .attach, .tasks, .compact:
             return []
         }
     }

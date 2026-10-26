@@ -111,3 +111,137 @@ import Testing
         #expect(catalog.models[1].efforts.isEmpty)
     }
 }
+
+@Suite("OpenCode compaction")
+struct OpenCodeCompactionTests {
+    /// `GET /session/{id}/message` after a compaction, from OpenCode 1.18.18, trimmed.
+    static let messages = #"""
+    [{"info":{"role":"user"},"parts":[{"type":"text","text":"Reply with just: ok"}]},
+     {"info":{"role":"assistant","mode":"build","tokens":{"total":16151}},"parts":[{"type":"step-start"},{"type":"text","text":"ok"}]},
+     {"info":{"role":"user"},"parts":[{"type":"compaction"}]},
+     {"info":{"role":"assistant","mode":"compaction","summary":true,"tokens":{"total":785}},"parts":[{"type":"reasoning","text":"thinking"},{"type":"text","text":"## Objective\n- Reply ok."}]}]
+    """#
+
+    static func json(_ text: String) -> JSONValue { (try? JSONDecoder().decode(JSONValue.self, from: Data(text.utf8))) ?? .null }
+
+    @Test func readsThePortItListensOn() {
+        #expect(OpenCodeServer.port(fromLine: "opencode server listening on http://127.0.0.1:61070") == 61070)
+        #expect(OpenCodeServer.port(fromLine: "Warning: OPENCODE_SERVER_PASSWORD is not set") == nil)
+    }
+
+    @Test func splitsTheModelAtItsFirstSlash() {
+        #expect(OpenCodeServer.model("opencode/big-pickle")?.provider == "opencode")
+        #expect(OpenCodeServer.model("opencode/big-pickle")?.model == "big-pickle")
+        #expect(OpenCodeServer.model("openrouter/anthropic/claude-sonnet-5")?.provider == "openrouter")
+        #expect(OpenCodeServer.model("openrouter/anthropic/claude-sonnet-5")?.model == "anthropic/claude-sonnet-5")
+        #expect(OpenCodeServer.model("big-pickle") == nil)
+        #expect(OpenCodeServer.model("/x") == nil)
+    }
+
+    @Test func theContextBeforeIsTheLastReplysTokens() {
+        let before = Self.json(Self.messages).array.map { JSONValue.array(Array($0.prefix(2))) } ?? .null
+        #expect(OpenCodeServer.contextTokens(messages: before) == 16151)
+        #expect(OpenCodeServer.contextTokens(messages: Self.json(Self.messages)) == 16151, "the compaction's own reply doesn't count")
+    }
+
+    @Test func theSummaryIsTheCompactionReplysText() {
+        #expect(OpenCodeServer.summary(messages: Self.json(Self.messages)) == "## Objective\n- Reply ok.")
+        #expect(OpenCodeServer.summary(messages: Self.json("[]")) == nil)
+    }
+
+    @Test func readsErrorsAndStatus() {
+        #expect(OpenCodeServer.errorMessage(#"{"name":"NotFoundError","data":{"message":"Session not found: ses_x"}}"#) == "Session not found: ses_x")
+        #expect(OpenCodeServer.errorMessage("gateway down") == nil)
+        #expect(OpenCodeServer.split("true\n200") == ("true", 200))
+        #expect(OpenCodeServer.split("{\"a\":1}\nmore\n404") == ("{\"a\":1}\nmore", 404))
+    }
+
+    @Test func percentEncodesTheDirectoryQueryValueByHand() {
+        // URLComponents.queryItems leaves `+` unescaped, and OpenCode reads a
+        // literal `+` as a space; space, `&` and `#` must stay encoded too.
+        #expect(OpenCodeServer.url(base: "http://127.0.0.1:4096", path: "/session/x/message",
+                                   directory: "/Users/dev/a b/libc++&x#y")
+                == "http://127.0.0.1:4096/session/x/message?directory=/Users/dev/a%20b/libc%2B%2B%26x%23y")
+    }
+
+    @Test func maxTimeIsWholeSecondsUntilTheDeadlineAtLeastOne() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        #expect(OpenCodeServer.maxTime(until: now.addingTimeInterval(120.4), from: now) == "120")
+        #expect(OpenCodeServer.maxTime(until: now.addingTimeInterval(0.4), from: now) == "1", "clamped to at least 1")
+        #expect(OpenCodeServer.maxTime(until: now, from: now) == nil, "at the deadline")
+        #expect(OpenCodeServer.maxTime(until: now.addingTimeInterval(-5), from: now) == nil, "past the deadline")
+    }
+
+    @Test func noModelAnywhereSaysSo() async {
+        let home = NSTemporaryDirectory() + "oc-\(UUID().uuidString)"
+        let request = CompactionRequest(sessionId: "ses_x", cwd: NSTemporaryDirectory())
+        await #expect(throws: AbstractError.message("OpenCode needs a model to compact with; choose one for this chat.")) {
+            try await OpenCodeCompactor().compact(request, executor: HomeOnly(home: home))
+        }
+    }
+
+    @Test func stoppingDuringSummarizeKillsCurlAndTheServer() async throws {
+        let dir = NSTemporaryDirectory() + "oc-\(UUID().uuidString)/"
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        let server = dir + "opencode"
+        try "#!/bin/sh\necho $$ > \(dir)server.pid\necho 'opencode server listening on http://127.0.0.1:4096'\nexec sleep 30\n"
+            .write(toFile: server, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: server)
+        let request = CompactionRequest(sessionId: "ses_x", cwd: dir, model: "opencode/x", binaryOverride: server)
+        let task = Task { try await OpenCodeCompactor().compact(request, executor: FakeCurl(dir: dir)) }
+        let deadline = Date().addingTimeInterval(15)
+        while !FileManager.default.fileExists(atPath: dir + "curl.pid"), Date() < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        task.cancel()
+        await #expect(throws: CancellationError.self) { try await task.value }
+        try await Task.sleep(for: .seconds(4)) // SIGTERM, then SIGKILL after the grace period.
+        for name in ["curl.pid", "server.pid"] {
+            let pid = try #require(Int32(String(contentsOfFile: dir + name, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
+            #expect(kill(pid, 0) != 0, "\(name) is gone")
+        }
+    }
+
+    @Test func openCodeCompactsThroughItsServer() {
+        #expect(OpenCodeProvider().commands.extra.contains(.compact))
+        guard case .sideChannel(let compactor)? = OpenCodeProvider().compaction else { Issue.record("no side channel"); return }
+        #expect(compactor is OpenCodeCompactor)
+    }
+}
+
+/// LocalExecutor with another home, so no real OpenCode config is read.
+private struct HomeOnly: Executor {
+    let home: String
+    var homeDirectory: String { home }
+    let base = LocalExecutor.shared
+    func run(_ command: String, _ args: [String], cwd: String?, stdin: Data?) async throws -> ExecResult { try await base.run(command, args, cwd: cwd, stdin: stdin) }
+    func spawn(_ spec: LaunchSpec, onLine: @escaping @Sendable (OutputLine) -> Void,
+               onExit: @escaping @Sendable (Int32?) -> Void) throws -> RunningProcess { try base.spawn(spec, onLine: onLine, onExit: onExit) }
+    func fileExists(_ path: String) -> Bool { base.fileExists(path) }
+    func readFile(_ path: String) throws -> String { try base.readFile(path) }
+    func createDirectory(_ path: String) throws { try base.createDirectory(path) }
+    func removeItem(_ path: String) throws { try base.removeItem(path) }
+    func which(_ binary: String) async -> String? { await base.which(binary) }
+}
+
+/// LocalExecutor whose `curl` answers the message list at once and blocks on
+/// `summarize`, noting its pid, as OpenCode's does for minutes.
+private struct FakeCurl: Executor {
+    let dir: String
+    var homeDirectory: String { dir }
+    let base = LocalExecutor.shared
+    func run(_ command: String, _ args: [String], cwd: String?, stdin: Data?) async throws -> ExecResult { try await base.run(command, args, cwd: cwd, stdin: stdin) }
+    func spawn(_ spec: LaunchSpec, onLine: @escaping @Sendable (OutputLine) -> Void,
+               onExit: @escaping @Sendable (Int32?) -> Void) throws -> RunningProcess {
+        guard spec.command == "curl" else { return try base.spawn(spec, onLine: onLine, onExit: onExit) }
+        let script = "for a; do last=$a; done; case $last in *summarize*) echo $$ > \(dir)curl.pid; exec sleep 30;; *) printf '[]\\n200';; esac"
+        let fake = LaunchSpec(command: "/bin/sh", args: ["-c", script, "curl"] + spec.args, cwd: spec.cwd, keepStdinOpen: false)
+        return try base.spawn(fake, onLine: onLine, onExit: onExit)
+    }
+    func fileExists(_ path: String) -> Bool { base.fileExists(path) }
+    func readFile(_ path: String) throws -> String { try base.readFile(path) }
+    func createDirectory(_ path: String) throws { try base.createDirectory(path) }
+    func removeItem(_ path: String) throws { try base.removeItem(path) }
+    func which(_ binary: String) async -> String? { await base.which(binary) }
+}

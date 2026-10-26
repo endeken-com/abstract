@@ -251,6 +251,8 @@ public enum OutputStreamKind: String, Sendable, Codable {
     /// A line of Abstract's own about the chat (its branch renamed, say),
     /// shown quietly between the agent's output.
     case note
+    /// A compaction Abstract ran or started (`CompactionMarker`).
+    case compaction
 }
 
 public struct UsageTotals: Sendable, Hashable, Codable {
@@ -355,6 +357,31 @@ public enum AgentEvent: Sendable, Hashable {
     indirect case subagent(parentToolUseId: String, AgentEvent)
     /// The chat passed from one agent to another, with what it was told.
     case handoff(from: String, to: String, summary: String?, source: HandoffSource?)
+    /// The agent's context was, or is being, compacted.
+    case compaction(CompactionEvent)
+}
+
+/// Who started a compaction: you, or the agent when its context filled.
+public enum CompactionTrigger: String, Sendable, Codable, Hashable { case manual, auto }
+
+/// What a compaction left behind. Whatever the agent doesn't report is nil.
+public struct CompactionResult: Sendable, Hashable, Codable {
+    public var tokensBefore: Int?
+    public var tokensAfter: Int?
+    public var contextWindow: Int?
+    public var summary: String?
+
+    public init(tokensBefore: Int? = nil, tokensAfter: Int? = nil, contextWindow: Int? = nil, summary: String? = nil) {
+        self.tokensBefore = tokensBefore; self.tokensAfter = tokensAfter
+        self.contextWindow = contextWindow; self.summary = summary
+    }
+}
+
+public enum CompactionEvent: Sendable, Hashable {
+    /// nil: the agent didn't say who started it.
+    case started(CompactionTrigger?)
+    case finished(CompactionResult, trigger: CompactionTrigger?, durationMs: Int?)
+    case failed(String)
 }
 
 public protocol OutputParser: AnyObject {
@@ -417,6 +444,32 @@ public enum FollowUpMode: Sendable {
     case stdin
     /// Follow-ups spawn a new process that resumes the provider session.
     case respawn
+}
+
+/// How an agent compacts its conversation's context.
+public enum Compaction: Sendable {
+    /// Sent to the agent as a turn; its own output reports progress.
+    case inStream(prompt: String)
+    /// Run beside the chat by a short-lived process of the agent's.
+    case sideChannel(any Compactor)
+}
+
+/// Compacts one agent conversation outside the chat's own process.
+public protocol Compactor: Sendable {
+    /// Runs on the executor's host. Throws with a reason fit to show.
+    func compact(_ request: CompactionRequest, executor: any Executor) async throws -> CompactionResult
+}
+
+public struct CompactionRequest: Sendable, Hashable {
+    /// The agent's own id for the conversation.
+    public var sessionId: String
+    public var cwd: String
+    public var model: String?
+    public var binaryOverride: String?
+
+    public init(sessionId: String, cwd: String, model: String? = nil, binaryOverride: String? = nil) {
+        self.sessionId = sessionId; self.cwd = cwd; self.model = model; self.binaryOverride = binaryOverride
+    }
 }
 
 /// Everything agent-specific. Adding an agent = one conforming type plus one
@@ -491,6 +544,8 @@ public protocol ProviderDefinition: Sendable {
     /// Whether that check's output shows the naming call can't act on
     /// anything (no tools, nothing permitted). False asks nothing.
     func namingCheckPasses(_ output: String) -> Bool
+    /// How it compacts; nil: it can't, and `/compact` isn't offered.
+    var compaction: Compaction? { get }
 }
 
 public extension ProviderDefinition {
@@ -513,4 +568,5 @@ public extension ProviderDefinition {
     func namingError(_ output: String) -> String? { nil }
     func namingCheck(home: String, binary: String?) -> LaunchSpec? { nil }
     func namingCheckPasses(_ output: String) -> Bool { true }
+    var compaction: Compaction? { nil }
 }

@@ -85,11 +85,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         let working = model.workingSessionIds.count
         let settingUp = model.activeSetupCount
-        guard working + settingUp > 0, DemoBootstrap.current == nil else {
-            model.stopAllSetups()
-            model.engine.stopAll()
-            return .terminateNow
-        }
+        guard working + settingUp > 0, DemoBootstrap.current == nil else { return stopAllAndQuit() }
         let alert = NSAlert()
         alert.messageText = "Quit while agents are working?"
         let agents = working == 0 ? nil : "\(working) agent\(working == 1 ? " is" : "s are") still running."
@@ -99,9 +95,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.addButton(withTitle: "Quit")
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return .terminateCancel }
+        return stopAllAndQuit()
+    }
+
+    /// Stops every agent and setup, then quits; once any compaction beside
+    /// an agent has stopped its helpers, which nothing else would.
+    private func stopAllAndQuit() -> NSApplication.TerminateReply {
         model.stopAllSetups()
         model.engine.stopAll()
-        return .terminateNow
+        guard !model.compactions.isEmpty else { return .terminateNow }
+        Task {
+            await model.stopAllCompactions()
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 
     /// Hang up every terminal's shell, like closing terminal windows.
@@ -232,11 +239,12 @@ struct AbstractCommands: Commands {
             Button("Reset Layout") { if let s = model.selectedSession { model.resetLayout(s.id) } }
                 .disabled(model.selectedSession == nil)
             Divider()
+            // A side-channel compaction runs no agent, but Stop is what cancels it.
             Button("Stop Agent") { if let s = model.selectedSession { model.stop(s.id) } }
                 .keyboardShortcut(".", modifiers: .command)
-                .disabled(model.selectedSession.map { !model.isAlive($0.id) } ?? true)
+                .disabled(model.selectedSession.map { !model.isAlive($0.id) && !model.isCompactingAside($0.id) } ?? true)
             Button("Resume Agent") { if let s = model.selectedSession { model.resume(s.id) } }
-                .disabled(model.selectedSession.map { model.isAlive($0.id) } ?? true)
+                .disabled(model.selectedSession.map { model.isAlive($0.id) || model.isCompactingAside($0.id) } ?? true)
             Divider()
             if model.everythingPaused {
                 Button("Resume Everything") { model.resumeEverything() }

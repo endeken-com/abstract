@@ -1,0 +1,10 @@
+{"id":1,"result":{"userAgent":"abstract/1 (Mac OS 26.5.1; arm64)","platformFamily":"unix"}}
+{"method":"thread/status/changed","params":{"threadId":"t-1","status":{"type":"idle"}}}
+{"id":2,"result":{"thread":{"id":"t-1"}}}
+{"method":"thread/tokenUsage/updated","params":{"threadId":"t-1","turnId":"u-0","tokenUsage":{"total":{"totalTokens":17251},"last":{"totalTokens":17251},"modelContextWindow":258400}}}
+{"id":3,"result":{}}
+{"method":"turn/started","params":{"threadId":"t-1","turn":{"id":"u-1","status":"inProgress"}}}
+{"method":"item/started","params":{"item":{"type":"contextCompaction","id":"i-1"},"threadId":"t-1","turnId":"u-1"}}
+{"method":"thread/tokenUsage/updated","params":{"threadId":"t-1","turnId":"u-1","tokenUsage":{"total":{"totalTokens":17251},"last":{"totalTokens":5546},"modelContextWindow":258400}}}
+{"method":"item/completed","params":{"item":{"type":"contextCompaction","id":"i-1"},"threadId":"t-1","turnId":"u-1"}}
+{"method":"turn/completed","params":{"threadId":"t-1","turn":{"id":"u-1","status":"completed","durationMs":4939}}}

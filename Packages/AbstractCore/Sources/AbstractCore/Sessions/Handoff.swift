@@ -119,6 +119,8 @@ public final class ChatStream {
             return [.notice(.info(line.line))]
         case .launch:
             return LaunchRecord(line).map { [.launch($0)] } ?? []
+        case .compaction:
+            return CompactionMarker(line).map { [$0.event] } ?? []
         case .stdout, .stderr:
             let events = parser?.feed(line.line, stream: line.stream) ?? [.raw(line: line.line, stream: line.stream)]
             let scoped = providerId == "codex" ? scopeCodex(events) : events
@@ -262,7 +264,7 @@ public enum HandoffTranscript {
                 agent = name(to)
                 speaker = nil
                 out += "\n---\n\n_Handed over from \(name(from)) to \(agent)._\n"
-            case .thinking, .system, .turn, .notice, .raw, .gitOperation:
+            case .thinking, .system, .turn, .notice, .raw, .gitOperation, .compaction:
                 continue
             }
         }
