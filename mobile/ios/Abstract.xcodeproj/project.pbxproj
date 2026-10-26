@@ -169,6 +169,11 @@
 						DevelopmentTeam = 4732X99X72;
 						LastSwiftMigration = 1250;
 						ProvisioningStyle = Automatic;
+						SystemCapabilities = {
+							com.apple.KeychainSharing = {
+								enabled = 1;
+							};
+						};
 					};
 				};
 			};

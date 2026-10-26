@@ -165,6 +165,11 @@ final class PluginService {
         refresh()
     }
 
+    func setTranscriptProjectKeys(_ id: String, _ keys: [String]) {
+        manager.setTranscriptProjectKeys(id, keys)
+        refresh()
+    }
+
     func reviewChangedPackage(_ id: String) {
         manager.reviewChangedPackage(id)
         refresh()
