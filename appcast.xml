@@ -5,10 +5,10 @@
     <link>https://endeken-com.github.io/abstract/appcast.xml</link>
     <language>en</language>
     <item>
-      <title>Abstract 0.12.0-nightly.51</title>
-      <pubDate>Sun, 25 Oct 2026 10:37:28 GMT</pubDate>
-      <sparkle:version>0.12.0.51</sparkle:version>
-      <sparkle:shortVersionString>0.12.0-nightly.51</sparkle:shortVersionString>
+      <title>Abstract 0.12.0-nightly.52</title>
+      <pubDate>Mon, 26 Oct 2026 12:06:46 GMT</pubDate>
+      <sparkle:version>0.12.0.52</sparkle:version>
+      <sparkle:shortVersionString>0.12.0-nightly.52</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
       <sparkle:channel>nightly</sparkle:channel>
       <sparkle:fullReleaseNotesLink>https://github.com/endeken-com/abstract/releases/tag/nightly</sparkle:fullReleaseNotesLink>
@@ -61,6 +61,7 @@
 &lt;li&gt;Phone chat rows make work and review status easy to scan by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/wesguirra/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/wesguirra"&gt;@wesguirra&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5988411530" data-permission-text="Title is private" data-url="https://github.com/endeken-com/abstract/issues/136" data-hovercard-type="pull_request" data-hovercard-url="/endeken-com/abstract/pull/136/hovercard" href="https://github.com/endeken-com/abstract/pull/136"&gt;#136&lt;/a&gt;&lt;/li&gt;
 &lt;li&gt;The phone composer makes settings and connection feel at home by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/wesguirra/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/wesguirra"&gt;@wesguirra&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5988627028" data-permission-text="Title is private" data-url="https://github.com/endeken-com/abstract/issues/138" data-hovercard-type="pull_request" data-hovercard-url="/endeken-com/abstract/pull/138/hovercard" href="https://github.com/endeken-com/abstract/pull/138"&gt;#138&lt;/a&gt;&lt;/li&gt;
 &lt;li&gt;Attach photos from the library in the phone composer by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/wesguirra/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/wesguirra"&gt;@wesguirra&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="6018978736" data-permission-text="Title is private" data-url="https://github.com/endeken-com/abstract/issues/143" data-hovercard-type="pull_request" data-hovercard-url="/endeken-com/abstract/pull/143/hovercard" href="https://github.com/endeken-com/abstract/pull/143"&gt;#143&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;Manage Mac plugins from the phone by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/wesguirra/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/wesguirra"&gt;@wesguirra&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="6019164304" data-permission-text="Title is private" data-url="https://github.com/endeken-com/abstract/issues/144" data-hovercard-type="pull_request" data-hovercard-url="/endeken-com/abstract/pull/144/hovercard" href="https://github.com/endeken-com/abstract/pull/144"&gt;#144&lt;/a&gt;&lt;/li&gt;
 &lt;/ul&gt;
 &lt;h3 dir="auto"&gt;Fixed&lt;/h3&gt;
 &lt;ul dir="auto"&gt;
@@ -92,8 +93,8 @@
 &lt;li&gt;Attach demo-mode screenshots of every screen to each pull request by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/wesguirra/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/wesguirra"&gt;@wesguirra&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5952964656" data-permission-text="Title is private" data-url="https://github.com/endeken-com/abstract/issues/111" data-hovercard-type="pull_request" data-hovercard-url="/endeken-com/abstract/pull/111/hovercard" href="https://github.com/endeken-com/abstract/pull/111"&gt;#111&lt;/a&gt;&lt;/li&gt;
 &lt;li&gt;Spike: share the project icon picker with profiles and plugin views by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/wesguirra/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/wesguirra"&gt;@wesguirra&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="5970624149" data-permission-text="Title is private" data-url="https://github.com/endeken-com/abstract/issues/129" data-hovercard-type="pull_request" data-hovercard-url="/endeken-com/abstract/pull/129/hovercard" href="https://github.com/endeken-com/abstract/pull/129"&gt;#129&lt;/a&gt;&lt;/li&gt;
 &lt;/ul&gt;
-&lt;p dir="auto"&gt;&lt;strong&gt;Full Changelog&lt;/strong&gt;: &lt;a class="commit-link" href="https://github.com/endeken-com/abstract/compare/v0.11.0...becdaf01f34f7488a8a2fbfe6ef8f29edf078b98"&gt;&lt;tt&gt;v0.11.0...becdaf0&lt;/tt&gt;&lt;/a&gt;&lt;/p&gt;</description>
-      <enclosure url="https://github.com/endeken-com/abstract/releases/download/nightly/Abstract-0.12.0-nightly.51.dmg" length="62339865" type="application/octet-stream" sparkle:edSignature="bw3kCL8Eq0Z0NbSmZMaSJ8XaZjodfusRNJIr7Ktu6Ncg94N9vE83rJ6sTAYdU9k2KwKUKLC2E1mi1JD0dh7WAw==" />
+&lt;p dir="auto"&gt;&lt;strong&gt;Full Changelog&lt;/strong&gt;: &lt;a class="commit-link" href="https://github.com/endeken-com/abstract/compare/v0.11.0...76eca34dc5d5f23e564a47c78b07806817a16568"&gt;&lt;tt&gt;v0.11.0...76eca34&lt;/tt&gt;&lt;/a&gt;&lt;/p&gt;</description>
+      <enclosure url="https://github.com/endeken-com/abstract/releases/download/nightly/Abstract-0.12.0-nightly.52.dmg" length="62512146" type="application/octet-stream" sparkle:edSignature="p3Tzkyw2q+E77x6wX26mXNRTgENlv68yO0Is5746Dg7HgfNasIM4O8+w29VC27t+0uZXjE1ywdNwvvsbsN24Dg==" />
     </item>
     <item>
       <title>Abstract 0.11.0</title>
