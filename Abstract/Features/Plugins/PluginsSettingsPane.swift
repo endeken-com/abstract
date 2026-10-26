@@ -2,15 +2,17 @@ import SwiftUI
 import UniformTypeIdentifiers
 import AbstractCore
 
-/// Settings → Plugins: what's installed, what each may see, and the switches
-/// that turn one on, off, or remove it (ABS-84 §5).
+/// Searchable plugin gallery and the existing permission review controls.
 struct PluginsSettingsPane: View {
     @Environment(AppModel.self) private var model
     @State private var pending: PendingInstall?
     @State private var enabling: InstalledPlugin?
     @State private var removing: InstalledPlugin?
     @State private var pickedProblem: String?
-    @State private var selectedTab = 0
+    @State private var query = ""
+    @State private var selectedView: PluginGalleryItem.ViewFilter = .all
+    @State private var selectedCategory: PluginGalleryItem.Category?
+    @State private var selectedPluginID: String?
     @State private var catalogBusy: String?
     /// A usable plugin whose own Settings page is showing (ABS-96).
     @State private var settingsPageFor: InstalledPlugin?
@@ -23,97 +25,100 @@ struct PluginsSettingsPane: View {
         var source: PluginSource
     }
 
+    private var bundled: [(folder: URL, inspection: PluginPackage.Inspection)] {
+        model.plugins.bundledFolders.compactMap { folder in
+            (try? PluginPackage.inspect(folder: folder)).map { (folder, $0) }
+        }
+    }
+
+    private var items: [PluginGalleryItem] {
+        PluginGalleryItem.items(installed: model.plugins.installed,
+                                bundled: bundled.map { $0.inspection.manifest }, catalog: model.plugins.catalog)
+    }
+
     var body: some View {
-        VStack(spacing: 0) {
-            Picker("Plugins", selection: $selectedTab) {
-                Text("Installed").tag(0)
-                Text("Catalog").tag(1)
+        let all = items
+        let visible = PluginGalleryItem.filter(all, query: query, view: selectedView, category: selectedCategory)
+        VStack(alignment: .leading, spacing: Space.lg) {
+            HStack(spacing: Space.sm) {
+                Image(systemName: "magnifyingglass").foregroundStyle(Color.btTextSecondary)
+                TextField("Search plugins", text: $query)
+                    .textFieldStyle(.plain)
+                    .accessibilityLabel("Search plugins")
             }
-            .pickerStyle(.segmented)
-            .padding()
-            if selectedTab == 0 {
-            Form {
-            Section {
-                if model.plugins.installed.isEmpty && model.plugins.orphans.isEmpty {
-                    Text("No plugins are installed yet.")
-                        .foregroundStyle(Color.btTextSecondary)
+            .padding(Space.md)
+            .background(Color.btSurface, in: RoundedRectangle(cornerRadius: 10))
+
+            ViewThatFits(in: .horizontal) {
+                HStack {
+                    viewPicker
+                    Spacer(minLength: Space.sm)
+                    installFromDiskButton
                 }
-                ForEach(model.plugins.installed) { plugin in
-                    row(plugin)
+                VStack(alignment: .leading, spacing: Space.sm) {
+                    viewPicker
+                    installFromDiskButton
                 }
-                ForEach(model.plugins.orphans, id: \.name) { orphan in
-                    LabeledContent {
-                        Text(orphan.problem).foregroundStyle(Color.btTextSecondary)
-                    } label: {
-                        Text(orphan.name)
-                        Text("Not installed")
-                    }
-                }
-            } header: {
-                Text("Installed")
-            } footer: {
-                SettingsCaption("Plugins are installed on this Mac, and paired phones can turn them on or off and open their screens. A plugin sees only what you granted it below, and turning it off takes that away and removes its screen, tabs, menu items and commands.")
             }
 
-            Section {
-                LabeledContent {
-                    Button("Install…") { pickPackage() }
-                } label: {
-                    Text("Install a plugin")
-                    Text("Choose a plugin folder, or a zip of one.")
-                }
-                ForEach(model.plugins.bundledFolders, id: \.path) { folder in
-                    if let inspection = try? PluginPackage.inspect(folder: folder),
-                       model.plugins.plugin(inspection.manifest.id) == nil {
-                        LabeledContent {
-                            Button("Install") {
-                                pending = PendingInstall(folder: folder, inspection: inspection, cleanup: nil, source: .bundled)
-                            }
-                        } label: {
-                            Text(inspection.manifest.name)
-                            Text("With Abstract · version \(inspection.manifest.version)")
+            if !all.isEmpty {
+                ScrollView(.horizontal) {
+                    HStack(spacing: Space.sm) {
+                        categoryButton("All kinds", category: nil)
+                        ForEach(PluginGalleryItem.Category.allCases.filter { kind in
+                            all.contains { $0.category == kind }
+                        }, id: \.self) { kind in
+                            categoryButton(kind.rawValue, category: kind)
                         }
                     }
                 }
-                if let pickedProblem {
-                    Text(pickedProblem).foregroundStyle(Color.btRemoved)
+                .scrollIndicators(.never)
+            }
+
+            if let problem = model.plugins.catalogProblem {
+                ViewThatFits(in: .horizontal) {
+                    HStack {
+                        Text("The catalog is unavailable. Installed and bundled plugins still work. \(problem)")
+                            .font(.btCaption).foregroundStyle(Color.btTextSecondary)
+                        Button("Try Again") { Task { await model.plugins.loadCatalog() } }
+                    }
+                    VStack(alignment: .leading, spacing: Space.sm) {
+                    Text("The catalog is unavailable. Installed and bundled plugins still work. \(problem)")
+                        .font(.btCaption).foregroundStyle(Color.btTextSecondary)
+                    Button("Try Again") { Task { await model.plugins.loadCatalog() } }
+                    }
                 }
-            } header: {
-                Text("Add")
+            } else if model.plugins.catalog.isEmpty {
+                ProgressView("Checking the catalog…")
             }
-            }
+            if let pickedProblem { Text(pickedProblem).foregroundStyle(Color.btRemoved) }
+
+            if visible.isEmpty {
+                Text(emptyMessage).foregroundStyle(Color.btTextSecondary)
+                    .frame(maxWidth: .infinity, minHeight: 120)
             } else {
-                Form {
-                    Section {
-                        if model.plugins.catalog.isEmpty && model.plugins.catalogProblem == nil {
-                            ProgressView("Loading plugins…")
-                        }
-                        ForEach(model.plugins.catalog) { entry in
-                            LabeledContent {
-                                let installed = model.plugins.plugin(entry.id)
-                                if installed?.record.version == entry.version && installed?.record.packageHash == entry.hash {
-                                    Text("Installed").foregroundStyle(Color.btTextSecondary)
-                                } else {
-                                    Button(installed == nil ? "Install" : "Review Update") {
-                                        download(entry)
-                                    }
-                                    .disabled(catalogBusy != nil)
-                                }
-                            } label: {
-                                Text(entry.name)
-                                Text("Version \(entry.version) · From Abstract")
-                            }
-                        }
-                        if let problem = model.plugins.catalogProblem {
-                            Text(problem).foregroundStyle(Color.btRemoved)
-                            Button("Try Again") { Task { await model.plugins.loadCatalog() } }
-                        }
-                        if let pickedProblem { Text(pickedProblem).foregroundStyle(Color.btRemoved) }
-                    } header: { Text("Catalog") }
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 245), spacing: Space.md)],
+                          alignment: .leading, spacing: Space.md) {
+                    ForEach(visible) { item in galleryCard(item) }
+                }
+            }
+
+            if let selectedPluginID, let item = all.first(where: { $0.id == selectedPluginID }) {
+                detail(item)
+            }
+            if !model.plugins.orphans.isEmpty {
+                VStack(alignment: .leading, spacing: Space.sm) {
+                    Text("Packages that could not be read").font(.btHeadline)
+                    ForEach(model.plugins.orphans, id: \.name) { orphan in
+                        Text("\(orphan.name): \(orphan.problem)").font(.btCaption)
+                    }
                 }
             }
         }
-        .settingsPane()
+        .padding(.horizontal, SettingsLayout.margin + SettingsLayout.textInset)
+        .padding(.vertical, Space.lg)
+        .frame(maxWidth: SettingsLayout.rowWidth + 2 * SettingsLayout.margin, alignment: .leading)
+        .frame(maxWidth: .infinity)
         .task { await model.plugins.loadCatalog() }
         .sheet(item: $pending) { item in
             PluginReviewSheet(
@@ -196,6 +201,144 @@ struct PluginsSettingsPane: View {
         } message: {
             Text("Its files, its saved settings and any secrets you entered for it are deleted from this Mac. Your chats and projects aren't affected.")
         }
+    }
+
+    private var emptyMessage: String {
+        if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "No plugins match your search and filters."
+        }
+        switch selectedView {
+        case .all: return "No plugins are available yet. Install one from a folder or zip."
+        case .installed: return "No installed plugins match these filters."
+        case .updates: return "No plugin updates need your attention."
+        }
+    }
+
+    private var viewPicker: some View {
+        Picker("Show", selection: $selectedView) {
+            ForEach(PluginGalleryItem.ViewFilter.allCases, id: \.self) { filter in
+                Text(filter.rawValue).tag(filter)
+            }
+        }
+        .pickerStyle(.segmented)
+        .frame(maxWidth: 360)
+    }
+
+    private var installFromDiskButton: some View {
+        Button("Install from folder or zip…") { pickPackage() }
+    }
+
+    private func categoryButton(_ title: String, category: PluginGalleryItem.Category?) -> some View {
+        Button(title) { selectedCategory = category }
+            .buttonStyle(.bt(category == selectedCategory ? .secondary : .ghost, size: .small))
+    }
+
+    private func galleryCard(_ item: PluginGalleryItem) -> some View {
+        VStack(alignment: .leading, spacing: Space.sm) {
+            HStack(alignment: .top, spacing: Space.md) {
+                Image(systemName: item.symbol)
+                    .font(.system(size: 22))
+                    .frame(width: 38, height: 38)
+                    .background(Color.btCanvas, in: RoundedRectangle(cornerRadius: 9))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.name).font(.btBodyMedium).foregroundStyle(Color.btText)
+                    Text(item.category.rawValue).font(.btCaption).foregroundStyle(Color.btTextSecondary)
+                }
+                Spacer(minLength: 0)
+            }
+            Text(item.summary).font(.btCaption).foregroundStyle(Color.btTextSecondary)
+                .lineLimit(2).frame(maxWidth: .infinity, minHeight: 34, alignment: .topLeading)
+            Text("Version \(item.version) · \(item.source.plainWords)")
+                .font(.btCaption).foregroundStyle(Color.btTextSecondary)
+            Text(item.publisher.map { "Verified publisher: \($0)" } ?? "Publisher unverified")
+                .font(.btCaption).foregroundStyle(Color.btTextSecondary)
+            HStack {
+                Text(stateWords(item)).font(.btCaption).foregroundStyle(Color.btTextSecondary)
+                Spacer(minLength: Space.sm)
+                primaryAction(item)
+            }
+        }
+        .padding(Space.md)
+        .background(Color.btSurface, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(
+            selectedPluginID == item.id ? Color.btTextSecondary : Color.clear, lineWidth: 1))
+        .contentShape(RoundedRectangle(cornerRadius: 12))
+        .onTapGesture { selectedPluginID = item.id }
+        .accessibilityElement(children: .contain)
+    }
+
+    private func stateWords(_ item: PluginGalleryItem) -> String {
+        switch item.state {
+        case .available: "Available"
+        case .installed: "On"
+        case .disabled: "Off"
+        case .updateAvailable: "Update available"
+        case .needsReview: "Needs review"
+        case .problem: "Needs attention"
+        }
+    }
+
+    @ViewBuilder
+    private func primaryAction(_ item: PluginGalleryItem) -> some View {
+        switch item.state {
+        case .available:
+            Button("Install") { install(item) }.disabled(catalogBusy != nil)
+        case .updateAvailable:
+            Button("Update") { if let entry = item.catalogEntry { download(entry) } }
+                .disabled(catalogBusy != nil)
+        case .disabled:
+            Button("Enable") { enabling = item.installed }
+        case .needsReview, .problem:
+            Button("Review") { selectedPluginID = item.id }
+        case .installed:
+            if let plugin = item.installed, let view = plugin.view {
+                Button("Open") {
+                    model.destination = .plugin(plugin.id, view.id)
+                    model.isSettingsOpen = false
+                }
+            } else {
+                Button("Manage") { selectedPluginID = item.id }
+            }
+        }
+    }
+
+    private func install(_ item: PluginGalleryItem) {
+        if item.source == .bundled,
+           let package = bundled.first(where: { $0.inspection.manifest.id == item.id }) {
+            pending = PendingInstall(folder: package.folder, inspection: package.inspection,
+                                     cleanup: nil, source: .bundled)
+        } else if let entry = item.catalogEntry {
+            download(entry)
+        }
+    }
+
+    private func detail(_ item: PluginGalleryItem) -> some View {
+        VStack(alignment: .leading, spacing: Space.md) {
+            HStack {
+                Text(item.name).font(.btHeadline).foregroundStyle(Color.btText)
+                Spacer()
+                Button { selectedPluginID = nil } label: { Image(systemName: "xmark") }
+                    .buttonStyle(.plain).accessibilityLabel("Close plugin details")
+            }
+            Text(item.summary).font(.btBody).foregroundStyle(Color.btTextSecondary)
+            Text("Version \(item.version) · \(item.source.plainWords) · \(item.publisher.map { "Verified publisher: \($0)" } ?? "Unverified")")
+                .font(.btCaption).foregroundStyle(Color.btTextSecondary)
+            if let manifest = item.installed?.manifest ?? bundled.first(where: { $0.inspection.manifest.id == item.id })?.inspection.manifest {
+                Text("What it adds").font(.btBodyMedium)
+                Text(manifest.appearanceSentences.isEmpty ? "A plugin screen in Abstract." : manifest.appearanceSentences.joined(separator: " "))
+                    .font(.btCaption).foregroundStyle(Color.btTextSecondary)
+            }
+            if let plugin = item.installed {
+                row(plugin)
+            } else {
+                primaryAction(item)
+                Text("Installing opens a review of what this plugin can access.")
+                    .font(.btCaption).foregroundStyle(Color.btTextSecondary)
+            }
+        }
+        .padding(Space.lg)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.btSurface, in: RoundedRectangle(cornerRadius: 12))
     }
 
     @ViewBuilder
