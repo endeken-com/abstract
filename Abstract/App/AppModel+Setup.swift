@@ -208,7 +208,15 @@ extension AppModel {
             let base = setup.baseRef.flatMap { $0.isEmpty ? nil : $0 } ?? project.defaultBaseRef
             setup.begin(.fetch)
             setStatus(id, .provisioning, detail: "Fetching \(base)")
-            let fresh = await Workspace.freshBase(executor: executor, root: project.rootPath, base: base)
+            // A child starts from the parent's local branch, including its
+            // unpushed commits. Fetching the same branch from origin could
+            // otherwise move the child to a different commit.
+            let fresh: Workspace.Base
+            if session(id)?.parentSessionId != nil {
+                fresh = Workspace.Base(ref: "refs/heads/\(base)")
+            } else {
+                fresh = await Workspace.freshBase(executor: executor, root: project.rootPath, base: base)
+            }
             guard !Task.isCancelled else { return }
             setup.base = fresh
             setup.finish(.fetch)

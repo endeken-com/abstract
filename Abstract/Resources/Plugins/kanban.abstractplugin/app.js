@@ -100,6 +100,8 @@ function cardEl(card) {
     h("span", { class: "card-meta" },
       h("span", { class: "ab-truncate" }, metaLine(card)),
       card.age ? h("span", { class: "age", title: "Last activity" }, card.age) : null),
+    card.subtasksTotal > 0 ? h("span", { class: "card-meta" },
+      `${card.subtasksDone} of ${card.subtasksTotal} sub-tasks done`) : null,
     foot);
 }
 
@@ -112,7 +114,9 @@ function rowEl(card, progress) {
     onclick: () => openCard(card.id),
   },
     h("span", { class: "ab-status ab-" + progress, "aria-hidden": "true" }),
-    h("span", { class: "title ab-truncate" }, card.title || "Untitled chat",
+    h("span", { class: "title ab-truncate" },
+      (card.parentId ? "↳ " : "") + (card.title || "Untitled chat") +
+        (card.subtasksTotal > 0 ? ` · ${card.subtasksDone} of ${card.subtasksTotal} sub-tasks done` : ""),
       card.pinned ? h("span", { class: "pin", title: "Pinned", "aria-label": "Pinned" }) : null),
     h("span", { class: "cell ab-truncate" }, card.projectName),
     h("span", { class: "cell ab-truncate" }, [card.agentName, card.macName].filter(Boolean).join(" · ")),

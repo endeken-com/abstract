@@ -791,7 +791,7 @@ final class AppModel {
                    policy: PermissionPolicy, model: String? = nil, effort: String? = nil, existing: WorktreeInfo? = nil,
                    name: String? = nil, nameSource: ChatNameSource = .manual, slug: String? = nil, automationId: String? = nil,
                    profile: ProfileSnapshot? = nil, workflow: WorkflowProgress? = nil, reviewing: String? = nil,
-                   select: Bool = true) async throws -> String {
+                   parentId: String? = nil, select: Bool = true) async throws -> String {
         let project = project(projectId)
         if projectId != nil, project == nil { throw AbstractError.notFound("project") }
         // A workflow's first step has the chat from the start, with its
@@ -819,6 +819,7 @@ final class AppModel {
         if let profile { session.apply(profile) }
         if let firstStep, let workflow { session.takeStep(firstStep, in: workflow) }
         session.reviewsSessionId = reviewing
+        session.parentSessionId = parentId
         session.nameSource = name == nil ? .fallback : nameSource
         if naming != nil { namingRequests.insert(session.id) }
         // Its agent's first replies may still name it; an older chat's never do.
@@ -855,6 +856,9 @@ final class AppModel {
         } catch {
             // Saved already: it says why, rather than seem to be starting forever.
             setStatus(session.id, .errored, detail: error.localizedDescription)
+            // A delegated child still exists. Return its id so its parent
+            // can wait for (and hear about) this failure.
+            if parentId != nil { return session.id }
             throw error
         }
         if let naming {
@@ -1983,27 +1987,29 @@ final class AppModel {
         // A turn that ended may have left changes: the sidebar files the chat by them.
         if wasWorking, [.idle, .finished, .errored].contains(status) {
             Task { await refreshBranch(sessionId) }
-            Task { await recordTurn(sessionId) }
-            reportTurnToPlugins(s, status: status)
+            let outcome = status == .errored ? "failed" : stopRequests[sessionId] != nil ? "stopped" : "done"
+            Task { await recordTurn(sessionId, outcome: outcome) }
         }
     }
 
     /// A finished turn, for plugins' background scripts (ABS-93); an
     /// automation's run finishes with its chat's first turn.
-    private func reportTurnToPlugins(_ s: Session, status: SessionStatus) {
+    private func reportTurnToPlugins(_ s: Session, outcome: String, summary: String?, changedFiles: Int) {
         guard let background = pluginBackground else { return }
-        let outcome = status == .errored ? "failed" : stopRequests[s.id] != nil ? "stopped" : "done"
-        background.deliver(.turnFinished(chatId: s.id, outcome: outcome, endedAt: Date()))
+        background.deliver(.turnFinished(chatId: s.id, outcome: outcome, endedAt: Date(), summary: summary,
+                                         changedFiles: changedFiles))
         if let automationId = s.automationId, reportedAutomationRuns.insert(s.id).inserted {
             background.deliver(.automationRunFinished(automationId: automationId, outcome: outcome, at: Date(), chatId: s.id))
         }
     }
 
     /// Saves what the turn that just ended changed and why.
-    private func recordTurn(_ sessionId: String) async {
+    private func recordTurn(_ sessionId: String, outcome: String) async {
         guard let s = session(sessionId) else { return }
         let pr = pullRequests[sessionId].map { (number: $0.number, body: $0.body) }
-        await turnRecorder.end(s, engine: engine, exec: executor(for: sessionId), pullRequest: pr)
+        let turn = await turnRecorder.end(s, engine: engine, exec: executor(for: sessionId), pullRequest: pr)
+        reportTurnToPlugins(s, outcome: outcome, summary: turn?.summary.map { String($0.prefix(2_000)) },
+                            changedFiles: turn?.files.count ?? 0)
     }
 
     private func replaceSession(_ s: Session) {

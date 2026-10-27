@@ -1,0 +1,36 @@
+{
+  "api": 2,
+  "id": "sh.abstract.delegation",
+  "name": "Delegation",
+  "version": "1.0.0",
+  "description": "A chat can ask another agent to work in its own chat and branch, then receive a short report when the sub-tasks finish.",
+  "entry": "index.html",
+  "background": "background.js",
+  "capabilities": ["projects.read", "chats.read", "turns.read", "chats.create", "chats.message", "storage.own", "agent.tools"],
+  "tools": [
+    {
+      "name": "delegate",
+      "description": "Start one sub-task in a separate chat and worktree. Commit work you need the child to see before calling this. The child keeps its own branch; merge it yourself after reviewing its work.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string", "description": "A short name for the sub-task" },
+          "prompt": { "type": "string", "description": "What the child agent should do" },
+          "agent": { "type": "string", "description": "The child agent id, such as claude or codex" },
+          "project": { "type": "string", "description": "Optional project key; defaults to this chat's project" }
+        },
+        "required": ["title", "prompt", "agent"]
+      }
+    },
+    {
+      "name": "wait_for",
+      "description": "Wait for your sub-tasks. This returns at once: end your turn after it says Waiting. A single message will bring their reports when they finish or one fails.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "children": { "type": "array", "items": { "type": "string" }, "description": "Child chat ids to wait for; defaults to unfinished children" }
+        }
+      }
+    }
+  ]
+}

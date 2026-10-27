@@ -97,7 +97,8 @@ import Testing
         #expect(payload["type"] == .string("chat.statusChanged"))
         #expect(payload["status"] == .string("needsYou"))
 
-        let turn = PluginEvent.turnFinished(chatId: "c", outcome: "done", endedAt: Date(timeIntervalSince1970: 0))
+        let turn = PluginEvent.turnFinished(chatId: "c", outcome: "done", endedAt: Date(timeIntervalSince1970: 0),
+                                            summary: "Finished the task", changedFiles: 2)
         #expect(turn.payload(capabilities: [.chatsRead]) == nil)
         #expect(turn.payload(capabilities: [.turnsRead])?["endedAt"] == .string("1970-01-01T00:00:00Z"))
 

@@ -13,6 +13,7 @@ extension AppModel {
         let projectsById = Dictionary(projects.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         var iconsByProjectId: [String: SidebarChats.Icon] = [:]
         let localProject = { (id: String?) -> Project? in id.flatMap { projectsById[$0] ?? self.remote.project($0) } }
+        let localChildren = Dictionary(grouping: sessions.filter { $0.parentSessionId != nil }, by: { $0.parentSessionId! })
         let local = sessions.filter { !$0.id.hasPrefix(RemoteService.mirrorPrefix) }.map { s in
             let project = localProject(s.projectId)
             let icon: SidebarChats.Icon
@@ -26,12 +27,16 @@ extension AppModel {
                               // A chat with no folder has nothing to review.
                               hasChanges: s.worktreePath == nil ? false : branchStates[s.id]?.hasUnmergedWork,
                               backgroundTasks: runningBackgroundTasks(s.id), projectName: project?.name,
-                              mac: here, icon: icon)
+                              mac: here, icon: icon,
+                              subtaskProgress: localChildren[s.id].map { children in
+                                  .init(done: children.count { [.idle, .finished].contains($0.status) }, total: children.count)
+                              }, stalled: stallState(s.id)?.isStalled ?? false)
         }
         let paired = remote.paired.compactMap { remote.links[$0.id] }.flatMap { link -> [SidebarChats.Chat] in
             guard let snapshot = link.snapshot else { return [] }
             let projects = Dictionary(snapshot.projects.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
             let busy = Set(snapshot.backgroundTasks ?? [])
+            let children = Dictionary(grouping: snapshot.sessions.filter { $0.parentSessionId != nil }, by: { $0.parentSessionId! })
             return snapshot.sessions.map { hosted in
                 var s = hosted
                 s.id = RemoteService.mirrorId(device: link.device.id, session: hosted.id)
@@ -42,7 +47,10 @@ extension AppModel {
                                          projectName: hostedProject?.name,
                                          mac: link.device.peer.name, isRemote: true,
                                          icon: SidebarChats.icon(project: hostedProject, isRemote: true,
-                                                                 remoteImage: hosted.projectId.flatMap { snapshot.projectIcons?[$0] }))
+                                                                 remoteImage: hosted.projectId.flatMap { snapshot.projectIcons?[$0] }),
+                                         subtaskProgress: children[hosted.id].map { group in
+                                             .init(done: group.count { [.idle, .finished].contains($0.status) }, total: group.count)
+                                         })
             }
         }
         return local + paired

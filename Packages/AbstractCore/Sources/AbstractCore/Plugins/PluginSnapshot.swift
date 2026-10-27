@@ -79,6 +79,10 @@ public struct PluginSnapshot: Sendable, Hashable, Codable {
         public var projectKey: String?
         public var agentId: String
         public var branch: String?
+        public var parentId: String? = nil
+        public var subtasksDone: Int? = nil
+        public var subtasksTotal: Int? = nil
+        public var stalled: Bool = false
         public var status: String
         public var progress: Progress
         public var pinned: Bool
@@ -122,7 +126,10 @@ public struct PluginSnapshot: Sendable, Hashable, Codable {
             default: .done
             }
             return Chat(id: session.id, title: session.name, projectKey: input.projectKey,
-                        agentId: session.providerId, branch: session.branch, status: session.status.rawValue,
+                        agentId: session.providerId, branch: session.branch, parentId: session.parentSessionId,
+                        subtasksDone: input.chat.subtaskProgress?.done, subtasksTotal: input.chat.subtaskProgress?.total,
+                        stalled: input.chat.stalled,
+                        status: session.status.rawValue,
                         progress: progress, pinned: session.pinnedAt != nil, archived: session.archivedAt != nil,
                         createdAt: iso.string(from: session.createdAt),
                         lastActivityAt: iso.string(from: input.chat.activeAt),

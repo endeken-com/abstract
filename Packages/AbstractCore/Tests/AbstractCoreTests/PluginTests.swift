@@ -290,7 +290,7 @@ import Testing
         let chat = try #require(json["chats"]?.array?.first?.object)
         #expect(Set(chat.keys) == ["id", "title", "projectKey", "agentId", "branch", "status", "progress",
                                    "pinned", "archived", "createdAt", "lastActivityAt", "hasChanges",
-                                   "backgroundTasks", "pullRequest", "macId"])
+                                   "backgroundTasks", "pullRequest", "macId", "stalled"])
         #expect(chat["progress"] == .string("needsYou"))
         #expect(chat["pinned"] == .bool(true))
         let project = try #require(json["projects"]?.array?.first?.object)

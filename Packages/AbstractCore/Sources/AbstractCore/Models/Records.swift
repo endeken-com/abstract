@@ -189,6 +189,8 @@ public struct Session: Sendable, Hashable, Identifiable, Codable {
     /// chat's worktree and never owns it: it doesn't take it over, and
     /// deleting it never removes the folder.
     public var reviewsSessionId: String? = nil
+    /// The chat that started this one as a sub-task.
+    public var parentSessionId: String? = nil
     /// The workflow it runs, and where it is in it; nil when it runs none.
     public var workflow: WorkflowProgress? = nil
 
@@ -212,7 +214,7 @@ public struct Session: Sendable, Hashable, Identifiable, Codable {
         case id, projectId, name, providerId, providerSessionId, worktreePath, branch, baseRef, status, statusDetail
         case permissionPolicy, prompt, automationId, createdAt, lastEventAt, archivedAt, model, effort, handoffFrom
         case providerSessions, pinnedAt, nameSource, profileId, profileName, profileInstructions, reviewsSessionId
-        case workflow
+        case workflow, parentSessionId
     }
 
     /// An older Mac's chats come without what it doesn't know yet.
@@ -239,6 +241,7 @@ public struct Session: Sendable, Hashable, Identifiable, Codable {
         profileName = try c.decodeIfPresent(String.self, forKey: .profileName)
         profileInstructions = try c.decodeIfPresent(String.self, forKey: .profileInstructions)
         reviewsSessionId = try c.decodeIfPresent(String.self, forKey: .reviewsSessionId)
+        parentSessionId = try c.decodeIfPresent(String.self, forKey: .parentSessionId)
         workflow = try? c.decodeIfPresent(WorkflowProgress.self, forKey: .workflow)
     }
 }

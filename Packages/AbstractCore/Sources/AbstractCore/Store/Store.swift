@@ -162,7 +162,23 @@ public final class Store: Sendable {
     }
 
     public func save(_ session: Session) throws {
-        try writer.write { db in try SessionRow(session).save(db) }
+        try writer.write { db in
+            if let parent = session.parentSessionId {
+                var seen: Set<String> = [session.id]
+                var current: String? = parent
+                while let id = current {
+                    guard seen.insert(id).inserted else {
+                        throw AbstractError.message("A chat can't be its own sub-task.")
+                    }
+                    guard let ancestor = try SessionRow.fetchOne(db, sql: "SELECT * FROM sessions WHERE id = ?", arguments: [id])?.value,
+                          ancestor.projectId == session.projectId else {
+                        throw AbstractError.message("That parent chat isn't in this project.")
+                    }
+                    current = ancestor.parentSessionId
+                }
+            }
+            try SessionRow(session).save(db)
+        }
     }
 
     /// A running CLI host may update status while its agent names the branch.
@@ -866,6 +882,10 @@ public final class Store: Sendable {
                 )
                 """)
         }
+        migrator.registerMigration("v24-chat-parents") { db in
+            try db.execute(sql: "ALTER TABLE sessions ADD COLUMN parent_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL")
+            try db.execute(sql: "CREATE INDEX sessions_parent ON sessions(parent_session_id)")
+        }
         return migrator
     }
 }
@@ -1001,6 +1021,7 @@ private struct SessionRow: FetchableRecord, PersistableRecord {
         value.handoffFrom = try row.decode(forColumn: "handoff_from")
         value.pinnedAt = try row.decode(forColumn: "pinned_at")
         value.reviewsSessionId = try row.decode(forColumn: "reviews_session_id")
+        value.parentSessionId = try row.decode(forColumn: "parent_session_id")
         value.nameSource = ChatNameSource(rawValue: try row.decode(forColumn: "name_source")) ?? .request
         if let workflow: String = try row.decode(forColumn: "workflow") {
             value.workflow = try? JSONDecoder().decode(WorkflowProgress.self, from: Data(workflow.utf8))
@@ -1036,6 +1057,7 @@ private struct SessionRow: FetchableRecord, PersistableRecord {
         container["profile_name"] = value.profileName
         container["profile_instructions"] = value.profileInstructions
         container["reviews_session_id"] = value.reviewsSessionId
+        container["parent_session_id"] = value.parentSessionId
         container["name_source"] = value.nameSource.rawValue
         container["workflow"] = try value.workflow.map { String(decoding: try JSONEncoder().encode($0), as: UTF8.self) }
     }

@@ -538,8 +538,9 @@ struct RailChatRow: View {
         let unreachable = model.remote.unreachableMessage(session.id)
         let stalled = unreachable == nil && (model.stallState(session.id)?.isStalled ?? false)
         let line = SidebarChats.line(for: chat, showProject: showProject)
+        let hasDetail = !line.isEmpty || (chat.subtaskProgress?.total ?? 0) > 0
         Button { showingDetails = false; model.open(session.id) } label: {
-            HStack(alignment: line.isEmpty && unreachable == nil && !stalled ? .center : .top, spacing: 8) {
+            HStack(alignment: !hasDetail && unreachable == nil && !stalled ? .center : .top, spacing: 8) {
                 RailChatMark(chat: chat, status: unreachable == nil ? session.status : .idle,
                              working: unreachable == nil && backgroundTasks > 0, stalled: stalled)
                     .opacity(unreachable == nil ? 1 : 0.5)
@@ -557,11 +558,17 @@ struct RailChatRow: View {
                             .foregroundStyle(Color.btWarning)
                             .lineLimit(1)
                     } else if !line.isEmpty { RailChatLine(line: line) }
+                    if let progress = chat.subtaskProgress, progress.total > 0 {
+                        Text("\(progress.done) of \(progress.total) sub-tasks done")
+                            .font(.btCaption)
+                            .foregroundStyle(Color.btTextTertiary)
+                            .lineLimit(1)
+                    }
                 }
             }
-            .padding(.leading, Rail.rowPadding + Rail.chatIndent)
+            .padding(.leading, Rail.rowPadding + Rail.chatIndent + (session.parentSessionId == nil ? 0 : 14))
             .padding(.trailing, Rail.rowPadding)
-            .padding(.vertical, line.isEmpty && unreachable == nil && !stalled ? 0 : 5)
+            .padding(.vertical, !hasDetail && unreachable == nil && !stalled ? 0 : 5)
             .frame(minHeight: Rail.rowHeight)
         }
         .buttonStyle(RailRowStyle(selected: selected))

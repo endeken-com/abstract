@@ -251,13 +251,31 @@ extension AppModel {
             if let agentId = action.agentId, ProviderRegistry.provider(agentId) == nil {
                 throw AbstractError.message("Abstract doesn't know that agent.")
             }
+            var parent: Session?
+            if let parentId = action.parentId {
+                guard let local = session(parentId), !parentId.hasPrefix(RemoteService.mirrorPrefix),
+                      local.projectId == project?.id else {
+                    throw AbstractError.message("That parent chat isn't in this project on this Mac.")
+                }
+                guard local.parentSessionId == nil || session(local.parentSessionId)?.parentSessionId == nil else {
+                    throw AbstractError.message("Sub-tasks can be at most two chats deep.")
+                }
+                guard sessions.filter({ $0.parentSessionId == parentId }).count < 5 else {
+                    throw AbstractError.message("A chat can have at most five sub-tasks.")
+                }
+                guard project == nil || local.branch != nil else {
+                    throw AbstractError.message("The parent chat needs a branch before it can start a sub-task.")
+                }
+                parent = local
+            }
             let id = try await startChat(
                 projectId: project?.id,
                 providerId: action.agentId ?? project?.defaultProviderId ?? "claude",
-                prompt: prompt, baseRef: nil,
+                prompt: prompt, baseRef: parent?.branch,
                 policy: action.policy.flatMap(PermissionPolicy.init(rawValue:))
                     ?? project?.defaultPermissionPolicy ?? .ask,
-                select: false)
+                name: action.title,
+                parentId: parent?.id, select: false)
             engine.record(sessionId: id, OutputLine(stream: .note, line: "Started by \(pluginName)."))
             return .object(["chatId": .string(id)])
 
