@@ -212,15 +212,17 @@ struct PullRequestPane: View {
                         if let error { ErrorLine(text: error) { self.error = nil } }
                         let requests = model.pullRequestsForChat(session.id)
                         if requests.count > 1 {
+                            let namesRepos = model.namesPullRequestRepos(session.projectId)
                             Menu {
                                 ForEach(requests) { request in
                                     Button {
                                         run("Loading pull request…") {
-                                            try await model.selectPullRequest(session.id, number: request.number)
+                                            try await model.selectPullRequest(session.id, request)
                                         }
                                     } label: {
-                                        Text("\(request.label) · \(request.stateLabel) · \(request.title)")
-                                        if request.number == model.pullRequests[session.id]?.number {
+                                        Text(namesRepos ? "\(request.repoName ?? "") \(request.label) · \(request.stateLabel) · \(request.title)"
+                                                        : "\(request.label) · \(request.stateLabel) · \(request.title)")
+                                        if request.id == model.pullRequests[session.id]?.id {
                                             Image(systemName: "checkmark")
                                         }
                                     }
@@ -297,11 +299,12 @@ struct PullRequestPane: View {
             return
         }
         if !model.isDemo {
-            // The project's code host plugin answers (ABS-139); none means nothing to show.
-            var host = await model.codeHost(for: project, chatId: session.id)
+            // A code host plugin answers for one of the project's
+            // repositories (ABS-139, ABS-163); none means nothing to show.
+            var host = await model.anyCodeHost(for: project, chatId: session.id)
             if host == nil {
                 await model.refreshCodeHostAccess(fresh: true)
-                host = await model.codeHost(for: project, chatId: session.id)
+                host = await model.anyCodeHost(for: project, chatId: session.id)
             }
             guard let host else {
                 phase = .unavailable("No code host", await model.codeHostMissing(project))
@@ -393,6 +396,9 @@ private struct PullRequestDetail: View {
                 PullRequestMark(pr: pr, size: 12)
                 Text(pr.stateLabel).font(.btCallout).foregroundStyle(pr.stateTint)
                 Text(verbatim: pr.label).font(.btCallout).foregroundStyle(Color.btTextTertiary)
+                if model.namesPullRequestRepos(session.projectId), let repo = pr.repoName {
+                    Text(repo).font(.btCallout).foregroundStyle(Color.btTextTertiary)
+                }
                 Spacer(minLength: Space.sm)
                 Button {
                     run("Refreshing…") {

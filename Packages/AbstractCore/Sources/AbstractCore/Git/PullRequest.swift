@@ -72,6 +72,12 @@ public struct PullRequest: Sendable, Hashable, Identifiable {
     }
 
     public var number: Int
+    /// The repository in its project it belongs to, by path from the
+    /// project's root; "" is the project's own (ABS-163). Set by the host
+    /// that asked for it, never by the code host's answer.
+    public var repoPath: String = ""
+    /// That repository's name, for its label in the PR screens.
+    public var repoName: String? = nil
     public var title: String
     public var state: State
     public var isDraft: Bool
@@ -102,7 +108,12 @@ public struct PullRequest: Sendable, Hashable, Identifiable {
     /// Review threads on the code; filled by the code host's `reviewThreads`.
     public var threads: [ReviewThread] = []
 
-    public var id: Int { number }
+    /// One pull request of one repository: the same number in a nested
+    /// repository or submodule is another pull request.
+    public var id: String { repoPath.isEmpty ? "#\(number)" : "\(repoPath)#\(number)" }
+
+    /// Whether `other` is this pull request: same repository, same number.
+    public func isSame(as other: PullRequest) -> Bool { number == other.number && repoPath == other.repoPath }
 
     public var checksSummary: ChecksSummary {
         checks.reduce(into: ChecksSummary()) { sum, check in
@@ -127,8 +138,9 @@ public struct PullRequest: Sendable, Hashable, Identifiable {
     /// Apply a fresh list result without discarding fields only a single read loads.
     /// Checks can change while `updatedAt` stays the same.
     public func refreshingSummary(with summary: PullRequest) -> PullRequest {
-        guard number == summary.number else { return summary }
+        guard isSame(as: summary) else { return summary }
         var updated = summary
+        updated.repoName = summary.repoName ?? repoName
         updated.mergeable = mergeable
         updated.mergeState = mergeState
         updated.changedFiles = changedFiles

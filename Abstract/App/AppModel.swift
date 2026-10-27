@@ -226,8 +226,12 @@ final class AppModel {
     @ObservationIgnored var pullRequestRetryAt: [String: ContinuousClock.Instant] = [:]
     @ObservationIgnored var pullRequestFailureCount: [String: Int] = [:]
     @ObservationIgnored var pullRequestLookupsAt: [String: ContinuousClock.Instant] = [:]
-    /// A pull request picked by hand for a chat, which a newer one won't replace.
-    @ObservationIgnored var pinnedPullRequests: [String: Int] = [:]
+    /// A pull request picked by hand for a chat (by its id: repository and
+    /// number), which a newer one won't replace.
+    @ObservationIgnored var pinnedPullRequests: [String: String] = [:]
+    /// Each project's repositories (its own, nested ones, submodules) and
+    /// their origins, read once per run, by project id (ABS-163).
+    @ObservationIgnored var projectRepos: [String: [ProjectRepo]] = [:]
     /// Where each chat's branch stands, by chat id: for its git actions and its Pull Request tab.
     var branchStates: [String: BranchState] = [:]
     /// When origin was last fetched, by project id (a chat id, without one);

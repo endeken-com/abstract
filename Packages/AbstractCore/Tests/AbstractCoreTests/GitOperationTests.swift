@@ -38,11 +38,11 @@ import AbstractCore
         let other = try #require(PullRequest(contract: .object([
             "number": .number(43), "title": .string("Another request"), "head": .string("feature/new"),
         ])))
-        #expect(PullRequestAssociation.retained(old, pinnedNumber: 42)?.number == 42)
-        #expect(PullRequestAssociation.candidates([old, other], branch: "feature/new", pinnedNumber: 42)
+        #expect(PullRequestAssociation.retained(old, pinned: "#42")?.number == 42)
+        #expect(PullRequestAssociation.candidates([old, other], branch: "feature/new", pinned: "#42")
             .map(\.number) == [42, 43])
-        #expect(PullRequestAssociation.retained(old, pinnedNumber: nil) == nil)
-        #expect(PullRequestAssociation.candidates([old, other], branch: "feature/new", pinnedNumber: nil)
+        #expect(PullRequestAssociation.retained(old, pinned: nil) == nil)
+        #expect(PullRequestAssociation.candidates([old, other], branch: "feature/new", pinned: nil)
             .map(\.number) == [43])
     }
 }

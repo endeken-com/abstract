@@ -39,6 +39,30 @@ public enum GitRemote {
         return GitText.trimmed(a) == GitText.trimmed(b)
     }
 
+    /// A submodule URL as git resolves it against its parent's remote:
+    /// each leading `../` drops the parent path's last part, so a sibling
+    /// repository is `../name`. Anything that isn't relative, or whose
+    /// parent names no host, is returned as it is.
+    public static func resolveRelative(_ url: String, against parent: String) -> String {
+        var rest = GitText.trimmed(url)
+        guard rest.hasPrefix("./") || rest.hasPrefix("../") else { return url }
+        let parent = GitText.trimmed(parent)
+        let prefix: String, parentPath: String
+        if let scheme = parent.range(of: "://"), let slash = parent[scheme.upperBound...].firstIndex(of: "/") {
+            prefix = String(parent[...slash]); parentPath = String(parent[parent.index(after: slash)...])
+        } else if !parent.contains("://"), let at = parent.firstIndex(of: "@"),
+                  let colon = parent[at...].firstIndex(of: ":") {
+            prefix = String(parent[...colon]); parentPath = String(parent[parent.index(after: colon)...])
+        } else { return url }
+        var parts = parentPath.split(separator: "/").map(String.init)
+        while rest.hasPrefix("../") {
+            guard !parts.isEmpty else { return url }
+            parts.removeLast(); rest.removeFirst(3)
+        }
+        if rest.hasPrefix("./") { rest.removeFirst(2) }
+        return prefix + (parts + [rest]).filter { !$0.isEmpty }.joined(separator: "/")
+    }
+
     /// The remote's host, lowercased: what picks its code host (ABS-139).
     public static func host(_ remote: String) -> String? {
         hostAndPath(remote).map { $0.host.lowercased() }
