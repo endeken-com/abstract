@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:">
+<link rel="stylesheet" href="/_abstract/abstract-ui.css">
+<link rel="stylesheet" href="style.css">
+<title>Dashboard</title>
+</head>
+<body>
+<div class="ab-page">
+  <header class="ab-header full-only">
+    <div class="ab-header-title"><h1>Dashboard</h1><span class="ab-tertiary ab-small">Across your chats</span></div>
+    <span class="ab-spacer"></span>
+    <label>Project <select id="project" aria-label="Filter by project"></select></label>
+    <label>Mac <select id="mac" aria-label="Filter by Mac"></select></label>
+  </header>
+  <main id="content" aria-live="polite"></main>
+</div>
+<script src="/_abstract/abstract-ui.js"></script>
+<script src="dashboard.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
