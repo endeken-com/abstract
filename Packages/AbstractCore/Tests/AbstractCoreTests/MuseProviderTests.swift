@@ -335,6 +335,45 @@ struct MuseProviderTests {
             == [.toolResult(toolUseId: "c2", output: "hi\n", isError: false, edit: nil)])
     }
 
+    /// Reasoning summary parts stream on `summary.n`, a new part opening a
+    /// new paragraph; the settled item's summary replaces what streamed.
+    @Test func serveFoldShowsReasoningSummaryAsThinking() {
+        let parser = provider.makeParser()
+        #expect(parser.feed(#"{"jsonrpc":"2.0","method":"item/started","params":{"item":{"itemId":"r1","kind":"reasoning","revision":1,"status":"inProgress"}}}"#, stream: .stdout).isEmpty)
+        #expect(parser.feed(#"{"jsonrpc":"2.0","method":"item/delta","params":{"itemId":"r1","field":"summary.0","delta":"**Counting**"}}"#, stream: .stdout)
+            == [.thinking(text: "**Counting**", blockId: "r1", partial: true)])
+        #expect(parser.feed(#"{"jsonrpc":"2.0","method":"item/delta","params":{"itemId":"r1","field":"summary.0","delta":" sheep"}}"#, stream: .stdout)
+            == [.thinking(text: " sheep", blockId: "r1", partial: true)])
+        #expect(parser.feed(#"{"jsonrpc":"2.0","method":"item/delta","params":{"itemId":"r1","field":"summary.1","delta":"Nine remain."}}"#, stream: .stdout)
+            == [.thinking(text: "\n\nNine remain.", blockId: "r1", partial: true)])
+        #expect(parser.feed(#"{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"itemId":"r1","kind":"reasoning","revision":3,"status":"completed","summary":["**Counting** sheep","Nine remain."]}}}"#, stream: .stdout)
+            == [.thinking(text: "**Counting** sheep\n\nNine remain.", blockId: "r1", partial: false)])
+
+        var timeline = Timeline()
+        timeline.append(contentsOf: [.thinking(text: "**Counting**", blockId: "r1", partial: true),
+                                     .thinking(text: "\n\nNine remain.", blockId: "r1", partial: true),
+                                     .thinking(text: "**Counting** sheep\n\nNine remain.", blockId: "r1", partial: false)])
+        #expect(timeline.blocks.compactMap { if case let .thinking(_, text) = $0 { text } else { nil } }
+            == ["**Counting** sheep\n\nNine remain."])
+    }
+
+    /// A settled reasoning item with no summary of its own keeps what
+    /// streamed; one with nothing readable (encrypted only) shows nothing.
+    @Test func serveFoldNeverInventsThinking() {
+        let parser = provider.makeParser()
+        _ = parser.feed(#"{"jsonrpc":"2.0","method":"item/delta","params":{"itemId":"r2","field":"summary.0","delta":"Checked the file."}}"#, stream: .stdout)
+        #expect(parser.feed(#"{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"itemId":"r2","kind":"reasoning","revision":2,"status":"completed","summary":[]}}}"#, stream: .stdout)
+            == [.thinking(text: "Checked the file.", blockId: "r2", partial: false)])
+        // Completed without ever being started or streamed, and nothing to read.
+        #expect(parser.feed(#"{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"itemId":"r3","kind":"reasoning","revision":1,"status":"completed","providerItemId":"rs_1"}}}"#, stream: .stdout).isEmpty)
+        // Raw reasoning, where the provider exposes it, when there is no summary.
+        #expect(parser.feed(#"{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"itemId":"r4","kind":"reasoning","revision":1,"status":"completed","text":"Raw step."}}}"#, stream: .stdout)
+            == [.thinking(text: "Raw step.", blockId: "r4", partial: false)])
+        // Token counts alone never become thinking.
+        #expect(parser.feed(#"{"jsonrpc":"2.0","method":"session/tokenUsage","params":{"usage":{"inputTokens":10,"outputTokens":5,"reasoningTokens":200}}}"#, stream: .stdout)
+            .allSatisfy { if case .thinking = $0 { false } else { true } })
+    }
+
     @Test func serveTurnFailureNamesTheModelProblem() {
         let line = #"{"jsonrpc":"2.0","method":"turn/completed","params":{"sessionId":"s","turnId":"t","terminal":"failed","reason":"model `muse-does-not-exist` does not exist or you lack access"}}"#
         let events = provider.makeParser().feed(line, stream: .stdout)

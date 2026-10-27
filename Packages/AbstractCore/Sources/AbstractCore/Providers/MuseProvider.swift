@@ -281,6 +281,8 @@ final class MuseServeParser: InputDrivingParser {
     /// Streamed reply text by item id, so a completion with no text of its
     /// own still carries what streamed.
     private var replyText: [String: String] = [:]
+    /// Streamed reasoning summary parts by item id, in part order.
+    private var summaryParts: [String: [String]] = [:]
 
     func noteStderr(_ line: String) {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -372,6 +374,17 @@ final class MuseServeParser: InputDrivingParser {
             case "output":
                 outputText[itemId, default: ""] += delta
                 return []
+            case let field? where field.hasPrefix("summary."):
+                // Reasoning summary part n streams on `summary.n`; a new
+                // index starts a new paragraph.
+                guard let index = Int(field.dropFirst("summary.".count)), index >= 0,
+                      !delta.isEmpty else { return [] }
+                var parts = summaryParts[itemId] ?? []
+                let opensPart = index >= parts.count && parts.contains { !$0.isEmpty }
+                while parts.count <= index { parts.append("") }
+                parts[index] += delta
+                summaryParts[itemId] = parts
+                return [.thinking(text: opensPart ? "\n\n" + delta : delta, blockId: itemId, partial: true)]
             default:
                 return []
             }
@@ -401,6 +414,17 @@ final class MuseServeParser: InputDrivingParser {
             let text = item["text"]?.string ?? replyText[itemId] ?? ""
             replyText[itemId] = nil
             return text.isEmpty ? [] : [.text(role: .assistant, text: text, blockId: itemId, partial: false)]
+        case "reasoning":
+            // Muse shows the provider's reasoning summary; raw reasoning
+            // only where the provider exposes it. Encrypted reasoning never
+            // reaches the view, and nothing is made up from token counts.
+            guard completed, let itemId = item["itemId"]?.string else { return [] }
+            let joined = { (parts: [String]) in parts.filter { !$0.isEmpty }.joined(separator: "\n\n") }
+            let settled = joined(item["summary"]?.array?.compactMap(\.string) ?? [])
+            let summary = settled.isEmpty ? joined(summaryParts[itemId] ?? []) : settled
+            summaryParts[itemId] = nil
+            let text = summary.isEmpty ? item["text"]?.string ?? "" : summary
+            return text.isEmpty ? [] : [.thinking(text: text, blockId: itemId, partial: false)]
         case "userMessage", "hookRun", "reminderChild":
             // Yours is logged by Abstract itself; the rest is the host's own work.
             return []

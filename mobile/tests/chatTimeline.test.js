@@ -104,3 +104,28 @@ test('Muse Code calls with unparsable arguments keep their output and no target'
   assert.equal(row.target, '');
   assert.equal(row.detail, 'the output');
 });
+
+test('Muse Code reasoning summaries show as thinking, the same as the Mac', () => {
+  const muse = (seq, method, params) => line(seq, 'stdout', { jsonrpc: '2.0', method, params });
+  const lines = [
+    muse(1, 'item/started', { item: { itemId: 'r1', kind: 'reasoning', revision: 1, status: 'inProgress' } }),
+    muse(2, 'item/delta', { itemId: 'r1', field: 'summary.0', delta: '**Counting**' }),
+    muse(3, 'item/delta', { itemId: 'r1', field: 'summary.0', delta: ' sheep' }),
+    muse(4, 'item/delta', { itemId: 'r1', field: 'summary.1', delta: 'Nine remain.' }),
+  ];
+  let thinking = chatTimeline(lines, 'muse-reasoning').filter(r => r.kind === 'thinking');
+  assert.deepEqual(thinking.map(r => [r.text, r.pending]), [['**Counting** sheep\n\nNine remain.', true]]);
+  lines.push(muse(5, 'item/completed', { item: { itemId: 'r1', kind: 'reasoning', revision: 3, status: 'completed', summary: ['**Counting** sheep', 'Nine remain.'] } }));
+  thinking = chatTimeline(lines, 'muse-reasoning').filter(r => r.kind === 'thinking');
+  assert.deepEqual(thinking.map(r => [r.text, r.pending]), [['**Counting** sheep\n\nNine remain.', false]]);
+  // Replayed from scratch, the same row.
+  assert.deepEqual(chatTimeline(lines, 'muse-reasoning-replay').filter(r => r.kind === 'thinking').map(r => r.text), ['**Counting** sheep\n\nNine remain.']);
+});
+
+test('Muse Code reasoning with nothing readable shows no thinking', () => {
+  const lines = [
+    line(1, 'stdout', { jsonrpc: '2.0', method: 'item/completed', params: { item: { itemId: 'r3', kind: 'reasoning', revision: 1, status: 'completed', providerItemId: 'rs_1' } } }),
+    line(2, 'stdout', { jsonrpc: '2.0', method: 'session/tokenUsage', params: { usage: { inputTokens: 10, outputTokens: 5, reasoningTokens: 200 } } }),
+  ];
+  assert.equal(chatTimeline(lines, 'muse-reasoning-empty').filter(r => r.kind === 'thinking').length, 0);
+});

@@ -49,6 +49,7 @@ type TimelineCache = {
   tools: Map<string, ChatItem>;
   codexItems: Map<string, ChatItem>;
   museItems: Map<string, ChatItem>;
+  museParts: Map<string, number>;
   blocks: Map<number, Block>;
 };
 const caches = new Map<string, TimelineCache>();
@@ -59,10 +60,11 @@ export function chatTimeline(lines: RemoteLine[], cacheKey = 'default'): ChatIte
   const continues = previous && lines.length >= previous.lines.length
     && (previous.lines.length === 0 || lines[previous.lines.length - 1] === previous.lines[previous.lines.length - 1]);
   const state: TimelineCache = continues ? previous : {
-    lines: [], rows: [], tools: new Map(), codexItems: new Map(), museItems: new Map(), blocks: new Map(),
+    lines: [], rows: [], tools: new Map(), codexItems: new Map(), museItems: new Map(), museParts: new Map(), blocks: new Map(),
   };
   if (!state.museItems) state.museItems = new Map();
-  const { rows, tools, codexItems, museItems, blocks } = state;
+  if (!state.museParts) state.museParts = new Map();
+  const { rows, tools, codexItems, museItems, museParts, blocks } = state;
   const append = (kind: ChatItem['kind'], text: string, id: string) => {
     if (text.trim()) rows.push({ id, kind, text });
   };
@@ -217,6 +219,25 @@ export function chatTimeline(lines: RemoteLine[], cacheKey = 'default'): ChatIte
           let row = museItems.get(itemId);
           if (!row) { row = { id, kind: 'prose', text: '', pending: true }; rows.push(row); museItems.set(itemId, row); }
           if (value.method === 'item/completed') { row.text = item.text || row.text; row.pending = false; }
+        } else if (item.kind === 'reasoning' && value.method === 'item/completed') {
+          // The provider's reasoning summary, else raw reasoning where exposed.
+          const summary = (Array.isArray(item.summary) ? item.summary : []).filter((part: unknown) => typeof part === 'string' && part).join('\n\n');
+          const row = museItems.get(itemId);
+          const text = summary || row?.text || (typeof item.text === 'string' ? item.text : '');
+          museParts.delete(itemId);
+          if (row) { row.text = text; row.pending = false; } else append('thinking', text, id);
+        }
+      } else if (value.method === 'item/delta' && typeof params.field === 'string' && params.field.startsWith('summary.') && typeof params.delta === 'string') {
+        // Reasoning summary part n streams on `summary.n`; a new part is a new paragraph.
+        const itemId = String(params.itemId || id);
+        const index = Number(params.field.slice('summary.'.length));
+        if (Number.isInteger(index) && index >= 0 && params.delta) {
+          let row = museItems.get(itemId);
+          if (!row) { row = { id, kind: 'thinking', text: '', pending: true }; rows.push(row); museItems.set(itemId, row); }
+          const parts = museParts.get(itemId) ?? 0;
+          if (index >= parts && row.text) row.text += '\n\n';
+          museParts.set(itemId, Math.max(parts, index + 1));
+          row.text += params.delta;
         }
       } else if (value.method === 'item/delta' && params.field === 'text' && typeof params.delta === 'string') {
         const itemId = String(params.itemId || id);
