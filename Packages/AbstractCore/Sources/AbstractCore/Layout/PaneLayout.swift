@@ -25,6 +25,17 @@ public enum SidePanelChrome {
     public static func tabsWidth(headerWidth: CGFloat, controlsWidth: CGFloat, gap: CGFloat) -> CGFloat {
         max(0, headerWidth - controlsWidth - gap)
     }
+
+    /// Room for the main pane's tabs in the title band: from where they
+    /// start (`tabsStart`, in window coordinates) to the main column's
+    /// trailing edge, less what the trailing controls keep. Clamped at
+    /// zero with no floor: a minimum wider than the room pushed the strip
+    /// past the column's edge, under the side panel's header or the chat
+    /// buttons. An unset column width yields zero, not a guessed width.
+    public static func mainTabsWidth(mainColumnWidth: CGFloat, detailOrigin: CGFloat,
+                                     tabsStart: CGFloat, trailingReserve: CGFloat) -> CGFloat {
+        max(0, (detailOrigin + mainColumnWidth - trailingReserve - tabsStart).rounded(.down))
+    }
 }
 
 /// What a tab shows. Add a case here and register a view for it in the app;

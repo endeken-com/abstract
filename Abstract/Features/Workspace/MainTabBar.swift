@@ -15,27 +15,29 @@ struct MainTabBar: View {
     var body: some View {
         HStack(spacing: Space.sm) {
             // The + follows the last tab; when the tabs outgrow the row they
-            // scroll, with the + at their end.
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 2) {
+            // scroll, with the + at their end. One scroll view at every
+            // width: a fitting/not-fitting pair could pick the plain row at
+            // the tabs' full width inside this strip's fixed frame, which
+            // centred the overflow — tabs spilled left, out of reach, with
+            // nothing to scroll. The scroll view clips to the frame always.
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
                     tabs
-                    Spacer(minLength: 0)
                 }
-                ScrollViewReader { proxy in
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        tabs
-                    }
-                    // The tab showing is always in view.
-                    .onChange(of: model.mainTabs.activeId, initial: true) { _, id in
-                        guard let id else { return }
-                        withAnimation(.snappy(duration: 0.2)) { proxy.scrollTo(id, anchor: .center) }
-                    }
+                // The tab showing is always in view, by the smallest scroll
+                // that reveals it: centring jumped the strip on every close.
+                .onChange(of: model.mainTabs.activeId, initial: true) { _, id in
+                    guard let id else { return }
+                    withAnimation(.snappy(duration: 0.2)) { proxy.scrollTo(id) }
                 }
-                .mask {
-                    HStack(spacing: 0) {
-                        Rectangle()
-                        LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing).frame(width: 20)
-                    }
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { _ in
+                    if let id = model.mainTabs.activeId { proxy.scrollTo(id) }
+                }
+            }
+            .mask {
+                HStack(spacing: 0) {
+                    Rectangle()
+                    LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing).frame(width: 20)
                 }
             }
             if session.worktreePath != nil {
@@ -85,11 +87,16 @@ private struct MainTabChip: View {
                 .foregroundStyle(active ? Color.btText : hovering ? Color.btTextSecondary : Color.btTextTertiary)
                 .lineLimit(1)
                 .truncationMode(.tail)
+                .frame(maxWidth: titleMaxWidth, alignment: .leading)
+                .clipped()
             if case .chat = tab.kind, let profile = session?.profileName {
                 Text(profile)
                     .font(BTFont.ui(11.5))
                     .foregroundStyle(Color.btTextTertiary)
                     .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: 40, alignment: .leading)
+                    .clipped()
                     .help("Started from the \(profile) profile")
             }
             if dirty {
@@ -152,6 +159,13 @@ private struct MainTabChip: View {
     }
 
     private var session: ChatSummary? { model.chatSummary(tab.kind.sessionId) }
+
+    /// Leave room for optional labels and the close button inside the 180 pt chip.
+    private var titleMaxWidth: CGFloat {
+        let profileWidth: CGFloat
+        if case .chat = tab.kind, session?.profileName != nil { profileWidth = 46 } else { profileWidth = 0 }
+        return 128 - profileWidth - (dirty ? 13 : 0)
+    }
 
     private var title: String {
         switch tab.kind {

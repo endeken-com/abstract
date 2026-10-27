@@ -147,10 +147,15 @@ struct PanelTabBar: View {
                         if inTitleBand { LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing).frame(width: 28) }
                     }
                 }
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { _ in
+                    if let id = panel.active?.id { proxy.scrollTo(id) }
+                }
                 addMenu
             }
+            // Smallest scroll that reveals the active tab: centring jumped
+            // the strip whenever a tab closed and a neighbour took over.
             .onChange(of: panel.active?.id, initial: true) { _, id in
-                if let id { proxy.scrollTo(id, anchor: .center) }
+                if let id { proxy.scrollTo(id) }
             }
         }
     }
