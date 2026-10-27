@@ -259,8 +259,8 @@ private struct TitlebarLeading: View {
         let sideOpen = model.layout(for: session.id).side.isOpen
         let canRun = Project.nonBlank(model.project(session.projectId)?.runScript) != nil && session.worktreePath != nil
         let buttons = CGFloat(canRun ? 4 : 3) * (Chrome.button + Chrome.gap) + 26
-        let end = detail + model.mainColumnWidth - (sideOpen ? Space.sm : buttons)
-        return max(160, (end - start).rounded(.down))
+        return SidePanelChrome.mainTabsWidth(mainColumnWidth: model.mainColumnWidth, detailOrigin: detail,
+                                             tabsStart: start, trailingReserve: sideOpen ? Space.sm : buttons)
     }
 
     private var room: CGFloat {

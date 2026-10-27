@@ -34,6 +34,29 @@ import AbstractCore
         #expect(SidePanelChrome.tabsWidth(headerWidth: 100, controlsWidth: controls, gap: 2) == 0)
     }
 
+    @Test func mainTabsNeverOutgrowTheMainColumn() {
+        // Sidebar hidden (detail at 0, tabs past the toggle at 132), side
+        // panel open at the narrowest window: room is 140, so the strip is
+        // 140 — a 160 floor here pushed it under the panel's header.
+        #expect(SidePanelChrome.mainTabsWidth(mainColumnWidth: 280, detailOrigin: 0, tabsStart: 132, trailingReserve: 8) == 140)
+        // Unset or stale column width: no guessed strip.
+        #expect(SidePanelChrome.mainTabsWidth(mainColumnWidth: 0, detailOrigin: 257, tabsStart: 265, trailingReserve: 8) == 0)
+        // Wide enough: the room less the reserved controls, unchanged.
+        #expect(SidePanelChrome.mainTabsWidth(mainColumnWidth: 700, detailOrigin: 257, tabsStart: 265, trailingReserve: 8) == 684)
+        #expect(SidePanelChrome.mainTabsWidth(mainColumnWidth: 700, detailOrigin: 257, tabsStart: 265, trailingReserve: 146) == 546)
+        // Every width and reserve: inside the room, never negative.
+        for main in stride(from: CGFloat(0), through: 1400, by: 37) {
+            for reserve in [CGFloat(8), 116, 146, 400] {
+                for start in [CGFloat(132), 265, 389] {
+                    let origin = start == 132 ? CGFloat(0) : start - 8
+                    let width = SidePanelChrome.mainTabsWidth(mainColumnWidth: main, detailOrigin: origin, tabsStart: start, trailingReserve: reserve)
+                    #expect(width >= 0)
+                    #expect(width <= max(0, origin + main - reserve - start))
+                }
+            }
+        }
+    }
+
     @Test func standardHasChangesAndFilesBesideTheChat() {
         let layout = PanelLayout.standard()
         #expect(layout.side.isOpen)
