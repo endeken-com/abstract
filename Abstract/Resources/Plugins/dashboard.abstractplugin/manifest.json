@@ -1,0 +1,13 @@
+{
+  "api": 1,
+  "id": "sh.abstract.dashboard",
+  "name": "Dashboard",
+  "version": "1.0.0",
+  "description": "Shows what your chats need, what your agents used this month, and how recent turns ended.",
+  "entry": "index.html",
+  "capabilities": ["projects.read", "chats.read", "chats.open", "usage.read", "turns.read", "storage.own"],
+  "contributes": {
+    "views": [{ "id": "main", "title": "Dashboard", "symbol": "chart.bar.xaxis", "location": "main" }],
+    "homeWidgets": [{ "id": "summary", "title": "Dashboard" }]
+  }
+}
