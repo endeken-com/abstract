@@ -30,7 +30,7 @@ public enum PluginEvent: Sendable, Equatable {
     /// `failed`; `previous` is nil for a chat that just appeared.
     case chatStatusChanged(chatId: String, status: String, previous: String?)
     /// `outcome` is `done`, `stopped` or `failed`, as in `getTurns`.
-    case turnFinished(chatId: String, outcome: String, endedAt: Date)
+    case turnFinished(chatId: String, outcome: String, endedAt: Date, summary: String?, changedFiles: Int)
     /// `kind` is `permission`, `question` or `plan`.
     case permissionRequested(chatId: String, requestId: String, kind: String, toolName: String, questions: [String])
     /// The request isn't waiting any more, however it ended (ABS-111).
@@ -70,10 +70,12 @@ public enum PluginEvent: Sendable, Equatable {
             object["chatId"] = .string(chatId)
             object["status"] = .string(status)
             object["previous"] = previous.map(JSONValue.string) ?? .null
-        case let .turnFinished(chatId, outcome, endedAt):
+        case let .turnFinished(chatId, outcome, endedAt, summary, changedFiles):
             object["chatId"] = .string(chatId)
             object["outcome"] = .string(outcome)
             object["endedAt"] = .string(PluginData.iso(endedAt))
+            object["summary"] = summary.map { .string(String($0.prefix(2_000))) } ?? .null
+            object["changedFiles"] = .number(Double(changedFiles))
         case let .permissionRequested(chatId, requestId, kind, toolName, questions):
             object["chatId"] = .string(chatId)
             object["kind"] = .string(kind)

@@ -113,6 +113,12 @@ public enum SidebarChats {
     }
 
     /// What the sidebar knows of one chat.
+    public struct SubtaskProgress: Sendable, Hashable {
+        public var done: Int
+        public var total: Int
+        public init(done: Int, total: Int) { self.done = done; self.total = total }
+    }
+
     public struct Chat: Sendable, Hashable, Identifiable {
         public var session: Session
         public var pullRequest: PullRequestFacts?
@@ -120,6 +126,9 @@ public enum SidebarChats {
         /// have yet; nil until its branch has been read.
         public var hasChanges: Bool?
         public var backgroundTasks: Int
+        /// Direct children that finished their turn, and all direct children.
+        public var subtaskProgress: SubtaskProgress?
+        public var stalled: Bool
         public var projectName: String?
         /// The Mac it runs on.
         public var mac: String
@@ -131,10 +140,13 @@ public enum SidebarChats {
         public var id: String { session.id }
 
         public init(session: Session, pullRequest: PullRequestFacts? = nil, hasChanges: Bool? = nil, backgroundTasks: Int = 0,
-                    projectName: String? = nil, mac: String = "", isRemote: Bool = false, icon: Icon = .agentLogo) {
+                    projectName: String? = nil, mac: String = "", isRemote: Bool = false, icon: Icon = .agentLogo,
+                    subtaskProgress: SubtaskProgress? = nil, stalled: Bool = false) {
             self.session = session; self.pullRequest = pullRequest; self.hasChanges = hasChanges
             self.backgroundTasks = backgroundTasks; self.projectName = projectName; self.mac = mac; self.isRemote = isRemote
             self.icon = icon
+            self.subtaskProgress = subtaskProgress
+            self.stalled = stalled
         }
 
         /// When it last did something.

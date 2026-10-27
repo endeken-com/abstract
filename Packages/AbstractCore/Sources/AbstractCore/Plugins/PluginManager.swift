@@ -431,9 +431,8 @@ public final class PluginManager: Sendable {
 
     public static let defaultsKey = "plugins.defaults.v1"
     /// Bundled plugins installed and turned on the first time Abstract
-    /// finds them: the official GitHub plugin, which Abstract's pull
-    /// request screens ask by default.
-    public static let defaultPluginIds: Set<String> = ["sh.abstract.github"]
+    /// finds them: GitHub for pull requests and Delegation for sub-tasks.
+    public static let defaultPluginIds: Set<String> = ["sh.abstract.github", "sh.abstract.delegation"]
 
     /// Installs and turns on each default plugin found among `bundled` once:
     /// removing or turning it off afterwards sticks. A bundled install

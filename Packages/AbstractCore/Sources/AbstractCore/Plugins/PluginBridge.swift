@@ -533,10 +533,20 @@ public struct PluginBridge: Sendable {
                 }
                 reviewOf = chatId
             }
+            var parentId: String?
+            if payload?["parentId"] != nil {
+                guard reviewOf == nil,
+                      let id = knownChat(.object(["chatId": payload?["parentId"] ?? .null])) else {
+                    return refuse(id, "That parent chat isn't in the plugin's list.")
+                }
+                parentId = id
+            }
+            let title = nonEmpty(payload?["title"]?.string)
+            if let title, title.count > 160 { return refuse(id, "That sub-task title is too long.") }
             built = PluginAction(capability: .chatsCreate, projectKey: payload?["projectKey"]?.string,
                                  text: prompt, agentId: payload?["agentId"]?.string,
                                  policy: reviewOf != nil ? PermissionPolicy.readOnly.rawValue : payload?["policy"]?.string,
-                                 reviewOf: reviewOf)
+                                 reviewOf: reviewOf, parentId: parentId, title: title)
         case "controlChat":
             guard capabilities.contains(.chatsControl) else {
                 return refuse(id, "This plugin hasn't been granted stopping or resuming your agents.")

@@ -30,6 +30,9 @@ public struct PluginAction: Sendable, Equatable {
     /// A new chat that reviews this chat's changes, read-only, in its
     /// worktree (ABS-112).
     public var reviewOf: String?
+    /// A child chat starts from this chat's branch.
+    public var parentId: String?
+    public var title: String?
     /// `chats.message` sending the chat's Review comments, as your own
     /// Send would, instead of `text`.
     public var sendsReview = false
@@ -56,11 +59,13 @@ public struct PluginAction: Sendable, Equatable {
                 text: String? = nil, agentId: String? = nil, policy: String? = nil,
                 control: Control? = nil, requestId: String? = nil, allow: Bool? = nil,
                 answers: [String: String] = [:], automationId: String? = nil,
-                reviewOf: String? = nil, sendsReview: Bool = false, batch: [Target] = []) {
+                reviewOf: String? = nil, parentId: String? = nil, title: String? = nil,
+                sendsReview: Bool = false, batch: [Target] = []) {
         self.capability = capability; self.chatId = chatId; self.projectKey = projectKey
         self.text = text; self.agentId = agentId; self.policy = policy; self.control = control
         self.requestId = requestId; self.allow = allow; self.answers = answers
-        self.automationId = automationId; self.reviewOf = reviewOf; self.sendsReview = sendsReview
+        self.automationId = automationId; self.reviewOf = reviewOf; self.parentId = parentId; self.title = title
+        self.sendsReview = sendsReview
         self.batch = batch
     }
 
@@ -70,6 +75,9 @@ public struct PluginAction: Sendable, Equatable {
         let chat = chatTitle.map { "“\($0)”" } ?? "one of your chats"
         switch capability {
         case .chatsCreate:
+            if parentId != nil {
+                return "\(pluginName) wants \(agentId.map(ProviderRegistry.name) ?? "an agent") to work on “\(title ?? "a sub-task")” in \(projectName ?? "this project")."
+            }
             if reviewOf != nil {
                 let agent = agentId.map(ProviderRegistry.name) ?? "an agent"
                 return "\(pluginName) wants \(agent) to review the changes in \(chat), without changing anything."

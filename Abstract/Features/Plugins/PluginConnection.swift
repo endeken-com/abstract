@@ -107,8 +107,9 @@ final class PluginConnection {
             onIconChoose(id, key, anchor)
         case .reply(let id, let value):
             send(type: "reply", id: id, payload: value)
-        case .getSnapshot:
+        case .getSnapshot(let id):
             pushSnapshot()
+            send(type: "reply", id: id, payload: .object(["sent": .bool(true)]))
         case .openChat(let id, let chatId):
             send(type: "reply", id: id, payload: .object(["opened": .bool(true)]))
             model.open(chatId)
