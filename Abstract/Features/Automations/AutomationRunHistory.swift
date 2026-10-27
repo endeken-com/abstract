@@ -1,10 +1,9 @@
 import SwiftUI
 import AbstractCore
 
-/// Past runs of one automation, newest first: one quiet row each, and the
-/// row opens the chat the run happened in.
+/// Past runs of one automation, newest first: one outcome word each, and
+/// the row (or its Open chat button) opens the chat the run happened in.
 struct AutomationRunHistory: View {
-    @Environment(AppModel.self) private var model
     /// nil while the automation is still being created.
     let automation: Automation?
     let runs: [AutomationRun]
@@ -18,12 +17,13 @@ struct AutomationRunHistory: View {
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 ForEach(runs) { RunRow(run: $0) }
+                if runs.count >= 50 {
+                    Text("Showing the latest 50 runs.")
+                        .font(.btCaption)
+                        .foregroundStyle(Color.btTextTertiary)
+                        .padding(.top, Space.lg)
+                }
             }
-            Text("A run counts as started once its instructions reach its chat. How the agent's work went shows on the chat.")
-                .font(.btCaption)
-                .foregroundStyle(Color.btTextTertiary)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, Space.lg)
         }
     }
 
@@ -32,7 +32,7 @@ struct AutomationRunHistory: View {
         guard automation.enabled else { return "No runs yet. This automation is paused." }
         guard !automation.triggers.isEmpty else {
             if let events = AutomationEvents.summary(automation.events) { return "No runs yet. \(events), it runs." }
-            return "No runs yet. With no triggers it runs only when you start it with Run now."
+            return "No runs yet. With no schedules it runs only when you start it with Run now."
         }
         guard let next = automation.nextRunAt else { return "No runs yet, and none coming up." }
         return "No runs yet. The first is \(AutomationText.moment(next))."
@@ -42,42 +42,43 @@ struct AutomationRunHistory: View {
 private struct RunRow: View {
     @Environment(AppModel.self) private var model
     let run: AutomationRun
+    @State private var hovering = false
 
     var body: some View {
-        if let session = run.sessionId.flatMap({ model.session($0) }) {
-            Button { model.open(session.id) } label: { content(session) }
-                .buttonStyle(RowButtonStyle(cornerRadius: Radius.md))
-                .padding(.horizontal, -AutoPage.hang)
-                .help("Open this run's chat")
-        } else {
-            content(nil)
-                .padding(.horizontal, -AutoPage.hang)
-        }
-    }
-
-    private func content(_ session: Session?) -> some View {
+        let session = run.sessionId.flatMap { model.session($0) }
+        let outcome = model.outcome(of: run)
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 0) {
-                glyph.frame(width: AutoPage.gutter, alignment: .leading)
-                Text("\(AutomationText.day(run.firedAt)), \(AutomationText.time(run.firedAt))")
-                    .font(.btBody)
-                    .foregroundStyle(Color.btText)
-                    .monospacedDigit()
-                    .frame(minWidth: 150, alignment: .leading)
+                HStack(spacing: 6) {
+                    Circle().fill(outcome.tint).frame(width: 6, height: 6)
+                    Text(outcome.word)
+                }
+                .font(.btBodyMedium)
+                .foregroundStyle(outcome.needsAttention ? outcome.tint : Color.btText)
+                .lineLimit(1)
+                .frame(minWidth: 120, alignment: .leading)
                 Text(triggerLabel)
                     .font(.btBody)
                     .foregroundStyle(Color.btTextSecondary)
                     .lineLimit(1)
                 Spacer(minLength: Space.md)
-                Text(outcome(session))
-                    .font(.btCallout)
-                    .foregroundStyle(run.status == .failed ? Color.btRemoved : Color.btTextTertiary)
-                    .lineLimit(1)
+                if let session {
+                    Button("Open chat") { model.open(session.id) }
+                        .buttonStyle(.bt(.ghost, size: .small))
+                        .help("Open this run's chat")
+                }
             }
-            .frame(height: 34)
+            .frame(height: 32)
+            Text(detail(session))
+                .font(.btCallout)
+                .foregroundStyle(Color.btTextTertiary)
+                .monospacedDigit()
+                .lineLimit(1)
+                .padding(.leading, AutoPage.gutter)
+                .padding(.bottom, Space.sm)
             if run.status == .failed, let error = run.error, !error.isEmpty {
                 Text(error)
-                    .font(.btMonoSmall)
+                    .font(.btBody)
                     .foregroundStyle(Color.btRemoved)
                     .lineLimit(6)
                     .textSelection(.enabled)
@@ -96,31 +97,25 @@ private struct RunRow: View {
         }
         .padding(.horizontal, AutoPage.hang)
         .contentShape(Rectangle())
+        .background(RoundedRectangle(cornerRadius: Radius.md, style: .continuous)
+            .fill(hovering && session != nil ? Color.btHover : .clear))
+        .padding(.horizontal, -AutoPage.hang)
+        .onHover { hovering = $0 }
+        .animation(.snappy(duration: 0.12), value: hovering)
+        .onTapGesture { if let session { model.open(session.id) } }
+        .help(session == nil ? "" : "Open this run's chat")
     }
 
-    /// "Scheduled", or for an event "“Fix login” was archived".
+    /// "Today, 09:00", with the chat's name when the run has one.
+    private func detail(_ session: Session?) -> String {
+        let when = "\(AutomationText.day(run.firedAt)), \(AutomationText.time(run.firedAt))"
+        return session.map { "\(when) · “\($0.name)”" } ?? when
+    }
+
+    /// "On schedule", "Run by hand", or for an event "“Fix login” is archived".
     private var triggerLabel: String {
         guard let event = run.event else { return run.trigger.label }
         let chat = run.sourceSessionId.flatMap { model.chatName($0) }.map { "“\($0)”" } ?? "A chat"
         return "\(chat) \(event.phrase)"
-    }
-
-    @ViewBuilder
-    private var glyph: some View {
-        if run.status == .creating {
-            ProgressView().controlSize(.mini).scaleEffect(0.8).frame(width: 10, height: 10)
-        } else {
-            Circle().fill(run.status.tint).frame(width: 6, height: 6)
-        }
-    }
-
-    /// What became of it: the chat's state once there is one.
-    private func outcome(_ session: Session?) -> String {
-        switch run.status {
-        case .creating: "Starting…"
-        case .failed: "Failed"
-        case .skipped: "Skipped"
-        case .created: session?.status.label ?? "Chat deleted"
-        }
     }
 }

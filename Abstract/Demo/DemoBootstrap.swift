@@ -100,8 +100,15 @@ final class DemoBootstrap {
                                 rrule: "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=8;BYMINUTE=30", timezone: here)
         triage.nextRunAt = triage.nextOccurrence(after: Date())
         try? model.store.save(triage)
-        // A little history for the Run History tab; no new chats.
+        // A little history for the Runs tab; no new chats.
         let done = model.sessions.first { $0.projectId == abstract?.id && $0.status == .idle }
+        try? model.store.save(AutomationRun.skipped(automationId: nightly.id, reason: .projectUnchanged,
+                                                    at: Date().addingTimeInterval(-86_400 * 3)))
+        // Triage's last run is waiting on a person, so the list shows it.
+        if let waiting = model.sessions.first(where: { $0.status == .waitingInput }) {
+            try? model.store.save(AutomationRun(automationId: triage.id, firedAt: Date().addingTimeInterval(-7_200), trigger: .schedule,
+                                                status: .created, sessionId: waiting.id))
+        }
         try? model.store.save(AutomationRun(automationId: nightly.id, firedAt: Date().addingTimeInterval(-86_400 * 2), trigger: .schedule,
                                             status: .failed, error: "git worktree add: 'auto-nightly-dependency-bump' is already checked out"))
         try? model.store.save(AutomationRun(automationId: nightly.id, firedAt: Date().addingTimeInterval(-86_400), trigger: .schedule,
@@ -422,6 +429,13 @@ struct Snapshotter {
                 UserDefaults.standard.set(first.id, forKey: "automations.open")
                 await shot("\(t)-16-automation-page", settle: 1.0)
                 UserDefaults.standard.set("", forKey: "automations.open")
+                // The same page on its Runs tab.
+                UserDefaults.standard.set("history", forKey: "automations.tab")
+                try? await Task.sleep(for: .milliseconds(400))
+                UserDefaults.standard.set(first.id, forKey: "automations.open")
+                await shot("\(t)-16c-automation-runs", settle: 1.0)
+                UserDefaults.standard.set("", forKey: "automations.open")
+                UserDefaults.standard.set("", forKey: "automations.tab")
             }
             if t == "graphite", let onEvents = model.automations.first(where: { !$0.events.isEmpty }) {
                 UserDefaults.standard.set(onEvents.id, forKey: "automations.open")

@@ -405,6 +405,23 @@ public final class Store: Sendable {
         try runs(automationId: automationId, limit: 1).first
     }
 
+    /// The newest run of every automation, by automation id: one query for
+    /// the list, so no row asks on its own.
+    public func latestRuns() throws -> [String: AutomationRun] {
+        try writer.read { db in
+            let rows = try RunRow.fetchAll(
+                db,
+                sql: """
+                    SELECT * FROM (
+                        SELECT *, ROW_NUMBER() OVER (
+                            PARTITION BY automation_id ORDER BY fired_at DESC, rowid DESC
+                        ) AS rank FROM automation_runs
+                    ) WHERE rank = 1
+                    """)
+            return Dictionary(uniqueKeysWithValues: rows.map { ($0.value.automationId, $0.value) })
+        }
+    }
+
     public func save(_ run: AutomationRun) throws {
         try writer.write { db in try RunRow(run).save(db) }
     }

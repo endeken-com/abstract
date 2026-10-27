@@ -227,42 +227,43 @@ struct AutomationDraft: Equatable {
             || triggers.count != a.triggers.count || zip(triggers, a.triggers).contains { !$0.matches($1) }
     }
 
-    /// Why Save is off, in a few words.
+    /// Why Save is off, in a few words: the first problem, for the header.
+    /// Each problem also shows at the field it names.
     var blocker: String? {
-        if prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "Instructions are empty" }
-        if workflowId != nil, deviceId != nil, isPinned { return "A workflow runs on this Mac in a chat it continues" }
-        if !events.isEmpty, deviceId != nil { return "Events start runs only on This Mac" }
-        if triggers.contains(where: { !TriggerCheck($0).isValid }) { return "A trigger needs fixing" }
-        return nil
+        instructionsBlocker ?? workflowBlocker ?? eventsBlocker
+            ?? (triggers.contains(where: { !TriggerCheck($0).isValid }) ? "A schedule needs fixing" : nil)
+    }
+
+    var instructionsBlocker: String? {
+        prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Instructions are empty" : nil
+    }
+
+    var workflowBlocker: String? {
+        workflowId != nil && deviceId != nil && isPinned ? "A workflow runs on this Mac in a chat it continues" : nil
+    }
+
+    var eventsBlocker: String? {
+        !events.isEmpty && deviceId != nil ? "Events start runs only on This Mac" : nil
     }
 }
 
-// MARK: - Settings tab
+// MARK: - Setup tab
 
-/// Triggers, where runs happen, and the instructions: one quiet column.
+/// What it does, when it runs, and where it runs: three labelled
+/// sections down one quiet column, instructions first.
 struct AutomationSettings: View {
     @Environment(AppModel.self) private var model
     @Binding var draft: AutomationDraft
-    /// Whether runs are on. Trigger rows say "Paused" instead of a next run otherwise.
+    /// Whether runs are on. Schedule rows say "Paused" instead of a next run otherwise.
     let active: Bool
     @Binding var editingInstructions: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            AutoSectionLabel(title: "When it runs")
-            TriggerList(triggers: $draft.triggers, concurrency: $draft.concurrency, missedRuns: $draft.missedRuns,
-                        onlyWhenChanged: $draft.onlyWhenChanged,
-                        showsChanged: draft.projectId != nil && draft.deviceId == nil, active: active,
-                        hasEvents: !draft.events.isEmpty,
-                        defaultTimezone: model.defaultTimezone)
-                .padding(.top, Space.xxs)
-            EventList(draft: $draft)
-                .padding(.top, Space.xs)
-
-            ScopeSentence(draft: $draft)
-                .padding(.top, Space.xl)
-
-            AutoSectionLabel(title: "Instructions") {
+            AutoSectionLabel(title: "What it does")
+            HStack(spacing: Space.sm) {
+                Text("Instructions").font(.btBodyMedium).foregroundStyle(Color.btText)
+                Spacer(minLength: Space.sm)
                 Button(editingInstructions ? "Done" : "Edit") {
                     withAnimation(.snappy(duration: 0.18)) { editingInstructions.toggle() }
                 }
@@ -270,9 +271,32 @@ struct AutomationSettings: View {
                 .padding(.trailing, -9)
                 .help(editingInstructions ? "Show the instructions as they read" : "Edit the instructions as Markdown")
             }
-            .padding(.top, Space.xxl)
+            .padding(.top, Space.xxs)
+            if let blocker = draft.instructionsBlocker {
+                Text(blocker)
+                    .font(.btCaption)
+                    .foregroundStyle(Color.btRemoved)
+                    .padding(.top, Space.xxs)
+            }
             InstructionsView(prompt: $draft.prompt, editing: $editingInstructions)
                 .padding(.top, Space.sm)
+
+            AutoSectionLabel(title: "When it runs")
+                .padding(.top, Space.xxl)
+            TriggerList(triggers: $draft.triggers, concurrency: $draft.concurrency, missedRuns: $draft.missedRuns,
+                        onlyWhenChanged: $draft.onlyWhenChanged,
+                        defaultConcurrency: .defaults(for: draft.workspaceMode),
+                        showsChanged: draft.projectId != nil && draft.deviceId == nil, active: active,
+                        hasEvents: !draft.events.isEmpty,
+                        defaultTimezone: model.defaultTimezone)
+                .padding(.top, Space.xxs)
+            EventList(draft: $draft)
+                .padding(.top, Space.xs)
+
+            AutoSectionLabel(title: "Where it runs")
+                .padding(.top, Space.xxl)
+            ScopeRows(draft: $draft)
+                .padding(.top, Space.xxs)
         }
     }
 }
@@ -284,12 +308,15 @@ private struct TriggerList: View {
     @Binding var concurrency: AutomationConcurrency
     @Binding var missedRuns: AutomationMissedRuns
     @Binding var onlyWhenChanged: Bool
+    /// The still-going choice nobody picked, for the disclosure's summary.
+    let defaultConcurrency: AutomationConcurrency
     /// A project on this Mac is what "changed since the last run" reads.
     let showsChanged: Bool
     let active: Bool
     /// Events start it too, so no schedule doesn't mean by hand only.
     let hasEvents: Bool
     let defaultTimezone: String
+    @State private var moreOptionsShown = false
 
     var body: some View {
         // Once a minute, so "today" turns into "tomorrow" on its own.
@@ -307,43 +334,50 @@ private struct TriggerList: View {
                     }
                 }
                 if triggers.isEmpty, !hasEvents {
-                    Text("With no triggers it runs only when you start it with Run now.")
+                    Text("With no schedules it runs only when you start it with Run now.")
                         .font(.btCallout)
                         .foregroundStyle(Color.btTextTertiary)
                         .padding(.top, Space.xxs)
                 } else if !triggers.isEmpty {
-                    VStack(alignment: .leading, spacing: 2) {
-                        sentence("If the last run is still going,") {
-                            SentenceMenu(title: concurrency.phrase, quiet: true) {
-                                Picker("If the last run is still going", selection: $concurrency) {
-                                    ForEach(AutomationConcurrency.allCases, id: \.self) { Text($0.option).tag($0) }
-                                }
-                                .pickerStyle(.inline)
-                                .labelsHidden()
-                            }
-                        }
-                        sentence("If runs were missed while Abstract was closed,") {
-                            SentenceMenu(title: missedRuns.phrase, quiet: true) {
-                                Picker("Missed runs", selection: $missedRuns) {
-                                    ForEach(AutomationMissedRuns.allCases, id: \.self) { Text($0.option).tag($0) }
-                                }
-                                .pickerStyle(.inline)
-                                .labelsHidden()
-                            }
-                        }
-                        if showsChanged {
-                            sentence("It runs") {
-                                SentenceMenu(title: onlyWhenChanged ? "only when the project changed since the last run"
-                                                                    : "whether or not the project changed", quiet: true) {
-                                    Picker("Only when the project changed", selection: $onlyWhenChanged) {
-                                        Text("Whether or Not the Project Changed").tag(false)
-                                        Text("Only When the Project Changed Since the Last Run").tag(true)
+                    DisclosureGroup(isExpanded: $moreOptionsShown) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            sentence("If the last run is still going,") {
+                                SentenceMenu(title: concurrency.phrase, quiet: true) {
+                                    Picker("If the last run is still going", selection: $concurrency) {
+                                        ForEach(AutomationConcurrency.allCases, id: \.self) { Text($0.option).tag($0) }
                                     }
                                     .pickerStyle(.inline)
                                     .labelsHidden()
                                 }
                             }
+                            sentence("If runs were missed while Abstract was closed,") {
+                                SentenceMenu(title: missedRuns.phrase, quiet: true) {
+                                    Picker("Missed runs", selection: $missedRuns) {
+                                        ForEach(AutomationMissedRuns.allCases, id: \.self) { Text($0.option).tag($0) }
+                                    }
+                                    .pickerStyle(.inline)
+                                    .labelsHidden()
+                                }
+                            }
+                            if showsChanged {
+                                sentence("It runs") {
+                                    SentenceMenu(title: onlyWhenChanged ? "only when the project changed since the last run"
+                                                                        : "whether or not the project changed", quiet: true) {
+                                        Picker("Only when the project changed", selection: $onlyWhenChanged) {
+                                            Text("Whether or Not the Project Changed").tag(false)
+                                            Text("Only When the Project Changed Since the Last Run").tag(true)
+                                        }
+                                        .pickerStyle(.inline)
+                                        .labelsHidden()
+                                    }
+                                }
+                            }
                         }
+                        .padding(.top, Space.xs)
+                    } label: {
+                        Text(moreOptionsLabel)
+                            .font(.btBody)
+                            .foregroundStyle(Color.btTextSecondary)
                     }
                     .padding(.top, Space.xs)
                 }
@@ -351,7 +385,26 @@ private struct TriggerList: View {
         }
     }
 
-    /// One of the sentences under the triggers: its words, then its menu.
+    /// "More run options", with any choice away from its default named
+    /// after it, so a closed disclosure still says what it holds.
+    private var moreOptionsLabel: String {
+        var parts: [String] = []
+        if concurrency != defaultConcurrency {
+            let stillGoing = switch concurrency {
+            case .skipIfActive: "skip if still running"
+            case .runAfterActiveFinishes: "run after it finishes"
+            case .startAnother: "start another if still running"
+            }
+            parts.append(stillGoing)
+        }
+        if missedRuns != .skip {
+            parts.append(missedRuns == .runOnce ? "run missed runs once" : "run each missed run")
+        }
+        if showsChanged, onlyWhenChanged { parts.append("only when the project changed") }
+        return parts.isEmpty ? "More run options" : "More run options — " + parts.joined(separator: " · ")
+    }
+
+    /// One of the sentences under the schedules: its words, then its menu.
     private func sentence<Menu: View>(_ words: String, @ViewBuilder menu: () -> Menu) -> some View {
         HStack(spacing: 1) {
             Text(words)
@@ -388,7 +441,7 @@ private struct TriggerRow: View {
                     Image(systemName: "xmark").font(.system(size: 9.5, weight: .semibold))
                 }
                 .buttonStyle(.icon(size: 22))
-                .help("Remove trigger")
+                .help("Remove schedule")
                 .opacity(hovering ? 1 : 0)
                 .allowsHitTesting(hovering)
             }
@@ -407,7 +460,7 @@ private struct TriggerRow: View {
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .accessibilityElement(children: .contain)
-        .accessibilityAction(named: "Remove trigger", onRemove)
+        .accessibilityAction(named: "Remove schedule", onRemove)
     }
 
     private var presetMenu: some View {
@@ -498,7 +551,7 @@ private struct AddTriggerRow: View {
                 Image(systemName: "plus")
                     .font(.system(size: 11, weight: .medium))
                     .frame(width: AutoPage.gutter, alignment: .leading)
-                Text("Add trigger").font(.btBody)
+                Text("Add schedule").font(.btBody)
             }
             .foregroundStyle(hovering ? Color.btText : Color.btTextSecondary)
             .frame(height: 32)
@@ -640,55 +693,70 @@ private struct AddEventRow: View {
 
 // MARK: Scope
 
-/// Which chat each run happens in, and how, as one sentence of choices:
-/// "Each run starts a new chat in abstract on This Mac using Claude · Opus
-/// with edits accepted", or "Each run continues “Weekly triage” on This Mac".
-private struct ScopeSentence: View {
+/// Which chat each run happens in, and how, as labelled rows: a label
+/// column, then the same chips and menus as ever, each row's notes and
+/// warnings under the row they belong to.
+private struct ScopeRows: View {
     @Environment(AppModel.self) private var model
     @Binding var draft: AutomationDraft
 
     /// The chat every run continues, once there is one.
     private var chat: Session? { draft.isPinned ? model.session(draft.pinnedSessionId) : nil }
 
+    private static let labelWidth: CGFloat = 110
+
     var body: some View {
-        VStack(alignment: .leading, spacing: Space.xs) {
-            FlowRow(spacing: 1, lineSpacing: 2) {
-                SentenceWord("Each run")
-                chatMenu
-                // A chat that exists already has its project, agent and permissions.
-                if chat == nil {
-                    SentenceWord("in")
-                    projectMenu
-                }
-                SentenceWord("on")
-                deviceMenu
-                if chat == nil || draft.workflowId != nil {
-                    if !model.profiles.isEmpty || !model.workflows.isEmpty {
-                        SentenceWord(draft.workflowId == nil ? "as" : "following")
-                        profileMenu
-                    }
-                }
-                // A workflow's steps bring their own agent and permissions.
-                if chat == nil, draft.workflowId == nil {
-                    SentenceWord("using")
-                    AgentChip(providerId: $draft.providerId, modelId: $draft.modelId, effort: $draft.effort, device: draft.deviceId)
-                    SentenceWord("with")
-                    policyMenu
+        VStack(alignment: .leading, spacing: Space.sm) {
+            row("Chat") { chatMenu } notes: { chatNotes }
+            // A chat that exists already has its project, agent and permissions.
+            if chat == nil {
+                row("Project") { projectMenu }
+            }
+            row("Mac") { deviceMenu } notes: { macNotes }
+            if chat == nil || draft.workflowId != nil {
+                if !model.profiles.isEmpty || !model.workflows.isEmpty {
+                    row("Profile") { profileMenu } notes: { profileNotes }
                 }
             }
-            notes
+            // A workflow's steps bring their own agent and permissions.
+            if chat == nil, draft.workflowId == nil {
+                row("Agent") {
+                    AgentChip(providerId: $draft.providerId, modelId: $draft.modelId, effort: $draft.effort, device: draft.deviceId)
+                } notes: { agentNotes }
+                row("Permissions") { policyMenu } notes: { policyNotes }
+            }
         }
+    }
+
+    private func row<Content: View, Notes: View>(_ label: String,
+                                                 @ViewBuilder content: () -> Content,
+                                                 @ViewBuilder notes: () -> Notes) -> some View {
+        VStack(alignment: .leading, spacing: Space.xxs) {
+            HStack(spacing: 0) {
+                Text(label)
+                    .font(.btBody)
+                    .foregroundStyle(Color.btTextSecondary)
+                    .frame(width: Self.labelWidth, alignment: .leading)
+                content().padding(.leading, -Chip.inset)
+            }
+            notes()
+                .padding(.leading, Self.labelWidth)
+        }
+    }
+
+    private func row<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
+        row(label, content: content) { EmptyView() }
     }
 
     private var chatMenu: some View {
         SentenceMenu(title: chatTitle) {
-            item("Starts a New Chat",
+            item("New Chat Each Run",
                  detail: draft.projectId == nil ? "A standalone chat each run" : "Each in its own worktree, fetched and set up fresh",
                  selected: !draft.isPinned) {
                 draft.setWorkspaceMode(.newWorktree)
                 draft.pinnedSessionId = nil
             }
-            item("Continues a Chat of Its Own", detail: "Made by the first run; every run after is its next message",
+            item("Same Chat Every Run", detail: "First run creates it; later runs continue it",
                  selected: draft.isPinned && chat == nil) {
                 draft.setWorkspaceMode(.pinned)
                 draft.pinnedSessionId = nil
@@ -709,9 +777,9 @@ private struct ScopeSentence: View {
     }
 
     private var chatTitle: String {
-        guard draft.isPinned else { return "starts a new chat" }
-        guard let chat else { return "continues a chat of its own" }
-        return "continues “\(chat.name)”"
+        guard draft.isPinned else { return "New chat each run" }
+        guard let chat else { return "Same chat every run" }
+        return "“\(chat.name)”"
     }
 
     /// Recent chats on this Mac, and the chosen one wherever it is.
@@ -731,7 +799,7 @@ private struct ScopeSentence: View {
     }
 
     private var projectMenu: some View {
-        SentenceMenu(title: model.project(draft.projectId)?.name ?? "no project") {
+        SentenceMenu(title: model.project(draft.projectId)?.name ?? "No project") {
             Picker("Project", selection: $draft.projectId) {
                 ForEach(model.projects) { p in Text(p.name).tag(Optional(p.id)) }
                 Divider()
@@ -787,8 +855,8 @@ private struct ScopeSentence: View {
     /// choosing one sets the agent, model, effort and permissions, and
     /// its instructions go to the agent at every run.
     private var profileMenu: some View {
-        SentenceMenu(title: model.workflow(draft.workflowId).map { "the “\($0.name)” workflow" }
-                     ?? model.profile(draft.profileId)?.name ?? "no profile") {
+        SentenceMenu(title: model.workflow(draft.workflowId).map { "“\($0.name)” workflow" }
+                     ?? model.profile(draft.profileId)?.name ?? "No profile") {
             Picker("Profile", selection: Binding(get: { draft.workflowId == nil ? draft.profileId : nil },
                                                  set: { chooseProfile($0) })) {
                 Text("No Profile").tag(String?.none)
@@ -845,7 +913,7 @@ private struct ScopeSentence: View {
     }
 
     private var policyMenu: some View {
-        SentenceMenu(title: draft.policy.phrase) {
+        SentenceMenu(title: draft.policy.phrase.prefix(1).uppercased() + draft.policy.phrase.dropFirst()) {
             ForEach(PermissionPolicy.autonomyCases, id: \.self) { p in
                 Toggle(isOn: Binding(get: { draft.policy == p }, set: { _ in draft.policy = p })) {
                     Text(p.title)
@@ -856,23 +924,7 @@ private struct ScopeSentence: View {
     }
 
     @ViewBuilder
-    private var notes: some View {
-        if chat == nil, draft.deviceId == nil, model.providerStatus[draft.providerId]?.available == false {
-            Label("\(ProviderRegistry.name(draft.providerId)) wasn't found on this Mac. Set its path in Settings › Agents.",
-                  systemImage: "exclamationmark.triangle")
-                .font(.btCallout)
-                .foregroundStyle(Color.btWarning)
-        }
-        if draft.deviceId != nil {
-            if deviceSnapshot == nil {
-                note("\(deviceName) isn't connected now. A run that comes due while it isn't is recorded as failed, with that reason.",
-                     warning: true)
-            } else if let snapshot = deviceSnapshot, chat == nil, let project = model.projects.first(where: { $0.id == draft.projectId }),
-                      !AutomationDeviceRun.hasProject(project, in: snapshot) {
-                note("\(deviceName) doesn't have a project called “\(project.name)”, so runs there fail until it does.",
-                     warning: true)
-            }
-        }
+    private var chatNotes: some View {
         if draft.isPinned, draft.pinnedSessionId != nil, chat == nil {
             note("Its chat was deleted, so the next run starts a new one of its own.", warning: true)
         }
@@ -887,6 +939,26 @@ private struct ScopeSentence: View {
             note("Its agent can start chats of their own, each in its own worktree, with the abstract command line "
                  + "(Settings › General › Command line).")
         }
+    }
+
+    @ViewBuilder
+    private var macNotes: some View {
+        if let blocker = draft.eventsBlocker { blockerCaption(blocker) }
+        if draft.deviceId != nil {
+            if deviceSnapshot == nil {
+                note("\(deviceName) isn't connected now. A run that comes due while it isn't is recorded as failed, with that reason.",
+                     warning: true)
+            } else if let snapshot = deviceSnapshot, chat == nil, let project = model.projects.first(where: { $0.id == draft.projectId }),
+                      !AutomationDeviceRun.hasProject(project, in: snapshot) {
+                note("\(deviceName) doesn't have a project called “\(project.name)”, so runs there fail until it does.",
+                     warning: true)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var profileNotes: some View {
+        if let blocker = draft.workflowBlocker { blockerCaption(blocker) }
         if let workflow = model.workflow(draft.workflowId) {
             if let problem = workflow.problem(profiles: model.profiles) {
                 note("“\(workflow.name)”: \(problem) Runs fail until it's fixed in Settings › Workflows.", warning: true)
@@ -895,9 +967,30 @@ private struct ScopeSentence: View {
                      + "with the instructions as its task. The agent, model and permissions are each step's own.")
             }
         }
+    }
+
+    @ViewBuilder
+    private var agentNotes: some View {
+        if chat == nil, draft.deviceId == nil, model.providerStatus[draft.providerId]?.available == false {
+            Label("\(ProviderRegistry.name(draft.providerId)) wasn't found on this Mac. Set its path in Settings › Agents.",
+                  systemImage: "exclamationmark.triangle")
+                .font(.btCallout)
+                .foregroundStyle(Color.btWarning)
+        }
+    }
+
+    @ViewBuilder
+    private var policyNotes: some View {
         if chat == nil, draft.policy == .ask {
             note("Nobody is there to answer while it runs: a run stops at its first tool call until you answer in its chat.")
         }
+    }
+
+    private func blockerCaption(_ text: String) -> some View {
+        Text(text)
+            .font(.btCaption)
+            .foregroundStyle(Color.btRemoved)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     private func note(_ text: String, warning: Bool = false) -> some View {
@@ -1039,7 +1132,7 @@ private struct InstructionsView: View {
     var body: some View {
         if editing {
             MarkdownEditor(text: $prompt, font: prose.font(size: prose.points), lineSpacing: prose.lineSpacing,
-                           placeholder: "What should the agent do on every run? Markdown works: headings, lists, code blocks.")
+                           placeholder: "What should the agent do on every run? Say what to do, in what order, and what to report back. Markdown works: headings, lists, code blocks.")
                 .focused($focused)
                 .padding(.horizontal, Self.bleed)
                 .padding(.vertical, 10)

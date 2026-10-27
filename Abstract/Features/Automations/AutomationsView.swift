@@ -26,7 +26,7 @@ struct AutomationsView: View {
                 EmptyStateView(
                     symbol: "clock.arrow.2.circlepath",
                     title: "No automations yet",
-                    message: "Run an agent on a schedule — nightly dependency bumps, issue triage, recurring cleanups. Each run starts a chat you review like any other, or continues one, whose agent can start chats of its own.",
+                    message: "Run an agent on a schedule, or when something happens in a chat. Each run is a chat you can read and reply to.",
                     action: ("New Automation", { creating = true })
                 )
             } else {
@@ -56,13 +56,16 @@ private extension View {
 // MARK: - List
 
 /// Every automation, grouped by project in the sidebar's order, under a
-/// filter bar whose choices are kept across launches.
+/// filter bar whose choices are kept across launches. The bar stays out
+/// of the way until a filter is on, the list outgrows a glance, or it is
+/// asked for.
 private struct AutomationList: View {
     @Environment(AppModel.self) private var model
     let open: (String) -> Void
     @AppStorage("automations.filter.project") private var projectChoice = ""
     @AppStorage("automations.filter.agent") private var agentChoice = ""
     @AppStorage("automations.filter.state") private var stateChoice: AutomationFilter.State = .all
+    @State private var filtersShown = false
 
     /// The stored choices; a project or agent that's gone counts as all.
     private var filter: AutomationFilter {
@@ -80,7 +83,20 @@ private struct AutomationList: View {
             TimelineView(.everyMinute) { context in
                 VStack(alignment: .leading, spacing: 0) {
                     AutoSectionLabel(title: heading(shown: sections.reduce(0) { $0 + $1.automations.count }, filter: filter)) {
-                        filterBar(filter)
+                        if filter.isOn || model.automations.count > 8 || filtersShown {
+                            filterBar(filter)
+                        } else {
+                            Button("Filter") { filtersShown = true }
+                                .buttonStyle(.bt(.ghost, size: .small))
+                                .padding(.trailing, -9)
+                        }
+                    }
+                    if let attention = AutomationSummary.attentionLine(
+                        outcomes: model.automations.compactMap { model.summary(of: $0, now: context.date).outcome }) {
+                        Text(attention)
+                            .font(.btCallout)
+                            .foregroundStyle(Color.btAttention)
+                            .padding(.top, Space.xxs)
                     }
                     if sections.isEmpty {
                         VStack(alignment: .leading, spacing: Space.md) {
@@ -102,9 +118,8 @@ private struct AutomationList: View {
                         .padding(.top, Space.lg)
                         .padding(.bottom, Space.xs)
                         ForEach(section.automations) { a in
-                            AutomationListRow(automation: a, chat: chat(of: a), device: device(of: a), now: context.date) {
-                                open(a.id)
-                            }
+                            AutomationListRow(automation: a, chat: chat(of: a), device: device(of: a), now: context.date,
+                                              action: { open(a.id) }, openPage: open)
                         }
                     }
                 }
@@ -189,14 +204,27 @@ private struct AutomationList: View {
 }
 
 private struct AutomationListRow: View {
+    @Environment(AppModel.self) private var model
     let automation: Automation
     let chat: String?
     let device: String?
     let now: Date
     let action: () -> Void
+    /// Opens another automation's page (a duplicate made here).
+    let openPage: (String) -> Void
+    @State private var hovering = false
+    @State private var running = false
+    @FocusState private var focused: Bool
+
+    private var summary: AutomationSummary { model.summary(of: automation, now: now) }
+    private var lastChatId: String? {
+        model.latestAutomationRuns[automation.id]?.sessionId.flatMap { model.session($0)?.id }
+    }
+    private var showsActions: Bool { hovering || focused }
 
     var body: some View {
-        Button(action: action) {
+        let summary = summary
+        VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 0) {
                 // Active: a solid diamond like a chat's; paused: an outline.
                 Group {
@@ -204,37 +232,91 @@ private struct AutomationListRow: View {
                     else { RoundedDiamond().stroke(Color.btTextTertiary, lineWidth: 1.2) }
                 }
                 .frame(width: 9, height: 9)
-                    .frame(width: AutoPage.gutter, alignment: .leading)
-                    .accessibilityLabel(automation.enabled ? "Active" : "Paused")
+                .frame(width: AutoPage.gutter, alignment: .leading)
+                .accessibilityLabel(automation.enabled ? "Active" : "Paused")
                 Text(automation.name)
                     .font(.btBodyMedium)
-                    .foregroundStyle(Color.btText)
+                    .foregroundStyle(automation.enabled ? Color.btText : Color.btTextTertiary)
                     .lineLimit(1)
                     .layoutPriority(1)
-                Text([AutomationText.schedule(automation), chat, device].compactMap { $0 }.joined(separator: " · "))
-                    .font(.btCallout)
-                    .foregroundStyle(Color.btTextTertiary)
-                    .lineLimit(1)
-                    .padding(.leading, Space.md)
                 Spacer(minLength: Space.lg)
-                Text(AutomationText.next(automation, now: now))
+                if showsActions {
+                    HStack(spacing: Space.xs) {
+                        Button("Run now", action: runNow)
+                            .buttonStyle(.bt(.secondary, size: .small))
+                            .disabled(running)
+                        Button(automation.enabled ? "Pause" : "Resume") {
+                            model.setAutomationEnabled(automation.id, !automation.enabled)
+                        }
+                        .buttonStyle(.bt(.ghost, size: .small))
+                    }
+                    .padding(.trailing, Space.sm)
+                }
+                Text(summary.next)
                     .font(.btCallout)
                     .foregroundStyle(automation.enabled ? Color.btTextSecondary : Color.btTextTertiary)
                     .monospacedDigit()
                     .lineLimit(1)
             }
-            .frame(height: 38)
-            .padding(.horizontal, AutoPage.hang)
+            HStack(spacing: 0) {
+                Text([summary.schedule, chat, device, ProviderRegistry.name(automation.providerId)]
+                    .compactMap { $0 }.joined(separator: " · "))
+                    .font(.btCallout)
+                    .foregroundStyle(Color.btTextTertiary)
+                    .lineLimit(1)
+                    .padding(.leading, AutoPage.gutter)
+                Spacer(minLength: Space.lg)
+                HStack(spacing: 6) {
+                    Circle().fill(summary.outcome?.tint ?? Color.btTextTertiary).frame(width: 6, height: 6)
+                    Text(summary.lastRun)
+                }
+                .font(.btCallout)
+                .foregroundStyle(summary.outcome.flatMap { $0.needsAttention ? $0.tint : nil } ?? Color.btTextTertiary)
+                .lineLimit(1)
+            }
         }
-        .buttonStyle(RowButtonStyle(cornerRadius: Radius.md))
+        .padding(.vertical, 7)
+        .padding(.horizontal, AutoPage.hang)
+        .contentShape(Rectangle())
+        .background(RoundedRectangle(cornerRadius: Radius.md, style: .continuous)
+            .fill(hovering ? Color.btHover : .clear))
         .padding(.horizontal, -AutoPage.hang)
+        .onHover { hovering = $0 }
+        .animation(.snappy(duration: 0.12), value: hovering)
+        .onTapGesture(perform: action)
+        .focusable()
+        .focused($focused)
+        .onKeyPress(.return) { action(); return .handled }
+        .accessibilityElement(children: .contain)
+        .accessibilityAction(named: "Open", action)
+        .contextMenu {
+            Button("Run now", action: runNow).disabled(running)
+            Button(automation.enabled ? "Pause" : "Resume") {
+                model.setAutomationEnabled(automation.id, !automation.enabled)
+            }
+            if let lastChatId {
+                Button("Open last chat") { model.open(lastChatId) }
+            }
+            Button("Duplicate") {
+                if let copy = model.duplicateAutomation(automation) { openPage(copy.id) }
+            }
+        }
+    }
+
+    private func runNow() {
+        guard !running else { return }
+        running = true
+        Task {
+            _ = await model.runAutomationNow(automation)
+            running = false
+        }
     }
 }
 
 // MARK: - Page
 
 /// One automation as a document: breadcrumb and run controls, the title,
-/// then Settings or Run History. The page edits a draft; Save stores it,
+/// then Setup or Runs. The page edits a draft; Save stores it,
 /// Discard puts it back. Creating one opens the same page, empty.
 private struct AutomationPage: View {
     @Environment(AppModel.self) private var model
@@ -248,6 +330,8 @@ private struct AutomationPage: View {
     @State private var editingInstructions: Bool
     @State private var runs: [AutomationRun] = []
     @State private var running = false
+    @State private var confirmingRun = false
+    @State private var describeHidden = false
     @State private var confirmingDelete = false
     @State private var confirmingLeave = false
     @State private var saveError: String?
@@ -259,6 +343,8 @@ private struct AutomationPage: View {
         self.onClose = onClose
         self.onOpen = onOpen
         _draft = State(initialValue: draft)
+        // Demo snapshots open the Runs tab by setting this before navigating.
+        _tab = State(initialValue: UserDefaults.standard.string(forKey: "automations.tab") == "history" ? .history : .settings)
         _editingInstructions = State(initialValue: draft.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 
@@ -269,13 +355,14 @@ private struct AutomationPage: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 header
-                if existing == nil {
-                    DescribeAutomation(draft: $draft, focused: $describeFocused) { editingInstructions = false }
+                if existing == nil, !describeHidden {
+                    DescribeAutomation(draft: $draft, focused: $describeFocused,
+                                       onStartBlank: { describeHidden = true; titleFocused = true }) { editingInstructions = false }
                         .padding(.top, Space.lg)
                 }
                 PageTabs(selection: $tab, items: [
-                    .init(value: .settings, title: "Settings"),
-                    .init(value: .history, title: "Run history"),
+                    .init(value: .settings, title: "Setup"),
+                    .init(value: .history, title: "Runs"),
                 ])
                 .padding(.top, Space.xl)
 
@@ -330,6 +417,18 @@ private struct AutomationPage: View {
         } message: {
             Text("This removes the automation and its run history. The chats its runs used stay.")
         }
+        .confirmationDialog("Run with unsaved changes?", isPresented: $confirmingRun) {
+            Button("Save and Run") {
+                if let saved = save() { startRun(saved) }
+            }
+            .disabled(draft.blocker != nil)
+            Button("Run Saved Version") {
+                if let existing { startRun(existing) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Your edits haven't been saved. Save them first, or run the version that's saved now.")
+        }
         .confirmationDialog("Discard your changes?", isPresented: $confirmingLeave) {
             Button("Discard Changes", role: .destructive, action: onClose)
             Button("Keep Editing", role: .cancel) {}
@@ -375,7 +474,7 @@ private struct AutomationPage: View {
                 .buttonStyle(.bt(.secondary, size: .small))
                 .disabled(running)
                 .padding(.leading, Space.xs)
-                .help(dirty ? "Start a run of the saved version now; unsaved edits aren't included" : "Start a run now, outside the schedule")
+                .help("Start a run now, outside the schedule")
             }
         }
         .frame(height: 28)
@@ -397,10 +496,35 @@ private struct AutomationPage: View {
                 saveControls
             }
             Toggle(isOn: Binding(get: { isActive }, set: { setActive($0) })) {
-                Text("Active").font(.btCallout).foregroundStyle(Color.btTextSecondary)
+                Text(isActive ? "Active" : "Paused").font(.btCallout).foregroundStyle(Color.btTextSecondary)
             }
             .toggleStyle(QuietSwitchStyle())
             .help(isActive ? "Pause: scheduled runs stop until you turn it back on" : "Resume the schedule")
+            if existing != nil {
+                Text("Takes effect now, even before you save other changes.")
+                    .font(.btCaption)
+                    .foregroundStyle(Color.btTextTertiary)
+            }
+            if let existing {
+                readBack(existing)
+            }
+        }
+    }
+
+    /// The saved automation in one breath, with a way into its chat.
+    private func readBack(_ a: Automation) -> some View {
+        let summary = model.summary(of: a)
+        let chatId = model.latestAutomationRuns[a.id]?.sessionId.flatMap { model.session($0)?.id }
+            ?? a.pinnedSessionId.flatMap { model.session($0)?.id }
+        return HStack(spacing: Space.sm) {
+            Text(summary.header)
+                .font(.btCallout)
+                .foregroundStyle(Color.btTextSecondary)
+                .lineLimit(1)
+            if let chatId {
+                Button("Open chat") { model.open(chatId) }
+                    .buttonStyle(.bt(.ghost, size: .small))
+            }
         }
     }
 
@@ -418,7 +542,7 @@ private struct AutomationPage: View {
             Button("Discard", action: discard)
                 .buttonStyle(.bt(.ghost, size: .small))
                 .disabled(existing != nil && !dirty)
-            Button("Save", action: save)
+            Button("Save") { _ = save() }
                 .buttonStyle(.bt(.primary, size: .small))
                 .disabled(!dirty || draft.blocker != nil)
                 .keyboardShortcut("s", modifiers: .command)
@@ -432,8 +556,9 @@ private struct AutomationPage: View {
         if let existing { model.setAutomationEnabled(existing.id, on) } else { draft.enabled = on }
     }
 
-    private func save() {
-        guard dirty, draft.blocker == nil else { return }
+    @discardableResult
+    private func save() -> Automation? {
+        guard dirty, draft.blocker == nil else { return nil }
         do {
             let saved = try model.saveAutomation(draft.automation(base: existing))
             saveError = nil
@@ -444,8 +569,10 @@ private struct AutomationPage: View {
                 draft = AutomationDraft(saved)
                 model.flash("Changes saved")
             }
+            return saved
         } catch {
             saveError = error.localizedDescription
+            return nil
         }
     }
 
@@ -467,10 +594,16 @@ private struct AutomationPage: View {
         guard let existing else { return }
         let fresh = model.automationRuns(existing.id)
         if fresh != runs { runs = fresh }
+        model.refreshLatestAutomationRuns()
     }
 
     private func runNow() {
         guard let a = existing, !running else { return }
+        if dirty { confirmingRun = true } else { startRun(a) }
+    }
+
+    private func startRun(_ a: Automation) {
+        guard !running else { return }
         running = true
         Task {
             _ = await model.runAutomationNow(a)
@@ -487,15 +620,38 @@ private struct DescribeAutomation: View {
     @Environment(AppModel.self) private var model
     @Binding var draft: AutomationDraft
     var focused: FocusState<Bool>.Binding
+    let onStartBlank: () -> Void
     let onDrafted: () -> Void
     @State private var text = ""
     @State private var drafting = false
     @State private var error: String?
     @State private var drafted = false
+    @State private var collapsed = false
 
     private var canDraft: Bool { !drafting && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
+    /// Examples that fill the box: a shape to copy, not stored templates.
+    private static let examples = [
+        "Every weekday at 9, triage new issues and tell me what needs me",
+        "Nightly, update dependencies and fix what breaks",
+        "Every Monday, summarise last week's merged work",
+    ]
+
     var body: some View {
+        if collapsed {
+            HStack(spacing: Space.sm) {
+                Text("Drafted — check the setup below")
+                    .font(.btCallout)
+                    .foregroundStyle(Color.btTextSecondary)
+                Button("Draft again") { collapsed = false }
+                    .buttonStyle(.bt(.ghost, size: .small))
+            }
+        } else {
+            box
+        }
+    }
+
+    private var box: some View {
         VStack(alignment: .leading, spacing: Space.xs) {
             // A text area like the chat composer: a description is several
             // sentences, so it opens three lines tall, with its button inside.
@@ -536,6 +692,17 @@ private struct DescribeAutomation: View {
                     .font(.btCallout)
                     .foregroundStyle(Color.btTextTertiary)
             }
+            FlowRow(spacing: Space.xs, lineSpacing: Space.xs) {
+                ForEach(Self.examples, id: \.self) { example in
+                    Button(example) { text = example; focused.wrappedValue = true }
+                        .buttonStyle(.bt(.secondary, size: .small))
+                        .help("Use this example")
+                }
+            }
+            .padding(.top, Space.xxs)
+            Button("Start blank instead", action: onStartBlank)
+                .buttonStyle(.bt(.ghost, size: .small))
+                .padding(.leading, -9)
         }
     }
 
@@ -551,6 +718,7 @@ private struct DescribeAutomation: View {
                     draft.apply(proposal, projectId: projectId, timezone: model.defaultTimezone)
                 }
                 drafted = true
+                collapsed = true
                 onDrafted()
             } catch {
                 self.error = error.localizedDescription
