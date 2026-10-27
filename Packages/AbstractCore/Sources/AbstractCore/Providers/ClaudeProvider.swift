@@ -556,6 +556,7 @@ final class ClaudeParser: OutputParser {
         }
         let edit = ClaudeWire.editPreview(toolUseResult: obj["tool_use_result"])
         let fileChanges = ClaudeWire.bashEditDiff(toolUseResult: obj["tool_use_result"])
+        let gitOperations = ClaudeWire.gitOperations(toolUseResult: obj["tool_use_result"])
         var events: [AgentEvent] = []
         for block in message["content"]?.array ?? [] {
             switch block["type"]?.string {
@@ -567,6 +568,7 @@ final class ClaudeParser: OutputParser {
                 if let fileChanges { events.append(.toolFileChanges(toolUseId: id, changes: fileChanges)) }
                 let images = ClaudeWire.images(block["content"])
                 if !images.isEmpty { events.append(.toolImages(toolUseId: id, images: images)) }
+                if block["is_error"]?.bool != true { events += gitOperations.map(AgentEvent.gitOperation) }
             case "text":
                 // Claude Code's own additions (a skill's instructions, reminders)
                 // come as user messages marked synthetic; they aren't yours.
@@ -758,6 +760,10 @@ private enum ClaudeWire {
             return preview(createdFile: filePath, content: content)
         }
         return nil
+    }
+
+    static func gitOperations(toolUseResult result: JSONValue?) -> [GitOperation] {
+        GitOperation.claude(result?["gitOperation"])
     }
 
     static func bashEditDiff(toolUseResult result: JSONValue?) -> ToolFileChanges? {

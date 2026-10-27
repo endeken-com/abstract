@@ -113,9 +113,42 @@ extension AppModel {
     }
 
     func pullRequestsForChat(_ sessionId: String) -> [PullRequest] {
-        guard let session = session(sessionId), let branch = session.branch,
+        guard let session = session(sessionId), session.branch != nil,
               let projectId = session.projectId else { return [] }
-        return (projectPullRequests[projectId] ?? []).filter { $0.head == branch }
+        return PullRequestAssociation.candidates(projectPullRequests[projectId] ?? [],
+                                                 branch: session.branch, pinnedNumber: pinnedPullRequests[sessionId])
+    }
+
+    /// Apply an agent's own git activity before the next periodic PR lookup.
+    func onGitOperation(_ operation: GitOperation, in sessionId: String) {
+        guard let session = session(sessionId) else { return }
+        switch operation {
+        case .commit:
+            break
+        case .push:
+            guard !sessionId.hasPrefix(RemoteService.mirrorPrefix) else { return }
+            Task { await refreshBranch(sessionId, fetch: .now) }
+            Task { _ = try? await refreshPullRequest(sessionId) }
+        case let .pullRequest(number, url, action):
+            if action == "created" || action == "reopened" {
+                pinnedPullRequests[sessionId] = number
+                if pullRequests[sessionId]?.number != number {
+                    pullRequests[sessionId] = PullRequest(contract: .object([
+                        "number": .number(Double(number)), "title": .string(""),
+                        "url": url.map { .string($0.absoluteString) } ?? .null,
+                        "head": .string(session.branch ?? ""), "base": .string(session.baseRef ?? ""),
+                    ]))
+                }
+            }
+            if ["created", "edited", "merged", "commented", "closed", "reopened", "ready", "draft",
+                "auto-merge-enabled", "auto-merge-disabled"].contains(action),
+               !sessionId.hasPrefix(RemoteService.mirrorPrefix) {
+                Task {
+                    _ = try? await refreshPullRequest(sessionId)
+                    if action == "merged" { await refreshBranch(sessionId, fetch: .now) }
+                }
+            }
+        }
     }
 
     func selectPullRequest(_ sessionId: String, number: Int) async throws {
@@ -141,7 +174,7 @@ extension AppModel {
         if let number = pr?.number, host.answers(.reviewThreads) {
             pr?.threads = try await host.reviewThreads(number: number)
         }
-        if pullRequests[sessionId]?.number == selected { pullRequests[sessionId] = pr }
+        if let pr, pullRequests[sessionId]?.number == selected { pullRequests[sessionId] = pr }
         return pr
     }
 
@@ -195,9 +228,9 @@ extension AppModel {
                                                     branchStates[sessionId]?.base]) else { return }
         session.branch = branch
         try? store.save(session)
-        // The old branch's pull request isn't this one's.
-        pullRequests[sessionId] = nil
-        pinnedPullRequests[sessionId] = nil
+        // An agent-reported PR belongs to this chat even after a branch rename.
+        pullRequests[sessionId] = PullRequestAssociation.retained(pullRequests[sessionId],
+                                                                  pinnedNumber: pinnedPullRequests[sessionId])
         pullRequestLookupsAt[sessionId] = nil
         reload()
     }
