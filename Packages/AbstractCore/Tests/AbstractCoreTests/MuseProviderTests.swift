@@ -335,6 +335,73 @@ struct MuseProviderTests {
             == [.toolResult(toolUseId: "c2", output: "hi\n", isError: false, edit: nil)])
     }
 
+    /// Recorded from `muse serve` (1.4.13, muse-wonder-full-1.0, effort high)
+    /// in a clean /tmp workspace; home paths, hook and reminder items
+    /// stripped, and one summary part reworded because it named a local
+    /// skill. The provider's reasoning summary streams, then settles.
+    @Test func serveRecordingShowsReasoningSummaryAsThinking() throws {
+        let events = try Self.fixture("muse-serve-reasoning")
+        let itemId = "d13a6fbc-9afa-45e2-814b-f8e604c35ed4"
+        let first = "Evaluating two puzzle interpretations and applying arithmetic under abstract output constraints."
+        let second = "Checking each step of both readings before settling on one count."
+        let thinking = events.compactMap { if case let .thinking(text, id, partial) = $0 { (text, id, partial) } else { nil } }
+        #expect(thinking.map(\.0) == [first, "\n\n" + second, first + "\n\n" + second])
+        #expect(thinking.allSatisfy { $0.1 == itemId })
+        #expect(thinking.map(\.2) == [true, true, false])
+
+        // Thinking comes before the answer, once, as one block.
+        var timeline = Timeline()
+        timeline.append(contentsOf: events)
+        let blocks = timeline.blocks.compactMap { block -> String? in
+            switch block {
+            case let .thinking(_, text): "thinking:" + text
+            case .assistant: "answer"
+            default: nil
+            }
+        }
+        #expect(blocks == ["thinking:" + first + "\n\n" + second, "answer"])
+        #expect(try Self.fixture("muse-serve-reasoning") == events)
+    }
+
+    /// Reasoning summary parts stream on `summary.n`, a new part opening a
+    /// new paragraph; the settled item's summary replaces what streamed.
+    @Test func serveFoldShowsReasoningSummaryAsThinking() {
+        let parser = provider.makeParser()
+        #expect(parser.feed(#"{"jsonrpc":"2.0","method":"item/started","params":{"item":{"itemId":"r1","kind":"reasoning","revision":1,"status":"inProgress"}}}"#, stream: .stdout).isEmpty)
+        #expect(parser.feed(#"{"jsonrpc":"2.0","method":"item/delta","params":{"itemId":"r1","field":"summary.0","delta":"**Counting**"}}"#, stream: .stdout)
+            == [.thinking(text: "**Counting**", blockId: "r1", partial: true)])
+        #expect(parser.feed(#"{"jsonrpc":"2.0","method":"item/delta","params":{"itemId":"r1","field":"summary.0","delta":" sheep"}}"#, stream: .stdout)
+            == [.thinking(text: " sheep", blockId: "r1", partial: true)])
+        #expect(parser.feed(#"{"jsonrpc":"2.0","method":"item/delta","params":{"itemId":"r1","field":"summary.1","delta":"Nine remain."}}"#, stream: .stdout)
+            == [.thinking(text: "\n\nNine remain.", blockId: "r1", partial: true)])
+        #expect(parser.feed(#"{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"itemId":"r1","kind":"reasoning","revision":3,"status":"completed","summary":["**Counting** sheep","Nine remain."]}}}"#, stream: .stdout)
+            == [.thinking(text: "**Counting** sheep\n\nNine remain.", blockId: "r1", partial: false)])
+
+        var timeline = Timeline()
+        timeline.append(contentsOf: [.thinking(text: "**Counting**", blockId: "r1", partial: true),
+                                     .thinking(text: "\n\nNine remain.", blockId: "r1", partial: true),
+                                     .thinking(text: "**Counting** sheep\n\nNine remain.", blockId: "r1", partial: false)])
+        #expect(timeline.blocks.compactMap { if case let .thinking(_, text) = $0 { text } else { nil } }
+            == ["**Counting** sheep\n\nNine remain."])
+    }
+
+    /// A settled reasoning item with no summary of its own keeps what
+    /// streamed; one with nothing readable (encrypted only) shows nothing.
+    @Test func serveFoldNeverInventsThinking() {
+        let parser = provider.makeParser()
+        _ = parser.feed(#"{"jsonrpc":"2.0","method":"item/delta","params":{"itemId":"r2","field":"summary.0","delta":"Checked the file."}}"#, stream: .stdout)
+        #expect(parser.feed(#"{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"itemId":"r2","kind":"reasoning","revision":2,"status":"completed","summary":[]}}}"#, stream: .stdout)
+            == [.thinking(text: "Checked the file.", blockId: "r2", partial: false)])
+        // Completed without ever being started or streamed, and nothing to read.
+        #expect(parser.feed(#"{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"itemId":"r3","kind":"reasoning","revision":1,"status":"completed","providerItemId":"rs_1"}}}"#, stream: .stdout).isEmpty)
+        // Raw reasoning, where the provider exposes it, when there is no summary.
+        #expect(parser.feed(#"{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"itemId":"r4","kind":"reasoning","revision":1,"status":"completed","text":"Raw step."}}}"#, stream: .stdout)
+            == [.thinking(text: "Raw step.", blockId: "r4", partial: false)])
+        // Token counts alone never become thinking.
+        #expect(parser.feed(#"{"jsonrpc":"2.0","method":"session/tokenUsage","params":{"usage":{"inputTokens":10,"outputTokens":5,"reasoningTokens":200}}}"#, stream: .stdout)
+            .allSatisfy { if case .thinking = $0 { false } else { true } })
+    }
+
     @Test func serveTurnFailureNamesTheModelProblem() {
         let line = #"{"jsonrpc":"2.0","method":"turn/completed","params":{"sessionId":"s","turnId":"t","terminal":"failed","reason":"model `muse-does-not-exist` does not exist or you lack access"}}"#
         let events = provider.makeParser().feed(line, stream: .stdout)
