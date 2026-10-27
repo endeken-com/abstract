@@ -1,30 +1,25 @@
 # App icon
 
-Abstract's icon is **Horizonte**: a bright planetary arc over a grainy dust field. It
-comes in two versions, both in `Brand/` as the full-size art they were drawn at:
+Abstract's icon is a folded white ribbon — a hexagonal loop — on black. The same
+art serves both appearances, in `Brand/` at full size:
 
 | File | Version | Shown |
 |---|---|---|
-| `Brand/horizonte-dark.png` | *Horizonte planetario de luz y polvo*: a white arc on black | Dark appearance; Android |
-| `Brand/horizonte-light.png` | *Horizonte lunar en escala de grises*: a light grey sky over a dark limb | Light appearance |
+| `Brand/horizonte-dark.png` | Folded white ribbon on black | Dark appearance; Android |
+| `Brand/horizonte-light.png` | Same art | Light appearance |
 
 Everything else is made from those two by `scripts/make-icons.sh`. Change the art in
 `Brand/`, run the script, and commit what it writes. `scripts/make-icons.sh --check`,
 which CI runs, fails if an icon is missing or the wrong size.
 
-- **Mac:** `AppIcon.icon`, an Icon Composer document holding the 1024 px masters of both
-  versions: lunar is its default (light) appearance, planetario its dark one. macOS 26
-  shapes and sizes it, and picks the version from the icon style in System Settings ›
-  Appearance, not from Light or Dark mode: Default shows lunar, Dark shows planetario.
-  For older macOS, and for the `AppIcon.icns` the DMG wears, Xcode flattens the default
-  appearance, so those show lunar. To lead with planetario instead, swap the two file
-  names in `icon.json`.
+- **Mac:** `AppIcon.icon`, an Icon Composer document holding the 1024 px masters for
+  both appearances (the same art). macOS 26 shapes and sizes it. For older macOS, and
+  for the `AppIcon.icns` the DMG wears, Xcode flattens the default appearance.
 - **iPhone:** `mobile/assets/icon-light.png` and `icon-dark.png`, named in
-  `mobile/app.config.js`. iOS 18 and later show lunar on a light home screen and
-  planetario on a dark one; earlier versions show lunar. The checked-in iOS project
-  carries the same two images (`mobile/ios/Abstract/Images.xcassets/AppIcon.appiconset`).
-- **Android:** an adaptive icon with planetario as its background layer and an empty
-  foreground (`icon-clear.png`), and `icon-arc.png`, the arc alone, for themed icons.
+  `mobile/app.config.js`. The checked-in iOS project carries the same two images
+  (`mobile/ios/Abstract/Images.xcassets/AppIcon.appiconset`).
+- **Android:** an adaptive icon with the art as its background layer and an empty
+  foreground (`icon-clear.png`), and `icon-arc.png`, the bright part alone, for themed icons.
 
 Provider logos (`ProviderClaude`, `ProviderOpenAI`, `ProviderCodex`) come from
 the MIT-licensed `@lobehub/icons-static-svg` package. The marks themselves
