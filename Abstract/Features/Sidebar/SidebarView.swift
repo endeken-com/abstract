@@ -540,7 +540,7 @@ struct RailChatRow: View {
         let unreachable = model.remote.unreachableMessage(session.id)
         let stalled = unreachable == nil && (model.stallState(session.id)?.isStalled ?? false)
         let line = SidebarChats.line(for: chat, showProject: showProject)
-        Button { model.open(session.id) } label: {
+        Button { showingDetails = false; model.open(session.id) } label: {
             HStack(alignment: line.isEmpty && unreachable == nil && !stalled ? .center : .top, spacing: 8) {
                 RailChatMark(chat: chat, status: unreachable == nil ? session.status : .idle,
                              working: unreachable == nil && backgroundTasks > 0, stalled: stalled)
@@ -588,13 +588,14 @@ struct RailChatRow: View {
             try? await Task.sleep(for: .milliseconds(600))
             if !Task.isCancelled && hovering { showingDetails = true }
         }
-        .popover(isPresented: $showingDetails, arrowEdge: .trailing) {
+        .background(HoverCard(presented: $showingDetails) {
             RailChatDetails(session: session)
+                .environment(model)
                 .onHover {
                     hoveringDetails = $0
                     if !$0 && !hovering { showingDetails = false }
                 }
-        }
+        })
         .simultaneousGesture(TapGesture(count: 2).onEnded { if !remote { draft = session.name; renaming = true } })
         // `/rename` in the composer: the row that shows the chat takes it.
         .onChange(of: model.renamingSessionId, initial: true) { _, id in
@@ -715,6 +716,70 @@ struct RailChatRow: View {
             alert.addButton(withTitle: "Cancel")
             alert.buttons.first?.hasDestructiveAction = true
             if alert.runModal() == .alertFirstButtonReturn { await model.delete(session.id, removeWorktree: true) }
+        }
+    }
+}
+
+/// The row's hover card, shown beside it. An AppKit popover the row opens
+/// and closes itself (`applicationDefined`): SwiftUI's `.popover` is
+/// transient, and a click on the row while its card was up went to closing
+/// the card instead of opening the chat, so the chat needed a second click.
+private struct HoverCard<Content: View>: NSViewRepresentable {
+    @Binding var presented: Bool
+    @ViewBuilder var content: () -> Content
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        context.coordinator.anchor = view
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.onResignKey = { presented = false }
+        context.coordinator.setPresented(presented, content: presented ? AnyView(content()) : nil)
+    }
+
+    static func dismantleNSView(_ nsView: NSView, coordinator: HoverCardCoordinator) {
+        coordinator.setPresented(false, content: nil)
+    }
+
+    func makeCoordinator() -> HoverCardCoordinator { HoverCardCoordinator() }
+}
+
+/// Owns the hover card's popover. Top-level, not nested in the generic
+/// `HoverCard`: the release optimizer crashes on the nested version.
+private final class HoverCardCoordinator: NSObject {
+    weak var anchor: NSView?
+    var onResignKey: (() -> Void)?
+    private var popover: NSPopover?
+    private var hosting: NSHostingController<AnyView>?
+    private var resignObserver: NSObjectProtocol?
+
+    func setPresented(_ on: Bool, content: AnyView?) {
+        if on, let content {
+            if popover != nil {
+                hosting?.rootView = content
+                return
+            }
+            guard let anchor, anchor.window != nil else { return }
+            let hosting = NSHostingController(rootView: content)
+            let popover = NSPopover()
+            popover.behavior = .applicationDefined
+            popover.contentViewController = hosting
+            popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .maxX)
+            self.hosting = hosting
+            self.popover = popover
+            // The row's hover logic closes the card, but a window that
+            // stops being key leaves no pointer to leave with.
+            resignObserver = NotificationCenter.default.addObserver(
+                forName: NSWindow.didResignKeyNotification, object: anchor.window, queue: .main
+            ) { [weak self] _ in self?.onResignKey?() }
+        } else if !on, let popover {
+            popover.close()
+            self.popover = nil
+            hosting = nil
+            if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
+            resignObserver = nil
         }
     }
 }
