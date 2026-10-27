@@ -7,13 +7,26 @@ extension AppModel {
     /// Every chat the sidebar can show: this Mac's, then those on paired Macs connected now.
     func sidebarChats() -> [SidebarChats.Chat] {
         let here = remote.identity.name
+        // Projects and their icons are resolved once here, not once per chat:
+        // a linear project lookup and an icon-file check per chat made every
+        // sidebar refresh cost projects × chats (ABS-159).
+        let projectsById = Dictionary(projects.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        var iconsByProjectId: [String: SidebarChats.Icon] = [:]
+        let localProject = { (id: String?) -> Project? in id.flatMap { projectsById[$0] ?? self.remote.project($0) } }
         let local = sessions.filter { !$0.id.hasPrefix(RemoteService.mirrorPrefix) }.map { s in
-            SidebarChats.Chat(session: s, pullRequest: pullRequests[s.id].map(SidebarChats.PullRequestFacts.init),
+            let project = localProject(s.projectId)
+            let icon: SidebarChats.Icon
+            if let project, let projectId = s.projectId {
+                if let cached = iconsByProjectId[projectId] { icon = cached } else {
+                    icon = SidebarChats.icon(project: project, isRemote: false, remoteImage: nil)
+                    iconsByProjectId[projectId] = icon
+                }
+            } else { icon = .agentLogo }
+            return SidebarChats.Chat(session: s, pullRequest: pullRequests[s.id].map(SidebarChats.PullRequestFacts.init),
                               // A chat with no folder has nothing to review.
                               hasChanges: s.worktreePath == nil ? false : branchStates[s.id]?.hasUnmergedWork,
-                              backgroundTasks: runningBackgroundTasks(s.id), projectName: project(s.projectId)?.name,
-                              mac: here,
-                              icon: SidebarChats.icon(project: project(s.projectId), isRemote: false, remoteImage: nil))
+                              backgroundTasks: runningBackgroundTasks(s.id), projectName: project?.name,
+                              mac: here, icon: icon)
         }
         let paired = remote.paired.compactMap { remote.links[$0.id] }.flatMap { link -> [SidebarChats.Chat] in
             guard let snapshot = link.snapshot else { return [] }

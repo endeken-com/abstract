@@ -203,6 +203,45 @@ import AbstractCore
         #expect(SidebarChats.Filter(projects: ["abstract"], agents: ["codex"]).matches(here) == false, "every filter must pass")
     }
 
+    @Test func visibleAppliesArchiveFilterAndSearchTogether() {
+        let chats = [
+            chat("Fix login", pr: .init(number: 3981, state: .open), project: "abstract", branch: "abstract/oauth-callback"),
+            chat("Tidy 3981 notes", pr: .init(number: 39812, state: .open), project: "abstract"),
+            chat("Old login", project: "abstract", archived: true),
+            chat("Payments", project: "payments-api", provider: "codex"),
+            chat("Loose login", project: nil),
+        ]
+        func ids(filter: SidebarChats.Filter = .init(), query: String = "", archived: Bool = false) -> [String] {
+            SidebarChats.visible(chats, filter: filter, query: query, showArchived: archived).map(\.id)
+        }
+        #expect(ids() == ["Fix login", "Tidy 3981 notes", "Payments", "Loose login"], "archived stay hidden, order is kept")
+        #expect(ids(archived: true) == ["Fix login", "Tidy 3981 notes", "Old login", "Payments", "Loose login"])
+        #expect(ids(query: "LOGIN") == ["Fix login", "Loose login"], "title, case-insensitive")
+        #expect(ids(query: "oauth") == ["Fix login"], "branch")
+        #expect(ids(query: "#3981") == ["Fix login"], "a #-number means that pull request, not a longer one")
+        #expect(ids(query: "3981") == ["Fix login", "Tidy 3981 notes"], "a bare number still matches a title that contains it")
+        #expect(ids(query: "  login  ") == ["Fix login", "Loose login"], "the query is trimmed once")
+        #expect(ids(filter: .init(projects: ["payments-api"])) == ["Payments"])
+        #expect(ids(filter: .init(agents: ["codex"]), query: "login") == [], "filter and search both must pass")
+        #expect(ids(query: "login", archived: true) == ["Fix login", "Old login", "Loose login"])
+    }
+
+    @Test func groupedByProjectKeepsRailOrder() {
+        let chats = [
+            chat("b-first", project: "beta"), chat("a-plain", project: "alpha"),
+            chat("a-late-pin", project: "alpha", pinnedAt: 20), chat("loose", project: nil),
+            chat("a-first-pin", project: "alpha", pinnedAt: 10), chat("a-second", project: "alpha"),
+            chat("b-second", project: "beta"),
+        ]
+        let groups = SidebarChats.groupedByProject(chats)
+        // Pinned first in pin order, the rest in input order — the order sessions(in:) gave.
+        #expect(groups["p-alpha"]?.map(\.id) == ["a-first-pin", "a-late-pin", "a-plain", "a-second"])
+        #expect(groups["p-beta"]?.map(\.id) == ["b-first", "b-second"])
+        let noProject: String? = nil
+        #expect(groups[noProject]?.map(\.id) == ["loose"])
+        #expect(SidebarChats.groupedByProject([]).isEmpty)
+    }
+
     @Test func filterChoicesSurviveARoundTrip() throws {
         let filter = SidebarChats.Filter(projects: ["abstract"], agents: ["codex"], macs: ["Studio"])
         #expect(try JSONDecoder().decode(SidebarChats.Filter.self, from: JSONEncoder().encode(filter)) == filter)
