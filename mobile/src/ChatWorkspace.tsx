@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { BlurTargetView } from 'expo-blur';
 import { AccessibilityInfo, ActivityIndicator, Alert, Animated, FlatList, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { SymbolView } from 'expo-symbols';
+import Svg, { Path } from 'react-native-svg';
 import { CompactMenu as MenuView } from './CompactMenu';
 import * as Haptics from 'expo-haptics';
 import Markdown from 'react-native-markdown-display';
@@ -21,7 +22,7 @@ import { PullRequestIcon } from './PullRequestIcon';
 import { ContextPill } from './ContextPill';
 import { chatContext } from './chatContext';
 import { FileIcon } from './FileIcon';
-import { toolKind, toolSymbol } from './toolPresentation';
+import { brandGlyph, resolveToolIndicator, toolKind, toolMonogram, type ToolIndicator } from './toolPresentation';
 import { SwipeForward } from './SwipeForward';
 import { useKeyboardHeight } from './useKeyboardVisible';
 import { connectionNotice, type ConnectionNotice } from './composerStatus';
@@ -32,7 +33,7 @@ import type { EditPreview } from './editPreview';
 import { buildRule, ruleKindTitle, saveRuleArgs, suggestedRule } from './permissionRules';
 import { stallText } from './stalls';
 import { MODE_CHOICES, currentPlan, effectivePlan, isReadOnlyMode, nonPlanPermissions, pendingPlanRequest, planHistory, planTitle, policyShort, policyTitle, quotedPlan } from './plan';
-import { swiftDate, type PendingPermission, type PermissionDecision, type PermissionRuleKind, type PlanState, type QueuedMessage, type Session, type Stall } from './types';
+import { swiftDate, type InstalledPlugin, type PendingPermission, type PermissionDecision, type PermissionRuleKind, type PlanState, type QueuedMessage, type Session, type Stall } from './types';
 import { chatPauseRow } from './pause';
 import { composerActions, queuedMessages, settledByQueue } from './messageQueue';
 import { contributionsFor } from './plugins';
@@ -53,7 +54,7 @@ const editStyles = StyleSheet.create({
   moreText: { color: muted, fontFamily: 'Inter', fontSize: 11 },
 });
 const iconMap: Record<string, string> = { menu: 'sidebar.left', review: 'plusminus', files: 'doc.text', terminal: 'terminal', pr: 'arrow.triangle.pull', manage: 'ellipsis', attach: 'plus', send: 'arrow.up', stop: 'stop.fill', chevron: 'chevron.down', close: 'xmark' };
-const androidIcons: Record<string, string> = { menu: 'menu', review: 'difference', files: 'description', terminal: 'terminal', pr: 'merge', manage: 'more_horiz', attach: 'add', send: 'arrow_upward', stop: 'stop', chevron: 'keyboard_arrow_down', close: 'close', 'arrow.down': 'arrow_downward', sparkles: 'auto_awesome', 'doc.text': 'description', 'doc.badge.plus': 'note_add', pencil: 'edit', magnifyingglass: 'search', globe: 'public', checklist: 'checklist', 'list.bullet.clipboard': 'assignment', 'person.2': 'group', 'book.closed': 'menu_book', 'questionmark.bubble': 'help', 'puzzlepiece.extension': 'extension', 'wrench.and.screwdriver': 'build', 'exclamationmark.triangle': 'warning', 'pause.circle.fill': 'pause_circle', 'wifi.slash': 'wifi_off', 'slider.horizontal.3': 'tune' };
+const androidIcons: Record<string, string> = { menu: 'menu', review: 'difference', files: 'description', terminal: 'terminal', pr: 'merge', manage: 'more_horiz', attach: 'add', send: 'arrow_upward', stop: 'stop', chevron: 'keyboard_arrow_down', close: 'close', 'arrow.down': 'arrow_downward', sparkles: 'auto_awesome', 'doc.text': 'description', 'doc.badge.plus': 'note_add', pencil: 'edit', magnifyingglass: 'search', globe: 'public', checklist: 'checklist', 'list.bullet.clipboard': 'assignment', 'person.2': 'group', 'book.closed': 'menu_book', 'questionmark.bubble': 'help', 'puzzlepiece.extension': 'extension', hammer: 'handyman', network: 'lan', macwindow: 'web_asset', 'wrench.and.screwdriver': 'build', 'exclamationmark.triangle': 'warning', 'exclamationmark.circle.fill': 'error', 'pause.circle.fill': 'pause_circle', 'wifi.slash': 'wifi_off', 'slider.horizontal.3': 'tune' };
 function Glyph({ name, size = 14, color = muted }: { name: string; size?: number; color?: string }) { return <SymbolView name={{ ios: iconMap[name] || name, android: androidIcons[name] || (name === 'checkmark' ? 'check' : name), web: androidIcons[name] || (name === 'checkmark' ? 'check' : name) } as any} size={size} tintColor={color} style={{ width: size, height: size }} />; }
 function Chip({ icon, label, onPress, active }: { icon?: string; label?: string; onPress: () => void; active?: boolean }) { return <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={() => { Haptics.selectionAsync().catch(() => {}); onPress(); }} style={[s.chip, active && s.chipActive]}>{icon && <Glyph name={icon} size={14} color={active ? ink : muted} />}{label && <Text numberOfLines={1} style={[s.chipLabel, active && { color: ink }]}>{label}</Text>}</Pressable>; }
 function ToolbarAction({ label, onPress, children }: { label: string; onPress: () => void; children: React.ReactNode }) {
@@ -228,13 +229,24 @@ function ToolEditPreview({ edit }: { edit: EditPreview }) {
     {edit.lines.length > shown.length && <Pressable onPress={() => setShowAll(true)} style={editStyles.more}><Text style={editStyles.moreText}>Show {edit.lines.length - shown.length} more lines</Text></Pressable>}
   </View>;
 }
-function TranscriptRow({ row }: { row: ChatItem }) {
+const monogramColors = ['#4A4A51', '#7A7A83', '#8E877C', '#7C8B74', '#9E7F7F', '#86778A', '#A09780'];
+function ToolRowIcon({ indicator, failed, path }: { indicator: ToolIndicator; failed?: boolean; path?: string }) {
+  const monogram = indicator.kind === 'mcpServer' ? toolMonogram(indicator.name) : null;
+  const glyph = indicator.kind === 'brand' ? brandGlyph(indicator.id) : null;
+  return <View accessibilityLabel={indicator.label} style={s.toolIcon}>
+    {path ? <FileIcon path={path} size={15} /> : glyph ? <Svg width={15} height={15} viewBox="0 0 24 24"><Path d={glyph} fill={tertiary} fillRule={indicator.kind === 'brand' && indicator.id === 'Abstract' ? 'evenodd' : 'nonzero'} /></Svg>
+      : monogram ? <View style={{ width: 15, height: 15, borderRadius: 4, backgroundColor: monogramColors[monogram.colorIndex], alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '700' }}>{monogram.letter}</Text></View>
+      : <Glyph name={indicator.kind === 'symbol' ? indicator.symbol : 'wrench.and.screwdriver'} size={15} color={tertiary} />}
+    {failed && <View style={{ position: 'absolute', right: 0, bottom: 0, backgroundColor: canvas, borderRadius: 5 }}><Glyph name="exclamationmark.circle.fill" size={8} color="#EF6461" /></View>}
+  </View>;
+}
+function TranscriptRow({ row, plugins }: { row: ChatItem; plugins: InstalledPlugin[] }) {
   const [expanded, setExpanded] = useState(false);
   if (row.kind === 'thinking') return <View style={s.thinkingRow}><Text style={s.thinkingLabel}>{row.pending ? 'Thinking' : 'Thought'}</Text><Text style={s.thinkingText}>{row.text.trim()}</Text></View>;
   if (row.kind === 'turn') return <View style={s.turnRow}><View style={s.turnRule} /><Text style={s.thinkingLabel}>{duration(row.durationMs || 0)}</Text><View style={s.turnRule} /></View>;
   if (row.kind === 'user') return <View style={s.userRow}><View style={s.userBubble}><Text style={s.prose}>{row.text}</Text></View></View>;
   if (row.kind === 'tool') return <View><Pressable accessibilityRole="button" accessibilityLabel={`${row.text} ${row.target || ''}`} onPress={() => setExpanded(!expanded)} style={s.toolRow}>
-    <View style={s.toolIcon}>{row.failed ? <Glyph name="exclamationmark.triangle" size={15} color="#EF6461" /> : row.path && toolKind(row.toolName || '') === 'edit' ? <FileIcon path={row.path} size={17} /> : <Glyph name={toolSymbol(row.toolName || '')} size={15} color={tertiary} />}</View>
+    <ToolRowIcon indicator={resolveToolIndicator(row.toolName || '', row.toolInput, plugins)} failed={row.failed} path={row.path && toolKind(row.toolName || '') === 'edit' ? row.path : undefined} />
     <Text style={s.toolVerb}>{row.text}</Text>{!!row.target && <Text numberOfLines={1} style={s.toolLabel}>{row.target}</Text>}
     {(row.additions !== undefined || row.deletions !== undefined) && <Text style={{ fontFamily: 'JetBrainsMono', fontSize: 10, flexShrink: 0 }}><Text style={{ color: '#4CC38A' }}>+{row.additions || 0}</Text><Text style={{ color: tertiary }}> </Text><Text style={{ color: '#EF6461' }}>−{row.deletions || 0}</Text></Text>}
     {row.failed && <Text style={s.toolFailed}>Failed</Text>}{row.pending && <Text style={s.toolPending}>Working</Text>}
@@ -298,7 +310,7 @@ function groupToolRows(rows: ChatItem[]): Array<ChatItem | TranscriptGroupItem> 
   }
   return result;
 }
-function ToolGroupRow({ group }: { group: TranscriptGroupItem }) {
+function ToolGroupRow({ group, plugins }: { group: TranscriptGroupItem; plugins: InstalledPlugin[] }) {
   const [expanded, setExpanded] = useState(group.groupKind === 'command');
   const pending = group.rows.some(row => row.pending);
   const failed = group.rows.filter(row => row.failed).length;
@@ -312,13 +324,13 @@ function ToolGroupRow({ group }: { group: TranscriptGroupItem }) {
     return [files && `${files} file${files === 1 ? '' : 's'}`, searches && `${searches} search${searches === 1 ? '' : 'es'}`, web && `${web} web search${web === 1 ? '' : 'es'}`, pages && `${pages} page${pages === 1 ? '' : 's'}`, other > 0 && `${other} lookup${other === 1 ? '' : 's'}`].filter(Boolean).join(', ');
   })();
   return <View><Pressable accessibilityRole="button" accessibilityLabel={`${pending ? 'Running' : 'Ran'} ${summary}`} onPress={() => setExpanded(!expanded)} style={s.toolRow}>
-    <View style={s.toolIcon}><Glyph name={group.groupKind === 'command' ? 'terminal' : 'magnifyingglass'} size={15} color={tertiary} /></View>
+    <ToolRowIcon indicator={group.groupKind === 'command' && group.rows.every(row => JSON.stringify(resolveToolIndicator(row.toolName || '', row.toolInput, plugins)) === JSON.stringify(resolveToolIndicator(group.rows[0].toolName || '', group.rows[0].toolInput, plugins))) ? resolveToolIndicator(group.rows[0].toolName || '', group.rows[0].toolInput, plugins) : { kind: 'symbol', symbol: group.groupKind === 'command' ? 'terminal' : 'magnifyingglass', label: 'Tool' }} failed={failed > 0} />
     <Text style={s.toolVerb}>{group.groupKind === 'command' ? pending ? 'Running' : 'Ran' : pending ? 'Exploring' : 'Explored'}</Text>
     <Text style={s.toolLabel}>{summary}</Text>{failed > 0 && <Text style={s.toolFailed}>{failed} failed</Text>}
     <Glyph name={expanded ? 'chevron.up' : 'chevron.down'} size={10} color={tertiary} />
-  </Pressable>{expanded && <View style={{ marginLeft: 9, paddingLeft: 10, borderLeftWidth: 1, borderLeftColor: border }}>{group.rows.map(row => <TranscriptRow key={row.id} row={row} />)}</View>}</View>;
+  </Pressable>{expanded && <View style={{ marginLeft: 9, paddingLeft: 10, borderLeftWidth: 1, borderLeftColor: border }}>{group.rows.map(row => <TranscriptRow key={row.id} row={row} plugins={plugins} />)}</View>}</View>;
 }
-const renderTranscriptItem = ({ item }: { item: ChatItem | TranscriptGroupItem }) => item.kind === 'group' ? <ToolGroupRow group={item} /> : <TranscriptRow row={item} />;
+const renderTranscriptItem = (item: ChatItem | TranscriptGroupItem, plugins: InstalledPlugin[]) => item.kind === 'group' ? <ToolGroupRow group={item} plugins={plugins} /> : <TranscriptRow row={item} plugins={plugins} />;
 const transcriptKey = (row: ChatItem | TranscriptGroupItem) => row.id;
 export function ChatWorkspace({ route, navigation }: any) {
   const [, force] = useState(0);
@@ -684,7 +696,7 @@ export function ChatWorkspace({ route, navigation }: any) {
   // Keep it from the reader's first touch until the transcript follows new output again.
   return <SafeAreaView edges={['left', 'right']} style={s.root}>
     {pauseRow && <View style={s.pauseBanner}><Glyph name="pause.circle.fill" size={16} color="#E8B34A" /><Text style={s.pauseBannerText}>{pauseRow.text}</Text><Pressable accessibilityRole="button" accessibilityLabel={pauseRow.button} accessibilityState={{ disabled: !pauseRow.canAct }} disabled={!pauseRow.canAct} onPress={() => mac.request(pauseRow.request.name, pauseRow.request.args).catch(error => Alert.alert('Abstract', String(error.message || error)))} style={[s.pauseBannerButton, !pauseRow.canAct && { opacity: 0.45 }]}><Text style={s.pauseBannerButtonText}>{pauseRow.button}</Text></Pressable></View>}
-    <SwipeForward onSwipe={() => navigation.navigate('Review', { hostId, sessionId: id })} onBack={() => navigation.goBack()}><BlurTargetView ref={blurTarget} style={{ flex: 1 }}><FlatList ref={scroll} style={s.transcript} contentInsetAdjustmentBehavior="automatic" contentContainerStyle={[s.transcriptContent, { paddingBottom: bottomPanelHeight + keyboardOffset + 20 }]} data={transcriptRows} keyExtractor={transcriptKey} renderItem={renderTranscriptItem} initialNumToRender={14} maxToRenderPerBatch={12} windowSize={7} updateCellsBatchingPeriod={30} maintainVisibleContentPosition={anchored ? { minIndexForVisible: 1 } : undefined} ListHeaderComponent={hasOlder || loadingHistory ? <Pressable accessibilityRole="button" accessibilityLabel="Load older messages" disabled={loadingHistory} onPress={loadEarlier} style={{ alignItems: 'center', paddingVertical: 10 }}>{loadingHistory ? <ActivityIndicator size="small" color={muted} /> : <Text style={s.thinkingLabel}>Load older messages</Text>}</Pressable> : null} ListFooterComponent={transcriptFooter} onContentSizeChange={onTranscriptSize} onLayout={scheduleFollow} onScroll={onTranscriptScroll} onScrollBeginDrag={onTranscriptDrag} onScrollEndDrag={event => updateScroll(event, true)} onMomentumScrollBegin={() => { follow.current.beginGesture(); setAnchored(true); }} onMomentumScrollEnd={event => updateScroll(event, true)} scrollEventThrottle={16} keyboardShouldPersistTaps="handled" />{!atBottom && <Pressable accessibilityLabel="Jump to latest" style={[s.jump, { bottom: bottomPanelHeight + keyboardOffset + 12 }]} onPress={jumpToLatest}><Glyph name="arrow.down" size={14} color={ink} /></Pressable>}</BlurTargetView></SwipeForward>
+    <SwipeForward onSwipe={() => navigation.navigate('Review', { hostId, sessionId: id })} onBack={() => navigation.goBack()}><BlurTargetView ref={blurTarget} style={{ flex: 1 }}><FlatList ref={scroll} style={s.transcript} contentInsetAdjustmentBehavior="automatic" contentContainerStyle={[s.transcriptContent, { paddingBottom: bottomPanelHeight + keyboardOffset + 20 }]} data={transcriptRows} keyExtractor={transcriptKey} renderItem={({ item }) => renderTranscriptItem(item, mac.snapshot?.plugins || [])} initialNumToRender={14} maxToRenderPerBatch={12} windowSize={7} updateCellsBatchingPeriod={30} maintainVisibleContentPosition={anchored ? { minIndexForVisible: 1 } : undefined} ListHeaderComponent={hasOlder || loadingHistory ? <Pressable accessibilityRole="button" accessibilityLabel="Load older messages" disabled={loadingHistory} onPress={loadEarlier} style={{ alignItems: 'center', paddingVertical: 10 }}>{loadingHistory ? <ActivityIndicator size="small" color={muted} /> : <Text style={s.thinkingLabel}>Load older messages</Text>}</Pressable> : null} ListFooterComponent={transcriptFooter} onContentSizeChange={onTranscriptSize} onLayout={scheduleFollow} onScroll={onTranscriptScroll} onScrollBeginDrag={onTranscriptDrag} onScrollEndDrag={event => updateScroll(event, true)} onMomentumScrollBegin={() => { follow.current.beginGesture(); setAnchored(true); }} onMomentumScrollEnd={event => updateScroll(event, true)} scrollEventThrottle={16} keyboardShouldPersistTaps="handled" />{!atBottom && <Pressable accessibilityLabel="Jump to latest" style={[s.jump, { bottom: bottomPanelHeight + keyboardOffset + 12 }]} onPress={jumpToLatest}><Glyph name="arrow.down" size={14} color={ink} /></Pressable>}</BlurTargetView></SwipeForward>
     <ProgressiveBlur edge="bottom" blurTarget={blurTarget} style={[s.bottomBlur, { bottom: keyboardOffset, height: bottomPanelHeight + 24 }]} />
     <View style={[s.bottomPanel, { bottom: keyboardOffset }]} onLayout={event => {
       const measuredHeight = event?.nativeEvent?.layout?.height;
