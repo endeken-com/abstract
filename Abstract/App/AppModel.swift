@@ -84,6 +84,8 @@ final class AppModel {
     /// Unarchived chats, most recently active first; changes only when the order does.
     private(set) var recentChats: [String] = []
     var automations: [Automation] = []
+    /// Each automation's newest run, for the list's last-run outcome.
+    var latestAutomationRuns: [String: AutomationRun] = [:]
     /// The named setups chats and automations can start from (ABS-101).
     var profiles: [AgentProfile] = []
     /// Profiles taking turns on a chat; see AppModel+Workflows.
@@ -459,6 +461,7 @@ final class AppModel {
         projects = (try? store.projects()) ?? []
         sessions = (try? store.sessions()) ?? []
         automations = (try? store.automations()) ?? []
+        latestAutomationRuns = (try? store.latestRuns()) ?? [:]
         profiles = (try? store.profiles()) ?? []
         workflows = (try? store.workflows()) ?? []
         reloadSkills()

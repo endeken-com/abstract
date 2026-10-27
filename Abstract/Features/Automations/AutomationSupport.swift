@@ -70,6 +70,7 @@ extension AppModel {
             return nil
         }
         let run = await scheduler.fire(a, trigger: .manual)
+        refreshLatestAutomationRuns()
         if run.status == .failed {
             flash("“\(a.name)” failed: \(run.error ?? "unknown error")", isError: true)
         } else {
@@ -108,26 +109,34 @@ extension AppModel {
     func automationRuns(_ automationId: String, limit: Int = 50) -> [AutomationRun] {
         (try? store.runs(automationId: automationId, limit: limit)) ?? []
     }
+
+    func refreshLatestAutomationRuns() {
+        if let fresh = try? store.latestRuns() { latestAutomationRuns = fresh }
+    }
+
+    /// An automation read back in words, with its latest run's chat status.
+    func summary(of a: Automation, now: Date = Date()) -> AutomationSummary {
+        let run = latestAutomationRuns[a.id]
+        return AutomationSummary(automation: a, latestRun: run,
+                                 sessionStatus: run?.sessionId.flatMap { session($0)?.status }, now: now)
+    }
+
+    /// One run's outcome, with its chat's status.
+    func outcome(of run: AutomationRun) -> RunOutcome {
+        RunOutcome(run: run, sessionStatus: run.sessionId.flatMap { session($0)?.status })
+    }
 }
 
 // MARK: - Presentation
 
-extension RunStatus {
-    var label: String {
-        switch self {
-        case .creating: "Creating"
-        case .created: "Created"
-        case .failed: "Failed"
-        case .skipped: "Skipped"
-        }
-    }
-
+extension RunOutcome {
+    /// Needs you and Failed take the tints chats use for those states;
+    /// the rest stay secondary ink.
     var tint: Color {
         switch self {
-        case .creating: .btTextTertiary
-        case .created: .btTextSecondary
+        case .needsYou: .btAttention
         case .failed: .btRemoved
-        case .skipped: .btTextTertiary
+        default: .btTextSecondary
         }
     }
 }
@@ -173,8 +182,8 @@ extension AutomationMissedRuns {
 extension RunTrigger {
     var label: String {
         switch self {
-        case .schedule: "Scheduled"
-        case .manual: "Manual"
+        case .schedule: "On schedule"
+        case .manual: "Run by hand"
         case .event: "Event"
         }
     }
@@ -185,7 +194,7 @@ extension AutomationEventTarget {
     var phrase: String {
         switch self {
         case .triggeringChat: "continues the chat it happened in"
-        case .ownChat: "goes where the sentence below says"
+        case .ownChat: "goes where scheduled runs go"
         }
     }
 
@@ -205,7 +214,7 @@ extension SchedulePreset {
         case .daily: "Every day"
         case .weekdays: "Every weekday"
         case .weekly: "Every week"
-        case .custom: "Custom rule"
+        case .custom: "Custom rule (advanced)"
         }
     }
 }
@@ -251,25 +260,6 @@ enum AutomationText {
         return "\(lead), \(time(date, in: timeZone))"
     }
 
-    /// "in 3h", "Paused", "Manual only" or "No upcoming runs".
-    static func next(_ a: Automation, now: Date = Date()) -> String {
-        guard a.enabled else { return "Paused" }
-        guard !a.triggers.isEmpty else { return a.events.isEmpty ? "Manual only" : "On events" }
-        guard let next = a.nextRunAt else { return "No upcoming runs" }
-        return next <= now ? "Due now" : RelativeTime.short(next, now: now)
-    }
-
-    /// The first trigger in words, with its city when it isn't this Mac's
-    /// zone, and how many more there are.
-    static func schedule(_ a: Automation) -> String {
-        let events = AutomationEvents.summary(a.events)
-        guard let first = a.triggers.first else { return events ?? "Runs only when started by hand" }
-        var text = Schedule.describe(rrule: first.rrule)
-        if first.timezone != TimeZone.current.identifier { text += " · \(TimeZoneField.city(first.timezone))" }
-        if a.triggers.count > 1 { text += " · +\(a.triggers.count - 1) more" }
-        if !a.events.isEmpty { text += " · and on \(a.events.count == 1 ? "an event" : "events")" }
-        return text
-    }
 }
 
 /// Where rows and labels line up on an automation page.
