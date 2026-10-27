@@ -42,54 +42,83 @@ extension AppModel {
         }
     }
 
-    /// Re-reads every project's recent pull requests from its code host and matches them to chats by branch.
+    /// Re-reads every project's recent pull requests from its code hosts —
+    /// one per repository in the project: its own, its declared nested
+    /// repositories and its submodules (ABS-163) — and matches them to
+    /// chats by branch within their own repository. A repository with no
+    /// host, or whose host is missing or signed out, yields none and says
+    /// nothing; the others still show.
     func refreshPullRequests(projectId: String? = nil, force: Bool = false) async {
         for project in projects where project.archivedAt == nil && (projectId == nil || project.id == projectId) {
             if !force, let retry = pullRequestRetryAt[project.id], ContinuousClock.now < retry { continue }
-            guard let host = await codeHost(for: project), await !codeHostAccess(host).blocks else { continue }
+            let repos = await repos(of: project)
             let missing = sessions.filter { $0.projectId == project.id && $0.branch != nil && pullRequests[$0.id] == nil }
             let due = missing.filter {
                 PullRequestLookup.isDue(last: pullRequestLookupsAt[$0.id])
             }
             let branches = Array(Set(due.compactMap(\.branch)))
             for session in due { pullRequestLookupsAt[session.id] = .now }
-            let list: [PullRequest]
-            do { list = try await host.pullRequests(branches: branches) }
-            catch {
+            var list: [PullRequest] = []
+            var threw: Set<String> = []
+            var mainError: Error?
+            var asked = false
+            for repo in repos {
+                guard let host = await codeHost(for: project, repo: repo),
+                      await !codeHostAccess(host).blocks else { continue }
+                asked = true
+                do {
+                    for var pr in try await host.pullRequests(branches: branches) {
+                        pr.repoPath = repo.path
+                        pr.repoName = repo.name
+                        list.append(pr)
+                    }
+                } catch {
+                    threw.insert(repo.path)
+                    if repo.isMain { mainError = error }
+                }
+            }
+            // No code host anywhere in the project: nothing was asked.
+            guard asked else { continue }
+            if let mainError {
                 let failures = min((pullRequestFailureCount[project.id] ?? 0) + 1, 5)
                 pullRequestFailureCount[project.id] = failures
                 let retrySeconds = min(30 * (1 << (failures - 1)), 300)
                 pullRequestRetryAt[project.id] = ContinuousClock.now.advanced(by: .seconds(retrySeconds))
                 projectPullRequestErrors[project.id] = PullRequestListingError.message(
-                    error.localizedDescription, lastLoaded: pullRequestsListedDate[project.id], retryAfter: retrySeconds)
-                continue
+                    mainError.localizedDescription, lastLoaded: pullRequestsListedDate[project.id], retryAfter: retrySeconds)
+                // One repository, as before: its last good list stands.
+                if repos.count == 1 { continue }
+            } else {
+                pullRequestFailureCount[project.id] = nil
+                pullRequestRetryAt[project.id] = nil
+                projectPullRequestErrors[project.id] = nil
+                pullRequestsListedDate[project.id] = Date()
             }
-            pullRequestFailureCount[project.id] = nil
-            pullRequestRetryAt[project.id] = nil
-            projectPullRequestErrors[project.id] = nil
-            pullRequestsListedDate[project.id] = Date()
+            // A repository that couldn't be read keeps its last list; a
+            // chat's selected pull request is kept beyond the list's limit.
+            let unread = (projectPullRequests[project.id] ?? []).filter { threw.contains($0.repoPath) }
             let retained = sessions.filter { $0.projectId == project.id }.compactMap { pullRequests[$0.id] }
-                .filter { old in !list.contains { $0.number == old.number } }
-            let combined = list + retained
-            projectPullRequests[project.id] = combined
+                .filter { old in !list.contains { $0.isSame(as: old) } }
+            projectPullRequests[project.id] = ProjectRepos.ordered(ProjectRepos.deduped(list + unread + retained))
             pullRequestsListedAt[project.id] = .now
             for session in sessions where session.projectId == project.id {
                 defer { if let pr = pullRequests[session.id] { recordPullRequest(session, pr) } }
                 let matches = pullRequestsForChat(session.id)
                 let current = pullRequests[session.id]
-                // An open pull request before a finished one; a newer one
-                // opened after the chat's was closed or merged takes its place.
+                // An open pull request before a finished one; a newer one in
+                // its repository opened after the chat's was closed or merged
+                // takes its place.
                 let open = matches.first { $0.state == .open }
-                if let open, let current, current.state != .open, open.number > current.number,
-                   pinnedPullRequests[session.id] != current.number {
+                if let open, let current, current.state != .open, open.repoPath == current.repoPath,
+                   open.number > current.number, pinnedPullRequests[session.id] != current.id {
                     pullRequests[session.id] = open
                     continue
                 }
                 // Keep a selected PR if it falls beyond the recent-list limit
                 // or has not appeared in the list just after creation.
-                guard let summary = matches.first(where: { $0.number == current?.number })
+                guard let summary = matches.first(where: { candidate in current.map { candidate.isSame(as: $0) } ?? false })
                     ?? (current == nil ? open ?? matches.first : nil) else { continue }
-                guard let known = pullRequests[session.id], known.number == summary.number else {
+                guard let known = pullRequests[session.id], known.isSame(as: summary) else {
                     pullRequests[session.id] = summary
                     continue
                 }
@@ -115,33 +144,50 @@ extension AppModel {
     func pullRequestsForChat(_ sessionId: String) -> [PullRequest] {
         guard let session = session(sessionId), let branch = session.branch,
               let projectId = session.projectId else { return [] }
-        return (projectPullRequests[projectId] ?? []).filter { $0.head == branch }
+        return ProjectRepos.matching(branch: branch, in: projectPullRequests[projectId] ?? [])
     }
 
-    func selectPullRequest(_ sessionId: String, number: Int) async throws {
-        guard let summary = pullRequestsForChat(sessionId).first(where: { $0.number == number }) else { return }
-        pinnedPullRequests[sessionId] = number
+    func selectPullRequest(_ sessionId: String, _ request: PullRequest) async throws {
+        guard let summary = pullRequestsForChat(sessionId).first(where: { $0.isSame(as: request) }) else { return }
+        pinnedPullRequests[sessionId] = summary.id
         pullRequests[sessionId] = summary
         try await refreshPullRequest(sessionId)
     }
 
-    /// The chat's pull request in full; nil when its branch has none.
+    /// The chat's pull request in full; nil when its branch has none. A
+    /// selected one is read from its own repository's host; with none
+    /// selected, the branch is asked of the main repository first, then
+    /// the project's other repositories.
     @discardableResult
     func refreshPullRequest(_ sessionId: String) async throws -> PullRequest? {
         guard !isDemo else { return pullRequests[sessionId] }
-        guard let session = session(sessionId), let branch = session.branch, let project = project(session.projectId),
-              let host = await codeHost(for: project, chatId: sessionId) else { return nil }
-        let selected = pullRequests[sessionId]?.number
+        guard let session = session(sessionId), let branch = session.branch,
+              let project = project(session.projectId) else { return nil }
+        let selected = pullRequests[sessionId]
         var pr: PullRequest?
+        var host: CodeHost?
         if let selected {
-            pr = try await host.pullRequest(number: selected)
+            guard let found = await codeHost(for: project, repoPath: selected.repoPath, chatId: sessionId) else { return nil }
+            host = found
+            pr = try await found.pullRequest(number: selected.number)
+            pr?.repoPath = selected.repoPath
+            pr?.repoName = selected.repoName ?? repo(of: project, path: selected.repoPath)?.name
         } else {
-            pr = try await host.pullRequest(branch: branch)
+            for repo in await repos(of: project) {
+                guard let candidate = await codeHost(for: project, repo: repo, chatId: sessionId) else { continue }
+                if let found = try await candidate.pullRequest(branch: branch) {
+                    pr = found
+                    pr?.repoPath = repo.path
+                    pr?.repoName = repo.name
+                    host = candidate
+                    break
+                }
+            }
         }
-        if let number = pr?.number, host.answers(.reviewThreads) {
+        if let number = pr?.number, let host, host.answers(.reviewThreads) {
             pr?.threads = try await host.reviewThreads(number: number)
         }
-        if pullRequests[sessionId]?.number == selected { pullRequests[sessionId] = pr }
+        if pullRequests[sessionId]?.id == selected?.id { pullRequests[sessionId] = pr }
         return pr
     }
 
@@ -220,16 +266,66 @@ extension AppModel {
         return origin
     }
 
-    /// The project's code host: the enabled plugin that handles its
-    /// `origin`, with its script running. `chatId` names the chat a call is
-    /// about, so its commands run in that chat's worktree, on its Mac.
+    /// The project's repositories (its own, its declared nested ones and
+    /// its submodules) with their origins, read once per run (ABS-163).
+    func repos(of project: Project) async -> [ProjectRepo] {
+        if let known = projectRepos[project.id] { return known }
+        let found = await ProjectRepos.list(executor(forProject: project.id), project: project)
+        projectRepos[project.id] = found
+        if projectOrigins[project.id] == nil { projectOrigins[project.id] = found.first?.remote ?? "" }
+        return found
+    }
+
+    /// The project's already-read repository at `path`; nil before the
+    /// first listing, when only its main one can be meant.
+    func repo(of project: Project, path: String) -> ProjectRepo? {
+        projectRepos[project.id]?.first { $0.path == path }
+    }
+
+    /// Whether the project has more than one repository to name pull
+    /// requests by: several read at its last listing, or several showing.
+    func namesPullRequestRepos(_ projectId: String?) -> Bool {
+        guard let projectId else { return false }
+        return (projectRepos[projectId] ?? []).filter { $0.remote != nil }.count > 1
+            || Set((projectPullRequests[projectId] ?? []).map(\.repoPath)).count > 1
+    }
+
+    /// The project's own repository's code host: the enabled plugin that
+    /// handles its `origin`, with its script running. `chatId` names the
+    /// chat a call is about, so its commands run in that chat's worktree,
+    /// on its Mac.
     func codeHost(for project: Project, chatId: String? = nil) async -> CodeHost? {
-        let origin = await origin(of: project)
-        if let origin { plugins.enableBitbucketForRemote(origin) }
-        let resolved: String?
-        if let origin { resolved = await GitRemote.codeHostRemote(origin, executor: executor(forProject: project.id)) }
-        else { resolved = nil }
+        await codeHost(for: project, repo: ProjectRepo(path: "", remote: await origin(of: project)), chatId: chatId)
+    }
+
+    /// One of the project's repositories' code host, picked by that
+    /// repository's own `origin`.
+    func codeHost(for project: Project, repo: ProjectRepo, chatId: String? = nil) async -> CodeHost? {
+        guard let origin = repo.remote else { return nil }
+        plugins.enableBitbucketForRemote(origin)
+        let resolved = await GitRemote.codeHostRemote(origin, executor: executor(forProject: project.id))
         return codeHost(remote: resolved, context: CodeHostContext(projectKey: pluginProjectKey(project.id), chatId: chatId))
+    }
+
+    /// The code host of the project's repository at `repoPath`, read with
+    /// its repositories when they aren't yet. An unknown path (a pull
+    /// request kept from before) falls back to the main repository's.
+    func codeHost(for project: Project, repoPath: String, chatId: String? = nil) async -> CodeHost? {
+        if repoPath.isEmpty { return await codeHost(for: project, chatId: chatId) }
+        guard let repo = await repos(of: project).first(where: { $0.path == repoPath }) else {
+            return await codeHost(for: project, chatId: chatId)
+        }
+        return await codeHost(for: project, repo: repo, chatId: chatId)
+    }
+
+    /// Any of the project's repositories' code hosts, its own first: for
+    /// screens that only need to know one answers at all.
+    func anyCodeHost(for project: Project, chatId: String? = nil) async -> CodeHost? {
+        if let host = await codeHost(for: project, chatId: chatId) { return host }
+        for repo in await repos(of: project) where !repo.isMain {
+            if let host = await codeHost(for: project, repo: repo, chatId: chatId) { return host }
+        }
+        return nil
     }
 
     /// What PR screens say about a project without a code host: the host
@@ -321,10 +417,11 @@ extension AppModel {
         try await refreshPullRequest(sessionId)
     }
 
-    /// The chat's pull request and the code host to act on it through.
+    /// The chat's pull request and the code host to act on it through:
+    /// its own repository's.
     private func pullRequestTarget(_ sessionId: String) async throws -> (CodeHost, Int)? {
         guard let pr = pullRequests[sessionId], let project = project(session(sessionId)?.projectId) else { return nil }
-        guard let host = await codeHost(for: project, chatId: sessionId) else { throw CodeHostError.noHost(nil) }
+        guard let host = await codeHost(for: project, repoPath: pr.repoPath, chatId: sessionId) else { throw CodeHostError.noHost(nil) }
         return (host, pr.number)
     }
 

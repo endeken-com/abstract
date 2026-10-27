@@ -81,7 +81,9 @@ struct PullRequestsView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(project.name).font(.btCallout).foregroundStyle(Color.btTextSecondary)
                             .padding(.bottom, Space.xs)
-                        ForEach(prs) { pr in PullRequestRow(pr: pr, project: project) }
+                        // With several repositories in the project, each row names its own.
+                        let namesRepos = model.namesPullRequestRepos(project.id)
+                        ForEach(prs) { pr in PullRequestRow(pr: pr, project: project, showRepo: namesRepos) }
                     }
                 }
             }
@@ -137,6 +139,7 @@ private struct PullRequestRow: View {
     @Environment(AppModel.self) private var model
     let pr: PullRequest
     let project: Project
+    var showRepo = false
     @State private var hovering = false
 
     var body: some View {
@@ -150,6 +153,10 @@ private struct PullRequestRow: View {
                         Text(verbatim: pr.label).font(.btCaption).foregroundStyle(Color.btTextTertiary).fixedSize()
                     }
                     HStack(spacing: 6) {
+                        if showRepo, let repo = pr.repoName {
+                            Text(repo).lineLimit(1)
+                            Text("·")
+                        }
                         if let chat {
                             // The chat's name, unless it's the pull request's title too.
                             Image(systemName: "text.bubble").help("Opened from \(chat.name)")

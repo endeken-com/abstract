@@ -357,6 +357,7 @@ public extension PullRequest {
             "additions": optionalNumber(additions), "deletions": optionalNumber(deletions), "changedFiles": optionalNumber(changedFiles),
             "createdAt": iso(createdAt), "updatedAt": iso(updatedAt), "body": string(body), "mergeCommit": string(mergeCommit),
             "hostTitle": .string(hostTitle), "mergeMethods": .array(mergeMethods.map { .string($0.rawValue) }),
+            "repoPath": .string(repoPath), "repoName": string(repoName),
             "checks": .array(checks.map { check in
                 .object(["name": .string(check.name), "workflow": string(check.workflow),
                          "outcome": .string(Check.Outcome.words[check.outcome] ?? "pending"), "url": link(check.url)])
@@ -403,6 +404,8 @@ public extension PullRequest {
                   },
                   threads: (json["threads"]?.array ?? []).compactMap(ReviewThread.init(contract:)))
         hostTitle = json["hostTitle"]?.string ?? "GitHub"
+        repoPath = json["repoPath"]?.string ?? ""
+        repoName = json["repoName"]?.string
         if let methods = json["mergeMethods"]?.array {
             mergeMethods = methods.compactMap { $0.string.flatMap(MergeMethod.init(rawValue:)) }
         }
