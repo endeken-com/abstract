@@ -122,6 +122,15 @@ test('Muse Code reasoning summaries show as thinking, the same as the Mac', () =
   assert.deepEqual(chatTimeline(lines, 'muse-reasoning-replay').filter(r => r.kind === 'thinking').map(r => r.text), ['**Counting** sheep\n\nNine remain.']);
 });
 
+test('the recorded Muse Code reasoning turn reads as on the Mac', () => {
+  const recording = fs.readFileSync(require.resolve('../../Packages/AbstractCore/Tests/AbstractCoreTests/Fixtures/muse-serve-reasoning.jsonl'), 'utf8');
+  const lines = recording.split('\n').filter(Boolean).map((text, index) => line(index + 1, 'stdout', text));
+  const rows = chatTimeline(lines, 'muse-reasoning-recording').filter(r => r.kind === 'thinking' || r.kind === 'prose');
+  assert.deepEqual(rows.map(r => r.kind), ['thinking', 'prose']);
+  assert.equal(rows[0].text, 'Evaluating two puzzle interpretations and applying arithmetic under abstract output constraints.\n\nChecking each step of both readings before settling on one count.');
+  assert.equal(rows[0].pending, false);
+});
+
 test('Muse Code reasoning with nothing readable shows no thinking', () => {
   const lines = [
     line(1, 'stdout', { jsonrpc: '2.0', method: 'item/completed', params: { item: { itemId: 'r3', kind: 'reasoning', revision: 1, status: 'completed', providerItemId: 'rs_1' } } }),

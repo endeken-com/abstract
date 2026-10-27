@@ -335,6 +335,34 @@ struct MuseProviderTests {
             == [.toolResult(toolUseId: "c2", output: "hi\n", isError: false, edit: nil)])
     }
 
+    /// Recorded from `muse serve` (1.4.13, muse-wonder-full-1.0, effort high)
+    /// in a clean /tmp workspace; home paths, hook and reminder items
+    /// stripped, and one summary part reworded because it named a local
+    /// skill. The provider's reasoning summary streams, then settles.
+    @Test func serveRecordingShowsReasoningSummaryAsThinking() throws {
+        let events = try Self.fixture("muse-serve-reasoning")
+        let itemId = "d13a6fbc-9afa-45e2-814b-f8e604c35ed4"
+        let first = "Evaluating two puzzle interpretations and applying arithmetic under abstract output constraints."
+        let second = "Checking each step of both readings before settling on one count."
+        let thinking = events.compactMap { if case let .thinking(text, id, partial) = $0 { (text, id, partial) } else { nil } }
+        #expect(thinking.map(\.0) == [first, "\n\n" + second, first + "\n\n" + second])
+        #expect(thinking.allSatisfy { $0.1 == itemId })
+        #expect(thinking.map(\.2) == [true, true, false])
+
+        // Thinking comes before the answer, once, as one block.
+        var timeline = Timeline()
+        timeline.append(contentsOf: events)
+        let blocks = timeline.blocks.compactMap { block -> String? in
+            switch block {
+            case let .thinking(_, text): "thinking:" + text
+            case .assistant: "answer"
+            default: nil
+            }
+        }
+        #expect(blocks == ["thinking:" + first + "\n\n" + second, "answer"])
+        #expect(try Self.fixture("muse-serve-reasoning") == events)
+    }
+
     /// Reasoning summary parts stream on `summary.n`, a new part opening a
     /// new paragraph; the settled item's summary replaces what streamed.
     @Test func serveFoldShowsReasoningSummaryAsThinking() {
