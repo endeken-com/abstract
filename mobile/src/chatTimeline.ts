@@ -8,6 +8,7 @@ export type ChatItem = {
   text: string;
   detail?: string;
   toolName?: string;
+  toolInput?: any;
   target?: string;
   path?: string;
   pending?: boolean;
@@ -69,7 +70,7 @@ export function chatTimeline(lines: RemoteLine[], cacheKey = 'default'): ChatIte
   const addTool = (id: string, name: string, input: any, pending: boolean): ChatItem => {
     const target = toolTarget(name, input);
     const edits = editPreviewFromInput(name, input);
-    const row: ChatItem = { id, kind: 'tool', text: toolVerb(name, pending), toolName: name, target: target.text, path: target.path, pending, edits };
+    const row: ChatItem = { id, kind: 'tool', text: toolVerb(name, pending), toolName: name, toolInput: input, target: target.text, path: target.path, pending, edits };
     if (edits.length) {
       row.additions = edits.reduce((total, edit) => total + edit.additions, 0);
       row.deletions = edits.reduce((total, edit) => total + edit.deletions, 0);
@@ -168,9 +169,12 @@ export function chatTimeline(lines: RemoteLine[], cacheKey = 'default'): ChatIte
         if (!row) { row = { id, kind, text, pending: value.type !== 'item.completed' }; rows.push(row); codexItems.set(itemId, row); }
         else { row.text = text || row.text; row.pending = value.type !== 'item.completed'; }
       } else if (['command_execution', 'file_change', 'patch_apply', 'mcp_tool_call', 'web_search', 'todo_list'].includes(item.type)) {
-        const name = item.type === 'mcp_tool_call' ? item.tool || item.name || 'mcp__tool' : item.type;
+        const name = item.type === 'mcp_tool_call' && item.server && item.tool
+          ? `mcp__${item.server}__${item.tool}` : item.type === 'mcp_tool_call' ? item.tool || item.name || 'mcp__tool' : item.type;
         let row = codexItems.get(itemId);
         if (!row) { row = addTool(id, name, item, value.type !== 'item.completed'); codexItems.set(itemId, row); }
+        row.toolName = name;
+        row.toolInput = item;
         if (value.type === 'item.completed') {
           row.pending = false;
           row.text = toolVerb(name);
@@ -205,6 +209,9 @@ export function chatTimeline(lines: RemoteLine[], cacheKey = 'default'): ChatIte
             if (item.kind === 'webSearch' && !input.query && typeof item.query === 'string') input = { query: item.query };
             row = addTool(id, name, input, item.status === 'inProgress');
             museItems.set(callId, row);
+          }
+          if (typeof item.args === 'string') {
+            try { row.toolInput = JSON.parse(item.args); } catch { /* incomplete args keep the last usable input */ }
           }
           if (['completed', 'failed', 'cancelled', 'rejected', 'timedOut'].includes(item.status)) {
             row.pending = false;

@@ -102,10 +102,20 @@ final class PluginToolLabels: @unchecked Sendable {
     static let shared = PluginToolLabels()
     private let lock = NSLock()
     private var labels: [String: String] = [:]
+    private var pluginIds: [String: String] = [:]
 
     func update(_ tools: [PublishedPluginTool]) {
         let fresh = Dictionary(tools.map { ($0.name, $0.label) }, uniquingKeysWith: { first, _ in first })
-        lock.withLock { labels.merge(fresh) { _, new in new } }
+        let ids = Dictionary(tools.map { ($0.name, $0.pluginId) }, uniquingKeysWith: { first, _ in first })
+        lock.withLock {
+            labels.merge(fresh) { _, new in new }
+            pluginIds = ids
+        }
+    }
+
+    func pluginId(_ streamName: String) -> String? {
+        guard let name = PluginTools.toolName(inStreamName: streamName) else { return nil }
+        return lock.withLock { pluginIds[name] }
     }
 
     /// "Echo: echo" for a plugin tool's call under any agent's spelling;

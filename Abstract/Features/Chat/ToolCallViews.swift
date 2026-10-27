@@ -236,7 +236,9 @@ struct ToolCallView: View {
                     // never while it waits for an answer: that shows what runs.
                     let skill = asking ? nil : SkillUse.name(tool: call.name, input: call.input)
                     let name = skill == nil ? call.name : "skill"
-                    ToolIcon(symbol: ToolPresentation.symbol(name), open: isOpen, hovering: hovering && !asking, failed: outcome.isFailure,
+                    ToolIcon(indicator: ToolIndicator.resolve(name: call.name, input: call.input,
+                                                              pluginId: PluginToolLabels.shared.pluginId(call.name), skillUse: !asking),
+                             open: isOpen, hovering: hovering && !asking, failed: outcome.isFailure,
                              file: kind == .edit ? ToolPresentation.path(call) : nil)
                     let verb = asking ? ToolPresentation.ask(name) : ToolPresentation.verb(name, pending: working)
                     HStack(spacing: 6) {
@@ -459,6 +461,10 @@ private struct CallRun: View {
 
     private var openSwitch: ExpansionSwitch { ExpansionSwitch(key: "run:\(calls.first?.id ?? "")", expansion: expansion, row: row) }
     private var open: Bool { openSwitch.value(local: local) ?? false }
+    private var runIndicator: ToolIndicator {
+        guard kind == .command else { return .kind(symbol: "magnifyingglass") }
+        return ToolIndicator.foldedCommands(calls)
+    }
 
     var body: some View {
         let running = calls.contains { $0.result == nil }
@@ -466,7 +472,7 @@ private struct CallRun: View {
         VStack(alignment: .leading, spacing: 0) {
             Button { if !openSwitch.set(!open) { withAnimation(.snappy(duration: 0.2)) { local.toggle() } } } label: {
                 HStack(spacing: 6) {
-                    ToolIcon(symbol: kind == .command ? "terminal" : "magnifyingglass", open: open, hovering: hovering, failed: false)
+                    ToolIcon(indicator: runIndicator, open: open, hovering: hovering, failed: failed > 0)
                     HStack(spacing: 6) {
                         Text(verb(running)).font(.btChatToolMedium).foregroundStyle(hovering ? Color.btText : Color.btTextSecondary)
                         Text(summary).font(.btChatTool).foregroundStyle(hovering ? Color.btTextSecondary : Color.btTextTertiary).lineLimit(1)
@@ -507,10 +513,9 @@ private struct CallRun: View {
 
 // MARK: - Pieces
 
-/// A call's kind as a small glyph; under the pointer it turns into the
-/// chevron that opens the row, and a failed call shows a warning instead.
+/// A tool's indicator in the existing 16-point slot.
 private struct ToolIcon: View {
-    let symbol: String
+    let indicator: ToolIndicator
     let open: Bool
     let hovering: Bool
     let failed: Bool
@@ -523,17 +528,44 @@ private struct ToolIcon: View {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 9, weight: .semibold))
                     .rotationEffect(.degrees(open ? 90 : 0))
-            } else if failed {
-                Image(systemName: "exclamationmark.triangle").foregroundStyle(Color.btRemoved)
             } else if let file {
                 FileIcon(path: file, size: 14)
             } else {
-                Image(systemName: symbol)
+                indicatorGlyph
             }
         }
         .font(.system(size: 11, weight: .regular))
         .foregroundStyle(hovering ? Color.btTextSecondary : Color.btTextTertiary)
         .frame(width: 16, height: 16)
+        .overlay(alignment: .bottomTrailing) {
+            if failed, !hovering {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundStyle(Color.btRemoved)
+                    .background(Color.btCanvas, in: Circle())
+                    .offset(x: 2, y: 2)
+            }
+        }
+        .help(indicator.label)
+        .accessibilityLabel(indicator.label)
+    }
+
+    @ViewBuilder private var indicatorGlyph: some View {
+        switch indicator {
+        case .brand(let id):
+            Image("ToolBrand\(id)").resizable().renderingMode(.template).scaledToFit()
+                .frame(width: 14, height: 14)
+        case .mcpServer(let name):
+            let monogram = ToolIndicator.monogram(name: name)
+            let colors: [UInt32] = [0x4A4A51, 0x7A7A83, 0x8E877C, 0x7C8B74, 0x9E7F7F, 0x86778A, 0xA09780]
+            Text(monogram.letter)
+                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .foregroundStyle(.white)
+                .frame(width: 15, height: 15)
+                .background(Color(nsColor: NSColor(hex: colors[monogram.colorIndex])), in: RoundedRectangle(cornerRadius: 4))
+        case .kind(let symbol): Image(systemName: symbol)
+        case .generic: Image(systemName: "wrench.and.screwdriver")
+        }
     }
 }
 
@@ -914,24 +946,7 @@ enum ToolPresentation {
     /// Codex puts around everything.
     static func command(_ call: ToolCall) -> String? {
         guard ToolKind(call.name) == .command, let raw = call.input["command"]?.string else { return nil }
-        return unwrapShell(raw)
-    }
-
-    static func unwrapShell(_ raw: String) -> String {
-        let s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        for shell in ["/bin/zsh", "/bin/bash", "/bin/sh", "zsh", "bash", "sh"] {
-            for flag in [" -lc ", " -c "] where s.hasPrefix(shell + flag) {
-                var body = String(s.dropFirst(shell.count + flag.count))
-                guard let quote = body.first, quote == "\"" || quote == "'", body.count >= 2, body.last == quote else { continue }
-                body = String(body.dropFirst().dropLast())
-                if quote == "\"" {
-                    body = body.replacingOccurrences(of: "\\\"", with: "\"").replacingOccurrences(of: "\\$", with: "$")
-                        .replacingOccurrences(of: "\\`", with: "`").replacingOccurrences(of: "\\\\", with: "\\")
-                }
-                return body
-            }
-        }
-        return s
+        return ToolIndicator.unwrapShell(raw)
     }
 
     static func target(_ call: ToolCall, root: String? = nil) -> ToolTarget? {

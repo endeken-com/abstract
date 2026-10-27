@@ -31,6 +31,14 @@ projects' own logos, used to name them where they appear as agents. The vector f
 [Simple Icons](https://simpleicons.org) (Ollama, CC0-1.0) and [LobeHub Icons](https://github.com/lobehub/lobe-icons)
 (LM Studio, MIT). The marks remain trademarks of their owners.
 
+## Tool logos
+
+The monochrome tool marks in `Abstract/Resources/Assets.xcassets/ToolBrand*` and
+`mobile/src/toolBrands.json` are from [Simple Icons](https://simpleicons.org),
+versions 16.36.0 and 11.15.0 (AWS, Azure, Playwright), under CC0-1.0
+(`Licenses/SimpleIcons-LICENSE.txt`). The Abstract A is original art.
+The marks remain trademarks of their owners and identify tools used in chats.
+
 ## Octicons
 
 The pull-request marks and git action icons (`Abstract/Components/Octicon.swift`) and the GitHub issue
