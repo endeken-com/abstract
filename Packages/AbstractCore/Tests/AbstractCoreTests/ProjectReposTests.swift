@@ -77,6 +77,14 @@ import Testing
         #expect(a.refreshingSummary(with: b).repoPath == "libs/core")
     }
 
+    @Test func aPinNamesOneRepositorysPullRequestOnly() {
+        let main = pr(7), nested = pr(7, repo: "libs/core", head: "other")
+        #expect(PullRequestAssociation.retained(nested, pinned: main.id) == nil)
+        #expect(PullRequestAssociation.retained(nested, pinned: nested.id) == nested)
+        #expect(PullRequestAssociation.candidates([main, nested], branch: "chat", pinned: nested.id).count == 2)
+        #expect(PullRequestAssociation.candidates([main, nested], branch: "chat", pinned: nil) == [main])
+    }
+
     // MARK: Real git
 
     @Test func discoveryFindsTheMainNestedAndSubmoduleReposOnceEach() async throws {

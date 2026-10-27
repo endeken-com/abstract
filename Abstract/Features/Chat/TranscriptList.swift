@@ -70,7 +70,7 @@ final class TranscriptController: NSObject {
         var id: Int { row.id }
     }
 
-    let scrollView = TranscriptScrollView()
+    let scrollView = NSScrollView()
     private let document = TranscriptDocumentView()
     private let model: AppModel
     private weak var feed: ChatFeed?
@@ -90,8 +90,15 @@ final class TranscriptController: NSObject {
     private let measurer: RowHost
     private var footerView = AnyView(EmptyView())
     private var jump = 0
-    private var following = true
+    /// Whether the list follows its end: only the reader's scrolling changes it.
+    private var follow = TranscriptFollow()
     private var scrollingByCode = false
+    /// While laying out, the view may be clamped or scrolled by the list
+    /// itself: bounds changes then are not the reader scrolling.
+    private var layingOut = false
+    /// The view's top at the last bounds change, so a change that only
+    /// resizes the view doesn't read as the reader scrolling.
+    private var lastOriginY: CGFloat = 0
     private var didInitialScroll = false
     private var relayoutScheduled = false
     /// The rows around the view at the last layout, by position.
@@ -147,7 +154,6 @@ final class TranscriptController: NSObject {
             (self?.items ?? []).map { TranscriptRows.plainText($0.row.block) }.filter { !$0.isEmpty }.joined(separator: "\n\n")
         }
         footerHost.onHeightChange = { [weak self] in self?.relayoutSoon() }
-        scrollView.onUserScrollUp = { [weak self] in self?.following = false }
         NotificationCenter.default.addObserver(self, selector: #selector(scrolled), name: NSView.boundsDidChangeNotification, object: scrollView.contentView)
         NotificationCenter.default.addObserver(self, selector: #selector(resized), name: NSView.frameDidChangeNotification, object: scrollView)
     }
@@ -173,7 +179,7 @@ final class TranscriptController: NSObject {
         feed.find.root = model.session(context.sessionId)?.worktreePath
         if jump != self.jump {
             self.jump = jump
-            following = true
+            follow.jump()
             scrollToEnd(animated: true)
         }
         rebuild(force: global)
@@ -238,7 +244,7 @@ final class TranscriptController: NSObject {
     private func rowToggled(_ id: Int) {
         guard index[id] != nil else { return }
         versions[id, default: 0] += 1
-        if id != items.last?.id { following = false }
+        if id != items.last?.id { follow.hold() }
         rebuild(force: false)
         layoutRows()
     }
@@ -301,6 +307,9 @@ final class TranscriptController: NSObject {
     /// Places every row, shows the ones near view, and keeps the scroll where
     /// it belongs: at the end while following, otherwise on what you're reading.
     func layoutRows() {
+        let wasLayingOut = layingOut
+        layingOut = true
+        defer { layingOut = wasLayingOut }
         let width = rowWidth
         if width != measuredWidth {
             measuredWidth = width
@@ -317,7 +326,7 @@ final class TranscriptController: NSObject {
         let clip = scrollView.contentView
         let reveal = pendingReveal
         pendingReveal = nil
-        let anchor = following || reveal != nil ? nil : readingAnchor()
+        let anchor = follow.following || reveal != nil ? nil : readingAnchor()
 
         let x = ((scrollView.contentSize.width - width) / 2).rounded()
         // Rows keep their heights current as they report them.
@@ -346,12 +355,12 @@ final class TranscriptController: NSObject {
                 let y = h <= view * 0.6 ? tops[i] : tops[i] + h * reveal.fraction
                 let target = min(max(0, y - view / 3), max(0, docHeight - view))
                 if abs(clip.bounds.minY - target) > 0.5 { scroll(to: target) }
-            } else if following || !didInitialScroll {
+            } else if follow.following || !didInitialScroll {
                 didInitialScroll = true
                 scrollToEnd(animated: false)
-            } else if let anchor, let i = index[anchor.id] {
-                let target = tops[i] - anchor.offset
-                if abs(clip.bounds.minY - target) > 0.5 { scroll(to: target) }
+            } else if let anchor, let i = index[anchor.id],
+                      let target = TranscriptAnchor.target(.init(row: i, offset: Double(anchor.offset)), tops: tops.map(Double.init)) {
+                if abs(clip.bounds.minY - CGFloat(target)) > 0.5 { scroll(to: CGFloat(target)) }
             }
             if !mountVisible(tops: tops, width: width) { break }
         }
@@ -407,12 +416,16 @@ final class TranscriptController: NSObject {
         return tops
     }
 
-    /// The first row at the top of the view, and how far above the view's top it starts.
+    /// The first row at the top of the view, and how far above the view's top
+    /// it starts. From every row's place, not only the mounted rows' frames:
+    /// mid-scroll the mounted rows lag the view, and anchoring to one below
+    /// the top lets rows sizing above it move the view.
     private func readingAnchor() -> (id: Int, offset: CGFloat)? {
-        let top = scrollView.contentView.bounds.minY
-        let candidates = mounted.compactMap { id, host in host.view.frame.maxY > top ? (id, host.view.frame.minY) : nil }
-        guard let first = candidates.min(by: { $0.1 < $1.1 }) else { return nil }
-        return (first.0, first.1 - scrollView.contentView.bounds.minY)
+        let tops = positions(width: measuredWidth)
+        let rowHeights = items.map { heights[$0.id] ?? estimate($0, width: measuredWidth) }
+        guard let anchor = TranscriptAnchor.anchor(tops: tops.map(Double.init), heights: rowHeights.map(Double.init),
+                                                   viewportTop: Double(scrollView.contentView.bounds.minY)) else { return nil }
+        return (items[anchor.row].id, CGFloat(anchor.offset))
     }
 
     /// A height for a row not measured yet, close enough that the scroll barely moves when it is.
@@ -626,7 +639,7 @@ final class TranscriptController: NSObject {
     /// call's output, a long message) and scrolls it a third of the way down.
     private func reveal(_ match: TranscriptMatch) {
         guard let place = locate(match) else { return }
-        following = false
+        follow.hold()
         for key in place.opens { feed?.expansion.set(key, true, row: place.row) }
         pendingReveal = (place.row, place.fraction)
         layoutRows()
@@ -737,10 +750,15 @@ final class TranscriptController: NSObject {
 
     @objc private func scrolled() {
         lastScroll = CACurrentMediaTime()
-        if !scrollingByCode {
-            // Back at the end, by scrolling or the keyboard: follow again.
-            if distanceFromEnd <= 4 { following = true }
+        // Where the view landed decides following, however the reader moved
+        // it — wheel, scrollbar, keys, a selection drag. The list's own
+        // scrolling, layout clamping the view, and resizes that leave the
+        // view's top where it was never count.
+        let originY = scrollView.contentView.bounds.minY
+        if !scrollingByCode, !layingOut, originY != lastOriginY {
+            follow.readerScrolled(distanceFromEnd: Double(distanceFromEnd))
         }
+        lastOriginY = originY
         document.needsLayout = true
         reportBottom()
     }
@@ -760,22 +778,6 @@ struct FindPlace {
     let opens: [String]
     /// How far down the row, from 0 to 1.
     let fraction: CGFloat
-}
-
-/// The transcript's scroll view. Scrolling up by hand stops following the end.
-final class TranscriptScrollView: NSScrollView {
-    var onUserScrollUp: (() -> Void)?
-
-    override func scrollWheel(with event: NSEvent) {
-        if event.scrollingDeltaY > 0 { onUserScrollUp?() }
-        super.scrollWheel(with: event)
-    }
-
-    override func keyDown(with event: NSEvent) {
-        // Page Up, Up arrow, Home.
-        if [116, 126, 115].contains(event.keyCode) { onUserScrollUp?() }
-        super.keyDown(with: event)
-    }
 }
 
 final class TranscriptDocumentView: NSView {

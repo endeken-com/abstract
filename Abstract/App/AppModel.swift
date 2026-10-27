@@ -1613,6 +1613,9 @@ final class AppModel {
                 }
             case .sessionId:
                 continue
+            case let .gitOperation(operation):
+                onGitOperation(operation, in: mirrorId)
+                feed(mirrorId).append(event, at: at)
             // The chat's status comes with the other Mac's snapshot; here it
             // only ends a turn, so its line and length show.
             default:
@@ -1946,6 +1949,8 @@ final class AppModel {
             let s = session(sessionId)
             try? store.record(UsageRecord(sessionId: sessionId, projectId: s?.projectId, providerId: s?.providerId ?? "unknown",
                                           usage: totals, costUsd: cost ?? 0, durationMs: duration ?? 0, turns: turns ?? 1))
+        case let .gitOperation(operation):
+            onGitOperation(operation, in: sessionId)
         case .compaction(.finished), .compaction(.failed):
             // Claude's own report ends an in-stream compaction; a side channel ends its own.
             if compactions[sessionId] == nil { endCompacting(sessionId) }
