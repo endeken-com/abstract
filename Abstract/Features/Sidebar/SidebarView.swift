@@ -42,10 +42,7 @@ struct SidebarView: View {
 
     /// The chats the search and filters let through, archived ones only when asked for.
     private func visibleChats(_ all: [SidebarChats.Chat]) -> [SidebarChats.Chat] {
-        let filter = filter
-        return all.filter {
-            (model.showArchived || $0.session.archivedAt == nil) && filter.matches($0) && SidebarChats.matches($0, query: query)
-        }
+        SidebarChats.visible(all, filter: filter, query: query, showArchived: model.showArchived)
     }
 
     private var list: some View {
@@ -150,14 +147,15 @@ struct SidebarView: View {
     /// Today's layout: each project's chats under it, then Standalone, then each paired Mac's.
     @ViewBuilder private func projectGroups(_ chats: [SidebarChats.Chat]) -> some View {
         let byId = Dictionary(chats.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let localGroups = SidebarChats.groupedByProject(chats.filter { !$0.isRemote })
         ForEach(model.projects) { project in
-            let rows = model.sessions(in: project.id).compactMap { byId[$0.id] }
+            let rows = localGroups[project.id] ?? []
             if !narrowing || !rows.isEmpty {
                 RailProjectGroup(project: project, chats: rows, dragging: $draggingProject)
             }
         }
 
-        let standalone = model.sessions(in: nil).compactMap { byId[$0.id] }
+        let standalone = localGroups[nil] ?? []
         if !standalone.isEmpty {
             RailGroup(title: SidebarChats.standalone, trailing: AnyView(
                 Button { model.showNewChat(in: nil, standalone: true) } label: { Image(systemName: "plus") }
@@ -179,10 +177,10 @@ struct SidebarView: View {
         } else if arrangement == .status {
             order = SidebarChats.sections(chats).flatMap { $0.chats + (showOlderDone ? $0.older : []) }.map(\.id)
         } else {
-            let shown = Set(chats.map(\.id))
+            let groups = SidebarChats.groupedByProject(chats.filter { !$0.isRemote })
             order = (model.projects.flatMap { p in
-                model.collapsedProjects.contains(p.id) ? [] : model.sessions(in: p.id).map(\.id)
-            } + model.sessions(in: nil).map(\.id)).filter(shown.contains)
+                model.collapsedProjects.contains(p.id) ? [] : (groups[p.id] ?? []).map(\.id)
+            } + (groups[nil] ?? []).map(\.id))
         }
         var seen = Set<String>()
         let unique = order.filter { seen.insert($0).inserted }

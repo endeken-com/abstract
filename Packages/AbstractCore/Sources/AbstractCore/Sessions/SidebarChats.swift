@@ -267,6 +267,35 @@ public enum SidebarChats {
 
     public static let standalone = "Standalone"
 
+    /// The chats the rail shows: archived ones only when asked for, then the
+    /// filter menu's choices, then the search box. The query is trimmed,
+    /// read as a pull-request number once, not once per chat.
+    public static func visible(_ chats: [Chat], filter: Filter, query: String, showArchived: Bool) -> [Chat] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let number = Int(q.hasPrefix("#") ? String(q.dropFirst()) : q)
+        return chats.filter { chat in
+            guard showArchived || chat.session.archivedAt == nil, filter.matches(chat) else { return false }
+            guard !q.isEmpty else { return true }
+            if let number, chat.pullRequest?.number == number { return true }
+            return chat.session.name.localizedCaseInsensitiveContains(q)
+                || (chat.session.branch?.localizedCaseInsensitiveContains(q) ?? false)
+        }
+    }
+
+    /// Chats under their projects (nil: standalone), in one pass, each group
+    /// in the rail's order: pinned first in pin order, the rest as given —
+    /// the order `Ordering.pinnedFirst` gives a project's sessions.
+    public static func groupedByProject(_ chats: [Chat]) -> [String?: [Chat]] {
+        var groups: [String?: [Chat]] = [:]
+        for chat in chats { groups[chat.session.projectId, default: []].append(chat) }
+        return groups.mapValues { members in
+            var pinned: [Chat] = [], rest: [Chat] = []
+            for chat in members { if chat.session.pinnedAt != nil { pinned.append(chat) } else { rest.append(chat) } }
+            pinned.sort { $0.session.pinnedAt! < $1.session.pinnedAt! }
+            return pinned + rest
+        }
+    }
+
     /// The search box: the chat's title or branch, or its pull request's number.
     public static func matches(_ chat: Chat, query: String) -> Bool {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
