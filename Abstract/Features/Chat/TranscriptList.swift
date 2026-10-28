@@ -70,7 +70,7 @@ final class TranscriptController: NSObject {
         var id: Int { row.id }
     }
 
-    let scrollView = NSScrollView()
+    let scrollView = TranscriptScrollView()
     private let document = TranscriptDocumentView()
     private let model: AppModel
     private weak var feed: ChatFeed?
@@ -160,6 +160,7 @@ final class TranscriptController: NSObject {
             (self?.items ?? []).map { TranscriptRows.plainText($0.row.block) }.filter { !$0.isEmpty }.joined(separator: "\n\n")
         }
         footerHost.onHeightChange = { [weak self] in self?.relayoutSoon() }
+        scrollView.onUserScrollUp = { [weak self] in self?.follow.hold() }
         NotificationCenter.default.addObserver(self, selector: #selector(scrolled), name: NSView.boundsDidChangeNotification, object: scrollView.contentView)
         NotificationCenter.default.addObserver(self, selector: #selector(resized), name: NSView.frameDidChangeNotification, object: scrollView)
     }
@@ -767,8 +768,10 @@ final class TranscriptController: NSObject {
                 scrollView.contentView.animator().setBoundsOrigin(NSPoint(x: 0, y: target))
             } completionHandler: { [weak self] in
                 Task { @MainActor in
-                    self?.scrollingByCode = false
-                    self?.scrollView.reflectScrolledClipView(self!.scrollView.contentView)
+                    guard let self else { return }
+                    self.scrollingByCode = false
+                    self.lastOriginY = self.scrollView.contentView.bounds.minY
+                    self.scrollView.reflectScrolledClipView(self.scrollView.contentView)
                 }
             }
         } else {
@@ -780,18 +783,17 @@ final class TranscriptController: NSObject {
         scrollingByCode = true
         scrollView.contentView.scroll(to: NSPoint(x: 0, y: y))
         scrollView.reflectScrolledClipView(scrollView.contentView)
+        lastOriginY = scrollView.contentView.bounds.minY
         scrollingByCode = false
     }
 
     @objc private func scrolled() {
         lastScroll = CACurrentMediaTime()
-        // Where the view landed decides following, however the reader moved
-        // it — wheel, scrollbar, keys, a selection drag. The list's own
-        // scrolling, layout clamping the view, and resizes that leave the
-        // view's top where it was never count.
+        // Ignore the list's own scrolling and layout clamping. A reader's
+        // upward movement stops following even close to the end.
         let originY = scrollView.contentView.bounds.minY
         if !scrollingByCode, !layingOut, originY != lastOriginY {
-            follow.readerScrolled(distanceFromEnd: Double(distanceFromEnd))
+            follow.readerScrolled(distanceFromEnd: Double(distanceFromEnd), movedUp: originY < lastOriginY)
         }
         lastOriginY = originY
         document.needsLayout = true
@@ -802,6 +804,20 @@ final class TranscriptController: NSObject {
 
     private func reportBottom() {
         onBottomChange?(distanceFromEnd < 80)
+    }
+}
+
+final class TranscriptScrollView: NSScrollView {
+    var onUserScrollUp: (() -> Void)?
+
+    override func scrollWheel(with event: NSEvent) {
+        if event.scrollingDeltaY > 0 { onUserScrollUp?() }
+        super.scrollWheel(with: event)
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if [116, 126, 115].contains(event.keyCode) { onUserScrollUp?() }
+        super.keyDown(with: event)
     }
 }
 

@@ -17,6 +17,14 @@ final class TranscriptFollowTests: XCTestCase {
         XCTAssertTrue(follow.following)
     }
 
+    func testUpwardMotionNearTheEndStillStopsFollowing() {
+        var follow = TranscriptFollow()
+        follow.readerScrolled(distanceFromEnd: 2, movedUp: true)
+        XCTAssertFalse(follow.following)
+        follow.readerScrolled(distanceFromEnd: 2)
+        XCTAssertTrue(follow.following)
+    }
+
     func testJumpResumesAndHoldStops() {
         var follow = TranscriptFollow()
         follow.readerScrolled(distanceFromEnd: 300)

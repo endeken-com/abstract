@@ -15,11 +15,10 @@ public struct TranscriptFollow: Equatable {
 
     public init() {}
 
-    /// The reader scrolled — wheel, scrollbar, keys, a selection drag: how
-    /// doesn't matter, where they landed does. Following resumes only at
-    /// the end itself.
-    public mutating func readerScrolled(distanceFromEnd: Double) {
-        following = distanceFromEnd <= Self.endTolerance
+    /// Upward motion stops following even near the end. Scrolling down to
+    /// the end resumes it.
+    public mutating func readerScrolled(distanceFromEnd: Double, movedUp: Bool = false) {
+        following = !movedUp && distanceFromEnd <= Self.endTolerance
     }
 
     /// The jump-to-latest control: go to the end and follow it again.
