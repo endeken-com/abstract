@@ -145,14 +145,18 @@ private struct PullRequestRow: View {
     var body: some View {
         let chat = model.chat(for: pr, in: project.id)
         Button { open(chat) } label: {
-            HStack(alignment: .firstTextBaseline, spacing: Space.md) {
-                PullRequestMark(pr: pr, size: 12).frame(width: 16)
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(pr.title).font(.btBody).foregroundStyle(Color.btText).lineLimit(1)
-                        Text(verbatim: pr.label).font(.btCaption).foregroundStyle(Color.btTextTertiary).fixedSize()
+            HStack(alignment: .top, spacing: Space.md) {
+                PullRequestMark(pr: pr, size: 15).frame(width: 18, height: 22)
+                VStack(alignment: .leading, spacing: 7) {
+                    HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
+                        Text(pr.title).font(.btBodyMedium).foregroundStyle(Color.btText).lineLimit(2)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Text(verbatim: pr.label).font(.btCaptionMedium).foregroundStyle(pr.stateTint)
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(pr.stateTint.opacity(0.1), in: RoundedRectangle(cornerRadius: 5))
+                            .fixedSize()
                     }
-                    HStack(spacing: 6) {
+                    HStack(spacing: Space.sm) {
                         if showRepo, let repo = pr.repoName {
                             Text(repo).lineLimit(1)
                             Text("·")
@@ -163,20 +167,17 @@ private struct PullRequestRow: View {
                             if chat.name != pr.title { Text(chat.name).lineLimit(1) }
                         } else if let author = pr.author {
                             GitHubAvatar(login: author, size: 14, hostTitle: pr.hostTitle)
-                            Text(author)
+                            Text(author).lineLimit(1)
                         }
                         Text(pr.head).font(.btMonoSmall).lineLimit(1).truncationMode(.middle)
-                        if let standing = pr.standing {
-                            Text("·")
-                            Text(standing).foregroundStyle(pr.checksSummary.failed > 0 ? Color.btRemoved : Color.btTextTertiary)
+                        Spacer(minLength: Space.xs)
+                        if let updated = pr.updatedAt {
+                            Text(RelativeTime.short(updated)).fixedSize()
                         }
                     }
                     .font(.btCaption)
                     .foregroundStyle(Color.btTextTertiary)
-                }
-                Spacer(minLength: Space.md)
-                if let updated = pr.updatedAt {
-                    Text(RelativeTime.short(updated)).font(.btCaption).foregroundStyle(Color.btTextTertiary).fixedSize()
+                    if pr.standing != nil { PullRequestStanding(pr: pr) }
                 }
             }
             .padding(.horizontal, Space.md)
