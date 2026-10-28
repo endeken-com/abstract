@@ -18,24 +18,26 @@ struct BTButtonStyle: ButtonStyle {
         let kind: Kind
         let size: Size
         @Environment(\.isEnabled) private var isEnabled
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
         @State private var hovering = false
 
         var body: some View {
+            let shape = RoundedRectangle(cornerRadius: size == .small ? 7 : 9, style: .continuous)
             configuration.label
                 .font(size == .small ? .btCallout.weight(.medium) : .btBodyMedium)
                 .lineLimit(1)
                 .padding(.horizontal, size == .small ? 9 : size == .large ? 16 : 12)
                 .frame(height: size == .small ? 24 : size == .large ? 34 : 28)
                 .foregroundStyle(foreground)
-                // Fills only, never outlines: a stroke around every button is
-                // exactly the boxed look Abstract avoids.
-                .background(background, in: RoundedRectangle(cornerRadius: size == .small ? 6 : 8, style: .continuous))
-                .scaleEffect(configuration.isPressed ? 0.97 : 1)
-                .opacity(isEnabled ? 1 : 0.45)
+                .background(background, in: shape)
+                .shadow(color: kind == .primary && isEnabled ? Color.btAccent.opacity(hovering ? 0.18 : 0.1) : .clear,
+                        radius: hovering ? 12 : 7, y: 2)
+                .scaleEffect(reduceMotion ? 1 : configuration.isPressed ? 0.975 : 1)
+                .opacity(isEnabled ? 1 : 0.5)
                 .contentShape(Rectangle())
                 .onHover { hovering = $0 }
-                .animation(.snappy(duration: 0.14), value: hovering)
-                .animation(.snappy(duration: 0.1), value: configuration.isPressed)
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: hovering)
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.1), value: configuration.isPressed)
         }
 
         private var foreground: Color {
@@ -50,9 +52,17 @@ struct BTButtonStyle: ButtonStyle {
         private var background: AnyShapeStyle {
             switch kind {
             case .primary:
-                AnyShapeStyle(Color.btAccent.opacity(configuration.isPressed ? 0.85 : hovering ? 0.92 : 1))
+                AnyShapeStyle(LinearGradient(
+                    colors: [Color.btAccent.opacity(configuration.isPressed ? 0.9 : 1),
+                             Color.btAccent.opacity(configuration.isPressed ? 0.78 : hovering ? 0.88 : 0.84)],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                ))
             case .secondary:
-                AnyShapeStyle(configuration.isPressed ? Color.btSelection : hovering ? Color.btSelection.opacity(0.8) : Color.btHover)
+                AnyShapeStyle(LinearGradient(
+                    colors: [hovering || configuration.isPressed ? Color.btSelection : Color.btSurfaceRaised,
+                             configuration.isPressed ? Color.btSelection : Color.btHover],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                ))
             case .ghost:
                 AnyShapeStyle(hovering || configuration.isPressed ? Color.btHover : .clear)
             case .danger:
@@ -87,21 +97,23 @@ struct IconButtonStyle: ButtonStyle {
         let active: Bool
         @State private var hovering = false
         @Environment(\.isEnabled) private var isEnabled
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
         var body: some View {
             configuration.label
                 .font(.system(size: size * 0.46, weight: .medium))
                 .foregroundStyle(hovering || active ? Color.btText : Color.btTextSecondary)
                 .frame(width: size, height: size)
-                .background(
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .fill(active ? Color.btSelection : hovering || configuration.isPressed ? Color.btHover : .clear)
-                )
-                .scaleEffect(configuration.isPressed ? 0.92 : 1)
+                .background(LinearGradient(
+                    colors: active ? [Color.btSelection, Color.btHover] : hovering || configuration.isPressed
+                        ? [Color.btHover, Color.btSurfaceRaised] : [.clear, .clear],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                ), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .scaleEffect(reduceMotion ? 1 : configuration.isPressed ? 0.94 : 1)
                 .opacity(isEnabled ? 1 : 0.4)
                 .contentShape(Rectangle())
                 .onHover { hovering = $0 }
-                .animation(.snappy(duration: 0.12), value: hovering)
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: hovering)
         }
     }
 }
