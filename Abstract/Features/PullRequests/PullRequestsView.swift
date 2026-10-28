@@ -146,30 +146,28 @@ private struct PullRequestRow: View {
         let chat = model.chat(for: pr, in: project.id)
         Button { open(chat) } label: {
             HStack(alignment: .top, spacing: Space.md) {
-                PullRequestMark(pr: pr, size: 15).frame(width: 18, height: 22)
                 VStack(alignment: .leading, spacing: 7) {
-                    HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
+                    HStack(alignment: .top, spacing: Space.sm) {
                         Text(pr.title).font(.btBodyMedium).foregroundStyle(Color.btText).lineLimit(2)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                        Text(verbatim: pr.label).font(.btCaptionMedium).foregroundStyle(pr.stateTint)
-                            .padding(.horizontal, 6).padding(.vertical, 2)
-                            .background(pr.stateTint.opacity(0.1), in: RoundedRectangle(cornerRadius: 5))
-                            .fixedSize()
+                        PullRequestStateBadge(pr: pr)
                     }
                     HStack(spacing: Space.sm) {
+                        Text(verbatim: pr.label).font(.btMonoSmall).foregroundStyle(Color.btTextSecondary)
                         if showRepo, let repo = pr.repoName {
-                            Text(repo).lineLimit(1)
                             Text("·")
+                            Text(repo).lineLimit(1)
                         }
                         if let chat {
                             // The chat's name, unless it's the pull request's title too.
+                            Text("·")
                             Image(systemName: "text.bubble").help("Opened from \(chat.name)")
                             if chat.name != pr.title { Text(chat.name).lineLimit(1) }
                         } else if let author = pr.author {
+                            Text("·")
                             GitHubAvatar(login: author, size: 14, hostTitle: pr.hostTitle)
                             Text(author).lineLimit(1)
                         }
-                        Text(pr.head).font(.btMonoSmall).lineLimit(1).truncationMode(.middle)
                         Spacer(minLength: Space.xs)
                         if let updated = pr.updatedAt {
                             Text(RelativeTime.short(updated)).fixedSize()
@@ -177,7 +175,11 @@ private struct PullRequestRow: View {
                     }
                     .font(.btCaption)
                     .foregroundStyle(Color.btTextTertiary)
-                    if pr.standing != nil { PullRequestStanding(pr: pr) }
+                    if !pr.head.isEmpty {
+                        Text("\(pr.head) → \(pr.base)").font(.btMonoSmall).foregroundStyle(Color.btTextTertiary)
+                            .lineLimit(1).truncationMode(.middle)
+                    }
+                    if !pr.standingDetails.isEmpty { PullRequestStanding(pr: pr) }
                 }
             }
             .padding(.horizontal, Space.md)

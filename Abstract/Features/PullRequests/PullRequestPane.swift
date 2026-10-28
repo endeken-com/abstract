@@ -168,7 +168,9 @@ struct PullRequestStateBadge: View {
 
     var body: some View {
         HStack(spacing: 5) {
-            PullRequestMark(pr: pr, size: 12)
+            PullRequestGlyph(kind: pr.glyph)
+                .foregroundStyle(pr.stateTint)
+                .frame(width: 12, height: 12)
             Text(pr.stateLabel)
         }
         .font(.btCaptionMedium)
@@ -186,30 +188,42 @@ struct PullRequestStanding: View {
     let pr: PullRequest
 
     var body: some View {
-        if let standing = pr.standing {
-            Label(standing, systemImage: symbol)
-                .font(.btCaptionMedium)
-                .foregroundStyle(tint)
-                .labelStyle(.titleAndIcon)
-                .fixedSize(horizontal: false, vertical: true)
+        if !pr.standingDetails.isEmpty {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: Space.md) {
+                    ForEach(pr.standingDetails, id: \.kind) { detail in status(detail) }
+                }
+                .fixedSize(horizontal: true, vertical: false)
+                VStack(alignment: .leading, spacing: Space.xs) {
+                    ForEach(pr.standingDetails, id: \.kind) { detail in status(detail) }
+                }
+            }
         }
     }
 
-    private var symbol: String {
-        if pr.checksSummary.failed > 0 || pr.hasConflicts { return "xmark.circle.fill" }
-        if pr.checksSummary.pending > 0 { return "clock" }
-        switch pr.reviewDecision {
-        case .changesRequested: return "bubble.left.fill"
-        case .approved: return "checkmark.seal.fill"
-        case .reviewRequired: return "person.crop.circle"
-        case nil: return "checkmark.circle.fill"
+    private func status(_ detail: PullRequest.StandingDetail) -> some View {
+        Label(detail.title, systemImage: symbol(detail.kind))
+            .font(.btCaptionMedium)
+            .foregroundStyle(tint(detail.kind))
+            .fixedSize()
+    }
+
+    private func symbol(_ kind: PullRequest.StandingDetail.Kind) -> String {
+        switch kind {
+        case .conflicts, .failedChecks: "xmark.circle.fill"
+        case .runningChecks: "clock"
+        case .passedChecks: "checkmark.circle.fill"
+        case .changesRequested: "bubble.left.fill"
+        case .approved: "checkmark.seal.fill"
+        case .reviewRequired: "person.crop.circle"
         }
     }
 
-    private var tint: Color {
-        if pr.checksSummary.failed > 0 || pr.hasConflicts { return .btRemoved }
-        if pr.reviewDecision == .changesRequested { return .btRemoved }
-        return .btTextSecondary
+    private func tint(_ kind: PullRequest.StandingDetail.Kind) -> Color {
+        switch kind {
+        case .conflicts, .failedChecks, .changesRequested: .btRemoved
+        default: .btTextSecondary
+        }
     }
 }
 
@@ -644,24 +658,23 @@ private struct PullRequestDetail: View {
             } else if pr.state == .open {
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: Space.sm) {
+                        primaryAction
                         pushButton
                         Spacer(minLength: Space.md)
                         closeButton
-                        primaryAction
                     }
                     .fixedSize(horizontal: true, vertical: false)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
                     VStack(alignment: .leading, spacing: Space.sm) {
-                        pushButton
                         HStack(spacing: Space.sm) {
                             primaryAction
-                            closeButton
+                            pushButton
                         }
                         .fixedSize(horizontal: true, vertical: false)
+                        closeButton
                     }
                     VStack(alignment: .leading, spacing: Space.sm) {
-                        pushButton
                         primaryAction
+                        pushButton
                         closeButton
                     }
                 }
@@ -679,7 +692,7 @@ private struct PullRequestDetail: View {
             Button {
                 run("Pushing…") { try await model.pushChanges(session.id, message: session.name) }
             } label: { Label(pushLabel, systemImage: "arrow.up") }
-                .buttonStyle(.bt(.secondary, size: .small))
+                .buttonStyle(.bt(.ghost, size: .small))
                 .help("Commit what's in the worktree and push it to the pull request")
         }
     }
@@ -687,14 +700,14 @@ private struct PullRequestDetail: View {
     private var closeButton: some View {
         Button { run("Closing…") { try await model.closePullRequest(session.id) } }
             label: { Label("Close PR", systemImage: "xmark.circle") }
-            .buttonStyle(.bt(.ghost, size: .small))
+            .buttonStyle(.bt(.danger, size: .small))
     }
 
     @ViewBuilder private var primaryAction: some View {
         if pr.isDraft {
             Button { run("Marking ready…") { try await model.markPullRequestReady(session.id) } }
                 label: { Label("Ready for Review", systemImage: "checkmark.circle") }
-                .buttonStyle(.bt(.primary, size: .small))
+                .buttonStyle(.bt(.secondary, size: .small))
         } else {
             Menu {
                 ForEach(pr.mergeMethods, id: \.self) { method in
@@ -702,7 +715,7 @@ private struct PullRequestDetail: View {
                 }
             } label: { Label("Merge", systemImage: "arrow.triangle.merge") }
                 .menuStyle(.button)
-                .buttonStyle(.bt(.primary, size: .small))
+                .buttonStyle(.bt(.secondary, size: .small))
                 .fixedSize()
                 .disabled(pr.hasConflicts)
                 .help(pr.hasConflicts ? "Resolve the conflicts with \(pr.base) first" : "Merge on \(pr.hostTitle)")
