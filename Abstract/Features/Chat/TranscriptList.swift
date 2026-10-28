@@ -115,6 +115,8 @@ final class TranscriptController: NSObject {
     private var premeasureAbove = -1
     private var premeasureBelow = 0
     private var premeasureAboveNext = true
+    /// The reading position before background measurements change row heights.
+    private var pendingAnchor: (id: Int, offset: CGFloat)?
     /// One selection across every row, as a web page has.
     let selection = TranscriptSelection()
     /// When the view last scrolled: work ahead waits for a pause.
@@ -177,8 +179,12 @@ final class TranscriptController: NSObject {
         footerView = footer
         footerHost.update(TranscriptRowView(content: footer, environment: environment(nil), width: rowWidth, model: model))
         if self.feed !== feed {
+            resetForNewChat()
             self.feed = feed
-            feed.expansion.onChange = { [weak self] row in self?.rowToggled(row) }
+            feed.expansion.onChange = { [weak self, weak feed] row in
+                guard let self, let feed, self.feed === feed else { return }
+                self.rowToggled(row)
+            }
             observe(feed)
             attach(feed.find)
         }
@@ -190,6 +196,29 @@ final class TranscriptController: NSObject {
             scrollToEnd(animated: true)
         }
         rebuild(force: global)
+    }
+
+    private func resetForNewChat() {
+        premeasuring?.cancel()
+        premeasuring = nil
+        for id in Array(mounted.keys) { unmount(id, park: false) }
+        parked.removeAll()
+        parkedOrder.removeAll()
+        items.removeAll()
+        index.removeAll()
+        heights.removeAll()
+        versions.removeAll()
+        measuredWidth = 0
+        historyRevision = -1
+        shownRange = 0..<0
+        premeasureCount = -1
+        pendingAnchor = nil
+        follow = TranscriptFollow()
+        didInitialScroll = false
+        revealed = false
+        revealStarted = nil
+        changedSinceCheck = false
+        scrollView.alphaValue = 0
     }
 
     private func observe(_ feed: ChatFeed) {
@@ -359,7 +388,8 @@ final class TranscriptController: NSObject {
         let clip = scrollView.contentView
         let reveal = pendingReveal
         pendingReveal = nil
-        let anchor = follow.following || reveal != nil ? nil : readingAnchor()
+        let anchor = follow.following || reveal != nil ? nil : (pendingAnchor ?? readingAnchor())
+        pendingAnchor = nil
 
         let x = ((scrollView.contentSize.width - width) / 2).rounded()
         // Rows keep their heights current as they report them.
@@ -568,8 +598,12 @@ final class TranscriptController: NSObject {
     /// rows just past the view are built.
     private func premeasureStep() -> Bool {
         guard revealed, measuredWidth > 0, !items.isEmpty else { return false }
+        // Measuring old rows changes the document's estimated height. While
+        // following the end, that would move the scroll position on every slice.
+        if follow.following { return false }
         // Never mid-scroll: a fling gets every frame.
         if CACurrentMediaTime() - lastScroll < 0.25 { return true }
+        let anchor = pendingAnchor ?? readingAnchor()
         let lower = min(shownRange.lowerBound, items.count)
         let upper = min(shownRange.upperBound, items.count)
         let range = lower..<max(lower, upper)
@@ -607,7 +641,10 @@ final class TranscriptController: NSObject {
             }
             measuredAny = true
         }
-        if measuredAny { document.needsLayout = true }
+        if measuredAny {
+            pendingAnchor = anchor
+            document.needsLayout = true
+        }
         return left
     }
 
