@@ -7,6 +7,8 @@ import AbstractCore
 /// when there's nothing to send).
 struct ComposerView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let session: Session
     @State private var draft = ""
     @State private var previewingMarkdown = false
@@ -116,7 +118,7 @@ struct ComposerView: View {
                         .frame(height: min(max(markdownHeight, 60), 180))
                         .padding(.top, 10)
                     } else {
-                        GrowingTextEditor(text: $draft, placeholder: placeholder, font: BTFont.chat(13.5), lines: 3...10, focused: $focused)
+                        GrowingTextEditor(text: $draft, placeholder: placeholder, font: BTFont.chat(13.5), lines: 2...10, focused: $focused)
                             .disabled(readOnly || settingUp || sending)
                             .onKeyPress(.tab) {
                                 guard draft.isEmpty, let suggestion else { return .ignored }
@@ -173,11 +175,19 @@ struct ComposerView: View {
                                 .disabled(remote && model.remote.unreachableMessage(session.id) != nil)
                                 .help(model.remote.unreachableMessage(session.id) ?? "Stop the agent (⌘.)")
                         } else {
-                            Button("Send", action: send)
-                                .buttonStyle(.btPrimary)
+                            Button(action: send) {
+                                Image(systemName: "arrow.up")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(canSend ? Color.btOnAccent : Color.btTextSecondary)
+                                    .frame(width: 30, height: 30)
+                                    .background(canSend ? Color.btAccent : Color.btSurfaceRaised, in: Circle())
+                                    .overlay(Circle().strokeBorder(Color.btBorderStrong.opacity(0.7), lineWidth: 0.75))
+                            }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("Send")
                                 .disabled(!canSend)
                                 .help(model.remote.unreachableMessage(session.id) ?? "Send (Return)")
-                                .animation(.snappy(duration: 0.15), value: canSend)
+                                .animation(reduceMotion ? nil : .snappy(duration: 0.15), value: canSend)
                         }
                     }
                 }
@@ -185,7 +195,16 @@ struct ComposerView: View {
             .padding(.leading, Space.lg)
             .padding(.trailing, 7)
             .padding(.vertical, 5)
-            .btFieldChrome(focused: focused)
+            .background {
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(LinearGradient(colors: [Color.btSurfaceRaised.opacity(0.45), Color.btField],
+                                         startPoint: .top, endPoint: .bottom))
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .strokeBorder(focused ? Color.btFieldBorderFocused : Color.btFieldBorder, lineWidth: 1)
+            }
+            .shadow(color: .black.opacity(colorScheme == .dark ? 0.16 : 0.05), radius: 12, y: 3)
             .attachmentInput(attachmentsBinding, focused: focused)
             .overlay(alignment: .top) {
                 let items = slashItems

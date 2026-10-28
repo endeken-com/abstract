@@ -139,8 +139,8 @@ enum TranscriptRows {
     static func gap(_ above: ChatRow, _ below: ChatRow) -> CGFloat {
         switch (above.block, below.block) {
         case (.user, .user): return 6
-        case (_, .user): return 28
-        case (.user, _): return 20
+        case (_, .user): return 32
+        case (.user, _): return 24
         case let (.assistant, .assistant(_, text, _, _)) where below.continues:
             // The next block of the same reply: a paragraph's space, a heading a little more.
             return text.hasPrefix("#") ? 22 : 14
@@ -148,7 +148,7 @@ enum TranscriptRows {
         case (.tools, .tools) where below.continues: return 2
         case (.tools, .tools), (.thinking, .thinking), (.tools, .thinking), (.thinking, .tools): return 6
         case (.turn, _), (_, .turn), (.compaction, _), (_, .compaction): return 16
-        default: return 14
+        default: return 18
         }
     }
 }
@@ -495,6 +495,11 @@ private struct UserBubble: View {
             // Paseo's bubble: round, but for the corner nearest the edge it's said from.
             .background(Color.btSurface, in: UnevenRoundedRectangle(topLeadingRadius: 16, bottomLeadingRadius: 16,
                                                                       bottomTrailingRadius: 16, topTrailingRadius: 4, style: .continuous))
+            .overlay {
+                UnevenRoundedRectangle(topLeadingRadius: 16, bottomLeadingRadius: 16,
+                                       bottomTrailingRadius: 16, topTrailingRadius: 4, style: .continuous)
+                    .strokeBorder(Color.btBorder.opacity(0.7), lineWidth: 0.75)
+            }
         }
     }
 
@@ -630,8 +635,7 @@ private struct CodeBlockChrome: View {
 }
 
 /// The agent's thinking, shown in the Thinking and Verbose transcripts:
-/// quieter, smaller and italic, under a small label so it reads as the
-/// agent thinking, not a quoted passage. It streams like a reply.
+/// quieter than a reply, with a luminous cue while it streams.
 private struct ThinkingView: View {
     @Environment(\.proseStyle) private var prose
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -642,28 +646,39 @@ private struct ThinkingView: View {
     @State private var tick = 0.0
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(streaming ? "Thinking" : "Thought")
-                .font(.btChatCaption)
-                .foregroundStyle(Color.btTextTertiary)
-            if streaming, !reduceMotion {
-                Revealing(text: text.trimmingCharacters(in: .whitespacesAndNewlines), streaming: true) { shown, _ in
-                    Text(marked(shown))
-                        .font(prose.font(size: prose.points - 1.5).italic())
-                        .foregroundStyle(Color.btTextTertiary)
-                        .lineSpacing(prose.lineSpacing - 2)
-                        .textSelection(.enabled)
-                        .textRenderer(StreamFadeRenderer(fade: fade, tick: tick))
-                        .onChange(of: shown) {
-                            fade.record(length: shown.utf16.count)
-                            withAnimation(.linear(duration: StreamFade.duration)) { tick += 1 }
+        HStack(alignment: .top, spacing: 12) {
+            ActivityOrb(active: streaming)
+                .frame(width: 28, height: 28)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 9) {
+                Text(streaming ? "Thinking…" : "Thought")
+                    .font(.btChatCallout)
+                    .foregroundStyle(Color.btTextSecondary)
+                Group {
+                    if streaming, !reduceMotion {
+                        Revealing(text: text.trimmingCharacters(in: .whitespacesAndNewlines), streaming: true) { shown, _ in
+                            Text(marked(shown))
+                                .font(prose.font(size: prose.points - 1))
+                                .foregroundStyle(Color.btTextSecondary)
+                                .lineSpacing(prose.lineSpacing - 1)
+                                .textSelection(.enabled)
+                                .textRenderer(StreamFadeRenderer(fade: fade, tick: tick))
+                                .onChange(of: shown) {
+                                    fade.record(length: shown.utf16.count)
+                                    withAnimation(.linear(duration: StreamFade.duration)) { tick += 1 }
+                                }
                         }
+                    } else {
+                        SelectableText(marked(text.trimmingCharacters(in: .whitespacesAndNewlines)))
+                            .font(prose.font(size: prose.points - 1))
+                            .foregroundStyle(Color.btTextSecondary)
+                            .lineSpacing(prose.lineSpacing - 1)
+                    }
                 }
-            } else {
-                SelectableText(marked(text.trimmingCharacters(in: .whitespacesAndNewlines)))
-                    .font(prose.font(size: prose.points - 1.5).italic())
-                    .foregroundStyle(Color.btTextTertiary)
-                    .lineSpacing(prose.lineSpacing - 2)
+                .padding(.leading, 12)
+                .overlay(alignment: .leading) {
+                    Rectangle().fill(Color.btBorderStrong.opacity(0.55)).frame(width: 1)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -813,7 +828,9 @@ private struct WorkingIndicator: View {
         else if case .thinking? = last, transcript.showsThinking { EmptyView() } else {
             SwiftUI.TimelineView(.periodic(from: .now, by: 1)) { context in
                 HStack(spacing: Space.sm) {
-                    DotLoader()
+                    ActivityOrb(active: true)
+                        .frame(width: 28, height: 28)
+                        .accessibilityHidden(true)
                     Text(label).font(.btChatCallout.weight(.regular)).foregroundStyle(Color.btTextSecondary)
                     // The log knows when the turn started, after a relaunch too.
                     if let start = feed.turnStartedAt ?? model.turnStartedAt[session.id] {
@@ -829,7 +846,9 @@ private struct WorkingIndicator: View {
     private func stallLine(_ stall: StallState) -> some View {
         SwiftUI.TimelineView(.periodic(from: .now, by: 1)) { context in
             HStack(spacing: Space.sm) {
-                DotLoader()
+                ActivityOrb(active: true)
+                    .frame(width: 28, height: 28)
+                    .accessibilityHidden(true)
                 Text(stallText(stall, at: context.date))
                     .font(.btChatCallout.weight(.regular)).foregroundStyle(Color.btWarning)
                 if stall.isStalled {
@@ -858,32 +877,33 @@ private struct WorkingIndicator: View {
     }
 }
 
-/// Six dots in two columns, lit in turn: the agent at work. After Paseo's
-/// loader (Apache-2.0, Copyright (c) 2025-present Mohamed Boudra); it steps
-/// six times a second inside the transcript's footer row only.
-private struct DotLoader: View {
-    private static let cycle = 0.95
-    private static let levels: [Double] = [1, 0.7, 0.45, 0.28, 0.16, 0.16]
-    /// Dot order around the grid: down the left, up the right.
-    private static let order = [0, 2, 4, 5, 3, 1]
+/// Two soft overlapping lights, animated only for live activity. The palette
+/// reverses on Paper so the cue stays visible without a bright white glow.
+private struct ActivityOrb: View {
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let active: Bool
 
     var body: some View {
-        SwiftUI.TimelineView(.periodic(from: .now, by: Self.cycle / 6)) { context in
-            let step = Int(context.date.timeIntervalSinceReferenceDate / (Self.cycle / 6)) % 6
-            Grid(horizontalSpacing: 2, verticalSpacing: 2) {
-                ForEach(0..<3, id: \.self) { row in
-                    GridRow {
-                        ForEach(0..<2, id: \.self) { column in
-                            let position = Self.order.firstIndex(of: row * 2 + column) ?? 0
-                            Circle()
-                                .fill(Color.btTextSecondary)
-                                .frame(width: 3, height: 3)
-                                .opacity(Self.levels[(step - position + 6) % 6])
-                        }
-                    }
-                }
+        SwiftUI.TimelineView(.animation(minimumInterval: 1.0 / 24.0, paused: reduceMotion || !active)) { context in
+            let phase = active && !reduceMotion ? context.date.timeIntervalSinceReferenceDate * 1.7 : 0
+            let light = colorScheme == .dark ? Color.white : Color.btTextSecondary
+            ZStack {
+                Circle()
+                    .fill(RadialGradient(colors: [light.opacity(0.68), light.opacity(0.28), light.opacity(0.03)],
+                                         center: .init(x: 0.4, y: 0.37), startRadius: 1, endRadius: 15))
+                    .overlay(Circle().strokeBorder(light.opacity(0.32), lineWidth: 0.8))
+                    .frame(width: 22, height: 22)
+                    .offset(x: -4 + 2 * sin(phase), y: -3)
+                Circle()
+                    .fill(RadialGradient(colors: [light.opacity(0.92), light.opacity(0.42), light.opacity(0.04)],
+                                         center: .init(x: 0.36, y: 0.32), startRadius: 1, endRadius: 15))
+                    .overlay(Circle().strokeBorder(light.opacity(0.25), lineWidth: 0.8))
+                    .frame(width: 22, height: 22)
+                    .offset(x: 4 - 2 * sin(phase), y: 3)
             }
-            .frame(width: 14, height: 14)
+            .shadow(color: light.opacity(colorScheme == .dark ? 0.25 : 0.1), radius: 7)
+            .frame(width: 28, height: 28)
         }
     }
 }
