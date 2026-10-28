@@ -79,18 +79,21 @@ struct PullRequestPill: View {
 
     var body: some View {
         Menu {
-            Button("Show Pull Request") { model.showPane(.review, in: sessionId) }
+            Button { model.showPane(.review, in: sessionId) }
+                label: { Label("Show Pull Request", systemImage: "sidebar.right") }
             if let url = pr.url {
-                Button("Open on \(pr.hostTitle)") { NSWorkspace.shared.open(url) }
-                Button("Copy Link") {
+                Button { NSWorkspace.shared.open(url) }
+                    label: { Label("Open on \(pr.hostTitle)", systemImage: "arrow.up.forward.square") }
+                Button {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(url.absoluteString, forType: .string)
-                }
+                } label: { Label("Copy Link", systemImage: "link") }
             }
             if pr.state == .open {
                 Divider()
                 if pr.isDraft {
-                    Button("Ready for Review") { act { try await model.markPullRequestReady(sessionId) } }
+                    Button { act { try await model.markPullRequestReady(sessionId) } }
+                        label: { Label("Ready for Review", systemImage: "checkmark.circle") }
                 } else {
                     Menu("Merge") {
                         ForEach(pr.mergeMethods, id: \.self) { method in
@@ -99,10 +102,12 @@ struct PullRequestPill: View {
                     }
                     .disabled(pr.hasConflicts)
                 }
-                Button("Close Pull Request") { act { try await model.closePullRequest(sessionId) } }
+                Button { act { try await model.closePullRequest(sessionId) } }
+                    label: { Label("Close Pull Request", systemImage: "xmark.circle") }
             }
             Divider()
-            Button("Refresh") { act { try await model.refreshPullRequest(sessionId) } }
+            Button { act { try await model.refreshPullRequest(sessionId) } }
+                label: { Label("Refresh", systemImage: "arrow.clockwise") }
         } label: {
             HStack(spacing: 5) {
                 Text(verbatim: pr.label).font(BTFont.ui(12.5, .semibold)).monospacedDigit()
@@ -154,6 +159,59 @@ struct PullRequestMark: View {
             .foregroundStyle(pr.tint)
             .frame(width: size, height: size)
             .help(pr.summary)
+    }
+}
+
+/// A compact state label shared by the list and the detail header.
+struct PullRequestStateBadge: View {
+    let pr: PullRequest
+
+    var body: some View {
+        HStack(spacing: 5) {
+            PullRequestMark(pr: pr, size: 12)
+            Text(pr.stateLabel)
+        }
+        .font(.btCaptionMedium)
+        .foregroundStyle(pr.stateTint)
+        .padding(.horizontal, 7)
+        .frame(height: 22)
+        .background(pr.stateTint.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
+        .fixedSize()
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// The same status language in list rows and the detail view.
+struct PullRequestStanding: View {
+    let pr: PullRequest
+
+    var body: some View {
+        if let standing = pr.standing {
+            Label(standing, systemImage: symbol)
+                .font(.btCaptionMedium)
+                .foregroundStyle(tint)
+                .labelStyle(.titleAndIcon)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var symbol: String {
+        if pr.checksSummary.failed > 0 || pr.hasConflicts { return "xmark.circle.fill" }
+        if pr.checksSummary.pending > 0 { return "clock" }
+        switch pr.reviewDecision {
+        case .changesRequested: return "bubble.left.fill"
+        case .approved: return "checkmark.seal.fill"
+        case .reviewRequired: return "person.crop.circle"
+        case nil: return "checkmark.circle.fill"
+        }
+    }
+
+    private var tint: Color {
+        if pr.checksSummary.failed > 0 || pr.hasConflicts { return .btRemoved }
+        if pr.checksSummary.pending > 0 { return .btTextSecondary }
+        if pr.reviewDecision == .changesRequested { return .btRemoved }
+        if pr.reviewDecision == .approved || (pr.reviewDecision == nil && pr.checksSummary.total > 0) { return .btAdded }
+        return .btTextSecondary
     }
 }
 
@@ -392,12 +450,12 @@ private struct PullRequestDetail: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                PullRequestMark(pr: pr, size: 12)
-                Text(pr.stateLabel).font(.btCallout).foregroundStyle(pr.stateTint)
-                Text(verbatim: pr.label).font(.btCallout).foregroundStyle(Color.btTextTertiary)
+            HStack(spacing: Space.sm) {
+                PullRequestStateBadge(pr: pr)
+                Text(verbatim: pr.label).font(.btCaptionMedium).foregroundStyle(Color.btTextSecondary)
+                    .monospacedDigit()
                 if model.namesPullRequestRepos(session.projectId), let repo = pr.repoName {
-                    Text(repo).font(.btCallout).foregroundStyle(Color.btTextTertiary)
+                    Text(repo).font(.btCaption).foregroundStyle(Color.btTextTertiary).lineLimit(1)
                 }
                 Spacer(minLength: Space.sm)
                 Button {
@@ -420,19 +478,19 @@ private struct PullRequestDetail: View {
                 .foregroundStyle(Color.btText)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
-            HStack(spacing: 6) {
+            HStack(spacing: Space.sm) {
                 if let author = pr.author {
                     GitHubAvatar(login: author, size: 16, hostTitle: pr.hostTitle)
-                    Text(author).font(.btCallout).foregroundStyle(Color.btTextSecondary).fixedSize()
+                    Text(author).font(.btCallout).foregroundStyle(Color.btTextSecondary).lineLimit(1)
                 }
                 Text("\(pr.head) → \(pr.base)").font(.btMonoSmall).foregroundStyle(Color.btTextTertiary)
                     .lineLimit(1).truncationMode(.middle)
+            }
+            HStack(spacing: Space.md) {
+                PullRequestStanding(pr: pr)
                 if let additions = pr.additions, let deletions = pr.deletions {
                     DiffCounts(additions: additions, deletions: deletions, hideZeros: true).fixedSize()
                 }
-            }
-            if let standing = pr.standing {
-                Text(standing).font(.btCallout).foregroundStyle(pr.checksSummary.failed > 0 ? Color.btRemoved : Color.btTextSecondary)
             }
             if pr.state == .open { PluginPullRequestSwitches(sessionId: session.id) }
         }
@@ -448,7 +506,8 @@ private struct PullRequestDetail: View {
         return VStack(alignment: .leading, spacing: 2) {
             SectionHeading(title: "Checks", detail: summary) {
                 if !failed.isEmpty, pr.state == .open {
-                    Button("Ask Agent to Fix") { model.askToFixChecks(session.id, failed) }
+                    Button { model.askToFixChecks(session.id, failed) }
+                        label: { Label("Ask Agent to Fix", systemImage: "sparkle") }
                         .buttonStyle(.bt(.ghost, size: .small))
                         .help("Send the failing checks to this chat's agent")
                 }
@@ -487,7 +546,8 @@ private struct PullRequestDetail: View {
         return VStack(alignment: .leading, spacing: Space.sm) {
             SectionHeading(title: "Reviews", detail: decision) {
                 if feedback, pr.state == .open {
-                    Button("Send All to Agent") { model.askToAddressReviews(session.id) }
+                    Button { model.askToAddressReviews(session.id) }
+                        label: { Label("Send All to Agent", systemImage: "paperplane") }
                         .buttonStyle(.bt(.ghost, size: .small))
                         .help("Send the open threads, reviews and comments to this chat's agent")
                 }
@@ -496,7 +556,8 @@ private struct PullRequestDetail: View {
                 HStack(spacing: Space.sm) {
                     GitHubAvatar(login: review.author, size: 18, hostTitle: pr.hostTitle)
                     Text(review.author).font(.btCallout.weight(.semibold)).foregroundStyle(Color.btText)
-                    Text(verdict(review.verdict) ?? "").font(.btCallout).foregroundStyle(Color.btTextSecondary)
+                    Label(verdict(review.verdict) ?? "", systemImage: verdictSymbol(review.verdict))
+                        .font(.btCallout).foregroundStyle(verdictTint(review.verdict))
                     Spacer(minLength: Space.sm)
                     if let date = review.submittedAt { Text(RelativeTime.short(date)).font(.btCaption).foregroundStyle(Color.btTextTertiary) }
                 }
@@ -554,6 +615,24 @@ private struct PullRequestDetail: View {
         }
     }
 
+    private func verdictSymbol(_ verdict: PullRequest.Review.Verdict) -> String {
+        switch verdict {
+        case .approved: "checkmark.circle.fill"
+        case .changesRequested: "xmark.circle.fill"
+        case .commented: "bubble.left"
+        case .dismissed: "minus.circle"
+        case .pending: "clock"
+        }
+    }
+
+    private func verdictTint(_ verdict: PullRequest.Review.Verdict) -> Color {
+        switch verdict {
+        case .approved: .btAdded
+        case .changesRequested: .btRemoved
+        default: .btTextSecondary
+        }
+    }
+
     @ViewBuilder
     private var actions: some View {
         let busy = working != nil
@@ -566,33 +645,27 @@ private struct PullRequestDetail: View {
                 }
                 .frame(height: 28)
             } else if pr.state == .open {
-                HStack(spacing: Space.sm) {
-                    if publish.uncommitted > 0 || publish.unpushed > 0 {
-                        Button(pushLabel) {
-                            run("Pushing…") { try await model.pushChanges(session.id, message: session.name) }
-                        }
-                        .buttonStyle(.bt(.secondary, size: .small))
-                        .help("Commit what's in the worktree and push it to the pull request")
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: Space.sm) {
+                        pushButton
+                        Spacer(minLength: Space.md)
+                        closeButton
+                        primaryAction
                     }
-                    Spacer(minLength: 0)
-                    Button("Close") { run("Closing…") { try await model.closePullRequest(session.id) } }
-                        .buttonStyle(.bt(.ghost, size: .small))
-                    if pr.isDraft {
-                        Button("Ready for Review") { run("Marking ready…") { try await model.markPullRequestReady(session.id) } }
-                            .buttonStyle(.bt(.primary, size: .small))
-                    } else {
-                        Menu {
-                            ForEach(pr.mergeMethods, id: \.self) { method in
-                                Button(title(method)) { run("Merging…") { try await model.mergePullRequest(session.id, method: method) } }
-                            }
-                        } label: {
-                            Text("Merge")
+                    .fixedSize(horizontal: true, vertical: false)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    VStack(alignment: .leading, spacing: Space.sm) {
+                        pushButton
+                        HStack(spacing: Space.sm) {
+                            primaryAction
+                            closeButton
                         }
-                        .menuStyle(.button)
-                        .buttonStyle(.bt(.primary, size: .small))
-                        .fixedSize()
-                        .disabled(pr.hasConflicts)
-                        .help(pr.hasConflicts ? "Resolve the conflicts with \(pr.base) first" : "Merge on \(pr.hostTitle)")
+                        .fixedSize(horizontal: true, vertical: false)
+                    }
+                    VStack(alignment: .leading, spacing: Space.sm) {
+                        pushButton
+                        primaryAction
+                        closeButton
                     }
                 }
                 .disabled(busy)
@@ -602,6 +675,41 @@ private struct PullRequestDetail: View {
 
     private var pushLabel: String {
         publish.uncommitted > 0 ? "Commit and Push" : "Push \(publish.unpushed) Commit\(publish.unpushed == 1 ? "" : "s")"
+    }
+
+    @ViewBuilder private var pushButton: some View {
+        if publish.uncommitted > 0 || publish.unpushed > 0 {
+            Button {
+                run("Pushing…") { try await model.pushChanges(session.id, message: session.name) }
+            } label: { Label(pushLabel, systemImage: "arrow.up") }
+                .buttonStyle(.bt(.secondary, size: .small))
+                .help("Commit what's in the worktree and push it to the pull request")
+        }
+    }
+
+    private var closeButton: some View {
+        Button { run("Closing…") { try await model.closePullRequest(session.id) } }
+            label: { Label("Close PR", systemImage: "xmark.circle") }
+            .buttonStyle(.bt(.ghost, size: .small))
+    }
+
+    @ViewBuilder private var primaryAction: some View {
+        if pr.isDraft {
+            Button { run("Marking ready…") { try await model.markPullRequestReady(session.id) } }
+                label: { Label("Ready for Review", systemImage: "checkmark.circle") }
+                .buttonStyle(.bt(.primary, size: .small))
+        } else {
+            Menu {
+                ForEach(pr.mergeMethods, id: \.self) { method in
+                    Button(title(method)) { run("Merging…") { try await model.mergePullRequest(session.id, method: method) } }
+                }
+            } label: { Label("Merge", systemImage: "arrow.triangle.merge") }
+                .menuStyle(.button)
+                .buttonStyle(.bt(.primary, size: .small))
+                .fixedSize()
+                .disabled(pr.hasConflicts)
+                .help(pr.hasConflicts ? "Resolve the conflicts with \(pr.base) first" : "Merge on \(pr.hostTitle)")
+        }
     }
 
     private func title(_ method: MergeMethod) -> String { methodTitle(method) }
@@ -652,10 +760,10 @@ private struct CheckRow: View {
     @ViewBuilder
     private var glyph: some View {
         switch check.outcome {
-        case .passed: Image(systemName: "checkmark").font(.system(size: 10, weight: .semibold)).foregroundStyle(Color.btTextSecondary)
-        case .failed: Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)).foregroundStyle(Color.btRemoved)
-        case .pending: ProgressView().controlSize(.mini)
-        case .skipped: Image(systemName: "minus").font(.system(size: 10)).foregroundStyle(Color.btTextTertiary)
+        case .passed: Image(systemName: "checkmark.circle.fill").font(.system(size: 12)).foregroundStyle(Color.btAdded)
+        case .failed: Image(systemName: "xmark.circle.fill").font(.system(size: 12)).foregroundStyle(Color.btRemoved)
+        case .pending: Image(systemName: "clock").font(.system(size: 12)).foregroundStyle(Color.btTextSecondary)
+        case .skipped: Image(systemName: "minus.circle").font(.system(size: 12)).foregroundStyle(Color.btTextTertiary)
         }
     }
 }
@@ -727,7 +835,7 @@ private struct ThreadBlock: View {
                 .buttonStyle(.plain)
                 .help(thread.path)
                 if canSend, !thread.isResolved {
-                    Button("Send to Agent", action: send)
+                    Button(action: send) { Label("Send to Agent", systemImage: "paperplane") }
                         .buttonStyle(.bt(.ghost, size: .small))
                         .help("Ask this chat's agent to address the thread")
                         .opacity(hovering ? 1 : 0)
