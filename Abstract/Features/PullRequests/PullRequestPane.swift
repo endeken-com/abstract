@@ -208,9 +208,7 @@ struct PullRequestStanding: View {
 
     private var tint: Color {
         if pr.checksSummary.failed > 0 || pr.hasConflicts { return .btRemoved }
-        if pr.checksSummary.pending > 0 { return .btTextSecondary }
         if pr.reviewDecision == .changesRequested { return .btRemoved }
-        if pr.reviewDecision == .approved || (pr.reviewDecision == nil && pr.checksSummary.total > 0) { return .btAdded }
         return .btTextSecondary
     }
 }
@@ -627,7 +625,6 @@ private struct PullRequestDetail: View {
 
     private func verdictTint(_ verdict: PullRequest.Review.Verdict) -> Color {
         switch verdict {
-        case .approved: .btAdded
         case .changesRequested: .btRemoved
         default: .btTextSecondary
         }
@@ -760,7 +757,7 @@ private struct CheckRow: View {
     @ViewBuilder
     private var glyph: some View {
         switch check.outcome {
-        case .passed: Image(systemName: "checkmark.circle.fill").font(.system(size: 12)).foregroundStyle(Color.btAdded)
+        case .passed: Image(systemName: "checkmark.circle.fill").font(.system(size: 12)).foregroundStyle(Color.btTextSecondary)
         case .failed: Image(systemName: "xmark.circle.fill").font(.system(size: 12)).foregroundStyle(Color.btRemoved)
         case .pending: Image(systemName: "clock").font(.system(size: 12)).foregroundStyle(Color.btTextSecondary)
         case .skipped: Image(systemName: "minus.circle").font(.system(size: 12)).foregroundStyle(Color.btTextTertiary)
