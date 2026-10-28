@@ -57,7 +57,6 @@ extension AppModel {
                 PullRequestLookup.isDue(last: pullRequestLookupsAt[$0.id])
             }
             let branches = Array(Set(due.compactMap(\.branch)))
-            for session in due { pullRequestLookupsAt[session.id] = .now }
             var list: [PullRequest] = []
             var threw: Set<String> = []
             var mainError: Error?
@@ -79,6 +78,9 @@ extension AppModel {
             }
             // No code host anywhere in the project: nothing was asked.
             guard asked else { continue }
+            if threw.isEmpty {
+                for session in due { pullRequestLookupsAt[session.id] = .now }
+            }
             if let mainError {
                 let failures = min((pullRequestFailureCount[project.id] ?? 0) + 1, 5)
                 pullRequestFailureCount[project.id] = failures
@@ -101,29 +103,31 @@ extension AppModel {
                 .filter { old in !list.contains { $0.isSame(as: old) } }
             projectPullRequests[project.id] = ProjectRepos.ordered(ProjectRepos.deduped(list + unread + retained))
             pullRequestsListedAt[project.id] = .now
+            var updatedPullRequests = pullRequests
             for session in sessions where session.projectId == project.id {
-                defer { if let pr = pullRequests[session.id] { recordPullRequest(session, pr) } }
+                defer { if let pr = updatedPullRequests[session.id] { recordPullRequest(session, pr) } }
                 let matches = pullRequestsForChat(session.id)
-                let current = pullRequests[session.id]
+                let current = updatedPullRequests[session.id]
                 // An open pull request before a finished one; a newer one in
                 // its repository opened after the chat's was closed or merged
                 // takes its place.
                 let open = matches.first { $0.state == .open }
                 if let open, let current, current.state != .open, open.repoPath == current.repoPath,
                    open.number > current.number, pinnedPullRequests[session.id] != current.id {
-                    pullRequests[session.id] = open
+                    updatedPullRequests[session.id] = open
                     continue
                 }
                 // Keep a selected PR if it falls beyond the recent-list limit
                 // or has not appeared in the list just after creation.
                 guard let summary = matches.first(where: { candidate in current.map { candidate.isSame(as: $0) } ?? false })
                     ?? (current == nil ? open ?? matches.first : nil) else { continue }
-                guard let known = pullRequests[session.id], known.isSame(as: summary) else {
-                    pullRequests[session.id] = summary
+                guard let known = updatedPullRequests[session.id], known.isSame(as: summary) else {
+                    updatedPullRequests[session.id] = summary
                     continue
                 }
-                pullRequests[session.id] = known.refreshingSummary(with: summary)
+                updatedPullRequests[session.id] = known.refreshingSummary(with: summary)
             }
+            if updatedPullRequests != pullRequests { pullRequests = updatedPullRequests }
         }
     }
 
@@ -279,7 +283,7 @@ extension AppModel {
         pullRequests[sessionId] = PullRequestAssociation.retained(pullRequests[sessionId],
                                                                   pinned: pinnedPullRequests[sessionId])
         pullRequestLookupsAt[sessionId] = nil
-        reload()
+        reloadSessions()
     }
 
     /// Before the chat's branch is pushed or proposed: the one its worktree

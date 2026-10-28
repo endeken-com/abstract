@@ -15,6 +15,8 @@ public struct TimelineEntry: Sendable, Identifiable, Hashable {
 public struct Timeline: Sendable {
     public private(set) var entries: [TimelineEntry] = []
     private var nextId = 0
+    private var textEntries: [String: Int] = [:]
+    private var thinkingEntries: [String: Int] = [:]
 
     public init() {}
 
@@ -28,13 +30,23 @@ public struct Timeline: Sendable {
         if case let .toolUse(id, name, input, nil) = event {
             event = .toolUse(id: id, name: name, input: input, edit: EditPreview.fromToolInput(name: name, input: input))
         }
-        if let blockId = event.blockId, let index = entries.lastIndex(where: { $0.event.blockId == blockId && $0.event.sameKind(as: event) }) {
+        let previous: Int? = switch event {
+        case let .text(_, _, blockId?, _): textEntries[blockId]
+        case let .thinking(_, blockId?, _): thinkingEntries[blockId]
+        default: nil
+        }
+        if let index = previous {
             entries[index].event = entries[index].event.merged(with: event)
             entries[index].at = at ?? entries[index].at
             return
         }
         nextId += 1
         entries.append(TimelineEntry(id: nextId, event: event, at: at))
+        switch event {
+        case let .text(_, _, blockId?, _): textEntries[blockId] = entries.count - 1
+        case let .thinking(_, blockId?, _): thinkingEntries[blockId] = entries.count - 1
+        default: break
+        }
     }
 
     public mutating func append(contentsOf events: [AgentEvent], at: Date? = nil) {
@@ -80,20 +92,6 @@ public struct Timeline: Sendable {
 }
 
 extension AgentEvent {
-    var blockId: String? {
-        switch self {
-        case .text(_, _, let id, _), .thinking(_, let id, _): id
-        default: nil
-        }
-    }
-
-    func sameKind(as other: AgentEvent) -> Bool {
-        switch (self, other) {
-        case (.text, .text), (.thinking, .thinking): true
-        default: false
-        }
-    }
-
     func merged(with incoming: AgentEvent) -> AgentEvent {
         switch (self, incoming) {
         case let (.text(role, old, id, _), .text(_, new, _, partial)):
@@ -194,13 +192,35 @@ extension Timeline {
         var turns = TurnTracker()
         var runningCompaction: Int?
         var afterCompaction = false
+        var pendingCallId: Int?
+        var pendingCalls: [ToolCall] = []
+        var pendingRawId: Int?
+        var pendingRaw: [OutputLine] = []
+
+        func flushGroups() {
+            if let id = pendingCallId {
+                out.append(.tools(id: id, calls: pendingCalls))
+                pendingCallId = nil
+                pendingCalls = []
+            }
+            if let id = pendingRawId {
+                out.append(.raw(id: id, lines: pendingRaw))
+                pendingRawId = nil
+                pendingRaw = []
+            }
+        }
+
+        func emit(_ block: TimelineBlock) {
+            flushGroups()
+            out.append(block)
+        }
 
         /// Ends the compaction under way, or adds one that ended unseen.
         func closeCompaction(_ state: CompactionState, trigger: CompactionTrigger?, entryId: Int) {
             if let i = runningCompaction, case let .compaction(id, started, _) = out[i] {
                 out[i] = .compaction(id: id, trigger: trigger ?? started, state: state)
             } else {
-                out.append(.compaction(id: entryId, trigger: trigger ?? .manual, state: state))
+                emit(.compaction(id: entryId, trigger: trigger ?? .manual, state: state))
             }
             runningCompaction = nil
             afterCompaction = true
@@ -218,7 +238,7 @@ extension Timeline {
             }
             if let line = turns.read(entry) {
                 // Claude ends a compaction with an empty turn: no line under the compaction's.
-                if !afterCompaction { out.append(line) }
+                if !afterCompaction { emit(line) }
                 assistantOpen = false
             }
             if afterCompaction {
@@ -231,14 +251,14 @@ extension Timeline {
             switch entry.event {
             case let .text(role, text, _, partial):
                 if role == .user {
-                    out.append(.user(id: entry.id, text: text))
+                    emit(.user(id: entry.id, text: text))
                     assistantOpen = false
                 } else if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    out.append(.assistant(id: entry.id, text: text, streaming: partial, opensTurn: !assistantOpen))
+                    emit(.assistant(id: entry.id, text: text, streaming: partial, opensTurn: !assistantOpen))
                     assistantOpen = true
                 }
             case let .thinking(text, _, _):
-                if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { out.append(.thinking(id: entry.id, text: text)) }
+                if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { emit(.thinking(id: entry.id, text: text)) }
             case let .toolUse(id, name, input, edit):
                 let r = results[id]
                 // The tool's own result diff wins (it has line numbers); until
@@ -247,16 +267,14 @@ extension Timeline {
                                     edit: r?.2 ?? edit,
                                     fileChanges: fileChanges[id],
                                     result: r.map { ToolResult(output: $0.0, isError: $0.1, images: images[id] ?? []) })
-                if case let .tools(groupId, calls)? = out.last {
-                    out[out.count - 1] = .tools(id: groupId, calls: calls + [call])
-                } else {
-                    out.append(.tools(id: entry.id, calls: [call]))
-                }
+                if pendingRawId != nil { flushGroups() }
+                if pendingCallId == nil { pendingCallId = entry.id }
+                pendingCalls.append(call)
                 assistantOpen = true
             case let .system(model, _, mode, _):
-                out.append(.system(id: entry.id, model: model, permissionMode: mode))
+                emit(.system(id: entry.id, model: model, permissionMode: mode))
             case let .error(message):
-                out.append(.error(id: entry.id, message: message))
+                emit(.error(id: entry.id, message: message))
             case let .notice(notice):
                 switch notice {
                 case .retrying: if entry.id != liveRetry { continue }
@@ -264,26 +282,24 @@ extension Timeline {
                 case let .warning(message): if errors.contains(message) { continue }
                 case .nearLimit, .limitReached, .info: break
                 }
-                out.append(.notice(id: entry.id, notice))
+                emit(.notice(id: entry.id, notice))
             case let .raw(line, stream):
-                if case let .raw(groupId, lines)? = out.last {
-                    out[out.count - 1] = .raw(id: groupId, lines: lines + [OutputLine(stream: stream, line: line)])
-                } else {
-                    out.append(.raw(id: entry.id, lines: [OutputLine(stream: stream, line: line)]))
-                }
+                if pendingCallId != nil { flushGroups() }
+                if pendingRawId == nil { pendingRawId = entry.id }
+                pendingRaw.append(OutputLine(stream: stream, line: line))
             case let .gitOperation(operation):
                 switch operation {
-                case .commit, .push: out.append(.gitOperation(id: entry.id, operation))
+                case .commit, .push: emit(.gitOperation(id: entry.id, operation))
                 case .pullRequest: break
                 }
             case let .handoff(from, to, summary, source):
-                out.append(.handoff(id: entry.id, from: from, to: to, summary: summary, source: source))
+                emit(.handoff(id: entry.id, from: from, to: to, summary: summary, source: source))
                 assistantOpen = false
             case let .compaction(event):
                 switch event {
                 case let .started(trigger):
                     if runningCompaction == nil {
-                        out.append(.compaction(id: entry.id, trigger: trigger ?? .auto, state: .running))
+                        emit(.compaction(id: entry.id, trigger: trigger ?? .auto, state: .running))
                         runningCompaction = out.count - 1
                     }
                 case let .finished(result, trigger, durationMs):
@@ -299,7 +315,8 @@ extension Timeline {
                 break
             }
         }
-        if !afterCompaction, let line = turns.pendingLine { out.append(line) }
+        if !afterCompaction, let line = turns.pendingLine { emit(line) }
+        flushGroups()
         return out
     }
 

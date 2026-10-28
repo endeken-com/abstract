@@ -435,7 +435,7 @@ final class AppModel {
         Task { await watchForStalls() }
         Task { await watchPullRequests() }
         Task { await watchCodeHostActivation() }
-        Task { await readEveryBranch() }
+        Task { await watchBranches() }
         if !isDemo { Task { await accounts.seedFromLogs(engine.logsURL) } }
         if !isDemo { remote.start(model: self) }
         Notifier.shared.requestAuthorization()
@@ -463,7 +463,7 @@ final class AppModel {
 
     func reload() {
         projects = (try? store.projects()) ?? []
-        sessions = (try? store.sessions()) ?? []
+        reloadSessions()
         automations = (try? store.automations()) ?? []
         latestAutomationRuns = (try? store.latestRuns()) ?? [:]
         profiles = (try? store.profiles()) ?? []
@@ -471,6 +471,10 @@ final class AppModel {
         reloadSkills()
         permissionRules = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, (try? store.permissionRules(projectId: $0.id)) ?? []) })
         toolServers = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, (try? store.toolServers(projectId: $0.id)) ?? []) })
+    }
+
+    func reloadSessions() {
+        sessions = (try? store.sessions()) ?? []
         alive = engine.aliveSessionIds
     }
 
@@ -839,7 +843,7 @@ final class AppModel {
             session.branch = existing.branch
         }
         try store.save(session)
-        reload()
+        reloadSessions()
         feed(session.id).reset()
         if select { open(session.id, newTab: true) }
         engine.recordInput(sessionId: session.id, text: prompt)
@@ -881,24 +885,29 @@ final class AppModel {
         s.name = ChatNaming.withTicket(title, from: [s.prompt.map { PromptAttachments.split($0).text }])
         s.nameSource = source
         try? store.save(s)
-        reload()
+        replaceSession(s)
     }
 
     /// Chats take their pull request's title, as its line in the release
     /// notes, and follow it when it's renamed; never a name you typed.
     private func nameChatsForPullRequests() {
         guard !isDemo else { return }
+        var updated = sessions
+        let indices = Dictionary(uniqueKeysWithValues: updated.enumerated().map { ($1.id, $0) })
         var renamed = false
         for (id, pr) in pullRequests where !id.hasPrefix(RemoteService.mirrorPrefix) && !pr.title.isEmpty {
-            guard var s = sessions.first(where: { $0.id == id }), s.nameSource.mayBeReplaced(by: .pullRequest) else { continue }
+            guard let index = indices[id] else { continue }
+            var s = updated[index]
+            guard s.nameSource.mayBeReplaced(by: .pullRequest) else { continue }
             let name = ChatNaming.pullRequestName(pr.title, ticketFrom: [s.name, pr.body, s.prompt.map { PromptAttachments.split($0).text }])
             guard name != s.name || s.nameSource != .pullRequest else { continue }
             s.name = name
             s.nameSource = .pullRequest
             try? store.save(s)
+            updated[index] = s
             renamed = true
         }
-        if renamed { reload() }
+        if renamed { sessions = updated }
     }
 
     /// How far a chat-title naming from its agent's words got, for chats
@@ -1225,7 +1234,7 @@ final class AppModel {
         s.model = model
         s.effort = effort
         try? store.save(s)
-        reload()
+        replaceSession(s)
         if isAlive(sessionId) { needsRelaunch.insert(sessionId) }
     }
 
@@ -1245,7 +1254,7 @@ final class AppModel {
         }
         s.permissionPolicy = policy
         try? store.save(s)
-        reload()
+        replaceSession(s)
         guard isAlive(sessionId), !isDemo,
               let line = provider.buildPermissionModeChange(policy, requestId: "mode-\(UUID().uuidString.prefix(8))") else { return }
         do { try engine.write(sessionId: sessionId, line) } catch { needsRelaunch.insert(sessionId) }
@@ -1302,7 +1311,7 @@ final class AppModel {
         guard var current = self.session(id) else { return }
         current.handoffFrom = nil
         try? store.save(current)
-        reload()
+        replaceSession(current)
         let prompt = HandoffPreamble.compose(from: ProviderRegistry.name(from), summary: summary, transcriptPath: transcript,
                                              resuming: current.providerSessionId != nil, message: message)
         do {
@@ -1691,14 +1700,14 @@ final class AppModel {
         s.name = name
         s.nameSource = .manual
         try? store.save(s)
-        reload()
+        replaceSession(s)
     }
 
     func setPinned(_ sessionId: String, _ pinned: Bool) {
         guard var s = session(sessionId) else { return }
         s.pinnedAt = pinned ? Date() : nil
         try? store.save(s)
-        reload()
+        replaceSession(s)
     }
 
     func setArchived(_ sessionId: String, _ archived: Bool) {
@@ -1714,7 +1723,7 @@ final class AppModel {
             mainTabs.removeSession(sessionId)
             syncDestinationWithTabs(leaving: sessionId)
         }
-        reload()
+        replaceSession(s)
         if archived, !wasArchived { automationEvent(.chatArchived, in: sessionId) }
     }
 
