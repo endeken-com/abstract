@@ -51,8 +51,8 @@ struct SidebarView: View {
         return ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 VStack(alignment: .leading, spacing: 1) {
-                    RailNavRow(title: "New", symbol: "plus", destination: .home)
-                    RailNavRow(title: "Automations", symbol: "clock", destination: .automations)
+                    RailNavRow(title: "New", symbol: "square.and.pencil", destination: .home)
+                    RailNavRow(title: "Automations", symbol: "clock.arrow.circlepath", destination: .automations)
                     RailNavRow(title: "Worktrees", symbol: "arrow.triangle.branch", destination: .worktrees)
                     RailNavRow(title: "Pull Requests", symbol: PullRequestGlyph.symbol, destination: .pullRequests)
                     ForEach(model.plugins.usable) { plugin in
@@ -75,10 +75,12 @@ struct SidebarView: View {
                         } label: { Image(systemName: "magnifyingglass") }
                             .buttonStyle(RailIconStyle())
                             .help("Search chats")
+                            .accessibilityLabel("Search chats")
                         SidebarFilterMenu(arrangement: $arrangement, filterJSON: $filterJSON, filter: filter, chats: allChats)
                         Button { model.isAddingProject = true } label: { Image(systemName: "plus") }
                             .buttonStyle(RailIconStyle())
                             .help("Add project")
+                            .accessibilityLabel("Add project")
                     }
                 }
 
@@ -386,6 +388,7 @@ struct RailSection<Trailing: View>: View {
 /// A group header plus its rows.
 struct RailGroup<Content: View>: View {
     let title: String
+    var icon: AnyView? = nil
     var trailing: AnyView? = nil
     var onTitleTap: (() -> Void)? = nil
     var collapsed = false
@@ -399,6 +402,12 @@ struct RailGroup<Content: View>: View {
             HStack(spacing: 4) {
                 Button { onTitleTap?() } label: {
                     HStack(spacing: 4) {
+                        if let icon {
+                            // Same 8pt icon-to-title gap as the nav rows above.
+                            icon.frame(width: Rail.iconColumn, height: Rail.iconColumn)
+                                .padding(.trailing, 4)
+                                .accessibilityHidden(true)
+                        }
                         Text(title)
                             .font(BTFont.ui(12.5))
                             .foregroundStyle(hovering && onTitleTap != nil ? Color.btTextSecondary : Color.btTextTertiary)
@@ -447,14 +456,17 @@ private struct RailProjectGroup: View {
         let collapsed = model.collapsedProjects.contains(project.id)
         RailGroup(
             title: project.name,
+            icon: AnyView(ProjectIconView(project: project, size: Rail.iconColumn)),
             trailing: AnyView(
                 HStack(spacing: 0) {
                     Button { model.destination = .projectSettings(project.id) } label: { Image(systemName: "ellipsis") }
                         .buttonStyle(RailIconStyle())
                         .help("\(project.name) settings")
+                        .accessibilityLabel("\(project.name) settings")
                     Button { model.showNewChat(in: project.id) } label: { Image(systemName: "plus") }
                         .buttonStyle(RailIconStyle())
                         .help("New chat in \(project.name)")
+                        .accessibilityLabel("New chat in \(project.name)")
                 }
             ),
             onTitleTap: {

@@ -77,6 +77,7 @@ struct WorktreesView: View {
                 .buttonStyle(.icon)
                 .keyboardShortcut("r", modifiers: .command)
                 .help("Refresh (⌘R)")
+                .accessibilityLabel("Refresh worktrees")
             Button { Task { await list.prune(project, model: model) } } label: {
                 Label("Prune", systemImage: "scissors")
             }
@@ -91,14 +92,14 @@ struct WorktreesView: View {
         let selection = Binding<String?>(get: { project?.id }, set: { projectId = $0 })
         if model.projects.count <= 4 {
             Picker("Project", selection: selection) {
-                ForEach(model.projects) { p in Text(p.name).tag(Optional(p.id)) }
+                ForEach(model.projects) { p in projectOption(p).tag(Optional(p.id)) }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
             .fixedSize()
         } else {
             Picker("Project", selection: selection) {
-                ForEach(model.projects) { p in Text(p.name).tag(Optional(p.id)) }
+                ForEach(model.projects) { p in projectOption(p).tag(Optional(p.id)) }
             }
             .pickerStyle(.menu)
             .labelsHidden()
@@ -106,15 +107,24 @@ struct WorktreesView: View {
         }
     }
 
+    private func projectOption(_ project: Project) -> some View {
+        HStack(spacing: 6) {
+            ProjectIconView(project: project, size: 16)
+                .accessibilityHidden(true)
+            Text(project.name)
+        }
+        .accessibilityLabel(project.name)
+    }
+
     @ViewBuilder
     private func sections(_ project: Project) -> some View {
         if let main = list.main {
-            WorktreeSection(title: "Main working tree") {
+            WorktreeSection(title: "Main working tree", symbol: "house") {
                 WorktreeRow(entry: main, projectId: project.id, onRemove: nil)
             }
         }
 
-        WorktreeSection(title: "Chat worktrees", count: list.chats.count) {
+        WorktreeSection(title: "Chat worktrees", symbol: "bubble.left.and.bubble.right", count: list.chats.count) {
             if list.chats.isEmpty {
                 Text("No chat has a worktree in \(project.name) yet. Start one and it gets its own.")
                     .font(.btCallout)
@@ -130,7 +140,7 @@ struct WorktreesView: View {
         }
 
         if !list.abandoned.isEmpty {
-            WorktreeSection(title: "Abandoned", count: list.abandoned.count, warning: true,
+            WorktreeSection(title: "Abandoned", symbol: "exclamationmark.triangle.fill", count: list.abandoned.count, warning: true,
                             note: "No chat uses these. They're left over from deleted chats, or ones made outside Abstract; remove them to reclaim the disk space.") {
                 ForEach(Array(list.abandoned.enumerated()), id: \.element.id) { i, entry in
                     if i > 0 { WorktreeDivider() }
@@ -145,6 +155,7 @@ struct WorktreesView: View {
 
 private struct WorktreeSection<Content: View>: View {
     let title: String
+    let symbol: String
     var count: Int? = nil
     var warning = false
     var note: String? = nil
@@ -152,20 +163,22 @@ private struct WorktreeSection<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 6) {
-                if warning {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 10, weight: .regular))
-                        .foregroundStyle(Color.btWarning)
-                }
-                Text(title)
-                    .font(.btSectionLabel)
+            HStack(spacing: Space.md) {
+                Image(systemName: symbol)
+                    .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(warning ? Color.btWarning : Color.btTextTertiary)
-                if let count, count > 0 {
-                    Text("\(count)")
+                    .frame(width: 24)
+                    .accessibilityHidden(true)
+                HStack(spacing: 6) {
+                    Text(title)
                         .font(.btSectionLabel)
-                        .foregroundStyle(Color.btTextTertiary)
-                        .monospacedDigit()
+                        .foregroundStyle(warning ? Color.btWarning : Color.btTextTertiary)
+                    if let count, count > 0 {
+                        Text("\(count)")
+                            .font(.btSectionLabel)
+                            .foregroundStyle(Color.btTextTertiary)
+                            .monospacedDigit()
+                    }
                 }
             }
             .padding(.bottom, note == nil ? Space.sm : Space.xs)
@@ -219,15 +232,18 @@ private struct WorktreeRow: View {
                     Button { model.showNewChat(in: projectId, worktree: entry.path) } label: { Image(systemName: "plus.bubble") }
                         .buttonStyle(.icon)
                         .help(entry.session == nil ? "New chat here" : "New chat here (takes it over from “\(entry.session!.name)”)")
+                        .accessibilityLabel("New chat here")
                 }
                 Button(action: reveal) { Image(systemName: "folder") }
                     .buttonStyle(.icon)
                     .disabled(!entry.exists)
                     .help(entry.exists ? "Reveal in Finder" : "The folder no longer exists")
+                    .accessibilityLabel("Reveal in Finder")
                 if let onRemove {
                     Button(action: onRemove) { Image(systemName: "trash") }
                         .buttonStyle(.icon)
                         .help("Remove worktree…")
+                        .accessibilityLabel("Remove worktree")
                 }
             }
             .opacity(hovering ? 1 : 0)
