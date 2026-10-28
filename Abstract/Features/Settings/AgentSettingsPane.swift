@@ -13,20 +13,35 @@ struct AgentSettingsPane: View {
                 ProviderSettingsSection(provider: provider, detecting: detecting, detect: detect)
             }
             Section {
-                HStack(spacing: Space.md) {
-                    SettingsCaption("Abstract looks for each agent on your login shell's PATH when it starts. Detect again after installing or updating one.")
-                    Spacer(minLength: Space.md)
-                    Button(action: detect) {
-                        HStack(spacing: 6) {
-                            if detecting { ProgressView().controlSize(.small).scaleEffect(0.7).frame(width: 12, height: 12) }
-                            Text(detecting ? "Detecting…" : "Detect Again")
-                        }
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: Space.md) {
+                        detectionCaption
+                        Spacer(minLength: Space.md)
+                        detectButton
                     }
-                    .disabled(detecting)
+                    VStack(alignment: .leading, spacing: Space.sm) {
+                        detectionCaption
+                        detectButton
+                    }
                 }
             }
         }
         .settingsPane()
+    }
+
+    private var detectionCaption: some View {
+        SettingsCaption("Abstract looks for each agent on your login shell's PATH when it starts. Detect again after installing or updating one.")
+    }
+
+    private var detectButton: some View {
+        Button(action: detect) {
+            HStack(spacing: 6) {
+                if detecting { ProgressView().controlSize(.small).scaleEffect(0.7).frame(width: 12, height: 12) }
+                Text(detecting ? "Detecting…" : "Detect Again")
+            }
+        }
+        .disabled(detecting)
+        .fixedSize()
     }
 
     private func detect() {
@@ -71,15 +86,15 @@ private struct ProviderSettingsSection: View {
             }
 
             LabeledContent {
-                HStack(spacing: Space.sm) {
-                    TextField("Binary path", text: pathBinding, prompt: Text("\(provider.binary) on PATH"))
-                        .labelsHidden()
-                        .fontWeight(Field.weight)
-                        .multilineTextAlignment(.leading)
-                        .font(.btMono)
-                        .onSubmit(detect)
-                        .btField()
-                    Button("Choose…", action: choose)
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: Space.sm) {
+                        pathField
+                        Button("Choose…", action: choose)
+                    }
+                    VStack(alignment: .trailing, spacing: Space.sm) {
+                        pathField
+                        Button("Choose…", action: choose)
+                    }
                 }
                 .frame(maxWidth: 360)
             } label: {
@@ -115,6 +130,16 @@ private struct ProviderSettingsSection: View {
             let args = text.split(whereSeparator: \.isWhitespace).map(String.init)
             update { $0.extraArgs = args.isEmpty ? nil : args }
         }
+    }
+
+    private var pathField: some View {
+        TextField("Binary path", text: pathBinding, prompt: Text("\(provider.binary) on PATH"))
+            .labelsHidden()
+            .fontWeight(Field.weight)
+            .multilineTextAlignment(.leading)
+            .font(.btMono)
+            .onSubmit(detect)
+            .btField()
     }
 
     @ViewBuilder

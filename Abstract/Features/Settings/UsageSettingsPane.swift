@@ -10,18 +10,15 @@ struct UsageSettingsPane: View {
     @AppStorage("usage.hideEmails") private var hideEmails = false
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Space.xxl) {
-                AccountsSection(hideEmails: $hideEmails)
-                Hairline()
-                TokenUsageSection()
-            }
-            // The same column the settings title and forms keep.
-            .padding(.horizontal, SettingsLayout.margin + SettingsLayout.textInset)
-            .padding(.vertical, Space.lg)
-            .frame(maxWidth: SettingsLayout.rowWidth + 2 * SettingsLayout.margin, alignment: .leading)
-            .frame(maxWidth: .infinity)
+        VStack(alignment: .leading, spacing: Space.xxl) {
+            AccountsSection(hideEmails: $hideEmails)
+            Hairline()
+            TokenUsageSection()
         }
+        .padding(.horizontal, SettingsLayout.margin + SettingsLayout.textInset)
+        .padding(.vertical, Space.lg)
+        .frame(maxWidth: SettingsLayout.rowWidth + 2 * SettingsLayout.margin, alignment: .leading)
+        .frame(maxWidth: .infinity)
         .task {
             // Limits move as agents work; re-read every few minutes while this is open.
             while !Task.isCancelled {
@@ -55,18 +52,21 @@ private struct AccountsSection: View {
     var body: some View {
         let accounts = model.accounts
         VStack(alignment: .leading, spacing: Space.xl) {
-            HStack(spacing: Space.md) {
-                Text("Accounts").font(.btHeadline).foregroundStyle(Color.btText)
-                Spacer(minLength: Space.md)
-                Text(accounts.refreshedAt.map { "Limits as each agent last reported them, checked \(RelativeTime.short($0)) ago" } ?? "Checking accounts…")
-                    .font(.btCaption).foregroundStyle(Color.btTextTertiary)
-                Button { hideEmails.toggle() } label: {
-                    Label(hideEmails ? "Show emails" : "Hide emails", systemImage: hideEmails ? "eye" : "eye.slash")
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: Space.md) {
+                    Text("Accounts").font(.btHeadline).foregroundStyle(Color.btText)
+                    Spacer(minLength: Space.sm)
+                    refreshLabel(accounts.refreshedAt)
+                    accountControls(accounts)
                 }
-                .buttonStyle(.bt(.ghost, size: .small))
-                Button { Task { await accounts.refresh(executor: model.executor) } } label: { Image(systemName: "arrow.clockwise") }
-                    .buttonStyle(.icon(size: 26))
-                    .help("Check again")
+                VStack(alignment: .leading, spacing: Space.sm) {
+                    HStack {
+                        Text("Accounts").font(.btHeadline).foregroundStyle(Color.btText)
+                        Spacer()
+                        accountControls(accounts)
+                    }
+                    refreshLabel(accounts.refreshedAt)
+                }
             }
 
             ProviderHeading(providerId: "claude", title: "Claude Code") {
@@ -85,6 +85,28 @@ private struct AccountsSection: View {
                 CardGrid { CodexAccountCard(hideEmails: hideEmails) }
             }
         }
+    }
+
+    private func refreshLabel(_ date: Date?) -> some View {
+        Text(date.map { "Limits as each agent last reported them, checked \(RelativeTime.short($0)) ago" } ?? "Checking accounts…")
+            .font(.btCaption)
+            .foregroundStyle(Color.btTextTertiary)
+            .lineLimit(2)
+    }
+
+    private func accountControls(_ accounts: AccountsStore) -> some View {
+        HStack(spacing: Space.xs) {
+            Button { hideEmails.toggle() } label: {
+                Label(hideEmails ? "Show emails" : "Hide emails", systemImage: hideEmails ? "eye" : "eye.slash")
+            }
+            .buttonStyle(.bt(.ghost, size: .small))
+            Button { Task { await accounts.refresh(executor: model.executor) } } label: {
+                Image(systemName: "arrow.clockwise")
+            }
+            .buttonStyle(.icon(size: 26))
+            .help("Check again")
+        }
+        .fixedSize()
     }
 
     private var addAccount: some View {
@@ -386,9 +408,18 @@ private struct TokenUsageSection: View {
                 Hairline()
                 stats(report)
                 Hairline()
-                HStack(alignment: .top, spacing: Space.xxl) {
-                    ModelTable(report: report)
-                    WorkspaceTable(report: report, all: $allWorkspaces)
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .top, spacing: Space.xxl) {
+                        ModelTable(report: report).frame(minWidth: 380)
+                        WorkspaceTable(report: report, all: $allWorkspaces).frame(minWidth: 250)
+                    }
+                    VStack(alignment: .leading, spacing: Space.xl) {
+                        ScrollView(.horizontal) {
+                            ModelTable(report: report).frame(minWidth: 380)
+                        }
+                        .scrollIndicators(.hidden)
+                        WorkspaceTable(report: report, all: $allWorkspaces)
+                    }
                 }
             }
         }
@@ -398,11 +429,29 @@ private struct TokenUsageSection: View {
     }
 
     private func header(_ report: UsageReport) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: Space.md) {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: Space.md) {
+                usageHeading(report)
+                Spacer(minLength: Space.sm)
+                usageFilters
+            }
+            VStack(alignment: .leading, spacing: Space.sm) {
+                usageHeading(report)
+                usageFilters
+            }
+        }
+    }
+
+    private func usageHeading(_ report: UsageReport) -> some View {
+        VStack(alignment: .leading, spacing: Space.xs) {
             Text("Token usage").font(.btHeadline).foregroundStyle(Color.btText)
             Text("\(report.start.formatted(.dateTime.month(.abbreviated).day())) – \(report.end.formatted(.dateTime.month(.abbreviated).day())), API-rate estimate from local session logs")
                 .font(.btCaption).foregroundStyle(Color.btTextTertiary)
-            Spacer(minLength: Space.md)
+        }
+    }
+
+    private var usageFilters: some View {
+        HStack(spacing: Space.sm) {
             if model.usage.loading, !model.usage.records.isEmpty { ProgressView().controlSize(.small).scaleEffect(0.7) }
             Picker("Show", selection: $metric) {
                 Text("Cost").tag(UsageReport.Metric.cost)
@@ -416,11 +465,27 @@ private struct TokenUsageSection: View {
             }
             .pickerStyle(.segmented).labelsHidden().fixedSize()
         }
+        .fixedSize()
     }
 
     private func overview(_ report: UsageReport) -> some View {
-        HStack(alignment: .top, spacing: Space.xxl) {
-            VStack(alignment: .leading, spacing: Space.md) {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: Space.xxl) {
+                providerSummary(report)
+                UsageChart(report: report, metric: metric)
+                    .frame(minWidth: 220)
+                    .frame(height: 200)
+            }
+            VStack(alignment: .leading, spacing: Space.lg) {
+                providerSummary(report)
+                UsageChart(report: report, metric: metric)
+                    .frame(height: 200)
+            }
+        }
+    }
+
+    private func providerSummary(_ report: UsageReport) -> some View {
+        VStack(alignment: .leading, spacing: Space.md) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(metric == .cost ? UsageFormat.cost(report.cost) + "*" : UsageFormat.tokens(report.tokens.total))
                         .font(BTFont.ui(34, .semibold)).monospacedDigit().foregroundStyle(Color.btText)
@@ -449,11 +514,8 @@ private struct TokenUsageSection: View {
                         }
                     }
                 }
-            }
-            .frame(width: 280, alignment: .leading)
-            UsageChart(report: report, metric: metric)
-                .frame(height: 200)
         }
+        .frame(width: 280, alignment: .leading)
     }
 
     private func share(_ row: UsageReport.Row, _ report: UsageReport) -> Double {
@@ -464,7 +526,8 @@ private struct TokenUsageSection: View {
     private func stats(_ report: UsageReport) -> some View {
         let t = report.tokens
         let input = t.input + t.cacheRead + t.cacheWrite
-        return HStack(alignment: .top, spacing: 0) {
+        return LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), alignment: .leading)],
+                         alignment: .leading, spacing: Space.lg) {
             Stat(title: "Processed tokens", value: UsageFormat.tokens(t.total))
             Stat(title: "Cached input", value: UsageFormat.tokens(t.cacheRead),
                  detail: input > 0 ? UsageFormat.percent(Double(t.cacheRead) / Double(input)) : nil)
