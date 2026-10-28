@@ -49,7 +49,7 @@ struct SidebarView: View {
         let allChats = model.sidebarChats()
         let chats = visibleChats(allChats)
         return ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
+            LazyVStack(alignment: .leading, spacing: 0) {
                 VStack(alignment: .leading, spacing: 1) {
                     RailNavRow(title: "New", symbol: "plus", destination: .home)
                     RailNavRow(title: "Automations", symbol: "clock", destination: .automations)
@@ -395,7 +395,7 @@ struct RailGroup<Content: View>: View {
     @State private var hovering = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 1) {
+        LazyVStack(alignment: .leading, spacing: 1) {
             HStack(spacing: 4) {
                 Button { onTitleTap?() } label: {
                     HStack(spacing: 4) {

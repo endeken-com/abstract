@@ -77,6 +77,7 @@ final class TranscriptController: NSObject {
     private var context: TranscriptContext?
     private var items: [Item] = []
     private var index: [Int: Int] = [:]
+    private var historyRevision = -1
     /// Measured heights at `measuredWidth`, by row id.
     private var heights: [Int: CGFloat] = [:]
     private var measuredWidth: CGFloat = 0
@@ -109,6 +110,11 @@ final class TranscriptController: NSObject {
     private var settleScheduled = false
     private var changedSinceCheck = false
     private var premeasuring: Task<Void, Never>?
+    private var premeasureRange = 0..<0
+    private var premeasureCount = -1
+    private var premeasureAbove = -1
+    private var premeasureBelow = 0
+    private var premeasureAboveNext = true
     /// One selection across every row, as a web page has.
     let selection = TranscriptSelection()
     /// When the view last scrolled: work ahead waits for a pause.
@@ -187,21 +193,45 @@ final class TranscriptController: NSObject {
 
     private func observe(_ feed: ChatFeed) {
         withObservationTracking {
-            _ = feed.history
+            _ = feed.historyRevision
             _ = feed.head.row
         } onChange: { [weak self, weak feed] in
             Task { @MainActor in
                 guard let self, let feed, feed === self.feed else { return }
-                self.rebuild(force: false)
+                if self.historyRevision != feed.historyRevision || !self.rebuildHead() {
+                    self.rebuild(force: false)
+                }
                 self.observe(feed)
                 feed.find.chatChanged()
             }
         }
     }
 
+    /// Streaming usually changes only the existing last row.
+    private func rebuildHead() -> Bool {
+        guard let feed, let context, let row = feed.head.row,
+              TranscriptRows.shows(row, context.transcript),
+              let last = items.last, last.id == row.id else { return false }
+        let updated = Item(row: row, gap: last.gap, live: context.working,
+                           approvals: last.approvals, latestTodo: last.latestTodo, version: last.version)
+        guard updated != last else { return true }
+        items[items.count - 1] = updated
+        if let host = mounted[row.id] {
+            host.update(root(for: updated))
+            record(updated, host.measure(width: rowWidth))
+        } else {
+            heights[row.id] = nil
+            dropParked(row.id)
+            premeasureCount = -1
+        }
+        document.needsLayout = true
+        return true
+    }
+
     /// Lays the feed's rows out as items, and redraws and re-measures the rows that changed.
     private func rebuild(force: Bool) {
         guard let feed, let context else { return }
+        historyRevision = feed.historyRevision
         let rows = feed.rows.filter { TranscriptRows.shows($0, context.transcript) }
         var next: [Item] = []
         next.reserveCapacity(rows.count)
@@ -232,6 +262,7 @@ final class TranscriptController: NSObject {
                 // Measured again when it's next near the view, or in an idle moment.
                 heights[item.id] = nil
                 dropParked(item.id)
+                premeasureCount = -1
             }
         }
         for id in mounted.keys where index[id] == nil { unmount(id, park: false) }
@@ -314,6 +345,7 @@ final class TranscriptController: NSObject {
         if width != measuredWidth {
             measuredWidth = width
             heights = [:]
+            premeasureCount = -1
             seedFromCache()
             for (id, host) in mounted {
                 guard let i = index[id] else { continue }
@@ -537,19 +569,33 @@ final class TranscriptController: NSObject {
         guard revealed, measuredWidth > 0, !items.isEmpty else { return false }
         // Never mid-scroll: a fling gets every frame.
         if CACurrentMediaTime() - lastScroll < 0.25 { return true }
+        let lower = min(shownRange.lowerBound, items.count)
+        let upper = min(shownRange.upperBound, items.count)
+        let range = lower..<max(lower, upper)
+        if premeasureRange != range || premeasureCount != items.count {
+            premeasureRange = range
+            premeasureCount = items.count
+            premeasureAbove = lower - 1
+            premeasureBelow = upper
+            premeasureAboveNext = true
+        }
         let deadline = CACurrentMediaTime() + 0.005
-        let above = Array((0..<min(shownRange.lowerBound, items.count)).reversed())
-        let below = Array(min(shownRange.upperBound, items.count)..<items.count)
         var measuredAny = false
         var left = false
-        // The next rows either way are built now, off screen, so scrolling to
-        // them reuses a finished row instead of building one mid-scroll.
-        let near = Set(above.prefix(Self.prebuilt) + below.prefix(Self.prebuilt))
-        for i in Self.interleave(above, below) {
-            let item = items[i]
-            let build = near.contains(i) && mounted[item.id] == nil && parked[item.id] == nil
-            guard build || heights[item.id] == nil else { continue }
+        while premeasureAbove >= 0 || premeasureBelow < items.count {
+            let fromAbove = premeasureAbove >= 0 && (premeasureAboveNext || premeasureBelow >= items.count)
+            let position = fromAbove ? premeasureAbove : premeasureBelow
+            let item = items[position]
+            let near = fromAbove ? position >= lower - Self.prebuilt : position < upper + Self.prebuilt
+            let build = near && mounted[item.id] == nil && parked[item.id] == nil
+            if !build && heights[item.id] != nil {
+                if fromAbove { premeasureAbove -= 1 } else { premeasureBelow += 1 }
+                premeasureAboveNext = !fromAbove
+                continue
+            }
             if CACurrentMediaTime() > deadline { left = true; break }
+            if fromAbove { premeasureAbove -= 1 } else { premeasureBelow += 1 }
+            premeasureAboveNext = !fromAbove
             if build {
                 let host = RowHost(root: root(for: item))
                 record(item, host.measure(width: measuredWidth))
@@ -566,17 +612,6 @@ final class TranscriptController: NSObject {
 
     /// Rows built ahead on each side of the view.
     private static let prebuilt = 32
-
-    /// Nearest first on both sides: a, b, a, b…
-    private static func interleave(_ a: [Int], _ b: [Int]) -> [Int] {
-        var out: [Int] = []
-        out.reserveCapacity(a.count + b.count)
-        for k in 0..<max(a.count, b.count) {
-            if k < a.count { out.append(a[k]) }
-            if k < b.count { out.append(b[k]) }
-        }
-        return out
-    }
 
     /// For the demo's scroll probe: the rows around a point, and how much they hold.
     func describe(around y: CGFloat) -> String {

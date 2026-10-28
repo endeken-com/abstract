@@ -56,14 +56,35 @@ extension AppModel {
         return local + paired
     }
 
-    /// Reads where each chat's branch stands, once, so the sidebar can tell
-    /// work waiting for review from work that's done. A turn's end reads its
-    /// chat's again (`setStatus`).
-    func readEveryBranch() async {
-        let chats = sessions.filter { $0.archivedAt == nil && $0.worktreePath != nil && !$0.id.hasPrefix(RemoteService.mirrorPrefix) }
+    /// Keep every unarchived chat's standing current without opening it.
+    func watchBranches() async {
+        await readEveryBranch(refreshAll: true)
+        guard !isDemo else { return }
+        var lastFullRead = ContinuousClock.now
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(120))
+            if Task.isCancelled { break }
+            let full = ContinuousClock.now - lastFullRead >= .seconds(600)
+            await readEveryBranch(refreshAll: true, limit: full ? nil : 40)
+            if full { lastFullRead = .now }
+        }
+    }
+
+    /// Recent chats first, with bounded git work so large sidebars stay responsive.
+    func readEveryBranch(refreshAll: Bool = false, limit: Int? = nil) async {
+        let chats = sessions.filter { $0.archivedAt == nil && $0.worktreePath != nil && !$0.id.hasPrefix(RemoteService.mirrorPrefix)
+            && (refreshAll || branchStates[$0.id] == nil) }
             .sorted { ($0.lastEventAt ?? $0.createdAt) > ($1.lastEventAt ?? $1.createdAt) }
-        for chat in chats where branchStates[chat.id] == nil {
-            await refreshBranch(chat.id)
+        let ids = chats.prefix(limit ?? chats.count).map(\.id)
+        var remaining = ids.makeIterator()
+        await withTaskGroup(of: Void.self) { group in
+            for _ in 0..<min(4, ids.count) {
+                if let id = remaining.next() { group.addTask { await self.refreshBranch(id) } }
+            }
+            while await group.next() != nil {
+                if Task.isCancelled { group.cancelAll(); break }
+                if let id = remaining.next() { group.addTask { await self.refreshBranch(id) } }
+            }
         }
     }
 }

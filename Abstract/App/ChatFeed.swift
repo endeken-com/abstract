@@ -35,6 +35,7 @@ final class ChatHead {
 @Observable
 final class ChatFeed {
     private(set) var history: [ChatRow] = []
+    private(set) var historyRevision = 0
     let head = ChatHead()
     /// Every tool call so far, for matching approvals to their calls. Changes
     /// only when a call starts or ends, not as text streams.
@@ -81,13 +82,27 @@ final class ChatFeed {
     @ObservationIgnored private var flush: Task<Void, Never>?
     /// Replies already cut into blocks, by block id, while their text is unchanged.
     @ObservationIgnored private var parts: [Int: (text: String, blocks: [String])] = [:]
+    @ObservationIgnored private var tailOnly = false
+    @ObservationIgnored private var tailBlock: TimelineBlock?
+    @ObservationIgnored private var tailRowCount = 0
     static let interval: Duration = .milliseconds(50)
     /// Row ids for a reply's blocks: the block id, then the part.
     static let partsPerBlock = 4096
 
     /// `at`: when the event's line was logged.
     func append(_ event: AgentEvent, at: Date? = nil) {
+        let previousCount = timeline.entries.count
         timeline.append(event, at: at)
+        let updatesTail: Bool
+        if case .text(.assistant, _, _, _) = event,
+           case .assistant(let id, _, _, _) = tailBlock,
+           timeline.entries.count == previousCount,
+           timeline.entries.last?.id == id {
+            updatesTail = true
+        } else {
+            updatesTail = false
+        }
+        if !updatesTail { tailOnly = false }
         guard flush == nil else { return }
         flush = Task { [weak self] in
             try? await Task.sleep(for: Self.interval)
@@ -99,6 +114,7 @@ final class ChatFeed {
     func reset(_ timeline: Timeline = Timeline()) {
         self.timeline = timeline
         parts = [:]
+        tailOnly = false
         isLoaded = true
         publish()
     }
@@ -106,11 +122,33 @@ final class ChatFeed {
     private func publish() {
         flush?.cancel()
         flush = nil
+        if tailOnly, case let .assistant(id, _, _, opensTurn) = tailBlock,
+           let entry = timeline.entries.last,
+           entry.id == id,
+           case let .text(.assistant, text, _, partial) = entry.event {
+            let block = TimelineBlock.assistant(id: id, text: text, streaming: partial, opensTurn: opensTurn)
+            let updated = rows(for: [block])
+            let oldSettledCount = max(0, tailRowCount - 1)
+            let newSettled = Array(updated.dropLast())
+            if Array(history.suffix(oldSettledCount)) != newSettled {
+                history.replaceSubrange((history.count - oldSettledCount)..<history.count, with: newSettled)
+                historyRevision += 1
+            }
+            if updated.last != head.row { head.row = updated.last }
+            tailBlock = block
+            tailRowCount = updated.count
+            if timeline.lastOutputAt != lastOutputAt { lastOutputAt = timeline.lastOutputAt }
+            if timeline.last != last { last = timeline.last }
+            return
+        }
         let blocks = timeline.blocks
         let rows = rows(for: blocks)
         let settled = Array(rows.dropLast())
-        if settled != history { history = settled }
+        if settled != history { history = settled; historyRevision += 1 }
         if rows.last != head.row { head.row = rows.last }
+        tailBlock = blocks.last
+        tailRowCount = blocks.last.map { self.rows(for: [$0]).count } ?? 0
+        tailOnly = true
 
         let calls = blocks.flatMap { block -> [ToolCall] in if case let .tools(_, calls) = block { calls } else { [] } }
         if calls != self.calls { self.calls = calls }

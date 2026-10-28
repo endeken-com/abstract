@@ -29,6 +29,47 @@ struct TimelineTests {
         #expect(t.entries.count == 3)
     }
 
+    @Test func mergesInterleavedBlocksByKindAndKeepsTheirOriginalPositions() {
+        var timeline = Timeline()
+        timeline.append(.text(role: .assistant, text: "first", blockId: "shared", partial: true))
+        timeline.append(.thinking(text: "thought", blockId: "shared", partial: true))
+        timeline.append(.text(role: .assistant, text: "other", blockId: "other", partial: true))
+        timeline.append(.text(role: .assistant, text: " again", blockId: "shared", partial: true))
+        timeline.append(.thinking(text: " again", blockId: "shared", partial: true))
+        #expect(timeline.entries.count == 3)
+        #expect(timeline.entries.map(\.id) == [1, 2, 3])
+        #expect(timeline.entries[0].event == .text(role: .assistant, text: "first again", blockId: "shared", partial: true))
+        #expect(timeline.entries[1].event == .thinking(text: "thought again", blockId: "shared", partial: true))
+    }
+
+    @Test func assemblesLargeTranscript() {
+        var timeline = Timeline()
+        for index in 0..<4_000 {
+            let blockId = "message:\(index)"
+            timeline.append(.text(role: .assistant, text: "A", blockId: blockId, partial: true))
+            timeline.append(.text(role: .assistant, text: "B", blockId: blockId, partial: true))
+        }
+        #expect(timeline.entries.count == 4_000)
+        #expect(timeline.entries.last?.event == .text(role: .assistant, text: "AB", blockId: "message:3999", partial: true))
+    }
+
+    @Test func assemblesLargeToolAndRawGroups() {
+        var timeline = Timeline()
+        for index in 0..<2_000 {
+            timeline.append(.toolUse(id: "tool:\(index)", name: "Read", input: .null, edit: nil))
+        }
+        timeline.append(.text(role: .assistant, text: "separator", blockId: nil, partial: false))
+        for _ in 0..<2_000 { timeline.append(.raw(line: "line", stream: .stdout)) }
+        let blocks = timeline.blocks
+        #expect(blocks.count == 3)
+        guard case let .tools(_, calls) = blocks[0], case let .raw(_, lines) = blocks[2] else {
+            Issue.record("expected grouped calls and raw lines")
+            return
+        }
+        #expect(calls.count == 2_000)
+        #expect(lines.count == 2_000)
+    }
+
     @Test func entriesGetDistinctStableIds() {
         var t = Timeline()
         for _ in 0..<3 { t.append(.raw(line: "x", stream: .stdout)) }
