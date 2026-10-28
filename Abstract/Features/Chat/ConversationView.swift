@@ -711,11 +711,17 @@ private struct TurnSummary: View {
                     .monospacedDigit()
                     .lineLimit(1)
                     .fixedSize()
-                if hovering, info.launch != nil {
-                    Button("How this turn started") { showingLaunch = true }
-                        .buttonStyle(.plain)
-                        .font(.btChatCaption)
-                        .foregroundStyle(Color.btTextSecondary)
+                if info.launch != nil {
+                    Button { showingLaunch = true } label: {
+                        Image(systemName: "info.circle")
+                            .frame(width: 18, height: 18)
+                    }
+                    .buttonStyle(.plain)
+                    .font(.btChatCaption)
+                    .foregroundStyle(Color.btTextSecondary)
+                    .opacity(hovering ? 1 : 0.55)
+                    .accessibilityLabel("How this turn started")
+                    .help("How this turn started")
                 }
                 Hairline()
             }
