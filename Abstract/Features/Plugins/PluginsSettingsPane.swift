@@ -13,7 +13,9 @@ struct PluginsSettingsPane: View {
     @State private var selectedView: PluginGalleryItem.ViewFilter = .all
     @State private var selectedCategory: PluginGalleryItem.Category?
     @State private var selectedPluginID: String?
+    @State private var afterDetail: (() -> Void)?
     @State private var catalogBusy: String?
+    @State private var catalogLoading = true
     /// A usable plugin whose own Settings page is showing (ABS-96).
     @State private var settingsPageFor: InstalledPlugin?
 
@@ -37,91 +39,158 @@ struct PluginsSettingsPane: View {
     }
 
     var body: some View {
-        let all = items
-        let visible = PluginGalleryItem.filter(all, query: query, view: selectedView, category: selectedCategory)
-        VStack(alignment: .leading, spacing: Space.lg) {
-            HStack(spacing: Space.sm) {
-                Image(systemName: "magnifyingglass").foregroundStyle(Color.btTextSecondary)
-                TextField("Search plugins", text: $query)
-                    .textFieldStyle(.plain)
-                    .accessibilityLabel("Search plugins")
-            }
-            .padding(Space.md)
-            .background(Color.btSurface, in: RoundedRectangle(cornerRadius: 10))
-
-            ViewThatFits(in: .horizontal) {
-                HStack {
-                    viewPicker
-                    Spacer(minLength: Space.sm)
-                    installFromDiskButton
-                }
-                VStack(alignment: .leading, spacing: Space.sm) {
-                    viewPicker
-                    installFromDiskButton
-                }
-            }
-
-            if !all.isEmpty {
-                ScrollView(.horizontal) {
-                    HStack(spacing: Space.sm) {
-                        categoryButton("All kinds", category: nil)
-                        ForEach(PluginGalleryItem.Category.allCases.filter { kind in
-                            all.contains { $0.category == kind }
-                        }, id: \.self) { kind in
-                            categoryButton(kind.rawValue, category: kind)
-                        }
-                    }
-                }
-                .scrollIndicators(.never)
-            }
-
-            if let problem = model.plugins.catalogProblem {
-                ViewThatFits(in: .horizontal) {
-                    HStack {
-                        Text("The catalog is unavailable. Installed and bundled plugins still work. \(problem)")
-                            .font(.btCaption).foregroundStyle(Color.btTextSecondary)
-                        Button("Try Again") { Task { await model.plugins.loadCatalog() } }
-                    }
-                    VStack(alignment: .leading, spacing: Space.sm) {
-                    Text("The catalog is unavailable. Installed and bundled plugins still work. \(problem)")
-                        .font(.btCaption).foregroundStyle(Color.btTextSecondary)
-                    Button("Try Again") { Task { await model.plugins.loadCatalog() } }
-                    }
-                }
-            } else if model.plugins.catalog.isEmpty {
-                ProgressView("Checking the catalog…")
-            }
-            if let pickedProblem { Text(pickedProblem).foregroundStyle(Color.btRemoved) }
-
-            if visible.isEmpty {
-                Text(emptyMessage).foregroundStyle(Color.btTextSecondary)
-                    .frame(maxWidth: .infinity, minHeight: 120)
-            } else {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 245), spacing: Space.md)],
-                          alignment: .leading, spacing: Space.md) {
-                    ForEach(visible) { item in galleryCard(item) }
-                }
-            }
-
-            if let selectedPluginID, let item = all.first(where: { $0.id == selectedPluginID }) {
+        galleryContent
+        .sheet(isPresented: Binding(get: { selectedPluginID != nil }, set: { if !$0 { selectedPluginID = nil } }),
+               onDismiss: {
+                   let action = afterDetail
+                   afterDetail = nil
+                   action?()
+               }) {
+            if let selectedPluginID, let item = items.first(where: { $0.id == selectedPluginID }) {
                 detail(item)
             }
-            if !model.plugins.orphans.isEmpty {
-                VStack(alignment: .leading, spacing: Space.sm) {
-                    Text("Packages that could not be read").font(.btHeadline)
-                    ForEach(model.plugins.orphans, id: \.name) { orphan in
-                        Text("\(orphan.name): \(orphan.problem)").font(.btCaption)
-                    }
-                }
+        }
+        .sheet(item: $pending) { item in pendingReview(item) }
+        .sheet(item: $settingsPageFor) { plugin in settingsPage(plugin) }
+        .sheet(item: $enabling) { plugin in enableReview(plugin) }
+        .confirmationDialog(
+            "Remove \(removing?.record.name ?? "")?",
+            isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Remove", role: .destructive) {
+                if let plugin = removing { model.removePlugin(plugin.id) }
+                removing = nil
             }
+            Button("Cancel", role: .cancel) { removing = nil }
+        } message: {
+            Text("Its files, its saved settings and any secrets you entered for it are deleted from this Mac. Your chats and projects aren't affected.")
+        }
+    }
+
+    private var galleryContent: some View {
+        let all = items
+        return VStack(alignment: .leading, spacing: Space.lg) {
+            searchField
+            filterBar
+            if !all.isEmpty { categoryBar(all) }
+            catalogStatus(all)
+            if let pickedProblem {
+                Text(pickedProblem).font(.btCaption).foregroundStyle(Color.btRemoved)
+            }
+            galleryResults(all)
+            if !model.plugins.orphans.isEmpty { orphanSection }
         }
         .padding(.horizontal, SettingsLayout.margin + SettingsLayout.textInset)
         .padding(.vertical, Space.lg)
         .frame(maxWidth: SettingsLayout.rowWidth + 2 * SettingsLayout.margin, alignment: .leading)
         .frame(maxWidth: .infinity)
-        .task { await model.plugins.loadCatalog() }
-        .sheet(item: $pending) { item in
-            PluginReviewSheet(
+        .task { await reloadCatalog() }
+    }
+
+    private var searchField: some View {
+        HStack(spacing: Space.sm) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 13))
+                .foregroundStyle(Color.btTextTertiary)
+            TextField("Search plugins", text: $query)
+                .textFieldStyle(.plain)
+                .accessibilityLabel("Search plugins")
+        }
+        .padding(.horizontal, Space.md)
+        .frame(height: 34)
+        .background(Color.btField, in: RoundedRectangle(cornerRadius: Radius.md))
+        .overlay(RoundedRectangle(cornerRadius: Radius.md).strokeBorder(Color.btFieldBorder))
+    }
+
+    private var filterBar: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack {
+                viewPicker
+                Spacer(minLength: Space.sm)
+                installFromDiskButton
+            }
+            VStack(alignment: .leading, spacing: Space.sm) {
+                viewPicker
+                installFromDiskButton
+            }
+        }
+    }
+
+    private func categoryBar(_ all: [PluginGalleryItem]) -> some View {
+        ScrollView(.horizontal) {
+            HStack(spacing: Space.sm) {
+                categoryButton("All kinds", category: nil)
+                ForEach(PluginGalleryItem.Category.allCases.filter { kind in
+                    all.contains { $0.category == kind }
+                }, id: \.self) { kind in
+                    categoryButton(kind.rawValue, category: kind)
+                }
+            }
+        }
+        .scrollIndicators(.never)
+    }
+
+    @ViewBuilder
+    private func catalogStatus(_ all: [PluginGalleryItem]) -> some View {
+        if let problem = model.plugins.catalogProblem {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: Space.md) {
+                    Text("The catalog is unavailable. Installed and bundled plugins still work. \(problem)")
+                        .font(.btCaption).foregroundStyle(Color.btTextSecondary)
+                    Spacer(minLength: 0)
+                    Button("Try Again") { Task { await reloadCatalog() } }
+                        .buttonStyle(.bt(.secondary, size: .small))
+                }
+                VStack(alignment: .leading, spacing: Space.sm) {
+                    Text("The catalog is unavailable. Installed and bundled plugins still work. \(problem)")
+                        .font(.btCaption).foregroundStyle(Color.btTextSecondary)
+                    Button("Try Again") { Task { await reloadCatalog() } }
+                        .buttonStyle(.bt(.secondary, size: .small))
+                }
+            }
+            .padding(Space.md)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.btHover, in: RoundedRectangle(cornerRadius: Radius.md))
+        } else if catalogLoading && !all.isEmpty {
+            ProgressView("Checking the catalog…").font(.btCaption)
+        }
+    }
+
+    @ViewBuilder
+    private func galleryResults(_ all: [PluginGalleryItem]) -> some View {
+        let visible = PluginGalleryItem.filter(all, query: query, view: selectedView, category: selectedCategory)
+        if visible.isEmpty {
+            if catalogLoading && all.isEmpty {
+                ProgressView("Checking the catalog…")
+                    .frame(maxWidth: .infinity, minHeight: 180)
+            } else if all.isEmpty {
+                EmptyStateView(symbol: emptySymbol, title: emptyTitle, message: emptyMessage,
+                               action: ("Install from folder or zip…", { pickPackage() }))
+                    .frame(minHeight: 180)
+            } else {
+                EmptyStateView(symbol: emptySymbol, title: emptyTitle, message: emptyMessage)
+                    .frame(minHeight: 180)
+            }
+        } else {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 245), spacing: Space.md)],
+                      alignment: .leading, spacing: Space.md) {
+                ForEach(visible) { item in galleryCard(item) }
+            }
+        }
+    }
+
+    private var orphanSection: some View {
+        VStack(alignment: .leading, spacing: Space.sm) {
+            Text("Packages that could not be read").font(.btHeadline)
+            ForEach(model.plugins.orphans, id: \.name) { orphan in
+                Text("\(orphan.name): \(orphan.problem)").font(.btCaption)
+            }
+        }
+    }
+
+    private func pendingReview(_ item: PendingInstall) -> some View {
+        PluginReviewSheet(
                 title: "\(model.plugins.plugin(item.inspection.manifest.id) == nil ? "Install" : "Update") \(item.inspection.manifest.name)?",
                 manifest: item.inspection.manifest,
                 source: item.source,
@@ -149,25 +218,31 @@ struct PluginsSettingsPane: View {
                 if let cleanup = item.cleanup { try? FileManager.default.removeItem(at: cleanup) }
                 pending = nil
             }
-        }
-        .sheet(item: $settingsPageFor) { plugin in
-            if let page = plugin.manifest?.contributes.settingsPage {
-                VStack(alignment: .leading, spacing: Space.md) {
-                    HStack {
-                        Text(page.title).font(.btHeadline).foregroundStyle(Color.btText)
-                        Spacer()
-                        Button("Done") { settingsPageFor = nil }.buttonStyle(.btPrimary)
-                    }
-                    PluginHostView(pluginId: plugin.id, viewId: page.id,
-                                   placement: PluginPlacement(place: .settings, contributionId: page.id))
-                        .frame(height: 420)
+    }
+
+    @ViewBuilder
+    private func settingsPage(_ plugin: InstalledPlugin) -> some View {
+        if let page = plugin.manifest?.contributes.settingsPage {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    Text(page.title).font(.btHeadline).foregroundStyle(Color.btText)
+                    Spacer()
+                    Button("Done") { settingsPageFor = nil }
+                        .buttonStyle(.btPrimary)
+                        .keyboardShortcut(.defaultAction)
                 }
                 .padding(Space.xl)
-                .frame(width: 560)
+                Divider()
+                PluginHostView(pluginId: plugin.id, viewId: page.id,
+                               placement: PluginPlacement(place: .settings, contributionId: page.id))
+                    .frame(minHeight: 380)
             }
+            .frame(width: 560)
         }
-        .sheet(item: $enabling) { plugin in
-            PluginReviewSheet(
+    }
+
+    private func enableReview(_ plugin: InstalledPlugin) -> some View {
+        PluginReviewSheet(
                 title: "Turn on \(plugin.record.name)?",
                 manifest: plugin.manifest ?? PluginManifest(
                     id: plugin.record.id, name: plugin.record.name, version: plugin.record.version,
@@ -187,31 +262,33 @@ struct PluginsSettingsPane: View {
             } cancel: {
                 enabling = nil
             }
-        }
-        .confirmationDialog(
-            "Remove \(removing?.record.name ?? "")?",
-            isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
-            titleVisibility: .visible
-        ) {
-            Button("Remove", role: .destructive) {
-                if let plugin = removing { model.removePlugin(plugin.id) }
-                removing = nil
-            }
-            Button("Cancel", role: .cancel) { removing = nil }
-        } message: {
-            Text("Its files, its saved settings and any secrets you entered for it are deleted from this Mac. Your chats and projects aren't affected.")
-        }
     }
 
     private var emptyMessage: String {
         if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return "No plugins match your search and filters."
+            return "Try a different search or category."
+        }
+        if selectedCategory != nil { return "Try another category or show all kinds." }
+        switch selectedView {
+        case .all: return "Add a plugin from a folder or zip to get started."
+        case .installed: return "Plugins you install will appear here."
+        case .updates: return "Updates and plugins needing review will appear here."
+        }
+    }
+
+    private var emptyTitle: String {
+        if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || selectedCategory != nil {
+            return "No matching plugins"
         }
         switch selectedView {
-        case .all: return "No plugins are available yet. Install one from a folder or zip."
-        case .installed: return "No installed plugins match these filters."
-        case .updates: return "No plugin updates need your attention."
+        case .all: return "No plugins yet"
+        case .installed: return "No installed plugins"
+        case .updates: return "You're up to date"
         }
+    }
+
+    private var emptySymbol: String {
+        selectedView == .updates ? "checkmark.circle" : "puzzlepiece.extension"
     }
 
     private var viewPicker: some View {
@@ -226,6 +303,7 @@ struct PluginsSettingsPane: View {
 
     private var installFromDiskButton: some View {
         Button("Install from folder or zip…") { pickPackage() }
+            .buttonStyle(.btSecondary)
     }
 
     private func categoryButton(_ title: String, category: PluginGalleryItem.Category?) -> some View {
@@ -234,36 +312,38 @@ struct PluginsSettingsPane: View {
     }
 
     private func galleryCard(_ item: PluginGalleryItem) -> some View {
-        VStack(alignment: .leading, spacing: Space.sm) {
-            HStack(alignment: .top, spacing: Space.md) {
+        VStack(alignment: .leading, spacing: Space.md) {
+            HStack(alignment: .center, spacing: Space.md) {
                 Image(systemName: item.symbol)
-                    .font(.system(size: 22))
-                    .frame(width: 38, height: 38)
-                    .background(Color.btCanvas, in: RoundedRectangle(cornerRadius: 9))
-                VStack(alignment: .leading, spacing: 2) {
+                    .font(.system(size: 18, weight: .regular))
+                    .foregroundStyle(Color.btText)
+                    .frame(width: 36, height: 36)
+                    .background(Color.btHover, in: RoundedRectangle(cornerRadius: Radius.md))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: Space.xxs) {
                     Text(item.name).font(.btBodyMedium).foregroundStyle(Color.btText)
                     Text(item.category.rawValue).font(.btCaption).foregroundStyle(Color.btTextSecondary)
                 }
                 Spacer(minLength: 0)
             }
             Text(item.summary).font(.btCaption).foregroundStyle(Color.btTextSecondary)
-                .lineLimit(2).frame(maxWidth: .infinity, minHeight: 34, alignment: .topLeading)
-            Text("Version \(item.version) · \(item.source.plainWords)")
-                .font(.btCaption).foregroundStyle(Color.btTextSecondary)
-            Text(item.publisher.map { "Verified publisher: \($0)" } ?? "Publisher unverified")
-                .font(.btCaption).foregroundStyle(Color.btTextSecondary)
-            HStack {
-                Text(stateWords(item)).font(.btCaption).foregroundStyle(Color.btTextSecondary)
-                Spacer(minLength: Space.sm)
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, minHeight: 32, alignment: .topLeading)
+            Spacer(minLength: 0)
+            HStack(spacing: Space.sm) {
+                Text("\(stateWords(item)) · \(item.source.plainWords)")
+                    .font(.btCaption)
+                    .foregroundStyle(Color.btTextSecondary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                Button("Details") { selectedPluginID = item.id }
+                    .buttonStyle(.bt(.ghost, size: .small))
                 primaryAction(item)
             }
         }
-        .padding(Space.md)
-        .background(Color.btSurface, in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(
-            selectedPluginID == item.id ? Color.btTextSecondary : Color.clear, lineWidth: 1))
-        .contentShape(RoundedRectangle(cornerRadius: 12))
-        .onTapGesture { selectedPluginID = item.id }
+        .padding(Space.lg)
+        .frame(maxWidth: .infinity, minHeight: 174, alignment: .topLeading)
+        .background(Color.btSurface, in: RoundedRectangle(cornerRadius: Radius.lg))
         .accessibilityElement(children: .contain)
     }
 
@@ -282,22 +362,33 @@ struct PluginsSettingsPane: View {
     private func primaryAction(_ item: PluginGalleryItem) -> some View {
         switch item.state {
         case .available:
-            Button("Install") { install(item) }.disabled(catalogBusy != nil)
+            Button(catalogBusy == item.id ? "Loading…" : "Install") {
+                afterClosingDetails { install(item) }
+            }
+                .buttonStyle(.bt(.secondary, size: .small))
+                .disabled(catalogBusy != nil)
         case .updateAvailable:
-            Button("Update") { if let entry = item.catalogEntry { download(entry) } }
+            Button(catalogBusy == item.id ? "Loading…" : "Update") {
+                if let entry = item.catalogEntry { afterClosingDetails { download(entry) } }
+            }
+                .buttonStyle(.bt(.secondary, size: .small))
                 .disabled(catalogBusy != nil)
         case .disabled:
-            Button("Enable") { enabling = item.installed }
+            Button("Enable") { afterClosingDetails { enabling = item.installed } }
+                .buttonStyle(.bt(.secondary, size: .small))
         case .needsReview, .problem:
             Button("Review") { selectedPluginID = item.id }
+                .buttonStyle(.bt(.secondary, size: .small))
         case .installed:
             if let plugin = item.installed, let view = plugin.view {
                 Button("Open") {
                     model.destination = .plugin(plugin.id, view.id)
                     model.isSettingsOpen = false
                 }
+                .buttonStyle(.bt(.secondary, size: .small))
             } else {
                 Button("Manage") { selectedPluginID = item.id }
+                    .buttonStyle(.bt(.secondary, size: .small))
             }
         }
     }
@@ -313,46 +404,78 @@ struct PluginsSettingsPane: View {
     }
 
     private func detail(_ item: PluginGalleryItem) -> some View {
-        VStack(alignment: .leading, spacing: Space.md) {
-            HStack {
-                Text(item.name).font(.btHeadline).foregroundStyle(Color.btText)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: Space.md) {
+                Image(systemName: item.symbol)
+                    .font(.system(size: 21))
+                    .frame(width: 44, height: 44)
+                    .background(Color.btHover, in: RoundedRectangle(cornerRadius: Radius.md))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: Space.xs) {
+                    Text(item.name).font(.btHeadline).foregroundStyle(Color.btText)
+                    Text(item.category.rawValue).font(.btCaption).foregroundStyle(Color.btTextSecondary)
+                }
                 Spacer()
                 Button { selectedPluginID = nil } label: { Image(systemName: "xmark") }
-                    .buttonStyle(.plain).accessibilityLabel("Close plugin details")
+                    .buttonStyle(.icon(size: 26))
+                    .help("Close plugin details")
+                    .accessibilityLabel("Close plugin details")
             }
-            Text(item.summary).font(.btBody).foregroundStyle(Color.btTextSecondary)
-            Text("Version \(item.version) · \(item.source.plainWords) · \(item.publisher.map { "Verified publisher: \($0)" } ?? "Unverified")")
-                .font(.btCaption).foregroundStyle(Color.btTextSecondary)
-            if let manifest = item.installed?.manifest ?? bundled.first(where: { $0.inspection.manifest.id == item.id })?.inspection.manifest {
-                Text("What it adds").font(.btBodyMedium)
-                Text(manifest.appearanceSentences.isEmpty ? "A plugin screen in Abstract." : manifest.appearanceSentences.joined(separator: " "))
-                    .font(.btCaption).foregroundStyle(Color.btTextSecondary)
+            .padding(Space.xl)
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: Space.md) {
+                    Text(item.summary).font(.btBody).foregroundStyle(Color.btTextSecondary)
+                    Text("Version \(item.version) · \(item.source.plainWords) · \(item.publisher.map { "Verified publisher: \($0)" } ?? "Unverified")")
+                        .font(.btCaption).foregroundStyle(Color.btTextSecondary)
+                    if let manifest = item.installed?.manifest ?? bundled.first(where: { $0.inspection.manifest.id == item.id })?.inspection.manifest {
+                        Divider().padding(.vertical, Space.xs)
+                        Text("What it adds").font(.btBodyMedium)
+                        Text(manifest.appearanceSentences.isEmpty ? "A plugin screen in Abstract." : manifest.appearanceSentences.joined(separator: " "))
+                            .font(.btBody).foregroundStyle(Color.btTextSecondary)
+                    }
+                    if let plugin = item.installed {
+                        Divider().padding(.vertical, Space.xs)
+                        row(plugin)
+                    } else {
+                        Text("Installing opens a review of what this plugin can access.")
+                            .font(.btCaption).foregroundStyle(Color.btTextSecondary)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(Space.xl)
             }
+            .frame(minHeight: 160, maxHeight: 510)
+            Divider()
             if let plugin = item.installed {
-                row(plugin)
+                pluginActions(plugin)
+                    .padding(.horizontal, Space.xl)
+                    .padding(.vertical, Space.md)
             } else {
-                primaryAction(item)
-                Text("Installing opens a review of what this plugin can access.")
-                    .font(.btCaption).foregroundStyle(Color.btTextSecondary)
+                HStack {
+                    Spacer()
+                    primaryAction(item)
+                }
+                .padding(.horizontal, Space.xl)
+                .padding(.vertical, Space.md)
             }
         }
-        .padding(Space.lg)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.btSurface, in: RoundedRectangle(cornerRadius: 12))
+        .frame(width: 560)
     }
 
     @ViewBuilder
     private func row(_ plugin: InstalledPlugin) -> some View {
         let record = plugin.record
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: Space.md) {
             Toggle(isOn: Binding(
                 get: { plugin.isUsable },
                 set: { on in
-                    if on { enabling = plugin } else { model.setPluginEnabled(plugin.id, false) }
+                    if on { afterClosingDetails { enabling = plugin } }
+                    else { model.setPluginEnabled(plugin.id, false) }
                 }
             )) {
-                Text(record.name)
-                Text("Version \(record.version) · \(record.source.plainWords) · \(plugin.publisher.map { "Verified publisher: \($0)" } ?? "Unverified")")
+                Text("Enabled")
+                Text("Turn this plugin on or off.")
             }
             .disabled(plugin.manifest == nil || plugin.problem != nil)
 
@@ -373,22 +496,26 @@ struct PluginsSettingsPane: View {
                 let words = capability == .cli
                     ? "Run \(record.grantedCLI?.binary ?? "its tool")'s commands that change things"
                     : capability.plainWords
-                HStack(spacing: Space.sm) {
+                HStack(alignment: .top, spacing: Space.sm) {
                     Text(record.alwaysAllowedActions.contains(capability)
                          ? "\(words) — always allowed."
                          : "\(words) — asks first.")
                         .font(.btCaption)
                         .foregroundStyle(Color.btTextSecondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     if record.alwaysAllowedActions.contains(capability) {
                         Button("Ask First") { model.plugins.setAlwaysAllowed(plugin.id, capability, false) }
+                            .buttonStyle(.bt(.secondary, size: .small))
                     }
                     Button("Revoke") { model.plugins.revokeCapability(plugin.id, capability) }
+                        .buttonStyle(.bt(.danger, size: .small))
                 }
             }
             if let problem = plugin.problem {
                 Text(problem).font(.btCaption).foregroundStyle(Color.btRemoved)
                 if plugin.manifest != nil && record.source != .catalog {
                     Button("Review") { model.plugins.reviewChangedPackage(plugin.id) }
+                        .buttonStyle(.btSecondary)
                 }
             } else if let note = model.plugins.backgroundProblems[plugin.id] {
                 // Its background script misbehaved (ABS-93); its screen
@@ -397,6 +524,7 @@ struct PluginsSettingsPane: View {
                     Text("Its background work stopped working. \(note)")
                         .font(.btCaption).foregroundStyle(Color.btRemoved)
                     Button("Restart") { model.plugins.restartBackground(plugin.id) }
+                        .buttonStyle(.btSecondary)
                 }
             } else if let lastError = record.lastError {
                 Text("Last error: \(lastError)").font(.btCaption).foregroundStyle(Color.btTextSecondary)
@@ -427,23 +555,31 @@ struct PluginsSettingsPane: View {
                     }
                 }
             }
-            HStack(spacing: Space.sm) {
-                if plugin.isUsable, let view = plugin.view {
-                    Button("Open") {
-                        model.destination = .plugin(plugin.id, view.id)
-                        model.isSettingsOpen = false
-                    }
-                }
-                if plugin.isUsable, let page = plugin.manifest?.contributes.settingsPage {
-                    Button(page.title) { settingsPageFor = plugin }
-                }
-                if plugin.isUsable, plugin.manifest?.grantedCapabilities.contains(.transcriptsRead) == true {
-                    Button("Choose Projects…") { enabling = plugin }
-                }
-                Button("Remove", role: .destructive) { removing = plugin }
-            }
         }
         .padding(.vertical, 2)
+    }
+
+    private func pluginActions(_ plugin: InstalledPlugin) -> some View {
+        HStack(spacing: Space.sm) {
+            if plugin.isUsable, let view = plugin.view {
+                Button("Open") {
+                    model.destination = .plugin(plugin.id, view.id)
+                    model.isSettingsOpen = false
+                }
+                .buttonStyle(.btSecondary)
+            }
+            if plugin.isUsable, let page = plugin.manifest?.contributes.settingsPage {
+                Button(page.title) { afterClosingDetails { settingsPageFor = plugin } }
+                    .buttonStyle(.btSecondary)
+            }
+            if plugin.isUsable, plugin.manifest?.grantedCapabilities.contains(.transcriptsRead) == true {
+                Button("Choose Projects…") { afterClosingDetails { enabling = plugin } }
+                    .buttonStyle(.btSecondary)
+            }
+            Spacer(minLength: 0)
+            Button("Remove", role: .destructive) { afterClosingDetails { removing = plugin } }
+                .buttonStyle(.btDanger)
+        }
     }
 
     private func pickPackage() {
@@ -464,6 +600,20 @@ struct PluginsSettingsPane: View {
             pickedProblem = error.description
         } catch {
             pickedProblem = "This plugin isn't a valid Abstract plugin."
+        }
+    }
+
+    private func reloadCatalog() async {
+        catalogLoading = true
+        await model.plugins.loadCatalog()
+        catalogLoading = false
+    }
+
+    private func afterClosingDetails(_ action: @escaping () -> Void) {
+        if selectedPluginID == nil { action() }
+        else {
+            afterDetail = action
+            selectedPluginID = nil
         }
     }
 
@@ -508,12 +658,45 @@ private struct PluginReviewSheet: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Space.md) {
-            Text(title).font(.btHeadline).foregroundStyle(Color.btText)
-            Text("Version \(manifest.version) · \(source.plainWords) · \(publisher.map { "Verified publisher: \($0)" } ?? "Unverified")")
-                .font(.btBody).foregroundStyle(Color.btTextSecondary)
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: Space.xs) {
+                Text(title).font(.btHeadline).foregroundStyle(Color.btText)
+                Text("Version \(manifest.version) · \(source.plainWords) · \(publisher.map { "Verified publisher: \($0)" } ?? "Unverified")")
+                    .font(.btCaption).foregroundStyle(Color.btTextSecondary)
+            }
+            .padding(Space.xl)
+            Divider()
+            ScrollView {
+                reviewContent
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(Space.xl)
+            }
+            .frame(minHeight: 180, maxHeight: 520)
+            Divider()
+            HStack(spacing: Space.sm) {
+                Spacer()
+                Button("Cancel", role: .cancel, action: cancel)
+                    .buttonStyle(.btGhost)
+                    .keyboardShortcut(.cancelAction)
+                if let secondaryLabel {
+                    Button(secondaryLabel) { confirm(false, pickedKeys) }
+                        .buttonStyle(.btSecondary)
+                }
+                Button(primaryLabel) { confirm(true, pickedKeys) }
+                    .buttonStyle(.btPrimary)
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding(.horizontal, Space.xl)
+            .padding(.vertical, Space.md)
+        }
+        .frame(width: 560)
+        .onAppear { pickedProjects = Set(initialProjectKeys) }
+    }
+
+    private var reviewContent: some View {
+        VStack(alignment: .leading, spacing: Space.lg) {
             if let changes, changes.asksForMore {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: Space.sm) {
                     Text("This update asks for more:").font(.btBodyMedium)
                     ForEach(changes.capabilities, id: \.rawValue) { capability in
                         Text(capability.plainWords)
@@ -538,13 +721,13 @@ private struct PluginReviewSheet: View {
                     .font(.btBody).foregroundStyle(Color.btTextSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: Space.sm) {
                 Text("It will appear:").font(.btBodyMedium).foregroundStyle(Color.btText)
                 ForEach(manifest.appearanceSentences, id: \.self) { sentence in
                     Text(sentence).font(.btBody).foregroundStyle(Color.btTextSecondary)
                 }
             }
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: Space.sm) {
                 Text("It will be able to:").font(.btBodyMedium).foregroundStyle(Color.btText)
                 if manifest.grantedCapabilities.isEmpty {
                     Text("Nothing beyond showing its own screen.")
@@ -563,7 +746,7 @@ private struct PluginReviewSheet: View {
             }
             if let cli = manifest.cli {
                 // The binary and every command, in plain words (ABS-139).
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: Space.sm) {
                     Text("On your Mac, it will be able to:").font(.btBodyMedium).foregroundStyle(Color.btText)
                     ForEach(cli.sentences, id: \.self) { sentence in
                         Text(sentence).font(.btBody).foregroundStyle(Color.btTextSecondary)
@@ -572,7 +755,7 @@ private struct PluginReviewSheet: View {
                 }
             }
             if !manifest.networkSentences.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: Space.sm) {
                     Text("On the web, it will be able to:").font(.btBodyMedium).foregroundStyle(Color.btText)
                     ForEach(manifest.networkSentences, id: \.self) { sentence in
                         Text(sentence).font(.btBody).foregroundStyle(Color.btTextSecondary)
@@ -580,7 +763,7 @@ private struct PluginReviewSheet: View {
                 }
             }
             if manifest.grantedCapabilities.contains(.transcriptsRead) {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: Space.sm) {
                     Text("It may read messages in:").font(.btBodyMedium).foregroundStyle(Color.btText)
                     if projectChoices.isEmpty {
                         Text("You have no projects yet, so it will read no messages.")
@@ -599,19 +782,7 @@ private struct PluginReviewSheet: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            HStack(spacing: Space.sm) {
-                Spacer()
-                Button("Cancel", role: .cancel, action: cancel)
-                if let secondaryLabel {
-                    Button(secondaryLabel) { confirm(false, pickedKeys) }
-                }
-                Button(primaryLabel) { confirm(true, pickedKeys) }.buttonStyle(.btPrimary)
-            }
-            .padding(.top, Space.xs)
         }
-        .padding(Space.xl)
-        .frame(width: 440)
-        .onAppear { pickedProjects = Set(initialProjectKeys) }
     }
 }
 
@@ -626,25 +797,32 @@ private struct PluginSecretRow: View {
     @State private var entered = false
 
     var body: some View {
-        HStack(spacing: Space.sm) {
-            Text(secret.title).font(.btCaption).foregroundStyle(Color.btTextSecondary)
+        VStack(alignment: .leading, spacing: Space.xs) {
+            Text(secret.title).font(.btBodyMedium).foregroundStyle(Color.btText)
             if entered {
-                Text("Entered — kept in your Keychain.")
-                    .font(.btCaption).foregroundStyle(Color.btTextSecondary)
-                Button("Remove") {
-                    model.plugins.setSecret(nil, pluginId: pluginId, name: secret.name)
-                    entered = false
+                HStack(spacing: Space.sm) {
+                    Text("Entered — kept in your Keychain.")
+                        .font(.btCaption).foregroundStyle(Color.btTextSecondary)
+                    Spacer()
+                    Button("Remove") {
+                        model.plugins.setSecret(nil, pluginId: pluginId, name: secret.name)
+                        entered = false
+                    }
+                    .buttonStyle(.bt(.danger, size: .small))
                 }
             } else {
-                SecureField(secret.title, text: $draft)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 220)
-                Button("Save") {
-                    model.plugins.setSecret(draft, pluginId: pluginId, name: secret.name)
-                    draft = ""
-                    entered = model.plugins.hasSecret(pluginId: pluginId, name: secret.name)
+                HStack(spacing: Space.sm) {
+                    SecureField(secret.title, text: $draft)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 260)
+                    Button("Save") {
+                        model.plugins.setSecret(draft, pluginId: pluginId, name: secret.name)
+                        draft = ""
+                        entered = model.plugins.hasSecret(pluginId: pluginId, name: secret.name)
+                    }
+                    .buttonStyle(.bt(.secondary, size: .small))
+                    .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
-                .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
         .onAppear { entered = model.plugins.hasSecret(pluginId: pluginId, name: secret.name) }
