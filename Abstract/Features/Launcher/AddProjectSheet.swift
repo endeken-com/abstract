@@ -42,13 +42,21 @@ struct AddProjectSheet: View {
                             .truncationMode(.middle)
                     }
                     Spacer()
-                    Text(probe == nil ? "Browse" : "Change").font(.btCallout).foregroundStyle(Color.btTextSecondary)
+                    Text(probe == nil ? "Browse" : "Change")
+                        .font(.btCallout)
+                        .foregroundStyle(Color.btTextSecondary)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color.btTextTertiary)
+                        .accessibilityHidden(true)
                 }
-                .padding(.vertical, Space.sm)
-                .padding(.horizontal, Space.xs)
+                .padding(.vertical, Space.md)
+                .padding(.horizontal, Space.md)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.btSurfaceRaised, in: RoundedRectangle(cornerRadius: Radius.md, style: .continuous))
             }
             .buttonStyle(CardButtonStyle())
+            .accessibilityLabel(probe.map { "Change repository, \($0.name)" } ?? "Choose a repository")
 
             if let probe, !probe.isRoot {
                 Notice(text: "That folder sits inside a larger repository, so Abstract uses its root. Worktrees then carry the whole project.")

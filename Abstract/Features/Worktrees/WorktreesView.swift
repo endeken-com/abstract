@@ -87,33 +87,36 @@ struct WorktreesView: View {
         }
     }
 
-    @ViewBuilder
     private var projectPicker: some View {
-        let selection = Binding<String?>(get: { project?.id }, set: { projectId = $0 })
-        if model.projects.count <= 4 {
-            Picker("Project", selection: selection) {
-                ForEach(model.projects) { p in projectOption(p).tag(Optional(p.id)) }
+        Menu {
+            ForEach(model.projects) { option in
+                Button {
+                    projectId = option.id
+                } label: {
+                    if option.id == project?.id {
+                        Label(option.name, systemImage: "checkmark")
+                    } else {
+                        Text(option.name)
+                    }
+                }
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize()
-        } else {
-            Picker("Project", selection: selection) {
-                ForEach(model.projects) { p in projectOption(p).tag(Optional(p.id)) }
+        } label: {
+            HStack(spacing: Space.sm) {
+                if let project {
+                    ProjectIconView(project: project, size: 16)
+                        .accessibilityHidden(true)
+                    Text(project.name)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .accessibilityHidden(true)
             }
-            .pickerStyle(.menu)
-            .labelsHidden()
-            .fixedSize()
+            .frame(maxWidth: 220, alignment: .leading)
         }
-    }
-
-    private func projectOption(_ project: Project) -> some View {
-        HStack(spacing: 6) {
-            ProjectIconView(project: project, size: 16)
-                .accessibilityHidden(true)
-            Text(project.name)
-        }
-        .accessibilityLabel(project.name)
+        .buttonStyle(.bt(.secondary, size: .small))
+        .accessibilityLabel("Project: \(project?.name ?? "None")")
     }
 
     @ViewBuilder
@@ -187,6 +190,7 @@ private struct WorktreeSection<Content: View>: View {
                     .font(.btCallout)
                     .foregroundStyle(Color.btTextSecondary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, WorktreeRow.textInset)
                     .padding(.bottom, Space.sm)
             }
             Hairline()
@@ -227,27 +231,10 @@ private struct WorktreeRow: View {
                 subtitle
             }
             Spacer(minLength: Space.md)
-            HStack(spacing: 2) {
-                if canStartChat {
-                    Button { model.showNewChat(in: projectId, worktree: entry.path) } label: { Image(systemName: "plus.bubble") }
-                        .buttonStyle(.icon)
-                        .help(entry.session == nil ? "New chat here" : "New chat here (takes it over from “\(entry.session!.name)”)")
-                        .accessibilityLabel("New chat here")
-                }
-                Button(action: reveal) { Image(systemName: "folder") }
-                    .buttonStyle(.icon)
-                    .disabled(!entry.exists)
-                    .help(entry.exists ? "Reveal in Finder" : "The folder no longer exists")
-                    .accessibilityLabel("Reveal in Finder")
-                if let onRemove {
-                    Button(action: onRemove) { Image(systemName: "trash") }
-                        .buttonStyle(.icon)
-                        .help("Remove worktree…")
-                        .accessibilityLabel("Remove worktree")
-                }
-            }
-            .opacity(hovering ? 1 : 0)
-            .allowsHitTesting(hovering)
+            Menu { actions } label: { Image(systemName: "ellipsis") }
+                .buttonStyle(.icon)
+                .help("Worktree actions")
+                .accessibilityLabel("Worktree actions for \(entry.refLabel)")
             trailing
         }
         .padding(.vertical, 10)
@@ -261,22 +248,25 @@ private struct WorktreeRow: View {
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .animation(.snappy(duration: 0.12), value: hovering)
-        .contextMenu {
-            if canStartChat {
-                Button("New Chat Here") { model.showNewChat(in: projectId, worktree: entry.path) }
-                Divider()
-            }
-            Button("Reveal in Finder", action: reveal).disabled(!entry.exists)
-            Button("Copy Path") { copy(entry.path) }
-            if let branch = entry.info.branch { Button("Copy Branch Name") { copy(branch) } }
-            if let s = entry.session {
-                Divider()
-                Button("Open Chat") { model.open(s.id) }
-            }
-            if let onRemove {
-                Divider()
-                Button("Remove Worktree…", action: onRemove)
-            }
+        .contextMenu { actions }
+    }
+
+    @ViewBuilder
+    private var actions: some View {
+        if canStartChat {
+            Button("New Chat Here") { model.showNewChat(in: projectId, worktree: entry.path) }
+            Divider()
+        }
+        Button("Reveal in Finder", action: reveal).disabled(!entry.exists)
+        Button("Copy Path") { copy(entry.path) }
+        if let branch = entry.info.branch { Button("Copy Branch Name") { copy(branch) } }
+        if let s = entry.session {
+            Divider()
+            Button("Open Chat") { model.open(s.id) }
+        }
+        if let onRemove {
+            Divider()
+            Button("Remove Worktree…", action: onRemove)
         }
     }
 
@@ -356,11 +346,12 @@ private struct WorktreeRow: View {
     private var trailing: some View {
         switch entry.kind {
         case .main:
-            Label("Accepted changes land here", systemImage: "arrow.down.to.line")
-                .font(.btCaption)
+            Image(systemName: "arrow.down.to.line")
+                .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(Color.btTextSecondary)
-                .labelStyle(.titleAndIcon)
-                .fixedSize()
+                .frame(width: 28, height: 28)
+                .help("Accepted changes land here")
+                .accessibilityLabel("Accepted changes land here")
         case .chat(let s):
             Button("Open Chat") { model.open(s.id) }
                 .buttonStyle(.bt(.secondary, size: .small))
@@ -381,8 +372,7 @@ private struct WorktreeRow: View {
     }
 
     static func abbreviate(_ path: String) -> String {
-        let home = NSHomeDirectory()
-        return path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
+        WorktreePathDisplay.abbreviated(path, homeDirectory: NSHomeDirectory())
     }
 }
 
