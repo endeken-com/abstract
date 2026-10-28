@@ -15,14 +15,21 @@ struct AddProjectSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.lg) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Add Project").font(.btHeadline)
-                Text("Point Abstract at a git repository on this Mac.").font(.btCallout).foregroundStyle(Color.btTextSecondary)
+            HStack(alignment: .top, spacing: Space.md) {
+                Image(systemName: "folder.badge.plus")
+                    .font(.system(size: 18, weight: .regular))
+                    .foregroundStyle(Color.btTextSecondary)
+                    .frame(width: 28)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Add Project").font(.btHeadline)
+                    Text("Point Abstract at a git repository on this Mac.").font(.btCallout).foregroundStyle(Color.btTextSecondary)
+                }
             }
 
             Button(action: choose) {
                 HStack(spacing: Space.md) {
-                    Image(systemName: probe == nil ? "folder" : "folder.fill")
+                    Image(systemName: probe == nil ? "folder.badge.plus" : "folder.fill")
                         .font(.system(size: 20, weight: .regular))
                         .foregroundStyle(probe == nil ? Color.btTextSecondary : Color.btAccent)
                         .frame(width: 28)
@@ -70,14 +77,14 @@ struct AddProjectSheet: View {
                     }
                     GridRow {
                         Text("Default agent").foregroundStyle(Color.btTextSecondary)
-                        Picker("", selection: $providerId) {
+                        Picker("Default agent", selection: $providerId) {
                             ForEach(model.pickableAgents(keeping: providerId), id: \.id) { p in Text(p.name).tag(p.id) }
                         }
                         .labelsHidden()
                     }
                     GridRow {
                         Text("Permissions").foregroundStyle(Color.btTextSecondary)
-                        Picker("", selection: $policy) {
+                        Picker("Permissions", selection: $policy) {
                             ForEach(PermissionPolicy.autonomyCases, id: \.self) { p in Text(p.title).tag(p) }
                         }
                         .labelsHidden()

@@ -297,10 +297,15 @@ private struct RemoteDeviceGroup: View {
             ForEach(snapshot.projects.sorted { $0.sortOrder < $1.sortOrder }) { project in
                 let rows = shown(snapshot.sessions.filter { $0.projectId == project.id })
                 if !narrowing || !rows.isEmpty {
-                    RailGroup(title: project.name, trailing: AnyView(
+                    RailGroup(title: project.name,
+                              icon: AnyView(IconTile(value: IconValue(symbol: project.iconSymbol, color: project.iconColor),
+                                                    name: project.name, context: .project(owner: nil), size: Rail.iconColumn,
+                                                    imageData: snapshot.projectIcons?[project.id])),
+                              trailing: AnyView(
                         Button { model.showNewChat(in: project.id) } label: { Image(systemName: "plus") }
                             .buttonStyle(RailIconStyle())
                             .help("New chat in \(project.name) on \(link.device.peer.name)")
+                            .accessibilityLabel("New chat in \(project.name) on \(link.device.peer.name)")
                     )) {
                         if rows.isEmpty {
                             Text("No chats")
