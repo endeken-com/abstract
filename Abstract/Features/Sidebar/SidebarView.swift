@@ -403,9 +403,10 @@ struct RailGroup<Content: View>: View {
                 Button { onTitleTap?() } label: {
                     HStack(spacing: 4) {
                         if let icon {
+                            // Same 8pt icon-to-title gap as the nav rows above.
                             icon.frame(width: Rail.iconColumn, height: Rail.iconColumn)
+                                .padding(.trailing, 4)
                                 .accessibilityHidden(true)
-                            Spacer().frame(width: 6)
                         }
                         Text(title)
                             .font(BTFont.ui(12.5))
