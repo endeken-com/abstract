@@ -189,35 +189,21 @@ private struct WorkflowStepRow: View {
                 .background(Color.btHover, in: Circle())
                 .padding(.top, 3)
             VStack(alignment: .leading, spacing: Space.sm) {
-                HStack(spacing: Space.sm) {
-                    Picker("Profile", selection: field(\.profileId)) {
-                        ForEach(model.profiles) { profile in
-                            Label {
-                                Text(profile.name)
-                            } icon: {
-                                IconTile(value: profile.iconValue, name: profile.name, context: .profile, size: 18)
-                            }.tag(profile.id)
-                        }
-                        if model.profile(step.profileId) == nil {
-                            Text("Deleted profile").tag(step.profileId)
-                        }
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: Space.sm) {
+                        profilePicker
+                        advanceControl
+                        Spacer(minLength: 0)
+                        controls
                     }
-                    .labelsHidden()
-                    .fixedSize()
-                    if isLast {
-                        Text("Last step")
-                            .font(.btCaption)
-                            .foregroundStyle(Color.btTextTertiary)
-                    } else {
-                        Picker("Then", selection: field(\.advance)) {
-                            ForEach(WorkflowAdvance.allCases, id: \.self) { Text("then \($0.title.lowercased())").tag($0) }
+                    HStack(alignment: .top, spacing: Space.sm) {
+                        VStack(alignment: .leading, spacing: Space.xs) {
+                            profilePicker
+                            advanceControl
                         }
-                        .labelsHidden()
-                        .fixedSize()
-                        .help(step.advance.detail)
+                        Spacer(minLength: 0)
+                        controls
                     }
-                    Spacer(minLength: 0)
-                    controls
                 }
                 TextField("Prompt", text: field(\.prompt),
                           prompt: Text(index == 0 ? "Optional: asked ahead of the task" : "Optional: what this step should do"),
@@ -232,6 +218,39 @@ private struct WorkflowStepRow: View {
         .padding(.vertical, Space.xs)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
+    }
+
+    private var profilePicker: some View {
+        Picker("Profile", selection: field(\.profileId)) {
+            ForEach(model.profiles) { profile in
+                Label {
+                    Text(profile.name)
+                } icon: {
+                    IconTile(value: profile.iconValue, name: profile.name, context: .profile, size: 18)
+                }.tag(profile.id)
+            }
+            if model.profile(step.profileId) == nil {
+                Text("Deleted profile").tag(step.profileId)
+            }
+        }
+        .labelsHidden()
+        .fixedSize()
+    }
+
+    @ViewBuilder
+    private var advanceControl: some View {
+        if isLast {
+            Text("Last step")
+                .font(.btCaption)
+                .foregroundStyle(Color.btTextTertiary)
+        } else {
+            Picker("Then", selection: field(\.advance)) {
+                ForEach(WorkflowAdvance.allCases, id: \.self) { Text("then \($0.title.lowercased())").tag($0) }
+            }
+            .labelsHidden()
+            .fixedSize()
+            .help(step.advance.detail)
+        }
     }
 
     private var controls: some View {

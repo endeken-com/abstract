@@ -103,47 +103,36 @@ struct SettingsView: View {
     @AppStorage("settingsTab") private var tab: SettingsTab = .general
     @State private var query = ""
 
-
     var body: some View {
         GeometryReader { geo in
+            let compact = geo.size.width < 760
             ZStack {
                 Color.black.opacity(0.18)
                     .ignoresSafeArea()
                     .onTapGesture { close() }
 
-                HStack(spacing: 0) {
-                    sidebar
-                        .frame(width: 190)
-                        .frame(maxHeight: .infinity, alignment: .top)
-                        .background(Color.btSidebar)
-
-                    Rectangle().fill(Color.btBorder).frame(width: 1)
-
-                    VStack(spacing: 0) {
-                        // Above the scroll view, not in it: a grouped form
-                        // stacked with anything else in a scroll view sends
-                        // layout round and round.
-                        header
-                        ScrollView {
-                            pane
-                                .frame(maxWidth: .infinity, alignment: .top)
+                Group {
+                    if compact {
+                        VStack(spacing: 0) {
+                            compactNavigation
+                            Rectangle().fill(Color.btBorder).frame(height: 1)
+                            detail
                         }
-                        .id(tab)
-                        .btThinScrollIndicator()
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color.btCanvas)
-                    .overlay(alignment: .topTrailing) {
-                        Button(action: close) {
-                            Image(systemName: "xmark").font(.system(size: 11, weight: .semibold))
+                    } else {
+                        HStack(spacing: 0) {
+                            sidebar
+                                .frame(width: geo.size.width < 1000 ? 184 : 204)
+                                .frame(maxHeight: .infinity, alignment: .top)
+                                .background(Color.btSidebar)
+                            Rectangle().fill(Color.btBorder).frame(width: 1)
+                            detail
+                                .overlay(alignment: .topTrailing) { closeButton.padding(Space.md) }
                         }
-                        .buttonStyle(.icon(size: 26))
-                        .help("Close Settings (Esc)")
-                        .padding(Space.md)
                     }
                 }
                 // Nearly the whole window: settings are read, not glanced at.
-                .frame(width: max(geo.size.width - 64, 0), height: max(geo.size.height - 64, 0))
+                .frame(width: max(geo.size.width - (compact ? 24 : 64), 0),
+                       height: max(geo.size.height - (compact ? 24 : 64), 0))
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .btRaised(radius: 14)
             }
@@ -158,13 +147,79 @@ struct SettingsView: View {
         .focusEffectDisabled()
     }
 
+    private var detail: some View {
+        VStack(spacing: 0) {
+            // Above the scroll view, not in it: a grouped form
+            // stacked with anything else in a scroll view sends
+            // layout round and round.
+            header
+            Rectangle().fill(Color.btBorder).frame(height: 1)
+            ScrollView {
+                pane
+                    .frame(maxWidth: SettingsLayout.rowWidth + 2 * SettingsLayout.margin)
+                    .frame(maxWidth: .infinity, alignment: .top)
+            }
+            .id(tab)
+            .btThinScrollIndicator()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.btCanvas)
+    }
+
+    private var compactNavigation: some View {
+        VStack(spacing: Space.sm) {
+            HStack {
+                Menu {
+                    ForEach(visibleGroups, id: \.title) { group in
+                        Section(group.title) {
+                            ForEach(group.tabs) { item in
+                                Button { tab = item } label: {
+                                    Label(item.title, systemImage: item.symbol)
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: Space.sm) {
+                        Image(systemName: tab.symbol).frame(width: Rail.iconColumn)
+                        Text(tab.title).lineLimit(1)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(Color.btTextTertiary)
+                    }
+                    .font(.btBodyMedium)
+                    .foregroundStyle(Color.btText)
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                Spacer()
+                closeButton
+            }
+            SettingsSearchField(query: $query) {
+                if let first = visibleGroups.first?.tabs.first { tab = first }
+            }
+        }
+        .padding(.horizontal, Space.lg)
+        .padding(.vertical, Space.sm)
+        .background(Color.btSidebar)
+    }
+
+    private var closeButton: some View {
+        Button(action: close) {
+            Image(systemName: "xmark").font(.system(size: 11, weight: .semibold))
+        }
+        .buttonStyle(.icon(size: 26))
+        .help("Close Settings (Esc)")
+        .accessibilityLabel("Close Settings")
+    }
+
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 1) {
             Text("Settings")
-                .font(BTFont.ui(13, .semibold))
+                .font(BTFont.ui(15, .semibold))
                 .foregroundStyle(Color.btText)
                 .padding(.horizontal, Rail.rowPadding)
-                .padding(.bottom, Space.sm)
+                .padding(.bottom, Space.md)
             SettingsSearchField(query: $query) {
                 if let first = visibleGroups.first?.tabs.first { tab = first }
             }
@@ -177,20 +232,21 @@ struct SettingsView: View {
                             .tracking(0.6)
                             .foregroundStyle(Color.btTextTertiary)
                             .padding(.horizontal, Rail.rowPadding)
-                            .padding(.top, Space.md)
-                            .padding(.bottom, 2)
+                            .padding(.top, Space.lg)
+                            .padding(.bottom, Space.xs)
                         ForEach(group.tabs) { item in
                             Button { tab = item } label: {
                                 HStack(spacing: 8) {
                                     Image(systemName: item.symbol)
                                         .font(.system(size: 12, weight: .medium))
                                         .frame(width: Rail.iconColumn)
-                                    Text(item.title).font(BTFont.ui(13))
+                                    Text(item.title)
+                                        .font(BTFont.ui(13, tab == item ? .medium : .regular))
                                     Spacer(minLength: 0)
                                 }
                                 .foregroundStyle(tab == item ? Color.btText : Color.btTextSecondary)
                                 .padding(.horizontal, Rail.rowPadding)
-                                .frame(height: Rail.rowHeight)
+                                .frame(height: 30)
                             }
                             .buttonStyle(RailRowStyle(selected: tab == item))
                         }
@@ -207,7 +263,7 @@ struct SettingsView: View {
             .scrollIndicators(.never)
         }
         .padding(Space.md)
-        .padding(.top, Space.xs)
+        .padding(.top, Space.md)
     }
 
     private var visibleGroups: [(title: String, tabs: [SettingsTab])] {
@@ -233,8 +289,8 @@ struct SettingsView: View {
         .frame(maxWidth: SettingsLayout.rowWidth - 2 * SettingsLayout.textInset, alignment: .leading)
         .padding(.horizontal, SettingsLayout.margin + SettingsLayout.textInset)
         .frame(maxWidth: .infinity)
-        .padding(.top, Space.xl)
-        .padding(.bottom, Space.xs)
+        .padding(.top, Space.xxl)
+        .padding(.bottom, Space.lg)
     }
 
     @ViewBuilder
@@ -330,7 +386,8 @@ private struct AppearanceSettingsPane: View {
     var body: some View {
         Form {
             Section {
-                HStack(spacing: Space.md) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 136), spacing: Space.md)],
+                          spacing: Space.md) {
                     ForEach([ThemeChoice.graphite, .paper, .ink, .system]) { choice in
                         ThemeCard(choice: choice, selected: theme == choice) { theme = choice }
                     }

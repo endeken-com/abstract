@@ -88,9 +88,12 @@ struct SettingsListRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: Space.md) {
-                IconTile(value: value, name: title, context: context, size: 24)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title).font(.btBodyMedium).foregroundStyle(Color.btText)
+                IconTile(value: value, name: title, context: context, size: 28)
+                VStack(alignment: .leading, spacing: Space.xs) {
+                    Text(title)
+                        .font(.btBodyMedium)
+                        .foregroundStyle(Color.btText)
+                        .lineLimit(1)
                     Text(detail)
                         .font(.btCaption)
                         .foregroundStyle(Color.btTextSecondary)
@@ -98,21 +101,20 @@ struct SettingsListRow: View {
                         .truncationMode(.tail)
                 }
                 Spacer(minLength: Space.sm)
-                if selected {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Color.btTextSecondary)
-                }
+                Image(systemName: selected ? "checkmark" : "chevron.right")
+                    .font(.system(size: selected ? 11 : 9, weight: .semibold))
+                    .foregroundStyle(selected ? Color.btText : Color.btTextTertiary)
             }
-            .padding(.horizontal, Space.sm)
-            .padding(.vertical, 6)
+            .padding(.horizontal, Space.md)
+            .padding(.vertical, Space.sm)
             .background(selected ? Color.btSelection : hovering ? Color.btHover : .clear,
                         in: RoundedRectangle(cornerRadius: Radius.sm, style: .continuous))
-            .padding(.horizontal, -Space.sm)
+            .padding(.horizontal, -Space.md)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
+        .accessibilityLabel("\(title), \(detail)")
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
