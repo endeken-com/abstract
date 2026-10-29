@@ -242,15 +242,13 @@ struct ToolCallView: View {
                              file: kind == .edit ? ToolPresentation.path(call) : nil)
                     let verb = asking ? ToolPresentation.ask(name) : ToolPresentation.verb(name, pending: working)
                     HStack(spacing: 6) {
-                        Text(verb)
-                            .font(.btChatToolMedium)
-                            .foregroundStyle(asking || hovering ? Color.btText : Color.btTextSecondary)
+                        ActivityStatusText(text: verb, font: .btChatToolMedium,
+                                           active: working && !asking,
+                                           fallback: asking || hovering ? .btText : .btTextSecondary)
                             .fixedSize()
                         ToolTargetView(target: skill.map { .text($0) } ?? ToolPresentation.target(call, root: model.session(sessionId)?.worktreePath),
                                        strong: asking || hovering)
                     }
-                    // A call at work shimmers instead of spinning, as in Paseo.
-                    .modifier(Shimmer(active: working && !asking && approval == nil, length: verb.count + 24))
                     if let edit = call.edit, kind == .edit {
                         DiffCounts(additions: edit.additions, deletions: edit.deletions, hideZeros: true).fixedSize()
                     }
@@ -474,10 +472,10 @@ private struct CallRun: View {
                 HStack(spacing: 6) {
                     ToolIcon(indicator: runIndicator, open: open, hovering: hovering, failed: failed > 0)
                     HStack(spacing: 6) {
-                        Text(verb(running)).font(.btChatToolMedium).foregroundStyle(hovering ? Color.btText : Color.btTextSecondary)
+                        ActivityStatusText(text: verb(running), font: .btChatToolMedium,
+                                           active: running, fallback: hovering ? .btText : .btTextSecondary)
                         Text(summary).font(.btChatTool).foregroundStyle(hovering ? Color.btTextSecondary : Color.btTextTertiary).lineLimit(1)
                     }
-                    .modifier(Shimmer(active: running, length: summary.count + 10))
                     if failed > 0 {
                         Text("\(failed) failed").font(.btChatCaption).foregroundStyle(Color.btRemoved).fixedSize()
                     }

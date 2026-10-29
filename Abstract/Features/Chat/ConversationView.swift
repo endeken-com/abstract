@@ -647,13 +647,15 @@ private struct ThinkingView: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            ActivityOrb(active: streaming)
-                .frame(width: 28, height: 28)
+            ActivityDiamonds(active: streaming)
+                .frame(width: 36, height: 36)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 9) {
-                Text(streaming ? "Thinking…" : "Thought")
-                    .font(.btChatCallout)
-                    .foregroundStyle(Color.btTextSecondary)
+                if streaming {
+                    ActivityStatusText(text: "Thinking…", font: .btChatCallout)
+                } else {
+                    Text("Thought").font(.btChatCallout).foregroundStyle(Color.btTextSecondary)
+                }
                 Group {
                     if streaming, !reduceMotion {
                         Revealing(text: text.trimmingCharacters(in: .whitespacesAndNewlines), streaming: true) { shown, _ in
@@ -834,10 +836,10 @@ private struct WorkingIndicator: View {
         else if case .thinking? = last, transcript.showsThinking { EmptyView() } else {
             SwiftUI.TimelineView(.periodic(from: .now, by: 1)) { context in
                 HStack(spacing: Space.sm) {
-                    ActivityOrb(active: true)
-                        .frame(width: 28, height: 28)
+                    ActivityDiamonds(active: true)
+                        .frame(width: 36, height: 36)
                         .accessibilityHidden(true)
-                    Text(label).font(.btChatCallout.weight(.regular)).foregroundStyle(Color.btTextSecondary)
+                    ActivityStatusText(text: label, font: .btChatCallout.weight(.regular))
                     // The log knows when the turn started, after a relaunch too.
                     if let start = feed.turnStartedAt ?? model.turnStartedAt[session.id] {
                         Text(RelativeTime.duration(Int(context.date.timeIntervalSince(start) * 1000)))
@@ -852,11 +854,10 @@ private struct WorkingIndicator: View {
     private func stallLine(_ stall: StallState) -> some View {
         SwiftUI.TimelineView(.periodic(from: .now, by: 1)) { context in
             HStack(spacing: Space.sm) {
-                ActivityOrb(active: true)
-                    .frame(width: 28, height: 28)
+                ActivityDiamonds(active: true)
+                    .frame(width: 36, height: 36)
                     .accessibilityHidden(true)
-                Text(stallText(stall, at: context.date))
-                    .font(.btChatCallout.weight(.regular)).foregroundStyle(Color.btWarning)
+                ActivityStatusText(text: stallText(stall, at: context.date), font: .btChatCallout.weight(.regular))
                 if stall.isStalled {
                     Button("Keep waiting") { model.keepWaiting(session.id) }
                     Button("Stop") { model.stop(session.id) }
@@ -883,33 +884,120 @@ private struct WorkingIndicator: View {
     }
 }
 
-/// Two soft overlapping lights, animated only for live activity. The palette
-/// reverses on Paper so the cue stays visible without a bright white glow.
-private struct ActivityOrb: View {
+/// Two overlapping diamonds: one glassy and crisp, one breathing through a
+/// soft blur. Motion stops when Reduce Motion is enabled.
+private struct ActivityDiamonds: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let active: Bool
 
     var body: some View {
-        SwiftUI.TimelineView(.animation(minimumInterval: 1.0 / 24.0, paused: reduceMotion || !active)) { context in
-            let phase = active && !reduceMotion ? context.date.timeIntervalSinceReferenceDate * 1.7 : 0
-            let light = colorScheme == .dark ? Color.white : Color.btTextSecondary
-            ZStack {
-                Circle()
-                    .fill(RadialGradient(colors: [light.opacity(0.68), light.opacity(0.28), light.opacity(0.03)],
-                                         center: .init(x: 0.4, y: 0.37), startRadius: 1, endRadius: 15))
-                    .overlay(Circle().strokeBorder(light.opacity(0.32), lineWidth: 0.8))
-                    .frame(width: 22, height: 22)
-                    .offset(x: -4 + 2 * sin(phase), y: -3)
-                Circle()
-                    .fill(RadialGradient(colors: [light.opacity(0.92), light.opacity(0.42), light.opacity(0.04)],
-                                         center: .init(x: 0.36, y: 0.32), startRadius: 1, endRadius: 15))
-                    .overlay(Circle().strokeBorder(light.opacity(0.25), lineWidth: 0.8))
-                    .frame(width: 22, height: 22)
-                    .offset(x: 4 - 2 * sin(phase), y: 3)
-            }
-            .shadow(color: light.opacity(colorScheme == .dark ? 0.25 : 0.1), radius: 7)
-            .frame(width: 28, height: 28)
+        let light = colorScheme == .dark ? Color.white : Color.btText
+        let violet = colorScheme == .dark ? Color(red: 0.81, green: 0.78, blue: 0.89)
+                                          : Color(red: 0.34, green: 0.31, blue: 0.41)
+        ZStack {
+            BlurredActivityDiamond(color: violet, animated: active && !reduceMotion)
+                .frame(width: 29, height: 29)
+                .offset(x: -4, y: -2)
+            ActivityDiamond()
+                .fill(RadialGradient(colors: [light.opacity(0.63), light.opacity(0.22), .clear],
+                                     center: .init(x: 0.35, y: 0.30), startRadius: 1, endRadius: 17))
+                .overlay(ActivityDiamond().stroke(light.opacity(0.48), lineWidth: 0.8))
+                .frame(width: 27, height: 27)
+                .offset(x: 4, y: 2)
+                .shadow(color: light.opacity(0.16), radius: 4)
         }
+        .frame(width: 36, height: 36)
+    }
+}
+
+private struct BlurredActivityDiamond: NSViewRepresentable {
+    let color: Color
+    let animated: Bool
+
+    func makeNSView(context: Context) -> BlurredDiamondView { BlurredDiamondView() }
+
+    func updateNSView(_ view: BlurredDiamondView, context: Context) {
+        view.color = NSColor(color)
+        view.animated = animated
+    }
+}
+
+private final class BlurredDiamondView: NSView {
+    private let diamond = CAShapeLayer()
+    var color: NSColor = .white { didSet { applyColor() } }
+    var animated = false { didSet { updateAnimation() } }
+
+    init() {
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.addSublayer(diamond)
+        diamond.lineWidth = 0.8
+        diamond.shadowOffset = .zero
+        diamond.shadowRadius = 4
+        diamond.shadowOpacity = 0.5
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        let path = ActivityDiamond().path(in: bounds).cgPath
+        diamond.frame = bounds
+        diamond.path = path
+        diamond.shadowPath = path
+        CATransaction.commit()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        updateAnimation()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyColor()
+    }
+
+    private func applyColor() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            diamond.fillColor = color.withAlphaComponent(0.20).cgColor
+            diamond.strokeColor = color.withAlphaComponent(0.46).cgColor
+            diamond.shadowColor = color.cgColor
+        }
+    }
+
+    private func updateAnimation() {
+        guard animated, window != nil else {
+            diamond.removeAnimation(forKey: "glow")
+            return
+        }
+        guard diamond.animation(forKey: "glow") == nil else { return }
+        let radius = CABasicAnimation(keyPath: "shadowRadius")
+        radius.fromValue = 3
+        radius.toValue = 7
+        let opacity = CABasicAnimation(keyPath: "shadowOpacity")
+        opacity.fromValue = 0.3
+        opacity.toValue = 0.68
+        let glow = CAAnimationGroup()
+        glow.animations = [radius, opacity]
+        glow.duration = 1.8
+        glow.autoreverses = true
+        glow.repeatCount = .infinity
+        glow.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        diamond.add(glow, forKey: "glow")
+    }
+}
+
+private struct ActivityDiamond: Shape {
+    func path(in rect: CGRect) -> Path {
+        let side = min(rect.width, rect.height) / 2.squareRoot()
+        let square = CGRect(x: rect.midX - side / 2, y: rect.midY - side / 2, width: side, height: side)
+        let turn = CGAffineTransform(translationX: rect.midX, y: rect.midY)
+            .rotated(by: .pi / 4)
+            .translatedBy(x: -rect.midX, y: -rect.midY)
+        return Path(roundedRect: square, cornerRadius: side * 0.26, style: .continuous).applying(turn)
     }
 }

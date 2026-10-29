@@ -813,7 +813,7 @@ private struct RailStatus: View {
     var body: some View {
         ZStack {
             if stalled {
-                RoundedDiamond().fill(Color.btWarning)
+                RoundedHexagon().fill(Color.btWarning)
             } else { statusMark }
         }
         .frame(width: size, height: size)
@@ -824,15 +824,15 @@ private struct RailStatus: View {
             switch status {
             case .running, .provisioning:
                 // A short stroke runs round the outline, the way the ring's arc spun.
-                AnimatedDiamond(motion: .travel, color: .btAccent, track: Color.btTextTertiary.opacity(0.35))
+                AnimatedHexagon(motion: .travel, color: .btAccent, track: Color.btTextTertiary.opacity(0.35))
             case .waitingInput:
-                RoundedDiamond().fill(Color.btAttention)
+                RoundedHexagon().fill(Color.btAttention)
             case .errored:
-                RoundedDiamond().fill(Color.btRemoved)
+                RoundedHexagon().fill(Color.btRemoved)
             case .idle:
-                RoundedDiamond().stroke(Color.btTextSecondary, lineWidth: 1.2)
+                RoundedHexagon().stroke(Color.btTextSecondary, lineWidth: 1.2)
             case .finished, .created:
-                RoundedDiamond().stroke(Color.btTextTertiary.opacity(0.7), lineWidth: 1.2)
+                RoundedHexagon().stroke(Color.btTextTertiary.opacity(0.7), lineWidth: 1.2)
             }
     }
 }
@@ -854,7 +854,7 @@ private struct RailChatMark: View {
                 if let badge {
                     RailStatus(status: badge, stalled: stalled, size: 7)
                         .padding(1.5)
-                        .background(RoundedDiamond().fill(Color.btSidebar))
+                        .background(RoundedHexagon().fill(Color.btSidebar))
                         .offset(x: 3.5, y: 3.5)
                 }
             }

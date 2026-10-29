@@ -226,10 +226,10 @@ private struct AutomationListRow: View {
         let summary = summary
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 0) {
-                // Active: a solid diamond like a chat's; paused: an outline.
+                // Active: a solid hexagon like a chat's; paused: an outline.
                 Group {
-                    if automation.enabled { RoundedDiamond().fill(Color.btTextSecondary) }
-                    else { RoundedDiamond().stroke(Color.btTextTertiary, lineWidth: 1.2) }
+                    if automation.enabled { RoundedHexagon().fill(Color.btTextSecondary) }
+                    else { RoundedHexagon().stroke(Color.btTextTertiary, lineWidth: 1.2) }
                 }
                 .frame(width: 9, height: 9)
                 .frame(width: AutoPage.gutter, alignment: .leading)
