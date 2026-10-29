@@ -560,7 +560,7 @@ private struct ToolIcon: View {
                 .font(.system(size: 10, weight: .bold, design: .rounded))
                 .foregroundStyle(.white)
                 .frame(width: 15, height: 15)
-                .background(Color(nsColor: NSColor(hex: colors[monogram.colorIndex])), in: RoundedRectangle(cornerRadius: 4))
+                .background(Color(nsColor: NSColor(hex: colors[monogram.colorIndex])), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
         case .kind(let symbol): Image(systemName: symbol)
         case .generic: Image(systemName: "wrench.and.screwdriver")
         }

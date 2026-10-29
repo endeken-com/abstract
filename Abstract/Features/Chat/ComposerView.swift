@@ -68,6 +68,10 @@ struct ComposerView: View {
     }
 
     var body: some View {
+        let composerRadius: CGFloat = 22
+        let actionInset: CGFloat = 8
+        let actionRadius = composerRadius - actionInset
+        let composerShape = RoundedRectangle(cornerRadius: composerRadius, style: .continuous)
         VStack(spacing: 0) {
             if let notice = model.composerNotices[session.id] {
                 Text(notice)
@@ -150,28 +154,28 @@ struct ComposerView: View {
                         if queueing {
                             if hasDraft || !queue.isEmpty {
                                 Button("Steer") { act(model.steer) }
-                                    .buttonStyle(.btGhost)
+                                    .buttonStyle(.bt(.ghost, cornerRadius: actionRadius))
                                     .disabled(sending || !model.canSteer(session.id))
                                     .help(model.steerUnavailable(session.id) ?? "Send this into the turn now")
                                 Button("Interrupt") { act(model.interrupt) }
-                                    .buttonStyle(.btGhost)
+                                    .buttonStyle(.bt(.ghost, cornerRadius: actionRadius))
                                     .disabled(sending)
                                     .help("Stop this turn and send now")
                             } else {
                                 Button("Stop") { model.stop(session.id) }
-                                    .buttonStyle(.btGhost)
+                                    .buttonStyle(.bt(.ghost, cornerRadius: actionRadius))
                                     .disabled(remote && model.remote.unreachableMessage(session.id) != nil)
                                     .help(model.remote.unreachableMessage(session.id) ?? "Stop the agent (⌘.)")
                             }
                             if hasDraft {
                                 Button("Queue", action: send)
-                                    .buttonStyle(.btPrimary)
+                                    .buttonStyle(.bt(.primary, cornerRadius: actionRadius))
                                     .disabled(!canSend)
                                     .help(model.remote.unreachableMessage(session.id) ?? "Send when this turn ends (Return)")
                             }
                         } else if working {
                             Button("Stop") { model.stop(session.id) }
-                                .buttonStyle(.btGhost)
+                                .buttonStyle(.bt(.ghost, cornerRadius: actionRadius))
                                 .disabled(remote && model.remote.unreachableMessage(session.id) != nil)
                                 .help(model.remote.unreachableMessage(session.id) ?? "Stop the agent (⌘.)")
                         } else {
@@ -179,7 +183,7 @@ struct ComposerView: View {
                                 Image(systemName: "arrow.up")
                                     .font(.system(size: 13, weight: .semibold))
                                     .foregroundStyle(canSend ? Color.btOnAccent : Color.btTextSecondary)
-                                    .frame(width: 30, height: 30)
+                                    .frame(width: 28, height: 28)
                                     .background(canSend ? Color.btAccent : Color.btSurfaceRaised, in: Circle())
                                     .overlay(Circle().strokeBorder(Color.btBorderStrong.opacity(0.7), lineWidth: 0.75))
                             }
@@ -193,16 +197,15 @@ struct ComposerView: View {
                 }
             }
             .padding(.leading, Space.lg)
-            .padding(.trailing, 7)
-            .padding(.vertical, 5)
+            .padding(.trailing, actionInset)
+            .padding(.top, 5)
+            .padding(.bottom, actionInset)
             .background {
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .fill(LinearGradient(colors: [Color.btSurfaceRaised.opacity(0.45), Color.btField],
-                                         startPoint: .top, endPoint: .bottom))
+                composerShape.fill(LinearGradient(colors: [Color.btSurfaceRaised.opacity(0.45), Color.btField],
+                                                  startPoint: .top, endPoint: .bottom))
             }
             .overlay {
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .strokeBorder(focused ? Color.btFieldBorderFocused : Color.btFieldBorder, lineWidth: 1)
+                composerShape.strokeBorder(focused ? Color.btFieldBorderFocused : Color.btFieldBorder, lineWidth: 1)
             }
             .shadow(color: .black.opacity(colorScheme == .dark ? 0.16 : 0.05), radius: 12, y: 3)
             .attachmentInput(attachmentsBinding, focused: focused)

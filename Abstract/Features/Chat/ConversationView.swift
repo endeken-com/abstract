@@ -467,6 +467,8 @@ private struct UserBubble: View {
         let open = openSwitch.value(local: local) ?? false
         let shown = long && !open ? Self.fold(paragraphs) : Array(paragraphs.prefix(2_000))
         let shownText = shown.joined(separator: "\n")
+        let bubbleShape = UnevenRoundedRectangle(topLeadingRadius: 16, bottomLeadingRadius: 16,
+                                                 bottomTrailingRadius: 16, topTrailingRadius: 4, style: .continuous)
         return HStack {
             Spacer(minLength: 80)
             VStack(alignment: .leading, spacing: prose.lineSpacing - 1) {
@@ -493,13 +495,8 @@ private struct UserBubble: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
             // Paseo's bubble: round, but for the corner nearest the edge it's said from.
-            .background(Color.btSurface, in: UnevenRoundedRectangle(topLeadingRadius: 16, bottomLeadingRadius: 16,
-                                                                      bottomTrailingRadius: 16, topTrailingRadius: 4, style: .continuous))
-            .overlay {
-                UnevenRoundedRectangle(topLeadingRadius: 16, bottomLeadingRadius: 16,
-                                       bottomTrailingRadius: 16, topTrailingRadius: 4, style: .continuous)
-                    .strokeBorder(Color.btBorder.opacity(0.7), lineWidth: 0.75)
-            }
+            .background(Color.btSurface, in: bubbleShape)
+            .overlay(bubbleShape.strokeBorder(Color.btBorder.opacity(0.7), lineWidth: 0.75))
         }
     }
 

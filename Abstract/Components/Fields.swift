@@ -17,10 +17,10 @@ enum Field {
 extension View {
     /// The shared input chrome. Pass whether the field has focus.
     func btFieldChrome(focused: Bool, radius: CGFloat = Field.radius) -> some View {
-        background(Color.btField, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+        let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+        return background(Color.btField, in: shape)
             .overlay(
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .strokeBorder(focused ? Color.btFieldBorderFocused : Color.btFieldBorder, lineWidth: 1)
+                shape.strokeBorder(focused ? Color.btFieldBorderFocused : Color.btFieldBorder, lineWidth: 1)
             )
             .animation(.snappy(duration: 0.12), value: focused)
     }

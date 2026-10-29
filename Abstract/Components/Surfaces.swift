@@ -11,8 +11,9 @@ extension View {
     /// A floating panel (palette, toast): raised fill, hairline, neutral drop
     /// shadow for separation. No coloured shadow, no glow.
     func btRaised(radius: CGFloat = Radius.xl) -> some View {
-        background(Color.btSurfaceRaised, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(Color.btBorderStrong, lineWidth: 0.5))
+        let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+        return background(Color.btSurfaceRaised, in: shape)
+            .overlay(shape.strokeBorder(Color.btBorderStrong, lineWidth: 0.5))
             .shadow(color: .black.opacity(0.14), radius: 14, y: 6)
     }
 

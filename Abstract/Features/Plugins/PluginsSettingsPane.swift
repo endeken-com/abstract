@@ -89,7 +89,8 @@ struct PluginsSettingsPane: View {
     }
 
     private var searchField: some View {
-        HStack(spacing: Space.sm) {
+        let shape = RoundedRectangle(cornerRadius: Radius.md, style: .continuous)
+        return HStack(spacing: Space.sm) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 13))
                 .foregroundStyle(Color.btTextTertiary)
@@ -99,8 +100,8 @@ struct PluginsSettingsPane: View {
         }
         .padding(.horizontal, Space.md)
         .frame(height: 34)
-        .background(Color.btField, in: RoundedRectangle(cornerRadius: Radius.md))
-        .overlay(RoundedRectangle(cornerRadius: Radius.md).strokeBorder(Color.btFieldBorder))
+        .background(Color.btField, in: shape)
+        .overlay(shape.strokeBorder(Color.btFieldBorder))
     }
 
     private var filterBar: some View {
@@ -148,7 +149,7 @@ struct PluginsSettingsPane: View {
             }
             .padding(Space.md)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.btHover, in: RoundedRectangle(cornerRadius: Radius.md))
+            .background(Color.btHover, in: RoundedRectangle(cornerRadius: Radius.md, style: .continuous))
         } else if catalogLoading && !all.isEmpty {
             HStack(spacing: Space.sm) {
                 ProgressView().controlSize(.small)
@@ -167,7 +168,7 @@ struct PluginsSettingsPane: View {
         }
         .padding(Space.md)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.btHover, in: RoundedRectangle(cornerRadius: Radius.md))
+        .background(Color.btHover, in: RoundedRectangle(cornerRadius: Radius.md, style: .continuous))
     }
 
     @ViewBuilder
@@ -332,7 +333,8 @@ struct PluginsSettingsPane: View {
     }
 
     private func galleryCard(_ item: PluginGalleryItem) -> some View {
-        VStack(alignment: .leading, spacing: Space.md) {
+        let shape = RoundedRectangle(cornerRadius: Radius.lg, style: .continuous)
+        return VStack(alignment: .leading, spacing: Space.md) {
             HStack(alignment: .top, spacing: Space.md) {
                 PluginIcon(symbol: item.symbol, size: 40)
                 VStack(alignment: .leading, spacing: Space.xxs) {
@@ -361,8 +363,8 @@ struct PluginsSettingsPane: View {
         }
         .padding(Space.lg)
         .frame(maxWidth: .infinity, minHeight: 190, alignment: .topLeading)
-        .background(Color.btSurface, in: RoundedRectangle(cornerRadius: Radius.lg))
-        .overlay(RoundedRectangle(cornerRadius: Radius.lg).strokeBorder(Color.btBorder, lineWidth: 0.5))
+        .background(Color.btSurface, in: shape)
+        .overlay(shape.strokeBorder(Color.btBorder, lineWidth: 0.5))
         .accessibilityElement(children: .contain)
     }
 
@@ -541,7 +543,7 @@ struct PluginsSettingsPane: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(Space.md)
-                .background(Color.btHover, in: RoundedRectangle(cornerRadius: Radius.md))
+                .background(Color.btHover, in: RoundedRectangle(cornerRadius: Radius.md, style: .continuous))
             }
             if let problem = plugin.problem {
                 Text(problem).font(.btCaption).foregroundStyle(Color.btRemoved)
@@ -674,7 +676,7 @@ private struct PluginIcon: View {
             .font(.system(size: size * 0.48, weight: .regular))
             .foregroundStyle(Color.btText)
             .frame(width: size, height: size)
-            .background(Color.btHover, in: RoundedRectangle(cornerRadius: Radius.md))
+            .background(Color.btHover, in: RoundedRectangle(cornerRadius: Radius.md, style: .continuous))
             .accessibilityHidden(true)
     }
 }
@@ -760,7 +762,7 @@ private struct PluginReviewSheet: View {
                 }
                 .padding(Space.md)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.btHover, in: RoundedRectangle(cornerRadius: Radius.md))
+                .background(Color.btHover, in: RoundedRectangle(cornerRadius: Radius.md, style: .continuous))
             }
             if let description = manifest.description, !description.isEmpty {
                 Text(description).font(.btBody).foregroundStyle(Color.btTextSecondary)
