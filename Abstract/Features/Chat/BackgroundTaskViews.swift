@@ -14,8 +14,7 @@ struct BackgroundTasksChip: View {
             Button { model.tasksOpen = TasksFocus(sessionId: sessionId) } label: {
                 HStack(spacing: 5) {
                     if running > 0 {
-                        AnimatedHexagon(motion: .travel, color: .btAccent, track: Color.btTextTertiary.opacity(0.35))
-                            .frame(width: 9, height: 9)
+                        WorkingMark().frame(width: 9, height: 9)
                     } else {
                         Image(systemName: "square.stack.3d.up").font(.system(size: 10))
                     }

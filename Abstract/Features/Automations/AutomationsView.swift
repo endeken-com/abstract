@@ -221,19 +221,26 @@ private struct AutomationListRow: View {
         model.latestAutomationRuns[automation.id]?.sessionId.flatMap { model.session($0)?.id }
     }
     private var showsActions: Bool { hovering || focused }
+    /// Starting a run, or its chat is at work.
+    private var working: Bool {
+        guard !running else { return true }
+        let status = model.session(lastChatId)?.status
+        return status == .running || status == .provisioning
+    }
 
     var body: some View {
         let summary = summary
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 0) {
-                // Active: a solid hexagon like a chat's; paused: an outline.
+                // Running: the working mark; active: a solid hexagon like a chat's; paused: an outline.
                 Group {
-                    if automation.enabled { RoundedHexagon().fill(Color.btTextSecondary) }
+                    if working { WorkingMark() }
+                    else if automation.enabled { RoundedHexagon().fill(Color.btTextSecondary) }
                     else { RoundedHexagon().stroke(Color.btTextTertiary, lineWidth: 1.2) }
                 }
                 .frame(width: 9, height: 9)
                 .frame(width: AutoPage.gutter, alignment: .leading)
-                .accessibilityLabel(automation.enabled ? "Active" : "Paused")
+                .accessibilityLabel(working ? "Running" : automation.enabled ? "Active" : "Paused")
                 Text(automation.name)
                     .font(.btBodyMedium)
                     .foregroundStyle(automation.enabled ? Color.btText : Color.btTextTertiary)

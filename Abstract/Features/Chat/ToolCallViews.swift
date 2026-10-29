@@ -239,7 +239,7 @@ struct ToolCallView: View {
                     ToolIcon(indicator: ToolIndicator.resolve(name: call.name, input: call.input,
                                                               pluginId: PluginToolLabels.shared.pluginId(call.name), skillUse: !asking),
                              open: isOpen, hovering: hovering && !asking, failed: outcome.isFailure,
-                             file: kind == .edit ? ToolPresentation.path(call) : nil)
+                             working: working && !asking, file: kind == .edit ? ToolPresentation.path(call) : nil)
                     let verb = asking ? ToolPresentation.ask(name) : ToolPresentation.verb(name, pending: working)
                     HStack(spacing: 6) {
                         ActivityStatusText(text: verb, font: .btChatToolMedium,
@@ -470,7 +470,7 @@ private struct CallRun: View {
         VStack(alignment: .leading, spacing: 0) {
             Button { if !openSwitch.set(!open) { withAnimation(.snappy(duration: 0.2)) { local.toggle() } } } label: {
                 HStack(spacing: 6) {
-                    ToolIcon(indicator: runIndicator, open: open, hovering: hovering, failed: failed > 0)
+                    ToolIcon(indicator: runIndicator, open: open, hovering: hovering, failed: failed > 0, working: running)
                     HStack(spacing: 6) {
                         ActivityStatusText(text: verb(running), font: .btChatToolMedium,
                                            active: running, fallback: hovering ? .btText : .btTextSecondary)
@@ -517,6 +517,8 @@ private struct ToolIcon: View {
     let open: Bool
     let hovering: Bool
     let failed: Bool
+    /// At work: the working mark stands in for the symbol until it's done.
+    var working = false
     /// A file the call edits: its icon from the Files pane stands in for the symbol.
     var file: String? = nil
 
@@ -526,6 +528,8 @@ private struct ToolIcon: View {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 9, weight: .semibold))
                     .rotationEffect(.degrees(open ? 90 : 0))
+            } else if working {
+                WorkingMark().frame(width: 10, height: 10)
             } else if let file {
                 FileIcon(path: file, size: 14)
             } else {
