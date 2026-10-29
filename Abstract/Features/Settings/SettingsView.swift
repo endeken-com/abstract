@@ -45,7 +45,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
     /// One sentence under the pane's title: what it's for.
     var subtitle: String {
         switch self {
-        case .appearance: "The theme, and the fonts the interface, the editor and chats are set in."
+        case .appearance: "Choose a theme and set the fonts for the interface, editor and chats."
         case .notifications: "What Abstract tells you about, and when a quiet chat counts as stalled."
         case .usage: "Your agents' accounts and plan limits, and what they used."
         case .general: "How chats read, automations' time zone, the command line and updates."
@@ -54,7 +54,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .profiles: "Saved setups a chat or automation starts from: agent, model, permissions and instructions."
         case .workflows: "Profiles taking turns on one chat: say, research, then build, review and test."
         case .skills: "Skills Abstract manages once and gives to every agent in a project."
-        case .integrations: "Revund."
+        case .integrations: "Connect Revund to review a chat's changes."
         case .plugins: "Plugins add panels, tools and background work to Abstract."
         case .devices: "Paired Macs, and phones that drive this one."
         case .advanced: "Options for debugging Abstract and its agents."
@@ -93,6 +93,10 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         ("Agents", [.agents, .profiles, .workflows, .skills]),
         ("System", [.devices, .advanced]),
     ]
+
+    var groupTitle: String {
+        Self.groups.first { $0.tabs.contains(self) }?.title ?? "Settings"
+    }
 }
 
 /// Settings as a panel over the window (⌘,), like ⌘K: sections on the left,
@@ -105,7 +109,7 @@ struct SettingsView: View {
 
     var body: some View {
         GeometryReader { geo in
-            let compact = geo.size.width < 760
+            let compact = SettingsLayout.usesCompactNavigation(at: geo.size.width)
             ZStack {
                 Color.black.opacity(0.18)
                     .ignoresSafeArea()
@@ -130,8 +134,7 @@ struct SettingsView: View {
                         }
                     }
                 }
-                // Nearly the whole window: settings are read, not glanced at.
-                .frame(width: max(geo.size.width - (compact ? 24 : 64), 0),
+                .frame(width: min(max(geo.size.width - (compact ? 24 : 64), 0), SettingsLayout.panelWidth),
                        height: max(geo.size.height - (compact ? 24 : 64), 0))
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .btRaised(radius: 14)
@@ -158,6 +161,7 @@ struct SettingsView: View {
                 pane
                     .frame(maxWidth: SettingsLayout.rowWidth + 2 * SettingsLayout.margin)
                     .frame(maxWidth: .infinity, alignment: .top)
+                    .padding(.bottom, Space.xl)
             }
             .id(tab)
             .btThinScrollIndicator()
@@ -278,6 +282,11 @@ struct SettingsView: View {
     /// The pane's title and what it's for, lined up with the form below.
     private var header: some View {
         VStack(alignment: .leading, spacing: Space.xs) {
+            Text((tab.groupTitle == tab.title ? "Settings" : tab.groupTitle).uppercased())
+                .font(.btSectionLabel)
+                .tracking(0.8)
+                .foregroundStyle(Color.btTextTertiary)
+                .padding(.bottom, Space.xs)
             Text(tab.title)
                 .font(.btTitle)
                 .foregroundStyle(Color.btText)
@@ -319,9 +328,14 @@ struct SettingsView: View {
 /// at most about 704 points wide with 20 around them, and their words start
 /// 10 in; the title above and panes of their own follow it.
 enum SettingsLayout {
+    static let panelWidth: CGFloat = 1160
     static let rowWidth: CGFloat = 704
     static let margin: CGFloat = 20
     static let textInset: CGFloat = 10
+    // Keep a readable form beside the sidebar; a narrow form uses the menu.
+    static func usesCompactNavigation(at windowWidth: CGFloat) -> Bool {
+        windowWidth - 64 - 184 < rowWidth + 2 * margin
+    }
 }
 
 /// Filters the settings sections as you type; Return opens the first.
@@ -361,6 +375,10 @@ extension View {
             .scrollContentBackground(.hidden)
             .scrollDisabled(true)
             .fixedSize(horizontal: false, vertical: true)
+            .font(.btBody)
+            .tint(Color.btAccent)
+            .pickerStyle(.menu)
+            .buttonStyle(.bt(.secondary, size: .small))
     }
 }
 
@@ -373,6 +391,43 @@ struct SettingsCaption: View {
             .font(.btCaption)
             .foregroundStyle(Color.btTextSecondary)
             .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// A form row that keeps the same label and control columns until the
+/// panel is too narrow, then gives the control the full row width.
+struct SettingsInputRow<Control: View>: View {
+    let title: String
+    let detail: String
+    let warning: String?
+    @ViewBuilder let control: Control
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: Space.lg) {
+                label.frame(width: 188, alignment: .leading)
+                control.frame(width: 480)
+            }
+            VStack(alignment: .leading, spacing: Space.sm) {
+                label
+                control
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, Space.xs)
+    }
+
+    private var label: some View {
+        VStack(alignment: .leading, spacing: Space.xs) {
+            Text(title).font(.btBodyMedium).foregroundStyle(Color.btText)
+            SettingsCaption(detail)
+            if let warning {
+                Label(warning, systemImage: "exclamationmark.triangle.fill")
+                    .font(.btCaption)
+                    .foregroundStyle(Color.btWarning)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 }
 

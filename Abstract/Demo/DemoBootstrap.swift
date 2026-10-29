@@ -389,6 +389,7 @@ struct Snapshotter {
             UserDefaults.standard.set("general", forKey: "settingsTab")
             model.isSettingsOpen = true
             await shot("\(t)-14-settings", settle: 0.8)
+            await compactSettingsShots(theme: t)
             UserDefaults.standard.set("profiles", forKey: "settingsTab")
             await shot("\(t)-29-icons-profiles", settle: 0.8)
             UserDefaults.standard.set("workflows", forKey: "settingsTab")
@@ -545,6 +546,21 @@ struct Snapshotter {
         let review = JSONValue(any: [sessionId: ["agentId": "codex", "agentName": "Codex", "scope": "uncommitted",
                                                  "reviewerId": "none", "round": 1, "phase": "waiting"]] as [String: Any])
         _ = try? model.plugins.manager.storage(for: "sh.abstract.second-opinion").set(review, forKey: "reviews")
+    }
+
+    /// Four settings panes at the width that uses the compact navigation.
+    private func compactSettingsShots(theme: String) async {
+        guard let window = NSApp.windows.first(where: { $0.canBecomeMain && $0.isVisible }) else { return }
+        let frame = window.frame
+        let width = min(frame.width, 700)
+        window.setFrame(NSRect(x: frame.midX - width / 2, y: frame.minY,
+                               width: width, height: frame.height), display: true)
+        for tab: SettingsTab in [.appearance, .general, .agents, .integrations] {
+            UserDefaults.standard.set(tab.rawValue, forKey: "settingsTab")
+            await shot("\(theme)-30-settings-compact-\(tab.rawValue)", settle: 0.8)
+        }
+        window.setFrame(frame, display: true)
+        UserDefaults.standard.set(SettingsTab.general.rawValue, forKey: "settingsTab")
     }
 
     /// The whole settings page: the window made tall enough, then put back.
