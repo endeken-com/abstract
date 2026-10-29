@@ -28,6 +28,12 @@ for theme in graphite paper ink; do
   count=$(find "$dir" -maxdepth 1 -name "$theme-*.png" | wc -l | tr -d ' ')
   echo "$theme: $count screens"
   if [ "$count" -eq 0 ]; then failed=1; fi
+  for pane in appearance general agents integrations; do
+    if [ ! -s "$dir/$theme-30-settings-compact-$pane.png" ]; then
+      echo "Missing compact $pane settings in $theme" >&2
+      failed=1
+    fi
+  done
 done
 if [ "$failed" -ne 0 ] || grep -q "^demo-snapshot: timed out" "$dir/demo.log"; then
   echo "demo-snapshot: screens are missing; the end of the app's log:" >&2

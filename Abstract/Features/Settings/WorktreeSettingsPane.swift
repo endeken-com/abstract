@@ -22,31 +22,21 @@ struct WorktreeSettingsPane: View {
         @Bindable var model = model
         Form {
             Section {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Worktree location")
+                SettingsInputRow(title: "Worktree location",
+                                 detail: "The folder each chat's worktree is created in. Projects can override it.",
+                                 warning: templateWarning) {
                     TextField("Worktree location", text: $model.worktreeTemplate, prompt: Text(WorktreeNaming.defaultTemplate))
                         .labelsHidden()
                         .font(.btMono)
                         .btField()
-                    SettingsCaption("The folder each chat's worktree is created in. Projects can override it.")
-                    if let warning = templateWarning {
-                        Label(warning, systemImage: "exclamationmark.triangle.fill")
-                            .font(.btCaption)
-                            .foregroundStyle(Color.btWarning)
-                    }
                 }
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Branch prefix")
+                SettingsInputRow(title: "Branch prefix",
+                                 detail: "Put in front of every branch Abstract creates, so its branches group together.",
+                                 warning: prefixWarning) {
                     TextField("Branch prefix", text: $model.branchPrefix, prompt: Text(WorktreeNaming.defaultBranchPrefix))
                         .labelsHidden()
                         .font(.btMono)
                         .btField()
-                    SettingsCaption("Put in front of every branch Abstract creates, so its branches group together.")
-                    if let warning = prefixWarning {
-                        Label(warning, systemImage: "exclamationmark.triangle.fill")
-                            .font(.btCaption)
-                            .foregroundStyle(Color.btWarning)
-                    }
                 }
             } header: {
                 Text("Naming")
@@ -95,18 +85,29 @@ struct WorktreeSettingsPane: View {
             }
 
             Section {
-                HStack {
-                    SettingsCaption("Existing worktrees stay where they are; new chats use the new names.")
-                    Spacer()
-                    Button("Reset to Default") {
-                        model.worktreeTemplate = WorktreeNaming.defaultTemplate
-                        model.branchPrefix = WorktreeNaming.defaultBranchPrefix
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: Space.md) {
+                        SettingsCaption("Existing worktrees stay where they are; new chats use the new names.")
+                        Spacer(minLength: Space.sm)
+                        resetButton
                     }
-                    .disabled(model.worktreeTemplate == WorktreeNaming.defaultTemplate && model.branchPrefix == WorktreeNaming.defaultBranchPrefix)
+                    VStack(alignment: .leading, spacing: Space.sm) {
+                        SettingsCaption("Existing worktrees stay where they are; new chats use the new names.")
+                        resetButton
+                    }
                 }
             }
         }
         .settingsPane()
+    }
+
+    private var resetButton: some View {
+        Button("Reset to Default") {
+            model.worktreeTemplate = WorktreeNaming.defaultTemplate
+            model.branchPrefix = WorktreeNaming.defaultBranchPrefix
+        }
+        .disabled(model.worktreeTemplate == WorktreeNaming.defaultTemplate && model.branchPrefix == WorktreeNaming.defaultBranchPrefix)
+        .fixedSize()
     }
 
     private var preview: (path: String, branch: String) {
