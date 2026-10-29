@@ -76,7 +76,7 @@ struct PluginsSettingsPane: View {
             if !all.isEmpty { categoryBar(all) }
             catalogStatus(all)
             if let pickedProblem {
-                Text(pickedProblem).font(.btCaption).foregroundStyle(Color.btRemoved)
+                notice("This plugin could not be opened", detail: pickedProblem, symbol: "exclamationmark.triangle")
             }
             galleryResults(all)
             if !model.plugins.orphans.isEmpty { orphanSection }
@@ -134,27 +134,40 @@ struct PluginsSettingsPane: View {
     @ViewBuilder
     private func catalogStatus(_ all: [PluginGalleryItem]) -> some View {
         if let problem = model.plugins.catalogProblem {
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: Space.md) {
-                    Text("The catalog is unavailable. Installed and bundled plugins still work. \(problem)")
-                        .font(.btCaption).foregroundStyle(Color.btTextSecondary)
-                    Spacer(minLength: 0)
-                    Button("Try Again") { Task { await reloadCatalog() } }
-                        .buttonStyle(.bt(.secondary, size: .small))
-                }
-                VStack(alignment: .leading, spacing: Space.sm) {
-                    Text("The catalog is unavailable. Installed and bundled plugins still work. \(problem)")
+            HStack(alignment: .top, spacing: Space.md) {
+                Image(systemName: "wifi.exclamationmark")
+                    .frame(width: 20).foregroundStyle(Color.btTextSecondary)
+                VStack(alignment: .leading, spacing: Space.xs) {
+                    Text("The catalog is unavailable").font(.btBodyMedium).foregroundStyle(Color.btText)
+                    Text("Installed and bundled plugins still work. \(problem)")
                         .font(.btCaption).foregroundStyle(Color.btTextSecondary)
                     Button("Try Again") { Task { await reloadCatalog() } }
                         .buttonStyle(.bt(.secondary, size: .small))
+                        .padding(.top, Space.xs)
                 }
             }
             .padding(Space.md)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Color.btHover, in: RoundedRectangle(cornerRadius: Radius.md))
         } else if catalogLoading && !all.isEmpty {
-            ProgressView("Checking the catalog…").font(.btCaption)
+            HStack(spacing: Space.sm) {
+                ProgressView().controlSize(.small)
+                Text("Checking the catalog…").font(.btCaption).foregroundStyle(Color.btTextSecondary)
+            }
         }
+    }
+
+    private func notice(_ title: String, detail: String, symbol: String) -> some View {
+        HStack(alignment: .top, spacing: Space.md) {
+            Image(systemName: symbol).frame(width: 20).foregroundStyle(Color.btRemoved)
+            VStack(alignment: .leading, spacing: Space.xs) {
+                Text(title).font(.btBodyMedium).foregroundStyle(Color.btText)
+                Text(detail).font(.btCaption).foregroundStyle(Color.btTextSecondary)
+            }
+        }
+        .padding(Space.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.btHover, in: RoundedRectangle(cornerRadius: Radius.md))
     }
 
     @ViewBuilder
@@ -162,8 +175,11 @@ struct PluginsSettingsPane: View {
         let visible = PluginGalleryItem.filter(all, query: query, view: selectedView, category: selectedCategory)
         if visible.isEmpty {
             if catalogLoading && all.isEmpty {
-                ProgressView("Checking the catalog…")
-                    .frame(maxWidth: .infinity, minHeight: 180)
+                VStack(spacing: Space.md) {
+                    ProgressView().controlSize(.regular)
+                    Text("Checking the catalog…").font(.btBody).foregroundStyle(Color.btTextSecondary)
+                }
+                .frame(maxWidth: .infinity, minHeight: 180)
             } else if all.isEmpty {
                 EmptyStateView(symbol: emptySymbol, title: emptyTitle, message: emptyMessage,
                                action: ("Install from folder or zip…", { pickPackage() }))
@@ -184,7 +200,7 @@ struct PluginsSettingsPane: View {
         VStack(alignment: .leading, spacing: Space.sm) {
             Text("Packages that could not be read").font(.btHeadline)
             ForEach(model.plugins.orphans, id: \.name) { orphan in
-                Text("\(orphan.name): \(orphan.problem)").font(.btCaption)
+                notice(orphan.name, detail: orphan.problem, symbol: "exclamationmark.triangle")
             }
         }
     }
@@ -225,7 +241,11 @@ struct PluginsSettingsPane: View {
         if let page = plugin.manifest?.contributes.settingsPage {
             VStack(alignment: .leading, spacing: 0) {
                 HStack {
-                    Text(page.title).font(.btHeadline).foregroundStyle(Color.btText)
+                    VStack(alignment: .leading, spacing: Space.xs) {
+                        Text(page.title).font(.btHeadline).foregroundStyle(Color.btText)
+                        Text("\(plugin.record.name) settings")
+                            .font(.btCaption).foregroundStyle(Color.btTextSecondary)
+                    }
                     Spacer()
                     Button("Done") { settingsPageFor = nil }
                         .buttonStyle(.btPrimary)
@@ -313,15 +333,11 @@ struct PluginsSettingsPane: View {
 
     private func galleryCard(_ item: PluginGalleryItem) -> some View {
         VStack(alignment: .leading, spacing: Space.md) {
-            HStack(alignment: .center, spacing: Space.md) {
-                Image(systemName: item.symbol)
-                    .font(.system(size: 18, weight: .regular))
-                    .foregroundStyle(Color.btText)
-                    .frame(width: 36, height: 36)
-                    .background(Color.btHover, in: RoundedRectangle(cornerRadius: Radius.md))
-                    .accessibilityHidden(true)
+            HStack(alignment: .top, spacing: Space.md) {
+                PluginIcon(symbol: item.symbol, size: 40)
                 VStack(alignment: .leading, spacing: Space.xxs) {
                     Text(item.name).font(.btBodyMedium).foregroundStyle(Color.btText)
+                        .lineLimit(1)
                     Text(item.category.rawValue).font(.btCaption).foregroundStyle(Color.btTextSecondary)
                 }
                 Spacer(minLength: 0)
@@ -330,32 +346,36 @@ struct PluginsSettingsPane: View {
                 .lineLimit(2)
                 .frame(maxWidth: .infinity, minHeight: 32, alignment: .topLeading)
             Spacer(minLength: 0)
-            HStack(spacing: Space.sm) {
-                Text("\(stateWords(item)) · \(item.source.plainWords)")
-                    .font(.btCaption)
-                    .foregroundStyle(Color.btTextSecondary)
+            HStack(spacing: Space.xs) {
+                statusLabel(item)
+                Text("· \(item.source.plainWords)")
+                    .font(.btCaption).foregroundStyle(Color.btTextTertiary)
                     .lineLimit(1)
-                Spacer(minLength: 0)
+            }
+            HStack(spacing: Space.sm) {
                 Button("Details") { selectedPluginID = item.id }
                     .buttonStyle(.bt(.ghost, size: .small))
+                Spacer(minLength: 0)
                 primaryAction(item)
             }
         }
         .padding(Space.lg)
-        .frame(maxWidth: .infinity, minHeight: 174, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: 190, alignment: .topLeading)
         .background(Color.btSurface, in: RoundedRectangle(cornerRadius: Radius.lg))
+        .overlay(RoundedRectangle(cornerRadius: Radius.lg).strokeBorder(Color.btBorder, lineWidth: 0.5))
         .accessibilityElement(children: .contain)
     }
 
-    private func stateWords(_ item: PluginGalleryItem) -> String {
-        switch item.state {
-        case .available: "Available"
-        case .installed: "On"
-        case .disabled: "Off"
-        case .updateAvailable: "Update available"
-        case .needsReview: "Needs review"
-        case .problem: "Needs attention"
+    private func statusLabel(_ item: PluginGalleryItem) -> some View {
+        HStack(spacing: Space.xs) {
+            Circle()
+                .fill(item.state == .installed ? Color.btAdded : item.state == .needsReview || item.state == .problem
+                      ? Color.btRemoved : Color.btTextTertiary)
+                .frame(width: 6, height: 6)
+            Text(item.statusText).lineLimit(1)
         }
+        .font(.btCaption)
+        .foregroundStyle(Color.btTextSecondary)
     }
 
     @ViewBuilder
@@ -406,14 +426,14 @@ struct PluginsSettingsPane: View {
     private func detail(_ item: PluginGalleryItem) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: Space.md) {
-                Image(systemName: item.symbol)
-                    .font(.system(size: 21))
-                    .frame(width: 44, height: 44)
-                    .background(Color.btHover, in: RoundedRectangle(cornerRadius: Radius.md))
-                    .accessibilityHidden(true)
+                PluginIcon(symbol: item.symbol, size: 44)
                 VStack(alignment: .leading, spacing: Space.xs) {
                     Text(item.name).font(.btHeadline).foregroundStyle(Color.btText)
-                    Text(item.category.rawValue).font(.btCaption).foregroundStyle(Color.btTextSecondary)
+                    HStack(spacing: Space.sm) {
+                        Text(item.category.rawValue).font(.btCaption).foregroundStyle(Color.btTextSecondary)
+                        Text("·").foregroundStyle(Color.btTextTertiary)
+                        statusLabel(item)
+                    }
                 }
                 Spacer()
                 Button { selectedPluginID = nil } label: { Image(systemName: "xmark") }
@@ -430,7 +450,7 @@ struct PluginsSettingsPane: View {
                         .font(.btCaption).foregroundStyle(Color.btTextSecondary)
                     if let manifest = item.installed?.manifest ?? bundled.first(where: { $0.inspection.manifest.id == item.id })?.inspection.manifest {
                         Divider().padding(.vertical, Space.xs)
-                        Text("What it adds").font(.btBodyMedium)
+                        Text("What it adds").font(.btBodyMedium).foregroundStyle(Color.btText)
                         Text(manifest.appearanceSentences.isEmpty ? "A plugin screen in Abstract." : manifest.appearanceSentences.joined(separator: " "))
                             .font(.btBody).foregroundStyle(Color.btTextSecondary)
                     }
@@ -466,25 +486,34 @@ struct PluginsSettingsPane: View {
     @ViewBuilder
     private func row(_ plugin: InstalledPlugin) -> some View {
         let record = plugin.record
-        VStack(alignment: .leading, spacing: Space.md) {
-            Toggle(isOn: Binding(
-                get: { plugin.isUsable },
-                set: { on in
-                    if on { afterClosingDetails { enabling = plugin } }
-                    else { model.setPluginEnabled(plugin.id, false) }
+        VStack(alignment: .leading, spacing: Space.lg) {
+            HStack(alignment: .center, spacing: Space.md) {
+                VStack(alignment: .leading, spacing: Space.xs) {
+                    Text("Turned \(plugin.isUsable ? "on" : "off")")
+                        .font(.btBodyMedium).foregroundStyle(Color.btText)
+                    Text("Choose whether this plugin can run in Abstract.")
+                        .font(.btCaption).foregroundStyle(Color.btTextSecondary)
                 }
-            )) {
-                Text("Enabled")
-                Text("Turn this plugin on or off.")
+                Spacer()
+                Toggle("Turn on \(record.name)", isOn: Binding(
+                    get: { plugin.isUsable },
+                    set: { on in
+                        if on { afterClosingDetails { enabling = plugin } }
+                        else { model.setPluginEnabled(plugin.id, false) }
+                    }
+                ))
+                .labelsHidden()
+                .disabled(plugin.manifest == nil || plugin.problem != nil)
             }
-            .disabled(plugin.manifest == nil || plugin.problem != nil)
 
             if let manifest = plugin.manifest, !manifest.grantedCapabilities.isEmpty {
+                Divider()
+                Text("Permissions").font(.btBodyMedium).foregroundStyle(Color.btText)
                 // What it actually holds now; before its first review,
                 // what it asks for.
                 Text((record.grantedCapabilities.isEmpty ? manifest.grantedCapabilities : record.grantedCapabilities).map {
                     $0.plainWords(transcriptProjects: model.pluginProjectNames(record.transcriptProjectKeys))
-                }.sorted().joined(separator: " · "))
+                }.sorted().joined(separator: "\n"))
                     .font(.btCaption)
                     .foregroundStyle(Color.btTextSecondary)
             }
@@ -496,20 +525,23 @@ struct PluginsSettingsPane: View {
                 let words = capability == .cli
                     ? "Run \(record.grantedCLI?.binary ?? "its tool")'s commands that change things"
                     : capability.plainWords
-                HStack(alignment: .top, spacing: Space.sm) {
+                VStack(alignment: .leading, spacing: Space.sm) {
                     Text(record.alwaysAllowedActions.contains(capability)
                          ? "\(words) — always allowed."
                          : "\(words) — asks first.")
-                        .font(.btCaption)
-                        .foregroundStyle(Color.btTextSecondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    if record.alwaysAllowedActions.contains(capability) {
-                        Button("Ask First") { model.plugins.setAlwaysAllowed(plugin.id, capability, false) }
-                            .buttonStyle(.bt(.secondary, size: .small))
+                        .font(.btCaption).foregroundStyle(Color.btTextSecondary)
+                    HStack(spacing: Space.sm) {
+                        if record.alwaysAllowedActions.contains(capability) {
+                            Button("Ask First") { model.plugins.setAlwaysAllowed(plugin.id, capability, false) }
+                                .buttonStyle(.bt(.secondary, size: .small))
+                        }
+                        Button("Revoke") { model.plugins.revokeCapability(plugin.id, capability) }
+                            .buttonStyle(.bt(.danger, size: .small))
                     }
-                    Button("Revoke") { model.plugins.revokeCapability(plugin.id, capability) }
-                        .buttonStyle(.bt(.danger, size: .small))
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(Space.md)
+                .background(Color.btHover, in: RoundedRectangle(cornerRadius: Radius.md))
             }
             if let problem = plugin.problem {
                 Text(problem).font(.btCaption).foregroundStyle(Color.btRemoved)
@@ -633,6 +665,20 @@ struct PluginsSettingsPane: View {
     }
 }
 
+private struct PluginIcon: View {
+    let symbol: String
+    let size: CGFloat
+
+    var body: some View {
+        Image(systemName: symbol)
+            .font(.system(size: size * 0.48, weight: .regular))
+            .foregroundStyle(Color.btText)
+            .frame(width: size, height: size)
+            .background(Color.btHover, in: RoundedRectangle(cornerRadius: Radius.md))
+            .accessibilityHidden(true)
+    }
+}
+
 /// The one review: name, version, where it came from, whether it's signed,
 /// and what it may see — in plain words. Grants are all-or-nothing.
 private struct PluginReviewSheet: View {
@@ -659,10 +705,13 @@ private struct PluginReviewSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: Space.xs) {
-                Text(title).font(.btHeadline).foregroundStyle(Color.btText)
-                Text("Version \(manifest.version) · \(source.plainWords) · \(publisher.map { "Verified publisher: \($0)" } ?? "Unverified")")
-                    .font(.btCaption).foregroundStyle(Color.btTextSecondary)
+            HStack(alignment: .center, spacing: Space.md) {
+                PluginIcon(symbol: manifest.view?.symbolOrFallback ?? PluginManifest.fallbackSymbol, size: 44)
+                VStack(alignment: .leading, spacing: Space.xs) {
+                    Text(title).font(.btHeadline).foregroundStyle(Color.btText)
+                    Text("Version \(manifest.version) · \(source.plainWords)")
+                        .font(.btCaption).foregroundStyle(Color.btTextSecondary)
+                }
             }
             .padding(Space.xl)
             Divider()
@@ -697,23 +746,28 @@ private struct PluginReviewSheet: View {
         VStack(alignment: .leading, spacing: Space.lg) {
             if let changes, changes.asksForMore {
                 VStack(alignment: .leading, spacing: Space.sm) {
-                    Text("This update asks for more:").font(.btBodyMedium)
+                    Text("This update asks for more").font(.btBodyMedium).foregroundStyle(Color.btText)
                     ForEach(changes.capabilities, id: \.rawValue) { capability in
-                        Text(capability.plainWords)
+                        reviewItem(capability.plainWords)
                     }
-                    ForEach(changes.networkHosts, id: \.self) { host in Text("Reach \(host).") }
-                    ForEach(changes.secretNames, id: \.self) { name in Text("Use your \(name).") }
-                    ForEach(changes.places, id: \.self) { place in Text(place) }
-                    if changes.background { Text("Run in the background.") }
-                    if changes.cli { Text("Run more command-line actions.") }
+                    ForEach(changes.networkHosts, id: \.self) { host in reviewItem("Reach \(host).") }
+                    ForEach(changes.secretNames, id: \.self) { name in reviewItem("Use your \(name).") }
+                    ForEach(changes.places, id: \.self) { place in reviewItem(place) }
+                    if changes.background { reviewItem("Run in the background.") }
+                    if changes.cli { reviewItem("Run more command-line actions.") }
                     Text("The installed version stays on until you approve this update.")
                         .font(.btCaption).foregroundStyle(Color.btTextSecondary)
                 }
+                .padding(Space.md)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.btHover, in: RoundedRectangle(cornerRadius: Radius.md))
             }
             if let description = manifest.description, !description.isEmpty {
                 Text(description).font(.btBody).foregroundStyle(Color.btTextSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            Text(publisher.map { "Verified publisher: \($0)" } ?? "Unverified publisher")
+                .font(.btCaption).foregroundStyle(Color.btTextSecondary)
             if publisher == nil {
                 Text(manifest.networkHosts.isEmpty
                      ? "It isn't signed. It runs in a locked-down page with no network or file access, and it can only see and do what's listed here."
@@ -722,13 +776,14 @@ private struct PluginReviewSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             VStack(alignment: .leading, spacing: Space.sm) {
-                Text("It will appear:").font(.btBodyMedium).foregroundStyle(Color.btText)
+                Text("Where it appears").font(.btBodyMedium).foregroundStyle(Color.btText)
                 ForEach(manifest.appearanceSentences, id: \.self) { sentence in
-                    Text(sentence).font(.btBody).foregroundStyle(Color.btTextSecondary)
+                    reviewItem(sentence)
                 }
             }
+            Divider()
             VStack(alignment: .leading, spacing: Space.sm) {
-                Text("It will be able to:").font(.btBodyMedium).foregroundStyle(Color.btText)
+                Text("What it can access").font(.btBodyMedium).foregroundStyle(Color.btText)
                 if manifest.grantedCapabilities.isEmpty {
                     Text("Nothing beyond showing its own screen.")
                         .font(.btBody).foregroundStyle(Color.btTextSecondary)
@@ -736,7 +791,7 @@ private struct PluginReviewSheet: View {
                 ForEach(manifest.grantedCapabilities.map {
                     $0.plainWords(transcriptProjects: pickedNames)
                 }.sorted(), id: \.self) { words in
-                    Text(words).font(.btBody).foregroundStyle(Color.btTextSecondary)
+                    reviewItem(words)
                 }
                 if manifest.grantedCapabilities.contains(where: \.isAction) {
                     Text("Before it starts a chat, sends a message, stops or resumes an agent, answers for you, or runs an automation, Abstract will ask you first. You can let it always do one of those, and take any of them back here in Settings.")
@@ -749,8 +804,7 @@ private struct PluginReviewSheet: View {
                 VStack(alignment: .leading, spacing: Space.sm) {
                     Text("On your Mac, it will be able to:").font(.btBodyMedium).foregroundStyle(Color.btText)
                     ForEach(cli.sentences, id: \.self) { sentence in
-                        Text(sentence).font(.btBody).foregroundStyle(Color.btTextSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
+                        reviewItem(sentence)
                     }
                 }
             }
@@ -758,7 +812,7 @@ private struct PluginReviewSheet: View {
                 VStack(alignment: .leading, spacing: Space.sm) {
                     Text("On the web, it will be able to:").font(.btBodyMedium).foregroundStyle(Color.btText)
                     ForEach(manifest.networkSentences, id: \.self) { sentence in
-                        Text(sentence).font(.btBody).foregroundStyle(Color.btTextSecondary)
+                        reviewItem(sentence)
                     }
                 }
             }
@@ -782,6 +836,17 @@ private struct PluginReviewSheet: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+        }
+    }
+
+    private func reviewItem(_ words: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
+            Image(systemName: "circle.fill")
+                .font(.system(size: 4))
+                .foregroundStyle(Color.btTextTertiary)
+                .accessibilityHidden(true)
+            Text(words).font(.btBody).foregroundStyle(Color.btTextSecondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }

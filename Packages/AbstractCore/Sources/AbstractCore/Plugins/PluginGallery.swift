@@ -27,6 +27,18 @@ public struct PluginGalleryItem: Identifiable, Sendable {
     public let installed: InstalledPlugin?
     public let catalogEntry: PluginCatalog.Entry?
 
+    /// The same state wording in gallery cards and plugin details.
+    public var statusText: String {
+        switch state {
+        case .available: "Available"
+        case .installed: "On"
+        case .disabled: "Off"
+        case .updateAvailable: "Update available"
+        case .needsReview: "Needs review"
+        case .problem: "Needs attention"
+        }
+    }
+
     public static func items(installed: [InstalledPlugin], bundled: [PluginManifest],
                              catalog: [PluginCatalog.Entry]) -> [Self] {
         let installedByID = Dictionary(uniqueKeysWithValues: installed.map { ($0.id, $0) })

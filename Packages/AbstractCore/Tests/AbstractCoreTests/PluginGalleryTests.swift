@@ -59,4 +59,19 @@ import Testing
         #expect(PluginGalleryItem.items(installed: [installed(manifest, problem: "Changed")],
                                         bundled: [], catalog: [])[0].state == .needsReview)
     }
+
+    @Test func galleryStatesHaveClearDisplayWords() {
+        let local = manifest("sh.abstract.local", "Local notes")
+        let available = PluginGalleryItem.items(installed: [], bundled: [local], catalog: [])
+        let on = PluginGalleryItem.items(installed: [installed(local)], bundled: [], catalog: [])
+        let off = PluginGalleryItem.items(installed: [installed(local, enabled: false)], bundled: [], catalog: [])
+        let update = PluginGalleryItem.items(installed: [installed(local, source: .catalog)],
+                                             bundled: [], catalog: [catalog(local.id)])
+        let review = PluginGalleryItem.items(installed: [installed(local, problem: "Changed")],
+                                             bundled: [], catalog: [])
+        let problem = PluginGalleryItem.items(installed: [installed(local, source: .catalog, problem: "Missing")],
+                                              bundled: [], catalog: [])
+        #expect([available, on, off, update, review, problem].map { $0[0].statusText } ==
+                ["Available", "On", "Off", "Update available", "Needs review", "Needs attention"])
+    }
 }
