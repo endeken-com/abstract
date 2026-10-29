@@ -567,46 +567,6 @@ private struct ToolIcon: View {
     }
 }
 
-/// A soft highlight sweeping across a label while its work runs, after
-/// Paseo's running-tool shimmer (Apache-2.0, Copyright (c) 2025-present
-/// Mohamed Boudra). Each transcript row has its own hosting view, so this
-/// redraws its row only.
-struct Shimmer: ViewModifier {
-    let active: Bool
-    /// About how many characters the label has; longer labels sweep slower.
-    let length: Int
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var phase: CGFloat = 0
-
-    private var duration: Double {
-        min(max(1.25 + Double(length) * 0.008 - (length <= 12 ? 0.25 : 0), 1), 2.3)
-    }
-
-    func body(content: Content) -> some View {
-        if active, !reduceMotion {
-            content
-                .opacity(0.72)
-                .overlay {
-                    content.mask {
-                        GeometryReader { geo in
-                            let band = min(max(42, geo.size.width * 0.22), 120)
-                            LinearGradient(colors: [.clear, .white, .clear], startPoint: .leading, endPoint: .trailing)
-                                .frame(width: band)
-                                .offset(x: -band + phase * (geo.size.width + band))
-                        }
-                    }
-                }
-                .onAppear {
-                    phase = 0
-                    withAnimation(.linear(duration: duration).repeatForever(autoreverses: false)) { phase = 1 }
-                }
-        } else {
-            content.opacity(active ? 0.72 : 1)
-        }
-    }
-}
-
-
 /// A file name first, its folder quieter after it; or a command in mono.
 private struct ToolTargetView: View {
     let target: ToolTarget?

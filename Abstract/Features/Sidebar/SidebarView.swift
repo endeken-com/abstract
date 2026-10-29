@@ -1032,9 +1032,13 @@ private struct RailChatDetails: View {
                         .font(BTFont.ui(14, .medium))
                         .foregroundStyle(Color.btText)
                         .fixedSize(horizontal: false, vertical: true)
-                    Text("\(session.status.label) · updated \(RelativeTime.short(session.lastEventAt ?? session.createdAt)) ago")
-                        .font(.btCaption)
-                        .foregroundStyle(Color.btTextTertiary)
+                    HStack(spacing: 0) {
+                        ActivityStatusText(text: session.status.label, font: .btCaption,
+                                           active: session.status.isWorking, fallback: .btTextTertiary)
+                        Text(" · updated \(RelativeTime.short(session.lastEventAt ?? session.createdAt)) ago")
+                            .font(.btCaption)
+                            .foregroundStyle(Color.btTextTertiary)
+                    }
                 }
             }
             Hairline()
