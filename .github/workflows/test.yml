@@ -50,7 +50,7 @@ jobs:
       - name: AbstractCore tests
         working-directory: Packages/AbstractCore
         env:
-          TIMED: LocalExecutorTests|ClaudeModelCatalogTests|ProjectSettingsTests|ChatNamingTests
+          TIMED: LocalExecutorTests|ClaudeModelCatalogTests|ProjectSettingsTests|ChatNamingTests|SetupScriptTests
         run: |
           swift test --filter "$TIMED"
           swift test --skip "$TIMED"

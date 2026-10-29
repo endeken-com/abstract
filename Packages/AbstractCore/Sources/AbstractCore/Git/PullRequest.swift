@@ -71,6 +71,14 @@ public struct PullRequest: Sendable, Hashable, Identifiable {
         public var total: Int { passed + failed + pending + skipped }
     }
 
+    /// Short, independent facts for the list and detail pane. A failing check
+    /// should not hide a review that also needs attention.
+    public struct StandingDetail: Sendable, Hashable {
+        public enum Kind: Sendable, Hashable { case conflicts, failedChecks, runningChecks, passedChecks, changesRequested, approved, reviewRequired }
+        public let kind: Kind
+        public let title: String
+    }
+
     public var number: Int
     /// The repository in its project it belongs to, by path from the
     /// project's root; "" is the project's own (ABS-163). Set by the host
@@ -127,6 +135,27 @@ public struct PullRequest: Sendable, Hashable, Identifiable {
     }
 
     public var hasConflicts: Bool { mergeable == "CONFLICTING" }
+
+    public var standingDetails: [StandingDetail] {
+        guard state == .open else { return [] }
+        var details: [StandingDetail] = []
+        if hasConflicts { details.append(.init(kind: .conflicts, title: "Conflicts with \(base)")) }
+        let summary = checksSummary
+        if summary.failed > 0 {
+            details.append(.init(kind: .failedChecks, title: "\(summary.failed) check\(summary.failed == 1 ? "" : "s") failing"))
+        } else if summary.pending > 0 {
+            details.append(.init(kind: .runningChecks, title: "Checks running"))
+        } else if summary.total > 0 {
+            details.append(.init(kind: .passedChecks, title: "Checks passed"))
+        }
+        switch reviewDecision {
+        case .changesRequested: details.append(.init(kind: .changesRequested, title: "Changes requested"))
+        case .approved: details.append(.init(kind: .approved, title: "Approved"))
+        case .reviewRequired: details.append(.init(kind: .reviewRequired, title: "Waiting for review"))
+        case nil: break
+        }
+        return details
+    }
 
     /// An author who owns the repository, is in its organisation, or was
     /// added to it: someone whose words may go to an agent unasked (ABS-109).
