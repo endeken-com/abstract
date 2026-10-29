@@ -254,6 +254,8 @@ final class AppModel {
     var showArchived = UserDefaults.standard.bool(forKey: "sidebar.showArchived") {
         didSet { UserDefaults.standard.set(showArchived, forKey: "sidebar.showArchived") }
     }
+    /// Archived chats picked in the rail for a bulk delete (ABS-181).
+    var archivedSelection = ChatSelection()
     var newChatProjectId: String?? = nil
     /// What the next New Chat's prompt starts with, from asking about some lines.
     var newChatPrompt: String?
@@ -1727,8 +1729,13 @@ final class AppModel {
         if archived, !wasArchived { automationEvent(.chatArchived, in: sessionId) }
     }
 
-    func delete(_ sessionId: String, removeWorktree: Bool) async {
-        guard let s = session(sessionId) else { return }
+    /// Deletes the chat, its worktree or folder, session log and agent
+    /// config. Files that can't be removed are flashed, unless `quiet` (a
+    /// bulk delete reports them once), and returned either way.
+    @discardableResult
+    func delete(_ sessionId: String, removeWorktree: Bool, quiet: Bool = false) async -> BulkChatDelete.Outcome {
+        guard let s = session(sessionId) else { return .failed("Chat not found.") }
+        var leftFiles: String?
         stopAgent(sessionId)
         setups[sessionId] = nil
         // A reviewer's folder belongs to the chat it reviews (ABS-112).
@@ -1739,12 +1746,13 @@ final class AppModel {
             do {
                 try await Git.removeWorktree(executor, root: project.rootPath, path: path, deleteBranch: nil)
             } catch {
-                flash("Worktree not removed: \(error.localizedDescription)", isError: true)
+                leftFiles = "Worktree not removed: \(error.localizedDescription)"
             }
         } else if removeWorktree, s.projectId == nil, let path = s.worktreePath, Workspace.isChatFolder(path, home: executor.homeDirectory) {
             // A standalone chat's own folder, which nothing else uses.
-            do { try executor.removeItem(path) } catch { flash("Folder not removed: \(error.localizedDescription)", isError: true) }
+            do { try executor.removeItem(path) } catch { leftFiles = "Folder not removed: \(error.localizedDescription)" }
         }
+        if let leftFiles, !quiet { flash(leftFiles, isError: true) }
         engine.deleteLog(sessionId: sessionId)
         ChatConfigFiles.remove(root: Self.agentConfigRoot, chatId: sessionId)
         discardLayout(sessionId)
@@ -1756,6 +1764,7 @@ final class AppModel {
         enrichers = enrichers.filter { !$0.key.hasPrefix(sessionId + "/") }
         if case .session(let id) = destination, id == sessionId { destination = .home }
         reload()
+        return leftFiles.map(BulkChatDelete.Outcome.leftFiles) ?? .deleted
     }
 
     // MARK: - Engine events
