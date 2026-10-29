@@ -855,7 +855,8 @@ private struct WorkingIndicator: View {
                 ActivityDiamonds(active: true)
                     .frame(width: 36, height: 36)
                     .accessibilityHidden(true)
-                ActivityStatusText(text: stallText(stall, at: context.date), font: .btChatCallout.weight(.regular))
+                ActivityStatusText(text: stallText(stall, at: context.date), font: .btChatCallout.weight(.regular),
+                                   active: !stall.isStalled, fallback: .btWarning)
                 if stall.isStalled {
                     Button("Keep waiting") { model.keepWaiting(session.id) }
                     Button("Stop") { model.stop(session.id) }

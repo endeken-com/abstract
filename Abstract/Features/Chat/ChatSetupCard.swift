@@ -69,7 +69,7 @@ private struct SetupStepRow: View {
                             .help(detail.help ?? "")
                     }
                 }
-                .modifier(Shimmer(active: running, length: title.count + 10))
+                .modifier(Shimmer(active: running))
                 if let started = setup.startedAt[step], step == .script || running {
                     Elapsed(from: started, to: setup.endedAt[step])
                 }

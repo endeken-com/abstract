@@ -96,11 +96,15 @@ private struct RecentRow: View {
                 Text(session.name).font(.btBody).foregroundStyle(Color.btText).lineLimit(1)
                 Spacer(minLength: Space.lg)
                 StatusDot(status: session.status, size: 6)
-                Text([session.status.label, model.project(session.projectId)?.name, RelativeTime.short(session.lastEventAt ?? session.createdAt)]
-                    .compactMap { $0 }.joined(separator: " · "))
-                    .font(.btCallout)
-                    .foregroundStyle(Color.btTextTertiary)
-                    .lineLimit(1)
+                HStack(spacing: 0) {
+                    ActivityStatusText(text: session.status.label, font: .btCallout,
+                                       active: session.status.isWorking, fallback: .btTextTertiary)
+                    Text([model.project(session.projectId)?.name, RelativeTime.short(session.lastEventAt ?? session.createdAt)]
+                        .compactMap { $0 }.map { " · \($0)" }.joined())
+                        .font(.btCallout)
+                        .foregroundStyle(Color.btTextTertiary)
+                }
+                .lineLimit(1)
             }
             .padding(.horizontal, Space.sm)
             .frame(height: 34)
