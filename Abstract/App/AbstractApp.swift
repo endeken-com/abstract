@@ -114,6 +114,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Hang up every terminal's shell, like closing terminal windows.
     func applicationWillTerminate(_ notification: Notification) {
         TerminalRegistry.shared.closeAll()
+        model.composerDrafts.flush()
         model.appLink?.stop()
         model.pluginToolLink?.stop()
     }

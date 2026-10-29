@@ -16,8 +16,17 @@ struct TaskLauncher: View {
     var embedded = false
     var onStarted: () -> Void = {}
 
-    @State private var prompt = ""
-    @State private var attachments: [PromptAttachment] = []
+    /// New Chat's unsent prompt and attachments, kept while you look
+    /// elsewhere (ABS-182); the New screen and the sheet share them.
+    private var draft: ComposerDrafts.Draft { model.composerDrafts.draft(ComposerDrafts.newChat) }
+    private var prompt: String {
+        get { draft.text }
+        nonmutating set { draft.text = newValue }
+    }
+    private var attachments: [PromptAttachment] {
+        get { draft.attachments }
+        nonmutating set { draft.attachments = newValue }
+    }
     /// The paired Mac the chat runs on; nil is this one. Its project,
     /// worktree and files stay on that Mac; you work from here.
     @State private var device: String?
@@ -42,9 +51,16 @@ struct TaskLauncher: View {
     @State private var deviceNotice: String?
     @FocusState private var focused: Bool
 
+    private var promptBinding: Binding<String> {
+        Binding(get: { prompt }, set: { prompt = $0 })
+    }
+    private var attachmentsBinding: Binding<[PromptAttachment]> {
+        Binding(get: { attachments }, set: { attachments = $0 })
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            GrowingTextEditor(text: $prompt, placeholder: "Describe the task. Be as specific as you would with a colleague.",
+            GrowingTextEditor(text: promptBinding, placeholder: "Describe the task. Be as specific as you would with a colleague.",
                               font: BTFont.ui(14), lineSpacing: 3, lines: 3...14, focused: $focused)
                 .padding(.horizontal, embedded ? Field.inset : Space.lg)
                 .padding(.top, embedded ? Field.inset : 14)
@@ -55,7 +71,7 @@ struct TaskLauncher: View {
                 .returnBreaksLine(commandReturn: start)
 
             if !attachments.isEmpty {
-                AttachmentTray(attachments: $attachments)
+                AttachmentTray(attachments: attachmentsBinding)
                     .padding(.horizontal, embedded ? 0 : Space.lg)
                     .padding(.bottom, Space.md)
             }
@@ -64,7 +80,7 @@ struct TaskLauncher: View {
                 // The choices wrap onto another line rather than push the sheet
                 // wider; space alone separates them.
                 FlowRow(spacing: Space.xs, lineSpacing: 4) {
-                    AttachUploadButton(attachments: $attachments)
+                    AttachUploadButton(attachments: attachmentsBinding)
                     if !onlineDevices.isEmpty { DeviceMenu(device: deviceBinding, devices: onlineDevices) }
                     CompactMenu(title: standalone ? "No project" : model.project(projectId)?.name ?? "Project") {
                         Picker("Project", selection: projectBinding) {
@@ -145,7 +161,7 @@ struct TaskLauncher: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                AttachmentButtons(repoRoot: model.project(projectId)?.rootPath, projectId: projectId, attachments: $attachments)
+                AttachmentButtons(repoRoot: model.project(projectId)?.rootPath, projectId: projectId, attachments: attachmentsBinding)
                 Button(action: start) {
                     HStack(spacing: 6) {
                         if starting { ProgressView().controlSize(.small).tint(Color.btOnAccent) }
@@ -189,9 +205,12 @@ struct TaskLauncher: View {
             }
         }
         .modifier(OptionalFieldChrome(active: !embedded, focused: focused))
-        .attachmentInput($attachments, focused: focused)
+        .attachmentInput(attachmentsBinding, focused: focused)
         .onAppear {
-            if prompt.isEmpty, let initialPrompt { prompt = initialPrompt }
+            // Ahead of anything already typed, once.
+            if let initialPrompt, !prompt.hasPrefix(initialPrompt) {
+                prompt = prompt.isEmpty ? initialPrompt : initialPrompt + "\n\n" + prompt
+            }
             let firstRemoteProject = onlineDevices.compactMap { device in
                 model.remote.links[device.id]?.snapshot?.projects.first { $0.archivedAt == nil }?.id
             }.first

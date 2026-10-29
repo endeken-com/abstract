@@ -761,7 +761,7 @@ struct Snapshotter {
                                      url: "https://github.com/acme/app/issues/42", body: "Archived chats show Running after a restart.")
         try? model.sendFollowUp(sessionId, text: "This is the bug from the issue; the screenshot shows it.",
                                 attachments: [issue] + (screenshot.map { [$0] } ?? []))
-        model.draftAttachments[sessionId] = [
+        model.composerDrafts.draft(sessionId).attachments = [
             PromptAttachment(kind: .trackerIssue, title: "Status dot for archived chats", reference: "ENG-318",
                              url: "https://linear.app/acme/issue/ENG-318", details: ["State: In Progress"],
                              tracker: PromptAttachment.linearTrackerId, trackerName: "Linear"),
@@ -775,7 +775,7 @@ struct Snapshotter {
             _ = try? model.plugins.install(from: folder, sourceKind: .bundled, enable: true)
         }
         await shot("graphite-03c-attachments", settle: 2.5)
-        model.draftAttachments[sessionId] = nil
+        model.composerDrafts.draft(sessionId).attachments = []
     }
 
     /// The first call of a kind in a transcript, and the row it's on.

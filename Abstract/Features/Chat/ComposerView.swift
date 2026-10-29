@@ -10,7 +10,6 @@ struct ComposerView: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let session: Session
-    @State private var draft = ""
     @State private var previewingMarkdown = false
     @State private var markdownHeight: CGFloat = 20
     @State private var sending = false
@@ -43,9 +42,19 @@ struct ComposerView: View {
         !readOnly && !settingUp && !sending && (!remote || model.remote.unreachableMessage(session.id) == nil)
             && (hasDraft || (!queueing && !queue.isEmpty))
     }
+    /// This chat's unsent text and attachments live above the screens, so
+    /// they wait here while you look elsewhere (ABS-182).
+    private var stored: ComposerDrafts.Draft { model.composerDrafts.draft(session.id) }
+    private var draft: String {
+        get { stored.text }
+        nonmutating set { stored.text = newValue }
+    }
+    private var draftBinding: Binding<String> {
+        Binding(get: { draft }, set: { draft = $0 })
+    }
     private var attachments: [PromptAttachment] {
-        get { model.draftAttachments[session.id] ?? [] }
-        nonmutating set { model.draftAttachments[session.id] = newValue.isEmpty ? nil : newValue }
+        get { stored.attachments }
+        nonmutating set { stored.attachments = newValue }
     }
     private var attachmentsBinding: Binding<[PromptAttachment]> {
         Binding(get: { attachments }, set: { attachments = $0 })
@@ -122,7 +131,7 @@ struct ComposerView: View {
                         .frame(height: min(max(markdownHeight, 60), 180))
                         .padding(.top, 10)
                     } else {
-                        GrowingTextEditor(text: $draft, placeholder: placeholder, font: BTFont.chat(13.5), lines: 2...10, focused: $focused)
+                        GrowingTextEditor(text: draftBinding, placeholder: placeholder, font: BTFont.chat(13.5), lines: 2...10, focused: $focused)
                             .disabled(readOnly || settingUp || sending)
                             .onKeyPress(.tab) {
                                 guard draft.isEmpty, let suggestion else { return .ignored }
