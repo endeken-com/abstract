@@ -8,21 +8,23 @@ struct BTButtonStyle: ButtonStyle {
 
     var kind: Kind = .secondary
     var size: Size = .regular
+    var cornerRadius: CGFloat? = nil
 
     func makeBody(configuration: Configuration) -> some View {
-        StyledButton(configuration: configuration, kind: kind, size: size)
+        StyledButton(configuration: configuration, kind: kind, size: size, cornerRadius: cornerRadius)
     }
 
     private struct StyledButton: View {
         let configuration: ButtonStyleConfiguration
         let kind: Kind
         let size: Size
+        let cornerRadius: CGFloat?
         @Environment(\.isEnabled) private var isEnabled
         @Environment(\.accessibilityReduceMotion) private var reduceMotion
         @State private var hovering = false
 
         var body: some View {
-            let shape = RoundedRectangle(cornerRadius: size == .small ? 7 : 9, style: .continuous)
+            let shape = RoundedRectangle(cornerRadius: cornerRadius ?? (size == .small ? 7 : 9), style: .continuous)
             configuration.label
                 .font(size == .small ? .btCallout.weight(.medium) : .btBodyMedium)
                 .lineLimit(1)
@@ -77,8 +79,9 @@ extension ButtonStyle where Self == BTButtonStyle {
     static var btSecondary: BTButtonStyle { BTButtonStyle(kind: .secondary) }
     static var btGhost: BTButtonStyle { BTButtonStyle(kind: .ghost) }
     static var btDanger: BTButtonStyle { BTButtonStyle(kind: .danger) }
-    static func bt(_ kind: BTButtonStyle.Kind, size: BTButtonStyle.Size = .regular) -> BTButtonStyle {
-        BTButtonStyle(kind: kind, size: size)
+    static func bt(_ kind: BTButtonStyle.Kind, size: BTButtonStyle.Size = .regular,
+                   cornerRadius: CGFloat? = nil) -> BTButtonStyle {
+        BTButtonStyle(kind: kind, size: size, cornerRadius: cornerRadius)
     }
 }
 

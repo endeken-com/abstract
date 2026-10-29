@@ -177,7 +177,7 @@ struct PullRequestStateBadge: View {
         .foregroundStyle(pr.stateTint)
         .padding(.horizontal, 7)
         .frame(height: 22)
-        .background(pr.stateTint.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
+        .background(pr.stateTint.opacity(0.1), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         .fixedSize()
         .accessibilityElement(children: .combine)
     }
