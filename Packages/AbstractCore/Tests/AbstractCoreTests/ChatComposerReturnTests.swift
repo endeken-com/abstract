@@ -46,6 +46,12 @@ final class ChatComposerReturnTests: XCTestCase {
         XCTAssertEqual(ChatComposerDraftEdit.insertingNewline(into: "text", selectedRange: nil).text, "text\n")
     }
 
+    func testShiftReturnBreaksAnEmptyNewChatPrompt() {
+        let edit = ChatComposerDraftEdit.insertingNewline(into: "", selectedRange: NSRange(location: 0, length: 0))
+        XCTAssertEqual(edit.text, "\n")
+        XCTAssertEqual(edit.selection, NSRange(location: 1, length: 0))
+    }
+
     private func action(isComposing: Bool = false, slashMenuOpen: Bool = false,
                         shift: Bool = false, command: Bool = false, option: Bool = false,
                         control: Bool = false, repeated: Bool = false) -> ChatComposerReturnAction {

@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import AbstractCore
 
 /// Every text input in Abstract looks the same: one steady fill that never
 /// changes, one corner radius, and a border that is the only thing that
@@ -57,6 +58,39 @@ extension View {
             // An input method uses Return to commit the text it is composing.
             guard let editor = NSApp.keyWindow?.firstResponder as? NSTextView, !editor.hasMarkedText() else { return .ignored }
             editor.insertNewlineIgnoringFieldEditor(nil)
+            return .handled
+        }
+    }
+
+    /// For a chat prompt, new or in a chat: Return sends, Shift-Return breaks
+    /// the line at the caret, and an input method keeps Return while it composes.
+    /// `slashItem` gives the highlighted `/` menu row's action, nil while it's closed.
+    func returnSends(text: Binding<String>, slashItem: @escaping () -> (() -> Void)? = { nil },
+                     send: @escaping () -> Void) -> some View {
+        onKeyPress(.return, phases: [.down, .repeat]) { press in
+            let editor = NSApp.keyWindow?.firstResponder as? NSTextView
+            let item = slashItem()
+            switch ChatComposerReturnAction.resolve(
+                isComposing: editor?.hasMarkedText() == true, slashMenuOpen: item != nil,
+                shift: press.modifiers.contains(.shift), command: press.modifiers.contains(.command),
+                option: press.modifiers.contains(.option), control: press.modifiers.contains(.control),
+                repeated: press.phase == .repeat
+            ) {
+            case .system:
+                return .ignored
+            case .consume:
+                return .handled
+            case .newline:
+                let edit = ChatComposerDraftEdit.insertingNewline(into: text.wrappedValue, selectedRange: editor?.selectedRange())
+                text.wrappedValue = edit.text
+                if let editor {
+                    DispatchQueue.main.async { [weak editor] in editor?.setSelectedRange(edit.selection) }
+                }
+            case .selectSlashItem:
+                item?()
+            case .send:
+                send()
+            }
             return .handled
         }
     }

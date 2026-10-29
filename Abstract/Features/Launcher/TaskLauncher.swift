@@ -52,7 +52,7 @@ struct TaskLauncher: View {
                 // In the sheet the prompt is the field; on the New screen the whole box is.
                 .modifier(OptionalFieldChrome(active: embedded, focused: focused))
                 .padding(.bottom, embedded ? Space.md : 0)
-                .returnBreaksLine(commandReturn: start)
+                .returnSends(text: $prompt, send: start)
 
             if !attachments.isEmpty {
                 AttachmentTray(attachments: $attachments)
@@ -150,7 +150,7 @@ struct TaskLauncher: View {
                     HStack(spacing: 6) {
                         if starting { ProgressView().controlSize(.small).tint(Color.btOnAccent) }
                         Text(starting ? "Starting" : "Start")
-                        if !starting { Text("⌘↩").font(.btCallout).opacity(0.7) }
+                        if !starting { Text("↩").font(.btCallout).opacity(0.7) }
                     }
                 }
                 .buttonStyle(.btPrimary)
