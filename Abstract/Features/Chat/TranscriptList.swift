@@ -361,8 +361,8 @@ final class TranscriptController: NSObject {
     }
 
     private var rowWidth: CGFloat {
-        let available = scrollView.contentSize.width - 2 * Self.sides
-        return max(200, min(Space.readingWidth, available)).rounded()
+        CGFloat(ChatColumnLayout.width(viewport: Double(scrollView.contentSize.width),
+                                       sideInset: Double(Self.sides), maximum: Double(Space.readingWidth))).rounded()
     }
 
     /// Places every row, shows the ones near view, and keeps the scroll where

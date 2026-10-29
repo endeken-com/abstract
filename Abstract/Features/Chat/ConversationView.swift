@@ -470,7 +470,7 @@ private struct UserBubble: View {
         let bubbleShape = UnevenRoundedRectangle(topLeadingRadius: 16, bottomLeadingRadius: 16,
                                                  bottomTrailingRadius: 16, topTrailingRadius: 4, style: .continuous)
         return HStack {
-            Spacer(minLength: 80)
+            Spacer(minLength: 0)
             VStack(alignment: .leading, spacing: prose.lineSpacing - 1) {
                 if shownText.count <= 24_000 {
                     let links = model.linkPills(in: shownText)
@@ -492,6 +492,7 @@ private struct UserBubble: View {
                     .foregroundStyle(Color.btTextTertiary)
                 }
             }
+            .frame(maxWidth: 560, alignment: .leading)
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
             // Paseo's bubble: round, but for the corner nearest the edge it's said from.

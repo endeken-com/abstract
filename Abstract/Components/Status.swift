@@ -44,6 +44,7 @@ enum ActivityInk {
 /// moves overlapping pastel color fields without rebuilding a chat row on every frame.
 struct ActivityStatusText: View {
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let text: String
     let font: Font
@@ -51,7 +52,7 @@ struct ActivityStatusText: View {
     var fallback: Color = .btTextSecondary
 
     var body: some View {
-        if active {
+        if active, contrast != .increased {
             Text(text)
                 .font(font)
                 .foregroundStyle(.clear)
@@ -61,7 +62,7 @@ struct ActivityStatusText: View {
                         .accessibilityHidden(true)
                 }
         } else {
-            Text(text).font(font).foregroundStyle(fallback)
+            Text(text).font(font).foregroundStyle(contrast == .increased ? Color.btText : fallback)
         }
     }
 }
