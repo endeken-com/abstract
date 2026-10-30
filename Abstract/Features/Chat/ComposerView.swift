@@ -138,7 +138,7 @@ struct ComposerView: View {
                                 draft = suggestion
                                 return .handled
                             }
-                            .returnSends(text: $draft, slashItem: {
+                            .returnSends(text: draftBinding, slashItem: {
                                 let items = slashItems
                                 return items.isEmpty ? nil : items[min(slashSelected, items.count - 1)].run
                             }, send: send)
