@@ -129,7 +129,10 @@ struct ComposerView: View {
                                 draft = suggestion
                                 return .handled
                             }
-                            .onKeyPress(.return, phases: [.down, .repeat], action: returnKey)
+                            .returnSends(text: $draft, slashItem: {
+                                let items = slashItems
+                                return items.isEmpty ? nil : items[min(slashSelected, items.count - 1)].run
+                            }, send: send)
                             // Last, so it sees these keys before the Tab handler above.
                             // Repeats too: holding ↓ keeps moving down the menu, not the caret.
                             .onKeyPress(keys: [.upArrow, .downArrow, .tab, .escape], phases: [.down, .repeat], action: slashKey)
@@ -450,33 +453,6 @@ struct ComposerView: View {
         case .escape:
             if slashChoosing != nil { slashChoosing = nil; slashSelected = 0 } else { slashDismissed = draft }
         default: return .ignored
-        }
-        return .handled
-    }
-
-    private func returnKey(_ press: KeyPress) -> KeyPress.Result {
-        let editor = NSApp.keyWindow?.firstResponder as? NSTextView
-        let items = slashItems
-        switch ChatComposerReturnAction.resolve(
-            isComposing: editor?.hasMarkedText() == true, slashMenuOpen: !items.isEmpty,
-            shift: press.modifiers.contains(.shift), command: press.modifiers.contains(.command),
-            option: press.modifiers.contains(.option), control: press.modifiers.contains(.control),
-            repeated: press.phase == .repeat
-        ) {
-        case .system:
-            return .ignored
-        case .consume:
-            return .handled
-        case .newline:
-            let edit = ChatComposerDraftEdit.insertingNewline(into: draft, selectedRange: editor?.selectedRange())
-            draft = edit.text
-            if let editor {
-                DispatchQueue.main.async { [weak editor] in editor?.setSelectedRange(edit.selection) }
-            }
-        case .selectSlashItem:
-            items[min(slashSelected, items.count - 1)].run()
-        case .send:
-            send()
         }
         return .handled
     }
