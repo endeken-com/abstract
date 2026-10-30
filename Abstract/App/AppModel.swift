@@ -153,8 +153,9 @@ final class AppModel {
     /// Chats whose agent restarts before its next message: the agent, model
     /// or effort changed while it was running.
     var needsRelaunch: Set<String> = []
-    /// Attachments waiting in each chat's composer, kept while you look at other tabs.
-    var draftAttachments: [String: [PromptAttachment]] = [:]
+    /// What's typed and attached in each chat's composer, and New Chat's,
+    /// kept while you look elsewhere and across launches (ABS-182).
+    let composerDrafts: ComposerDrafts
     /// Chats being restarted on purpose; their exit is not an error.
     private(set) var relaunching: Set<String> = []
     /// Chats passing to another agent: the outgoing one's summary turn is
@@ -376,6 +377,7 @@ final class AppModel {
         remote = RemoteService(dataDirectory: engine.logsURL.deletingLastPathComponent())
         AttachmentStore.root = engine.logsURL.deletingLastPathComponent().appendingPathComponent("attachments")
         AttachmentStore.prune()
+        composerDrafts = ComposerDrafts(file: engine.logsURL.deletingLastPathComponent().appendingPathComponent("composer-drafts.json"))
         worktreeTemplate = store.setting("worktreeTemplate", as: String.self) ?? WorktreeNaming.defaultTemplate
         branchPrefix = store.setting("branchPrefix", as: String.self) ?? WorktreeNaming.defaultBranchPrefix
         providerOverrides = store.setting("providerOverrides", as: [String: ProviderOverride].self) ?? [:]
@@ -1761,6 +1763,7 @@ final class AppModel {
         feeds[sessionId] = nil
         permissions[sessionId] = nil
         streams[sessionId] = nil
+        composerDrafts.remove(sessionId)
         enrichers = enrichers.filter { !$0.key.hasPrefix(sessionId + "/") }
         if case .session(let id) = destination, id == sessionId { destination = .home }
         reload()

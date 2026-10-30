@@ -34,7 +34,7 @@ enum IssueTrackerProbe {
         guard let sessionId = model.selectedSessionId, let projectId = model.session(sessionId)?.projectId else {
             log("tracker probe: no chat in a project"); return
         }
-        model.draftAttachments[sessionId] = [
+        model.composerDrafts.draft(sessionId).attachments = [
             PromptAttachment(kind: .trackerIssue, title: "Status dot for archived chats", reference: "ENG-318",
                              url: "https://linear.app/acme/issue/ENG-318", tracker: linear, trackerName: "Linear"),
             PromptAttachment(kind: .trackerIssue, title: "Checkout retries twice", reference: "PROJ-42",
@@ -67,8 +67,8 @@ enum IssueTrackerProbe {
         log("tracker probe: jira-on sections=\(model.plugins.contributions(.projectSettings).map(\.pluginId))")
 
         // Both chips go with a message, and keep their marks in it.
-        let attachments = model.draftAttachments[sessionId] ?? []
-        model.draftAttachments[sessionId] = nil
+        let attachments = model.composerDrafts.draft(sessionId).attachments
+        model.composerDrafts.draft(sessionId).attachments = []
         try? model.sendFollowUp(sessionId, text: "Both issues are about the same retry path.", attachments: attachments)
         try? await Task.sleep(for: .seconds(2))
         shot("-sent")
