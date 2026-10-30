@@ -633,7 +633,7 @@ private struct CodeBlockChrome: View {
 }
 
 /// The agent's thinking, shown in the Thinking and Verbose transcripts:
-/// quieter than a reply, with a luminous cue while it streams.
+/// quieter than a reply, with the working mark while it streams.
 private struct ThinkingView: View {
     @Environment(\.proseStyle) private var prose
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -644,41 +644,40 @@ private struct ThinkingView: View {
     @State private var tick = 0.0
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            ActivityDiamonds(active: streaming)
-                .frame(width: 36, height: 36)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 9) {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 6) {
+                WorkingMarkSlot(active: streaming)
                 if streaming {
                     ActivityStatusText(text: "Thinking…", font: .btChatCallout)
                 } else {
                     Text("Thought").font(.btChatCallout).foregroundStyle(Color.btTextSecondary)
                 }
-                Group {
-                    if streaming, !reduceMotion {
-                        Revealing(text: text.trimmingCharacters(in: .whitespacesAndNewlines), streaming: true) { shown, _ in
-                            Text(marked(shown))
-                                .font(prose.font(size: prose.points - 1))
-                                .foregroundStyle(Color.btTextSecondary)
-                                .lineSpacing(prose.lineSpacing - 1)
-                                .textSelection(.enabled)
-                                .textRenderer(StreamFadeRenderer(fade: fade, tick: tick))
-                                .onChange(of: shown) {
-                                    fade.record(length: shown.utf16.count)
-                                    withAnimation(.linear(duration: StreamFade.duration)) { tick += 1 }
-                                }
-                        }
-                    } else {
-                        SelectableText(marked(text.trimmingCharacters(in: .whitespacesAndNewlines)))
+            }
+            Group {
+                if streaming, !reduceMotion {
+                    Revealing(text: text.trimmingCharacters(in: .whitespacesAndNewlines), streaming: true) { shown, _ in
+                        Text(marked(shown))
                             .font(prose.font(size: prose.points - 1))
                             .foregroundStyle(Color.btTextSecondary)
                             .lineSpacing(prose.lineSpacing - 1)
+                            .textSelection(.enabled)
+                            .textRenderer(StreamFadeRenderer(fade: fade, tick: tick))
+                            .onChange(of: shown) {
+                                fade.record(length: shown.utf16.count)
+                                withAnimation(.linear(duration: StreamFade.duration)) { tick += 1 }
+                            }
                     }
+                } else {
+                    SelectableText(marked(text.trimmingCharacters(in: .whitespacesAndNewlines)))
+                        .font(prose.font(size: prose.points - 1))
+                        .foregroundStyle(Color.btTextSecondary)
+                        .lineSpacing(prose.lineSpacing - 1)
                 }
-                .padding(.leading, 12)
-                .overlay(alignment: .leading) {
-                    Rectangle().fill(Color.btBorderStrong.opacity(0.55)).frame(width: 1)
-                }
+            }
+            // The rule falls from the mark; the words line up with its label.
+            .padding(.leading, 22)
+            .overlay(alignment: .leading) {
+                Rectangle().fill(Color.btBorderStrong.opacity(0.55)).frame(width: 1).padding(.leading, 7.5)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -833,10 +832,8 @@ private struct WorkingIndicator: View {
         } else if case .text(_, _, _, true)? = last { EmptyView() } else if case .toolUse? = last { EmptyView() }
         else if case .thinking? = last, transcript.showsThinking { EmptyView() } else {
             SwiftUI.TimelineView(.periodic(from: .now, by: 1)) { context in
-                HStack(spacing: Space.sm) {
-                    ActivityDiamonds(active: true)
-                        .frame(width: 36, height: 36)
-                        .accessibilityHidden(true)
+                HStack(spacing: 6) {
+                    WorkingMarkSlot()
                     ActivityStatusText(text: label, font: .btChatCallout.weight(.regular))
                     // The log knows when the turn started, after a relaunch too.
                     if let start = feed.turnStartedAt ?? model.turnStartedAt[session.id] {
@@ -851,10 +848,8 @@ private struct WorkingIndicator: View {
     /// No output for a while, in amber; stalled adds what you can do about it.
     private func stallLine(_ stall: StallState) -> some View {
         SwiftUI.TimelineView(.periodic(from: .now, by: 1)) { context in
-            HStack(spacing: Space.sm) {
-                ActivityDiamonds(active: true)
-                    .frame(width: 36, height: 36)
-                    .accessibilityHidden(true)
+            HStack(spacing: 6) {
+                WorkingMarkSlot(active: !stall.isStalled)
                 ActivityStatusText(text: stallText(stall, at: context.date), font: .btChatCallout.weight(.regular),
                                    active: !stall.isStalled, fallback: .btWarning)
                 if stall.isStalled {
@@ -883,120 +878,14 @@ private struct WorkingIndicator: View {
     }
 }
 
-/// Two overlapping diamonds: one glassy and crisp, one breathing through a
-/// soft blur. Motion stops when Reduce Motion is enabled.
-private struct ActivityDiamonds: View {
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    let active: Bool
+/// The working mark in the 16-point slot a tool row's icon takes, so the
+/// words after it line up with the tool rows'.
+private struct WorkingMarkSlot: View {
+    var active = true
 
     var body: some View {
-        let light = colorScheme == .dark ? Color.white : Color.btText
-        let violet = colorScheme == .dark ? Color(red: 0.81, green: 0.78, blue: 0.89)
-                                          : Color(red: 0.34, green: 0.31, blue: 0.41)
-        ZStack {
-            BlurredActivityDiamond(color: violet, animated: active && !reduceMotion)
-                .frame(width: 29, height: 29)
-                .offset(x: -4, y: -2)
-            ActivityDiamond()
-                .fill(RadialGradient(colors: [light.opacity(0.63), light.opacity(0.22), .clear],
-                                     center: .init(x: 0.35, y: 0.30), startRadius: 1, endRadius: 17))
-                .overlay(ActivityDiamond().stroke(light.opacity(0.48), lineWidth: 0.8))
-                .frame(width: 27, height: 27)
-                .offset(x: 4, y: 2)
-                .shadow(color: light.opacity(0.16), radius: 4)
-        }
-        .frame(width: 36, height: 36)
-    }
-}
-
-private struct BlurredActivityDiamond: NSViewRepresentable {
-    let color: Color
-    let animated: Bool
-
-    func makeNSView(context: Context) -> BlurredDiamondView { BlurredDiamondView() }
-
-    func updateNSView(_ view: BlurredDiamondView, context: Context) {
-        view.color = NSColor(color)
-        view.animated = animated
-    }
-}
-
-private final class BlurredDiamondView: NSView {
-    private let diamond = CAShapeLayer()
-    var color: NSColor = .white { didSet { applyColor() } }
-    var animated = false { didSet { updateAnimation() } }
-
-    init() {
-        super.init(frame: .zero)
-        wantsLayer = true
-        layer?.addSublayer(diamond)
-        diamond.lineWidth = 0.8
-        diamond.shadowOffset = .zero
-        diamond.shadowRadius = 4
-        diamond.shadowOpacity = 0.5
-    }
-
-    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
-
-    override func layout() {
-        super.layout()
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        let path = ActivityDiamond().path(in: bounds).cgPath
-        diamond.frame = bounds
-        diamond.path = path
-        diamond.shadowPath = path
-        CATransaction.commit()
-    }
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        updateAnimation()
-    }
-
-    override func viewDidChangeEffectiveAppearance() {
-        super.viewDidChangeEffectiveAppearance()
-        applyColor()
-    }
-
-    private func applyColor() {
-        effectiveAppearance.performAsCurrentDrawingAppearance {
-            diamond.fillColor = color.withAlphaComponent(0.20).cgColor
-            diamond.strokeColor = color.withAlphaComponent(0.46).cgColor
-            diamond.shadowColor = color.cgColor
-        }
-    }
-
-    private func updateAnimation() {
-        guard animated, window != nil else {
-            diamond.removeAnimation(forKey: "glow")
-            return
-        }
-        guard diamond.animation(forKey: "glow") == nil else { return }
-        let radius = CABasicAnimation(keyPath: "shadowRadius")
-        radius.fromValue = 3
-        radius.toValue = 7
-        let opacity = CABasicAnimation(keyPath: "shadowOpacity")
-        opacity.fromValue = 0.3
-        opacity.toValue = 0.68
-        let glow = CAAnimationGroup()
-        glow.animations = [radius, opacity]
-        glow.duration = 1.8
-        glow.autoreverses = true
-        glow.repeatCount = .infinity
-        glow.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        diamond.add(glow, forKey: "glow")
-    }
-}
-
-private struct ActivityDiamond: Shape {
-    func path(in rect: CGRect) -> Path {
-        let side = min(rect.width, rect.height) / 2.squareRoot()
-        let square = CGRect(x: rect.midX - side / 2, y: rect.midY - side / 2, width: side, height: side)
-        let turn = CGAffineTransform(translationX: rect.midX, y: rect.midY)
-            .rotated(by: .pi / 4)
-            .translatedBy(x: -rect.midX, y: -rect.midY)
-        return Path(roundedRect: square, cornerRadius: side * 0.26, style: .continuous).applying(turn)
+        WorkingMark(color: active ? .btAccent : .btTextTertiary, active: active)
+            .frame(width: 10, height: 10)
+            .frame(width: 16, height: 16)
     }
 }

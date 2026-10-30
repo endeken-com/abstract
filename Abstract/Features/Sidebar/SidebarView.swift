@@ -906,9 +906,8 @@ private final class HoverCardCoordinator: NSObject {
     }
 }
 
-/// A chat's status as a small ring. At rest it is a quiet hollow circle;
-/// working turns it into a slowly turning arc; only "needs you" and errors
-/// fill in with colour.
+/// A chat's status as a small hexagon. At rest it is a quiet outline;
+/// working shows the working mark; only "needs you" and errors fill in.
 private struct RailStatus: View {
     let status: SessionStatus
     /// Working, but no output for so long the chat is marked Stalled.
@@ -928,8 +927,7 @@ private struct RailStatus: View {
     @ViewBuilder private var statusMark: some View {
             switch status {
             case .running, .provisioning:
-                // A short stroke runs round the outline, the way the ring's arc spun.
-                AnimatedHexagon(motion: .travel, color: .btAccent, track: Color.btTextTertiary.opacity(0.35))
+                WorkingMark()
             case .waitingInput:
                 RoundedHexagon().fill(Color.btAttention)
             case .errored:
@@ -943,7 +941,7 @@ private struct RailStatus: View {
 }
 
 /// What leads a chat's row: its project's icon (its agent's logo when it
-/// has no project), with a small badge for its state: turning while it
+/// has no project), with a small badge for its state: stepping while it
 /// works, filled when it needs you, red when it failed. At rest, just the icon.
 private struct RailChatMark: View {
     let chat: SidebarChats.Chat

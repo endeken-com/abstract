@@ -52,13 +52,10 @@ struct RoundedHexagon: Shape {
         path.closeSubpath()
         return path
     }
-
-    /// Outline length for a frame of `size`, for dashes that travel around it.
-    static func perimeter(_ size: CGFloat) -> CGFloat { 3 * size * 0.94 }
 }
 
-/// Status as a small solid hexagon. A working agent's mark breathes gently;
-/// nothing glows or radiates. Always shown next to a word, never on its own.
+/// Status as a small solid hexagon; a working agent shows the working mark
+/// instead. Always shown next to a word, never on its own.
 struct StatusDot: View {
     let status: SessionStatus
     var size: CGFloat = 8
@@ -66,7 +63,7 @@ struct StatusDot: View {
     var body: some View {
         Group {
             if status == .running {
-                AnimatedHexagon(motion: .breathe, color: status.tint)
+                WorkingMark(color: status.tint)
             } else {
                 RoundedHexagon().fill(status.tint)
             }
@@ -76,110 +73,116 @@ struct StatusDot: View {
     }
 }
 
-/// A rounded hexagon whose loop runs in Core Animation. A SwiftUI
-/// `repeatForever` re-runs the window's view graph every frame, for as long
-/// as an agent works, and that starves scrolling and streaming; a layer
-/// animation costs the main thread nothing.
-struct AnimatedHexagon: NSViewRepresentable {
-    enum Motion { case breathe, travel }
-    let motion: Motion
-    let color: Color
-    /// The outline under a travelling stroke.
-    var track: Color = .clear
-    var lineWidth: CGFloat = 1.4
+/// The one working mark: three small solid hexagons, a fragment of
+/// honeycomb, lit one after another round the cluster. No blur, no glow;
+/// with Reduce Motion, or once the work is done, all three hold still.
+/// Every mark on screen shares the same clock, so they step together.
+struct WorkingMark: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    var color: Color = .btAccent
+    var active = true
 
-    func makeNSView(context: Context) -> HexagonLayerView { HexagonLayerView(motion: motion) }
-
-    func updateNSView(_ view: HexagonLayerView, context: Context) {
-        view.colors = (NSColor(color), NSColor(track))
-        view.lineWidth = lineWidth
+    var body: some View {
+        WorkingMarkLayers(color: color, animated: active && !reduceMotion)
+            .accessibilityHidden(true)
     }
 }
 
-final class HexagonLayerView: NSView {
-    private let motion: AnimatedHexagon.Motion
-    private let trackLayer = CAShapeLayer()
-    private let markLayer = CAShapeLayer()
-    var colors: (mark: NSColor, track: NSColor) = (.clear, .clear) { didSet { applyColors() } }
-    var lineWidth: CGFloat = 1.4 { didSet { needsLayout = true } }
+/// The loop runs in Core Animation. A SwiftUI `repeatForever` re-runs the
+/// window's view graph every frame, for as long as an agent works, and that
+/// starves scrolling and streaming; a layer animation costs the main thread nothing.
+private struct WorkingMarkLayers: NSViewRepresentable {
+    let color: Color
+    let animated: Bool
 
-    init(motion: AnimatedHexagon.Motion) {
-        self.motion = motion
+    func makeNSView(context: Context) -> WorkingMarkView { WorkingMarkView() }
+
+    func updateNSView(_ view: WorkingMarkView, context: Context) {
+        view.color = NSColor(color)
+        view.animated = animated
+    }
+}
+
+final class WorkingMarkView: NSView {
+    private static let period: CFTimeInterval = 1.2
+    /// Left, upper right, lower right: the order they light in.
+    private let cells = (0..<3).map { _ in CAShapeLayer() }
+    var color: NSColor = .clear { didSet { applyColor() } }
+    var animated = false { didSet { if animated != oldValue { updateAnimation() } } }
+
+    init() {
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.addSublayer(trackLayer)
-        layer?.addSublayer(markLayer)
+        cells.forEach { layer?.addSublayer($0) }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
     override func layout() {
         super.layout()
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        let path = RoundedHexagon().path(in: bounds).cgPath
-        for shape in [trackLayer, markLayer] {
-            shape.frame = bounds
-            shape.path = path
+        for (cell, rect) in zip(cells, Self.cells(in: bounds)) {
+            cell.frame = bounds
+            cell.path = RoundedHexagon().path(in: rect).cgPath
         }
-        switch motion {
-        case .breathe:
-            trackLayer.isHidden = true
-            markLayer.strokeColor = nil
-        case .travel:
-            let perimeter = RoundedHexagon.perimeter(min(bounds.width, bounds.height))
-            for shape in [trackLayer, markLayer] {
-                shape.fillColor = nil
-                shape.lineWidth = lineWidth
-            }
-            markLayer.lineCap = .round
-            markLayer.lineDashPattern = [perimeter * 0.3, perimeter * 0.7].map { NSNumber(value: Double($0)) }
-        }
-        applyColors()
         CATransaction.commit()
-        animate()
+        updateAnimation()
     }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        if window != nil { animate() }
+        updateAnimation()
     }
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
-        applyColors()
+        applyColor()
     }
 
-    private func applyColors() {
+    /// Three flat-topped hexagons round a shared corner, a hairline apart,
+    /// centred in `rect`. Each comes back as the square its hexagon fills.
+    static func cells(in rect: CGRect) -> [CGRect] {
+        // Radius r, gap g: the cluster is 3.5r + 0.87g wide and 3.46r + g tall.
+        let gapRatio: CGFloat = 0.22
+        let radius = min(rect.width / (3.5 + 0.866 * gapRatio), rect.height / (3.464 + gapRatio))
+        let reach = radius * (1 + gapRatio / 3.squareRoot())
+        let corner = CGPoint(x: rect.midX + reach / 4, y: rect.midY)
+        return [CGPoint(x: -reach, y: 0),
+                CGPoint(x: reach / 2, y: reach * 0.866),
+                CGPoint(x: reach / 2, y: -reach * 0.866)].map {
+            CGRect(x: corner.x + $0.x - radius, y: corner.y + $0.y - radius, width: radius * 2, height: radius * 2)
+        }
+    }
+
+    private func applyColor() {
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            switch motion {
-            case .breathe:
-                markLayer.fillColor = colors.mark.cgColor
-            case .travel:
-                trackLayer.strokeColor = colors.track.cgColor
-                markLayer.strokeColor = colors.mark.cgColor
-            }
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            cells.forEach { $0.fillColor = color.cgColor }
+            CATransaction.commit()
         }
     }
 
-    private func animate() {
-        guard bounds.width > 0, markLayer.animation(forKey: "loop") == nil else { return }
-        let loop: CABasicAnimation
-        switch motion {
-        case .breathe:
-            loop = CABasicAnimation(keyPath: "opacity")
-            loop.fromValue = 1
-            loop.toValue = 0.35
-            loop.autoreverses = true
-            loop.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        case .travel:
-            loop = CABasicAnimation(keyPath: "lineDashPhase")
-            loop.fromValue = 0
-            loop.toValue = -RoundedHexagon.perimeter(min(bounds.width, bounds.height))
+    private func updateAnimation() {
+        guard animated, window != nil, bounds.width > 0 else {
+            if !animated { cells.forEach { $0.removeAnimation(forKey: "step") } }
+            return
         }
-        loop.duration = 1.1
-        loop.repeatCount = .infinity
-        markLayer.add(loop, forKey: "loop")
+        // Phase from the media clock, so every mark lights the same cell at once.
+        let now = CACurrentMediaTime().truncatingRemainder(dividingBy: Self.period)
+        for (index, cell) in cells.enumerated() where cell.animation(forKey: "step") == nil {
+            let step = CAKeyframeAnimation(keyPath: "opacity")
+            step.values = [0.25, 1, 0.25, 0.25]
+            step.keyTimes = [0, 0.2, 0.55, 1]
+            step.timingFunctions = (0..<3).map { _ in CAMediaTimingFunction(name: .easeInEaseOut) }
+            step.duration = Self.period
+            step.repeatCount = .infinity
+            step.timeOffset = now + Self.period * Double(3 - index) / 3
+            cell.add(step, forKey: "step")
+        }
     }
 }
 
