@@ -68,7 +68,7 @@ struct TaskLauncher: View {
                 // In the sheet the prompt is the field; on the New screen the whole box is.
                 .modifier(OptionalFieldChrome(active: embedded, focused: focused))
                 .padding(.bottom, embedded ? Space.md : 0)
-                .returnSends(text: $prompt, send: start)
+                .returnSends(text: promptBinding, send: start)
 
             if !attachments.isEmpty {
                 AttachmentTray(attachments: attachmentsBinding)
