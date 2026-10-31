@@ -1,10 +1,14 @@
 import SwiftUI
 import AppKit
+import Darwin
 import AbstractCore
 
 @main
 struct AbstractApp: App {
     init() {
+        // A disconnected pipe or socket must return EPIPE to its writer instead
+        // of terminating the entire app with SIGPIPE.
+        signal(SIGPIPE, SIG_IGN)
         BTFont.registerBundled()
         ThinScroller.install()
     }
