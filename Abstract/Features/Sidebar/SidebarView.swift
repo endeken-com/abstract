@@ -612,6 +612,13 @@ private struct RailProjectGroup: View {
     }
 }
 
+/// Keeps pointer movement from invalidating the SwiftUI row on every event.
+private final class HoverDelay {
+    var task: Task<Void, Never>?
+
+    deinit { task?.cancel() }
+}
+
 /// A chat in the rail: its project and state, title and age on the first
 /// line; where it lives and how its pull request stands on a quiet second.
 struct RailChatRow: View {
@@ -626,7 +633,7 @@ struct RailChatRow: View {
     @State private var renaming = false
     @State private var draft = ""
     @State private var hovering = false
-    @State private var restingPoint: CGPoint?
+    @State private var hoverDelay = HoverDelay()
     @State private var hoveringDetails = false
     @State private var showingDetails = false
     @FocusState private var fieldFocused: Bool
@@ -683,24 +690,25 @@ struct RailChatRow: View {
         .opacity(session.archivedAt == nil ? 1 : 0.5)
         .onContinuousHover { phase in
             switch phase {
-            case .active(let point):
+            case .active:
                 hovering = true
-                restingPoint = point
+                guard !renaming, !showingDetails else { return }
+                hoverDelay.task?.cancel()
+                hoverDelay.task = Task {
+                    try? await Task.sleep(for: .milliseconds(600))
+                    if !Task.isCancelled && hovering && !renaming { showingDetails = true }
+                }
             case .ended:
                 hovering = false
-                restingPoint = nil
+                hoverDelay.task?.cancel()
+                hoverDelay.task = nil
                 Task {
                     try? await Task.sleep(for: .milliseconds(250))
                     if !hovering && !hoveringDetails { showingDetails = false }
                 }
             }
         }
-        // Every pointer move restarts the wait, so the card only opens once the pointer rests.
-        .task(id: restingPoint) {
-            guard restingPoint != nil, !renaming, !showingDetails else { return }
-            try? await Task.sleep(for: .milliseconds(600))
-            if !Task.isCancelled && hovering { showingDetails = true }
-        }
+        .onDisappear { hoverDelay.task?.cancel() }
         .background(HoverCard(presented: $showingDetails) {
             RailChatDetails(session: session)
                 .environment(model)
