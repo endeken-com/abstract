@@ -297,67 +297,75 @@ final class FakeGitHub: PluginGitFetching {
             #expect(error.code == .pluginFailed)
         }
     }
+}
 
-    // MARK: The git fetcher, against repositories on disk
-
-    /// A folder standing in for github.com: `<owner>/<repo>.git` bare repositories.
-    private func gitHubOnDisk(_ root: URL) async throws -> (base: String, commits: [String]) {
-        let exec = LocalExecutor.shared
-        let work = root.appendingPathComponent("work").path
-        try FileManager.default.createDirectory(atPath: work + "/plugins/x", withIntermediateDirectories: true)
-        func git(_ args: [String], in dir: String = work) async throws -> String {
-            let result = try await exec.run("git", ["-c", "user.email=test@example.com", "-c", "user.name=Test",
-                                                    "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"] + args,
-                                            cwd: dir, stdin: nil)
-            #expect(result.ok, "git \(args): \(result.stderr)")
-            return GitText.trimmed(result.stdout)
-        }
-        _ = try await git(["init", "--quiet", "--initial-branch=main"])
-        try FakeGitHub.manifest().write(toFile: work + "/plugins/x/manifest.json", atomically: true, encoding: .utf8)
-        try "<html></html>".write(toFile: work + "/plugins/x/index.html", atomically: true, encoding: .utf8)
-        try "elsewhere".write(toFile: work + "/README.md", atomically: true, encoding: .utf8)
-        _ = try await git(["add", "."])
-        _ = try await git(["commit", "--quiet", "-m", "one"])
-        _ = try await git(["tag", "-a", "v1.2", "-m", "v1.2"])
-        let first = try await git(["rev-parse", "HEAD"])
-        try FakeGitHub.manifest(version: "1.1.0").write(toFile: work + "/plugins/x/manifest.json", atomically: true, encoding: .utf8)
-        try "changed".write(toFile: work + "/README.md", atomically: true, encoding: .utf8)
-        _ = try await git(["commit", "--quiet", "-am", "two"])
-        let second = try await git(["rev-parse", "HEAD"])
-        let hub = root.appendingPathComponent("github")
-        try FileManager.default.createDirectory(at: hub.appendingPathComponent("owner"), withIntermediateDirectories: true)
-        _ = try await git(["clone", "--quiet", "--bare", work, hub.appendingPathComponent("owner/monorepo.git").path], in: root.path)
-        return (hub.absoluteURL.absoluteString + "/", [first, second])
-    }
-
-    @Test func gitFetcherReadsAFolderAtATagAndComparesCommits() async throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("plugin-git-disk-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: root) }
-        let (base, commits) = try await gitHubOnDisk(root)
-        let fetcher = GitPluginFetcher(githubBase: base)
-        let tagged = try PluginGitSource.parse("owner/monorepo/plugins/x@v1.2")
-        #expect(try await fetcher.resolve(tagged) == commits[0])
-        #expect(try await fetcher.resolve(PluginGitSource(owner: "owner", repo: "monorepo")) == commits[1])
-        #expect(try await fetcher.resolve(PluginGitSource(owner: "owner", repo: "monorepo", ref: "main")) == commits[1])
-        await #expect(throws: PluginGitError.self) {
-            try await fetcher.resolve(PluginGitSource(owner: "owner", repo: "monorepo", ref: "nope"))
-        }
-        await #expect(throws: PluginGitError.self) {
-            try await fetcher.resolve(PluginGitSource(owner: "owner", repo: "missing"))
+extension GitHeavy {
+    /// The real git fetcher, against bare repositories on disk standing in
+    /// for github.com. A dozen git processes per test: serialized with the
+    /// other process-heavy suites so CI's timing-bound tests keep their limits.
+    @Suite("Plugin git fetcher")
+    struct PluginGitFetcherTests {
+        /// A folder standing in for github.com: `<owner>/<repo>.git` bare repositories.
+        private func gitHubOnDisk(_ root: URL) async throws -> (base: String, commits: [String]) {
+            let exec = LocalExecutor.shared
+            let work = root.appendingPathComponent("work").path
+            try FileManager.default.createDirectory(atPath: work + "/plugins/x", withIntermediateDirectories: true)
+            func git(_ args: [String], in dir: String = work) async throws -> String {
+                let result = try await exec.run("git", ["-c", "user.email=test@example.com", "-c", "user.name=Test",
+                                                        "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"] + args,
+                                                cwd: dir, stdin: nil)
+                #expect(result.ok, "git \(args): \(result.stderr)")
+                return GitText.trimmed(result.stdout)
+            }
+            _ = try await git(["init", "--quiet", "--initial-branch=main"])
+            try FakeGitHub.manifest().write(toFile: work + "/plugins/x/manifest.json", atomically: true, encoding: .utf8)
+            try "<html></html>".write(toFile: work + "/plugins/x/index.html", atomically: true, encoding: .utf8)
+            try "elsewhere".write(toFile: work + "/README.md", atomically: true, encoding: .utf8)
+            _ = try await git(["add", "."])
+            _ = try await git(["commit", "--quiet", "-m", "one"])
+            _ = try await git(["tag", "-a", "v1.2", "-m", "v1.2"])
+            let first = try await git(["rev-parse", "HEAD"])
+            try FakeGitHub.manifest(version: "1.1.0").write(toFile: work + "/plugins/x/manifest.json", atomically: true, encoding: .utf8)
+            try "changed".write(toFile: work + "/README.md", atomically: true, encoding: .utf8)
+            _ = try await git(["commit", "--quiet", "-am", "two"])
+            let second = try await git(["rev-parse", "HEAD"])
+            let hub = root.appendingPathComponent("github")
+            try FileManager.default.createDirectory(at: hub.appendingPathComponent("owner"), withIntermediateDirectories: true)
+            _ = try await git(["clone", "--quiet", "--bare", work, hub.appendingPathComponent("owner/monorepo.git").path], in: root.path)
+            return (hub.absoluteURL.absoluteString + "/", [first, second])
         }
 
-        let (manager, host) = try host()
-        defer { try? FileManager.default.removeItem(at: host) }
-        let candidate = try await manager.inspectGit(tagged, fetcher: fetcher)
-        defer { try? FileManager.default.removeItem(at: candidate.cleanup) }
-        #expect(candidate.source.commit == commits[0] && candidate.inspection.manifest.version == "1.0.0")
-        #expect(candidate.inspection.fileCount == 2)
+        @Test func gitFetcherReadsAFolderAtATagAndComparesCommits() async throws {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent("plugin-git-disk-\(UUID().uuidString)")
+            defer { try? FileManager.default.removeItem(at: root) }
+            let (base, commits) = try await gitHubOnDisk(root)
+            let fetcher = GitPluginFetcher(githubBase: base)
+            let tagged = try PluginGitSource.parse("owner/monorepo/plugins/x@v1.2")
+            #expect(try await fetcher.resolve(tagged) == commits[0])
+            #expect(try await fetcher.resolve(PluginGitSource(owner: "owner", repo: "monorepo")) == commits[1])
+            #expect(try await fetcher.resolve(PluginGitSource(owner: "owner", repo: "monorepo", ref: "main")) == commits[1])
+            await #expect(throws: PluginGitError.self) {
+                try await fetcher.resolve(PluginGitSource(owner: "owner", repo: "monorepo", ref: "nope"))
+            }
+            await #expect(throws: PluginGitError.self) {
+                try await fetcher.resolve(PluginGitSource(owner: "owner", repo: "missing"))
+            }
 
-        let changes = try await fetcher.compare(tagged, from: commits[0], to: commits[1])
-        #expect(changes == PluginGitChanges(commits: 1, files: ["manifest.json"]))
+            let host = FileManager.default.temporaryDirectory.appendingPathComponent("plugin-git-disk-host-\(UUID().uuidString)")
+            let manager = PluginManager(store: try Store.inMemory(), pluginsRoot: host.appendingPathComponent("Plugins"),
+                                        dataRoot: host.appendingPathComponent("PluginData"))
+            defer { try? FileManager.default.removeItem(at: host) }
+            let candidate = try await manager.inspectGit(tagged, fetcher: fetcher)
+            defer { try? FileManager.default.removeItem(at: candidate.cleanup) }
+            #expect(candidate.source.commit == commits[0] && candidate.inspection.manifest.version == "1.0.0")
+            #expect(candidate.inspection.fileCount == 2)
 
-        await #expect(throws: PluginGitError.self) {
-            try await manager.inspectGit(PluginGitSource(owner: "owner", repo: "monorepo", path: "plugins/none"), fetcher: fetcher)
+            let changes = try await fetcher.compare(tagged, from: commits[0], to: commits[1])
+            #expect(changes == PluginGitChanges(commits: 1, files: ["manifest.json"]))
+
+            await #expect(throws: PluginGitError.self) {
+                try await manager.inspectGit(PluginGitSource(owner: "owner", repo: "monorepo", path: "plugins/none"), fetcher: fetcher)
+            }
         }
     }
 }
