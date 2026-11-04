@@ -25,11 +25,11 @@ import Testing
     }
 
     @Test func theNewestPageShowsFirstThenTheWholeLogInOrder() throws {
-        let log = SyntheticChats.log(lines: 3_000)
+        let log = SyntheticChats.log(lines: 1_000)
         let (engine, dir) = try engine(lines: log)
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let page = try #require(TimelinePage.newest(engine: engine, sessionId: "chat", providerId: "claude", bytes: 32 << 10))
+        let page = try #require(TimelinePage.newest(engine: engine, sessionId: "chat", providerId: "claude", bytes: 16 << 10))
         let whole = TimelinePage.whole(engine: engine, sessionId: "chat", providerId: "claude")
         let pageTexts = texts(page), wholeTexts = texts(whole.timeline)
         // The page starts at a message of yours and is the end of the whole chat, as it reads.

@@ -5,10 +5,13 @@ import Testing
 /// What opening a chat and sending a message cost below the views, on
 /// ABS-159's synthetic profile with long chats (ABS-184). Each step has a
 /// budget, mostly against the machine's own timing of the slow way, so a
-/// regression fails while a busy CI machine doesn't.
+/// regression fails while a busy CI machine doesn't. Kept small: the suite
+/// runs beside tests that time real processes, and mustn't starve them.
 /// Timings: `swift test --filter NavigationBench` (and `-c release`).
 @Suite(.serialized) struct NavigationBench {
-    static let longChat = 6_000
+    static let longChat = 2_000
+    /// The newest page, smaller than the app's so the logs here can be too.
+    static let page = 32 << 10
 
     @Test func savingOneChatInsteadOfReloading() throws {
         let store = try Self.profileStore()
@@ -37,16 +40,16 @@ import Testing
 
     @Test func openingALongChat() throws {
         let (engine, dir) = try Self.engine(lines: Self.longChat)
-        let (longer, longerDir) = try Self.engine(lines: Self.longChat * 4)
+        let (longer, longerDir) = try Self.engine(lines: Self.longChat, copies: 4)
         defer { try? FileManager.default.removeItem(at: dir); try? FileManager.default.removeItem(at: longerDir) }
         let whole = Self.time("open, whole log (read + replay)", runs: 3) {
             TimelinePage.whole(engine: engine, sessionId: "long", providerId: "claude").timeline.entries.count
         }
-        let page = Self.time("open, newest page (read + replay)", runs: 10) {
-            TimelinePage.newest(engine: engine, sessionId: "long", providerId: "claude")?.entries.count ?? 0
+        let page = Self.time("open, newest page (read + replay)") {
+            TimelinePage.newest(engine: engine, sessionId: "long", providerId: "claude", bytes: Self.page)?.entries.count ?? 0
         }
-        let longerPage = Self.time("open, newest page of a log 4× as long", runs: 10) {
-            TimelinePage.newest(engine: longer, sessionId: "long", providerId: "claude")?.entries.count ?? 0
+        let longerPage = Self.time("open, newest page of a log 4× as long") {
+            TimelinePage.newest(engine: longer, sessionId: "long", providerId: "claude", bytes: Self.page)?.entries.count ?? 0
         }
         // Budgets against the same machine's own timings, so a loaded CI
         // runner doesn't fail them: what shows at once is a small part of a
@@ -80,26 +83,30 @@ import Testing
         return store
     }
 
-    static func engine(lines: Int) throws -> (SessionEngine, URL) {
+    /// A chat's log of `lines` lines, written `copies` times over.
+    static func engine(lines: Int, copies: Int = 1) throws -> (SessionEngine, URL) {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("nav-bench-\(UUID().uuidString)")
         let engine = SessionEngine(executor: LocalExecutor.shared, logDirectory: dir)
         let encoder = JSONEncoder()
         let text = SyntheticChats.log(lines: lines).map { String(decoding: try! encoder.encode($0), as: UTF8.self) }.joined(separator: "\n") + "\n"
-        try text.write(to: dir.appendingPathComponent("long.jsonl"), atomically: true, encoding: .utf8)
+        try String(repeating: text, count: copies).write(to: dir.appendingPathComponent("long.jsonl"), atomically: true, encoding: .utf8)
         return (engine, dir)
     }
 
-    /// Milliseconds per run of `body`, after one to warm up.
+    /// Milliseconds for the fastest of `runs` runs of `body`, after one to
+    /// warm up: a run the machine held up doesn't count against it.
     @discardableResult
     static func time(_ label: String, runs: Int = 10, _ body: () -> Int) -> Double {
-        _ = body()
-        let start = ContinuousClock.now
-        var acc = 0
-        for _ in 0..<runs { acc &+= body() }
-        let elapsed = ContinuousClock.now - start
-        let ms = (Double(elapsed.components.seconds) * 1000 + Double(elapsed.components.attoseconds) / 1e15) / Double(runs)
-        report("\(label): \((ms * 100).rounded() / 100) ms (\(acc))")
-        return ms
+        var acc = body()
+        var fastest = Double.infinity
+        for _ in 0..<runs {
+            let start = ContinuousClock.now
+            acc &+= body()
+            let elapsed = ContinuousClock.now - start
+            fastest = min(fastest, Double(elapsed.components.seconds) * 1000 + Double(elapsed.components.attoseconds) / 1e15)
+        }
+        report("\(label): \((fastest * 100).rounded() / 100) ms (\(acc))")
+        return fastest
     }
 
     static func report(_ line: String) {
