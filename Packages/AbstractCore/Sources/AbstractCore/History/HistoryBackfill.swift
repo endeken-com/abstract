@@ -40,8 +40,8 @@ public enum HistoryBackfill {
             turns.append(LoggedTurn(lines: first...last, transcript: transcript, commits: shipped.commits,
                                     commitCommands: shipped.commands, pullRequest: shipped.pullRequest))
         }
-        for (seq, line) in lines {
-            let events = stream.feed(line)
+        let folded = stream.feed(batch: lines.map(\.line))
+        for ((seq, line), events) in zip(lines, folded) {
             if events.contains(where: { if case .text(.user, _, _, _) = $0 { true } else { false } }), ended || reported { close() }
             current.append((seq, events, line.at))
             for event in events {

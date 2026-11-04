@@ -65,7 +65,7 @@ struct RealAgentTests {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("real-opencode-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
-        let provider = OpenCodeProvider()
+        let provider = Agents.opencode
         let model = ProcessInfo.processInfo.environment["ABSTRACT_OPENCODE_MODEL"] ?? "opencode/big-pickle"
         let engine = SessionEngine(executor: LocalExecutor.shared, logDirectory: dir.appendingPathComponent("logs"))
 

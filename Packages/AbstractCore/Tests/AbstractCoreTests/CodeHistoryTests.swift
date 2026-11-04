@@ -285,7 +285,7 @@ import Testing
     }
 
     @Test func openCodeGetsTheToolInItsConfig() {
-        let provider = OpenCodeProvider()
+        let provider = Agents.opencode
         let on = LaunchContext(cwd: "/w", prompt: "hi", permissionPolicy: .autoEdits, historyTool: tool)
         for spec in [provider.buildLaunch(on), provider.buildResume(on, resumeId: "r1")] {
             let config = spec.env["OPENCODE_CONFIG_CONTENT"] ?? ""
@@ -308,7 +308,7 @@ import Testing
     @Test func openCodeMCPCallsReadAsTools() throws {
         // Recorded from a real `opencode run` turn against `abstract mcp`
         // (opencode 1.18.18); session ids replaced.
-        let parser = OpenCodeProvider().makeParser()
+        let parser = Agents.opencode.makeParser()
         let url = try #require(Bundle.module.url(forResource: "opencode-mcp", withExtension: "jsonl", subdirectory: "Fixtures"))
         let events = try String(contentsOf: url, encoding: .utf8).split(separator: "\n").map(String.init)
             .flatMap { parser.feed($0, stream: .stdout) }

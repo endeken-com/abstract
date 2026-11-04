@@ -35,7 +35,7 @@ import AbstractCore
     }
 
     @Test func openCodePlanAndAskUseItsPlanAgent() {
-        let provider = OpenCodeProvider()
+        let provider = Agents.opencode
         for policy in [PermissionPolicy.plan, .readOnly] {
             let args = provider.buildLaunch(context(policy)).args
             #expect(args.contains("--agent"))
@@ -47,7 +47,7 @@ import AbstractCore
     }
 
     @Test func musePlanAndAskCannotWrite() {
-        let provider = MuseProvider()
+        let provider = Agents.muse
         for policy in [PermissionPolicy.plan, .readOnly] {
             let args = provider.buildLaunch(context(policy)).args
             #expect(args.contains("--disable-write"))

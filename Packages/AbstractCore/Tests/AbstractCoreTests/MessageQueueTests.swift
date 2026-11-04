@@ -29,7 +29,7 @@ struct MessageQueueTests {
         #expect(!FollowUp.canSteer(.respawn, alive: true, status: .running))
         #expect(FollowUp.steerUnavailable(ClaudeProvider()) == nil)
         #expect(FollowUp.steerUnavailable(CodexProvider()) == "Codex reads messages between turns")
-        #expect(FollowUp.steerUnavailable(OpenCodeProvider()) == "OpenCode reads messages between turns")
+        #expect(FollowUp.steerUnavailable(Agents.opencode) == "OpenCode reads messages between turns")
     }
 
     @Test func theQueueGoesAfterAFinishedOrInterruptedTurnOnly() {

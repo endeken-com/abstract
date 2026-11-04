@@ -1,0 +1,24 @@
+{
+  "api": 2,
+  "id": "sh.abstract.agent.muse",
+  "name": "Muse Code",
+  "version": "1.0.0",
+  "description": "Muse Code as an agent in your chats, over `muse serve`: one host process stays alive for the chat, and a relaunch resumes its session.",
+  "capabilities": ["agents"],
+  "agent": "agent.js",
+  "contributes": {
+    "agents": [
+      {
+        "id": "muse",
+        "label": "Muse Code",
+        "asset": "ProviderMuse",
+        "command": ["muse"],
+        "detect": ["--version"],
+        "capabilities": ["prompt.message", "prompt.image", "prompt.steer", "permission", "session.persistence", "naming", "models.discover"],
+        "skills": "codexHome",
+        "toolServers": "none",
+        "config": [".config/muse/settings.json"]
+      }
+    ]
+  }
+}

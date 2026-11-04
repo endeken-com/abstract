@@ -159,6 +159,8 @@ struct Commands {
         } catch {
             throw CLIError(.internalError, "Can't open Abstract's database at \(path): \(error.localizedDescription)")
         }
+        // The agents of the plugins that are on, as the app has them (ABS-185).
+        AgentPlugins.shared.setInstalled(from: PluginManager(store: store))
         let executable = Bundle.main.executablePath ?? CommandLine.arguments[0]
         return Commands(store: store, storePath: path, locks: SessionLock.defaultDirectory(),
                         executable: URL(fileURLWithPath: executable).resolvingSymlinksInPath().path)

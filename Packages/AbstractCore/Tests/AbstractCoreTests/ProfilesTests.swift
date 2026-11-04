@@ -65,9 +65,9 @@ import Testing
     @Test func openCodeGetsTheInstructionsAsItsAgentsPrompt() {
         var profile = reviewer
         profile.providerId = "opencode"
-        let spec = AgentLaunch.spec(for: chat(from: profile), provider: OpenCodeProvider(), prompt: "Review this",
+        let spec = AgentLaunch.spec(for: chat(from: profile), provider: Agents.opencode, prompt: "Review this",
                                     resumeId: nil, settings: settings(history: true), home: "/tmp")
-        #expect(spec.args.contains("--agent") && spec.args.contains(OpenCodeProvider.profileAgent))
+        #expect(spec.args.contains("--agent") && spec.args.contains("abstract-profile"))
         let config = spec.env["OPENCODE_CONFIG_CONTENT"] ?? ""
         #expect(config.contains("most serious first"))
         // The code-history server rides in the same config.
@@ -80,9 +80,9 @@ import Testing
         var session = chat(from: reviewer)
         session.providerId = "opencode"
         session.permissionPolicy = .plan
-        let spec = AgentLaunch.spec(for: session, provider: OpenCodeProvider(), prompt: "Plan this",
+        let spec = AgentLaunch.spec(for: session, provider: Agents.opencode, prompt: "Plan this",
                                     resumeId: nil, settings: settings(), home: "/tmp")
-        #expect(spec.args.contains("plan") && !spec.args.contains(OpenCodeProvider.profileAgent))
+        #expect(spec.args.contains("plan") && !spec.args.contains("abstract-profile"))
         #expect(spec.args.last?.contains("most serious first") == true)
         #expect(spec.args.last?.hasSuffix("Plan this") == true)
     }
@@ -92,7 +92,7 @@ import Testing
         let spec = AgentLaunch.spec(for: session, provider: ClaudeProvider(), prompt: "hi",
                                     resumeId: nil, settings: settings(), home: "/tmp")
         #expect(!spec.args.contains("--append-system-prompt"))
-        let opencode = AgentLaunch.spec(for: session, provider: OpenCodeProvider(), prompt: "hi",
+        let opencode = AgentLaunch.spec(for: session, provider: Agents.opencode, prompt: "hi",
                                         resumeId: nil, settings: settings(), home: "/tmp")
         #expect(!opencode.args.contains("--agent"))
         #expect(opencode.env.isEmpty)

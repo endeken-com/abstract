@@ -34,6 +34,10 @@ public enum PluginCapability: String, Sendable, Hashable, Codable, CaseIterable 
     /// Run the command-line tool its manifest names, with only the
     /// subcommands it lists (ABS-139). Writes ask first until always allowed.
     case cli = "cli"
+    /// Run a coding agent in your chats (ABS-185): the program its
+    /// `contributes.agents` names, through the chat's executor, its output
+    /// read by the plugin's agent script.
+    case agents = "agents"
 
     /// The capabilities that do something to a chat or an automation, as
     /// opposed to reading. Each asks first until always allowed.
@@ -71,6 +75,7 @@ public enum PluginCapability: String, Sendable, Hashable, Codable, CaseIterable 
         case .pullRequestsRead: "Read your chats' pull requests: their checks, reviews and comments"
         case .agentTools: "Give your agents tools it runs, which ask you first until you allow them in a project's settings"
         case .cli: "Run the command-line tool it names, with only the commands it lists"
+        case .agents: "Run the coding agents it adds in your chats, which can change your worktrees and run commands"
         }
     }
 
@@ -243,6 +248,9 @@ public struct PluginManifest: Sendable, Hashable, Codable {
     public var tools: [PluginAgentTool]?
     /// The command-line tool it runs (ABS-139), under `cli`.
     public var cli: PluginCLI?
+    /// The script that drives its agents (ABS-185), under `agents`: plain
+    /// JavaScript in a context of its own, with no page and no network.
+    public var agent: String?
 
     /// The exact hosts a plugin with `network` may reach (ABS-94). No
     /// wildcards: every host is shown at review and checked per request.
@@ -327,6 +335,8 @@ public struct PluginManifest: Sendable, Hashable, Codable {
         /// Themes for Settings → Appearance (ABS-185): data only, Paseo's
         /// schema. Nothing runs and nothing is granted.
         public var themes: [ThemeContribution]
+        /// Coding agents (ABS-185), run by the host, read by its agent script.
+        public var agents: [PluginAgentDeclaration]
 
         public init(views: [View] = [], chatPanelTabs: [Contribution] = [], chatMenuItems: [Contribution] = [],
                     paletteCommands: [Contribution] = [], settingsPage: Contribution? = nil,
@@ -334,9 +344,10 @@ public struct PluginManifest: Sendable, Hashable, Codable {
                     pullRequestSwitches: [Contribution] = [], linkDecorators: [Contribution] = [],
                     issueTracker: PluginIssueTrackerDeclaration? = nil,
                     codeHost: CodeHostDeclaration? = nil, projectSettings: Contribution? = nil,
-                    themes: [ThemeContribution] = []) {
+                    themes: [ThemeContribution] = [], agents: [PluginAgentDeclaration] = []) {
             self.projectSettings = projectSettings
             self.themes = themes
+            self.agents = agents
             self.views = views; self.chatPanelTabs = chatPanelTabs; self.chatMenuItems = chatMenuItems
             self.paletteCommands = paletteCommands; self.settingsPage = settingsPage; self.homeWidgets = homeWidgets
             self.reviewActions = reviewActions; self.pullRequestSwitches = pullRequestSwitches
@@ -360,6 +371,7 @@ public struct PluginManifest: Sendable, Hashable, Codable {
             issueTracker = try box.decodeIfPresent(PluginIssueTrackerDeclaration.self, forKey: .issueTracker)
             codeHost = try box.decodeIfPresent(CodeHostDeclaration.self, forKey: .codeHost)
             themes = try box.decodeIfPresent([ThemeContribution].self, forKey: .themes) ?? []
+            agents = try box.decodeIfPresent([PluginAgentDeclaration].self, forKey: .agents) ?? []
         }
     }
 
@@ -386,7 +398,9 @@ public struct PluginManifest: Sendable, Hashable, Codable {
                 pullRequestSwitches: [Contribution] = [], linkDecorators: [Contribution] = [],
                 issueTracker: PluginIssueTrackerDeclaration? = nil,
                 codeHost: CodeHostDeclaration? = nil, themes: [ThemeContribution] = [],
+                agents: [PluginAgentDeclaration] = [], agent: String? = nil,
                 background: String? = nil, tools: [PluginAgentTool] = [], cli: PluginCLI? = nil) {
+        self.agent = agent
         self.api = api; self.id = id; self.name = name; self.version = version
         self.background = background
         self.tools = tools.isEmpty ? nil : tools
@@ -399,7 +413,7 @@ public struct PluginManifest: Sendable, Hashable, Codable {
                                        paletteCommands: paletteCommands, settingsPage: settingsPage, homeWidgets: homeWidgets,
                                        reviewActions: reviewActions, pullRequestSwitches: pullRequestSwitches,
                                        linkDecorators: linkDecorators, issueTracker: issueTracker, codeHost: codeHost,
-                                       themes: themes)
+                                       themes: themes, agents: agents)
     }
 
     // A plugin that only runs in the background (ABS-93) may leave out
@@ -420,6 +434,7 @@ public struct PluginManifest: Sendable, Hashable, Codable {
         background = try box.decodeIfPresent(String.self, forKey: .background)
         tools = try box.decodeIfPresent([PluginAgentTool].self, forKey: .tools)
         cli = try box.decodeIfPresent(PluginCLI.self, forKey: .cli)
+        agent = try box.decodeIfPresent(String.self, forKey: .agent)
     }
 
     public var agentTools: [PluginAgentTool] { tools ?? [] }
@@ -453,6 +468,7 @@ public struct PluginManifest: Sendable, Hashable, Codable {
             let names = contributes.themes.map(\.name).joined(separator: ", ")
             sentences.append("Themes — \(names), in Settings → Appearance.")
         }
+        sentences += contributes.agents.map(\.sentence)
         if background != nil {
             sentences.append("In the background — it runs while it's on, even with its screen closed.")
         }
@@ -495,7 +511,7 @@ public struct PluginManifest: Sendable, Hashable, Codable {
         guard Self.isSemver(version) else {
             throw PluginValidationError.invalidManifest("version is not semver: \(version)")
         }
-        guard !entry.isEmpty || isThemesOnly else { throw PluginValidationError.missingEntry(entry) }
+        guard !entry.isEmpty || isPageless else { throw PluginValidationError.missingEntry(entry) }
         guard entry.isEmpty || PluginPackage.isContained(relativePath: entry) else {
             throw PluginValidationError.escapingPath(entry)
         }
@@ -611,8 +627,9 @@ public struct PluginManifest: Sendable, Hashable, Codable {
             try codeHost.validate()
         }
         try validateThemes()
+        try validateAgents()
         let total = contributes.views.count + places.map(\.1.count).reduce(0, +) + (contributes.issueTracker == nil ? 0 : 1)
-            + contributes.themes.count
+            + contributes.themes.count + contributes.agents.count
         guard total > 0 || background != nil else {
             throw PluginValidationError.invalidManifest("the plugin doesn't add anything")
         }
@@ -620,9 +637,13 @@ public struct PluginManifest: Sendable, Hashable, Codable {
 
     /// A plugin that adds themes and nothing else: it has no page, no
     /// script and asks for nothing.
-    public var isThemesOnly: Bool {
+    public var isThemesOnly: Bool { !contributes.themes.isEmpty && contributes.agents.isEmpty && isPageless }
+
+    /// A plugin of themes and agents alone (ABS-185): nothing it adds opens
+    /// a page, so it needs no `entry`.
+    public var isPageless: Bool {
         let c = contributes
-        return !c.themes.isEmpty && c.views.isEmpty && c.chatPanelTabs.isEmpty && c.chatMenuItems.isEmpty
+        return !(c.themes.isEmpty && c.agents.isEmpty) && c.views.isEmpty && c.chatPanelTabs.isEmpty && c.chatMenuItems.isEmpty
             && c.paletteCommands.isEmpty && c.settingsPage == nil && c.homeWidgets.isEmpty && c.reviewActions.isEmpty
             && c.pullRequestSwitches.isEmpty && c.linkDecorators.isEmpty && c.projectSettings == nil
             && c.issueTracker == nil && c.codeHost == nil && background == nil && agentTools.isEmpty && cli == nil
@@ -639,6 +660,28 @@ public struct PluginManifest: Sendable, Hashable, Codable {
             throw PluginValidationError.invalidManifest("duplicate id in themes")
         }
         for theme in themes { try theme.validate() }
+    }
+
+    /// Agents exist only under their grant, with a script to read them
+    /// (ABS-185). The grant needs agents; agents need API 2.
+    private func validateAgents() throws {
+        let agents = contributes.agents
+        guard grantedCapabilities.contains(.agents) == !agents.isEmpty else {
+            throw PluginValidationError.invalidManifest("agents needs its agents listed, and listed agents need the agents capability")
+        }
+        guard (agent != nil) == !agents.isEmpty else {
+            throw PluginValidationError.invalidManifest("agents need an agent script, and an agent script needs agents")
+        }
+        guard agents.isEmpty || api >= 2 else { throw PluginValidationError.invalidManifest("agents need api 2") }
+        if let agent {
+            guard agent.hasSuffix(".js"), PluginPackage.isContained(relativePath: agent) else {
+                throw PluginValidationError.invalidManifest("agent must be a .js file inside the package")
+            }
+        }
+        guard agents.count <= 4, Set(agents.map(\.id)).count == agents.count else {
+            throw PluginValidationError.invalidManifest("at most 4 agents, each with its own id")
+        }
+        for declaration in agents { try declaration.validate() }
     }
 
     /// Tools exist only under their grant, and the grant needs tools; the

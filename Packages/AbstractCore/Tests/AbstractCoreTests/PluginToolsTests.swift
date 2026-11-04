@@ -134,7 +134,7 @@ import Testing
     @Test func openCodeReportsAPluginToolCallAsATool() throws {
         // Recorded from a real `opencode run` turn (opencode/big-pickle)
         // against `abstract mcp --plugins` and a stand-in for the app.
-        let parser = OpenCodeProvider().makeParser()
+        let parser = Agents.opencode.makeParser()
         let url = try #require(Bundle.module.url(forResource: "opencode-plugin-tool", withExtension: "jsonl", subdirectory: "Fixtures"))
         let events = try String(contentsOf: url, encoding: .utf8).split(separator: "\n").map(String.init)
             .flatMap { parser.feed($0, stream: .stdout) }
@@ -339,13 +339,13 @@ import Testing
     }
 
     @Test func openCodeGetsTheServerMergedBesideCodeHistory() throws {
-        let spec = OpenCodeProvider().buildLaunch(LaunchContext(cwd: "/w", prompt: "hi", permissionPolicy: .autoEdits,
+        let spec = Agents.opencode.buildLaunch(LaunchContext(cwd: "/w", prompt: "hi", permissionPolicy: .autoEdits,
                                                                 historyTool: history, pluginTools: plugins))
         let config = try json(spec.env["OPENCODE_CONFIG_CONTENT"])
         #expect(config["mcp"]?[CodeHistory.serverName] != nil)
         #expect(config["mcp"]?[PluginTools.serverName]?["command"]
             == .array((["/Applications/Abstract.app/Contents/Helpers/abstract"] + plugins.serverArgs).map(JSONValue.string)))
-        let alone = OpenCodeProvider().buildLaunch(LaunchContext(cwd: "/w", prompt: "hi", permissionPolicy: .autoEdits, pluginTools: plugins))
+        let alone = Agents.opencode.buildLaunch(LaunchContext(cwd: "/w", prompt: "hi", permissionPolicy: .autoEdits, pluginTools: plugins))
         #expect(try json(alone.env["OPENCODE_CONFIG_CONTENT"])["mcp"]?[CodeHistory.serverName] == nil)
     }
 

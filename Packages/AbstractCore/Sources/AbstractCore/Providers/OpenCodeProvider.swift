@@ -1,9 +1,10 @@
 import Foundation
 
-/// OpenCode's non-interactive CLI. Each `run` is one turn; `--session` resumes
-/// the same conversation on the next turn. The JSON stream shape was checked
-/// against OpenCode 1.18.18.
-public struct OpenCodeProvider: ProviderDefinition {
+/// OpenCode's non-interactive CLI, as it was in Swift. OpenCode now runs from
+/// its bundled agent plugin (ABS-185, `agent-opencode.abstractplugin`); this
+/// stays only as the reference the plugin's fixture replays and parse
+/// benchmark are checked against, until the Swift providers are deleted.
+struct OpenCodeProvider: ProviderDefinition {
     public var id: String { "opencode" }
     public var name: String { "OpenCode" }
     public var logoAsset: String { "ProviderOpenCode" }
@@ -12,7 +13,6 @@ public struct OpenCodeProvider: ProviderDefinition {
     public var followUpMode: FollowUpMode { .respawn }
     /// `run` sends `/compact` to the model as text; its server really compacts.
     public var commands: ProviderCommands { ProviderCommands(extra: [.compact]) }
-    public var compaction: Compaction? { .sideChannel(OpenCodeCompactor()) }
 
     public init() {}
 

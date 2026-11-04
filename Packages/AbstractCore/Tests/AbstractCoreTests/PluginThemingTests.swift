@@ -161,7 +161,7 @@ import Testing
         for folder in folders {
             let manifest = try PluginPackage.inspect(folder: folder).manifest
             // A theme plugin has no screen (ABS-185).
-            guard !manifest.isThemesOnly else { continue }
+            guard !manifest.isPageless else { continue }
             let html = try String(contentsOf: folder.appendingPathComponent(manifest.entry), encoding: .utf8)
             #expect(html.contains("href=\"/_abstract/abstract-ui.css\""), "\(manifest.id) doesn't link the kit")
             // Its own CSS uses no colour of its own: the kit's names, or the host's tokens.

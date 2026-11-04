@@ -65,11 +65,11 @@ import Testing
         #expect(server.launch(for: ClaudeProvider()) != nil)
         #expect(server.launch(for: CodexProvider()) == nil)
         // Muse can't keep a tool out, so it gets none, even when chosen.
-        #expect(server.launch(for: MuseProvider()) == nil)
-        #expect(MuseProvider().toolServerSupport == .none)
+        #expect(server.launch(for: Agents.muse) == nil)
+        #expect(Agents.muse.toolServerSupport == .none)
         #expect(ClaudeProvider().toolServerSupport == .askFirst)
         #expect(CodexProvider().toolServerSupport == .allowOrOff)
-        #expect(OpenCodeProvider().toolServerSupport == .allowOrOff)
+        #expect(Agents.opencode.toolServerSupport == .allowOrOff)
     }
 
     // MARK: - Per-agent config rendering
@@ -140,11 +140,11 @@ import Testing
     @Test func openCodeGetsTheServersInItsConfigEnvironment() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("tools-\(UUID().uuidString)").path
         defer { try? FileManager.default.removeItem(atPath: directory) }
-        let linear = try Self.launch(Self.linear(), OpenCodeProvider())
+        let linear = try Self.launch(Self.linear(), Agents.opencode)
         let local = try Self.launch(ProjectToolServer(projectId: "p1", name: "db", connection: .command(["db-mcp"], env: ["DB_URL": "x"]),
                                                       tools: [.init(name: "run.query")], access: ["run.query": .off]),
-                                    OpenCodeProvider())
-        let spec = OpenCodeProvider().buildLaunch(Self.context([linear, local], directory: directory))
+                                    Agents.opencode)
+        let spec = Agents.opencode.buildLaunch(Self.context([linear, local], directory: directory))
         let config = try JSONDecoder().decode(JSONValue.self, from: Data(try #require(spec.env["OPENCODE_CONFIG_CONTENT"]).utf8))
         #expect(config["mcp"]?["linear"]?["type"]?.string == "remote")
         #expect(config["mcp"]?["linear"]?["headers"]?["Authorization"]?.string == "Bearer lin_test")
@@ -166,7 +166,7 @@ import Testing
         let settings = LaunchSettings(providerOverrides: [:], outputStyle: .default, claudeProfile: nil,
                                       attachmentsDirectory: "/a", toolServers: [Self.linear()])
         let session = Session(projectId: "p1", name: "Chat", providerId: "muse", worktreePath: "/w")
-        #expect(settings.toolServers(for: session, provider: MuseProvider()).isEmpty)
+        #expect(settings.toolServers(for: session, provider: Agents.muse).isEmpty)
     }
 
     // MARK: - Ask first in Claude

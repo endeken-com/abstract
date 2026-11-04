@@ -1,0 +1,26 @@
+{
+  "api": 2,
+  "id": "sh.abstract.agent.opencode",
+  "name": "OpenCode",
+  "version": "1.0.0",
+  "description": "OpenCode as an agent in your chats, through its non-interactive CLI. Each turn is one `opencode run`; the next resumes the same session.",
+  "capabilities": ["agents"],
+  "agent": "agent.js",
+  "contributes": {
+    "agents": [
+      {
+        "id": "opencode",
+        "label": "OpenCode",
+        "asset": "ProviderOpenCode",
+        "command": ["opencode"],
+        "install": "brew install sst/tap/opencode",
+        "detect": ["--version"],
+        "capabilities": ["prompt.message", "prompt.image", "session.persistence", "naming", "compaction", "models.discover"],
+        "skills": "skillsPath",
+        "toolServers": "allowOrOff",
+        "commands": ["compact"],
+        "config": [".config/opencode/opencode.json"]
+      }
+    ]
+  }
+}
