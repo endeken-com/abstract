@@ -1,0 +1,21 @@
+{
+  "api": 2,
+  "id": "sh.example.provider-direct",
+  "name": "Direct provider example",
+  "version": "1.0.0",
+  "description": "A sample third-party agent plugin, adapted from Paseo's plugin-examples/provider-direct (Apache-2.0): an agent implemented straight against the agent contract. Its program is `echo`, so it runs anywhere and answers every message with an echo.",
+  "capabilities": ["agents"],
+  "agent": "agent.js",
+  "contributes": {
+    "agents": [
+      {
+        "id": "direct-example",
+        "label": "Direct provider example",
+        "icon": "icon.svg",
+        "command": ["echo"],
+        "detect": ["direct-example"],
+        "capabilities": ["prompt.message", "session.persistence", "naming"]
+      }
+    ]
+  }
+}

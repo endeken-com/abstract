@@ -176,7 +176,7 @@ private struct SkillFixture {
         let f = try SkillFixture.make()
         defer { f.remove() }
         let before = f.homeSnapshot()
-        let spec = launch(MuseProvider(), f)
+        let spec = launch(Agents.muse, f)
         #expect(spec.env["CODEX_HOME"] == f.data + "/agent-config/chat-1/codex-home")
         #expect(f.homeSnapshot() == before)
     }
@@ -185,7 +185,7 @@ private struct SkillFixture {
         let f = try SkillFixture.make()
         defer { f.remove() }
         let before = f.homeSnapshot()
-        let spec = launch(OpenCodeProvider(), f)
+        let spec = launch(Agents.opencode, f)
         let folder = f.data + "/agent-config/chat-1/skills"
         let config = try JSONDecoder().decode(JSONValue.self, from: Data(try #require(spec.env["OPENCODE_CONFIG_CONTENT"]).utf8))
         #expect(config["skills"]?["paths"] == .array([.string(folder)]))
@@ -199,8 +199,8 @@ private struct SkillFixture {
         defer { f.remove() }
         #expect(!launch(ClaudeProvider(), f, project: []).args.contains { $0.contains("agent-config") })
         #expect(launch(CodexProvider(), f, project: []).env["CODEX_HOME"] == nil)
-        #expect(launch(MuseProvider(), f, project: []).env["CODEX_HOME"] == nil)
-        #expect(launch(OpenCodeProvider(), f, project: []).env["OPENCODE_CONFIG_CONTENT"] == nil)
+        #expect(launch(Agents.muse, f, project: []).env["CODEX_HOME"] == nil)
+        #expect(launch(Agents.opencode, f, project: []).env["OPENCODE_CONFIG_CONTENT"] == nil)
     }
 
     @Test func aSkillTakenOutOfTheProjectIsGoneFromTheNextLaunch() throws {
@@ -247,7 +247,7 @@ private struct SkillFixture {
         // An agent swaps each folder Abstract clears for a link elsewhere.
         for (provider, folder) in [(ClaudeProvider() as any ProviderDefinition, "/claude/.claude/skills"),
                                    (ClaudeProvider(), "/claude"), (CodexProvider(), "/codex-home/skills"),
-                                   (CodexProvider(), "/codex-home"), (OpenCodeProvider(), "/skills")] {
+                                   (CodexProvider(), "/codex-home"), (Agents.opencode, "/skills")] {
             _ = launch(provider, f)
             try FileManager.default.removeItem(atPath: chat + folder)
             try FileManager.default.createSymbolicLink(atPath: chat + folder, withDestinationPath: f.root + "/elsewhere")

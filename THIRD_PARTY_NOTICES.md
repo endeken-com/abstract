@@ -17,6 +17,8 @@ comment:
 - `Packages/AbstractCore/Sources/AbstractCore/Git/GitActions.swift`, `Abstract/Features/Workspace/WorkspaceActions.swift`, `ExternalEditors.swift`: the git actions and open-in-editor buttons.
 - `Abstract/Features/Editor/EditorDocument.swift`, `CodeTextView.swift`, `CodeEditorView.swift`: the file editor (autosave, conflicts on disk, its bar); One Dark / One Light syntax colours.
 - `Packages/AbstractCore/Sources/AbstractCore/Theme/ThemeDerivation.swift`: the theme contribution's schema and hex rule (`packages/app/src/plugins/themes/index.ts`) and the expansion of its eight colours into a full palette (`buildDarkPluginTheme` / `buildLightPluginTheme`, `packages/app/src/styles/theme.ts`), adapted to Abstract's palette roles (ABS-185).
+- `Packages/AbstractCore/Sources/AbstractCore/Plugins/PluginAgents.swift`, `Providers/AgentRuntime.swift`: the agent contribution after Paseo's `ProviderRegistration` (`id`, `label`, `icon`, `command`), its capability list and `negotiateProviderCapabilities`, and its catalog (`packages/plugin/src/server/provider.ts`), adapted to a host that runs the agent's program itself (ABS-185).
+- `Packages/AbstractCore/Tests/AbstractCoreTests/Fixtures/agent-direct-example.abstractplugin`: the sample agent plugin, adapted from Paseo's `plugin-examples/provider-direct`.
 
 ## Textual
 

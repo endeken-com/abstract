@@ -1,12 +1,13 @@
 import Foundation
 import Synchronization
 
-/// Muse Code, driven over `muse serve`: the MSP session host is the only
-/// surface that carries each tool call's real arguments, status and output
-/// as it happens (docs/spikes/ABS-88.md). One host process stays alive for
-/// the chat; a relaunch resumes its retained session by id. The naming
-/// one-off still uses `exec`, which is all that call needs.
-public struct MuseProvider: ProviderDefinition {
+/// Muse Code, driven over `muse serve`, as it was in Swift. Muse now runs
+/// from its bundled agent plugin (ABS-185, `agent-muse.abstractplugin`);
+/// this stays only as the reference the plugin's fixture replays and parse
+/// benchmark are checked against, until the Swift providers are deleted.
+/// (The MSP session host carries each tool call's real arguments, status and
+/// output as it happens: docs/spikes/ABS-88.md.)
+struct MuseProvider: ProviderDefinition {
     public var id: String { "muse" }
     public var name: String { "Muse Code" }
     public var logoAsset: String { "ProviderMuse" }

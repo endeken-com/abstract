@@ -76,6 +76,89 @@ every theme of every plugin that's on; Match System picks a light one and a dark
 Turn the plugin off and a window drawing in its theme falls back to Graphite. The phone
 gets the colours from the Mac and runs nothing.
 
+## Adding an agent
+
+An agent is a plugin contribution too (ABS-185), after Paseo's provider plugins:
+OpenCode and Muse Code are bundled agent plugins
+(`Abstract/Resources/Plugins/agent-*.abstractplugin`), and one you install runs
+chats without a new Abstract. What differs from Paseo: **the plugin never
+starts anything.** Abstract runs the program the manifest names, through the
+chat's own executor (so paired Macs, per-chat MCP servers and skills keep
+working), and hands each line it prints to the plugin's agent script.
+
+```json
+{
+  "api": 2, "id": "sh.example.my-agent", "name": "My agent", "version": "1.0.0",
+  "capabilities": ["agents"],
+  "agent": "agent.js",
+  "contributes": {
+    "agents": [
+      {
+        "id": "my-agent", "label": "My agent", "icon": "icon.svg",
+        "command": ["my-agent", "--json"], "install": "brew install my-agent",
+        "capabilities": ["prompt.message", "prompt.steer", "permission", "session.persistence"],
+        "skills": "addedDirectory", "toolServers": "askFirst",
+        "config": [".config/my-agent/config.json"]
+      }
+    ]
+  }
+}
+```
+
+`command[0]` is a plain program name on the login shell's PATH, never a shell,
+interpreter or `git`, and it's the only thing the agent ever runs; the review
+screen names it, and an update that changes it is reviewed again. The
+capabilities say what it can do, and Abstract leaves out any it doesn't know (as
+Paseo negotiates). Without one, Abstract says the agent can't:
+
+| Capability | What it turns on |
+|---|---|
+| `prompt.message` | Required: it takes a prompt |
+| `prompt.image` | Pictures ride with the prompt |
+| `prompt.steer` | Follow-ups go to the running program's stdin; without it each turn starts it again |
+| `interrupt`, `permission`, `permission.mode` | Stop a turn, answer its permission requests, change its mode while it runs |
+| `session.persistence` | A later turn resumes the conversation |
+| `task.stop`, `task.background` | Stop one of its background tasks, move work to the background |
+| `naming`, `compaction`, `models.discover` | Name chats, `/compact`, list the account's models |
+| `lines.enrich` | Fill in a line from the chat's worktree before it's logged |
+
+The agent script is plain JavaScript in a context of its own: no page, no
+network, no timers, no files. It registers each agent:
+
+```js
+AbstractAgent.register({
+  id: "my-agent",
+  launch(ctx, resumeId) {           // ctx: the prompt, folder, model, policy, MCP servers…
+    return { args: ["run", ctx.prompt], env: {}, stdin: null, keepStdinOpen: false };
+  },
+  parser() {                        // one per chat, fed a batch of lines at a time
+    return {
+      feed(lines) { return lines.map(({ line, stream }) => [{ type: "text", role: "assistant", text: line }]); },
+      exit(code) { return [{ type: "status", status: code === 0 ? "finished" : "errored" }]; },
+    };
+  },
+  message({ text, images, sessionId }) { return JSON.stringify({ type: "user", text }) + "\n"; },
+  catalog() { return { models: [{ id: "big", label: "Big", efforts: [] }], versions: [] }; },
+  *discoverModels() { const r = yield { run: { args: ["models"] } }; return parseModels(r.stdout); },
+});
+```
+
+`feed` returns, for each line, the events it made, as `{ type, … }` objects
+(`text`, `thinking`, `toolUse` with an `edit` preview, `toolResult`, `usage`,
+`sessionId`, `turnEnd`, `permissionRequest`, `notice`, `task`, `error`, `raw`…).
+It must be a function of the lines alone: the same log folds to the same chat
+on every Mac. Jobs (`discoverModels`, `compact`) are generators whose every
+`yield` is one thing Abstract does and hands back: run the agent's own program
+(`run`), talk to it a line at a time (`converse`), start it and wait for a line
+(`start`, `stop`), or call a server it started on the chat's own Mac (`http`,
+loopback only). `AbstractAgent` also offers `editPreview(tool, input)`,
+`compactJSON(value)`, `uuid()` and `writeConfigFile(name, text)` (into the
+chat's own config folder, while a launch is built).
+
+The sample in `Packages/AbstractCore/Tests/AbstractCoreTests/Fixtures/agent-direct-example.abstractplugin`,
+adapted from Paseo's `provider-direct`, runs a whole chat with `echo` as its
+program.
+
 ## The kit
 
 Every plugin can use Abstract's own components. Link them from the host's scheme; the

@@ -22,7 +22,7 @@ import Testing
         configured.branchCommand = "/Applications/Abstract.app/Contents/Helpers/abstract"
         let session = Session(id: "chat", projectId: "p", name: "Run", providerId: "claude",
                               worktreePath: "/tmp/worktree", branch: "auto/run/2026-10-21-1200")
-        for provider in [ClaudeProvider(), CodexProvider(), OpenCodeProvider(), MuseProvider()] as [any ProviderDefinition] {
+        for provider in [ClaudeProvider(), CodexProvider(), Agents.opencode, Agents.muse] as [any ProviderDefinition] {
             let spec = AgentLaunch.spec(for: session, provider: provider, prompt: "Find the next ticket",
                                         resumeId: nil, settings: configured, home: "/tmp")
             let joined = spec.args.joined(separator: " ") + (spec.stdinInitial ?? "") + spec.env.values.joined()
@@ -31,8 +31,8 @@ import Testing
                 let start = try #require(lines.map { try JSONDecoder().decode(JSONValue.self, from: Data($0.utf8)) }
                     .first { $0["method"]?.string == "session/start" })
                 let id = try #require(start["params"]?["sessionId"]?.string)
-                #expect(MusePendingTurns.peek(id)?.prompt.contains("abstract branch name") == true)
-                MusePendingTurns.remove(id)
+                #expect(MusePlugin.pendingPrompt(id)?.contains("abstract branch name") == true)
+                MusePlugin.removePending(id)
             } else {
                 #expect(joined.contains("abstract branch name"), "\(provider.id) needs the CLI instruction")
             }

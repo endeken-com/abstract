@@ -4,7 +4,7 @@ import Testing
 
 @Suite("Muse Code")
 struct MuseProviderTests {
-    let provider = MuseProvider()
+    let provider = Agents.muse
 
     private func context(_ policy: PermissionPolicy = .ask) -> LaunchContext {
         LaunchContext(cwd: "/tmp/clean-worktree", prompt: "Say hello.", permissionPolicy: policy)
@@ -12,7 +12,7 @@ struct MuseProviderTests {
 
     private static func fixture(_ name: String) throws -> [AgentEvent] {
         let url = try #require(Bundle.module.url(forResource: name, withExtension: "jsonl", subdirectory: "Fixtures"))
-        let parser = MuseProvider().makeParser()
+        let parser = Agents.muse.makeParser()
         return try String(contentsOf: url, encoding: .utf8)
             .split(separator: "\n").flatMap { parser.feed(String($0), stream: .stdout) }
     }
@@ -115,7 +115,7 @@ struct MuseProviderTests {
         ctx.effort = "high"
         let spec = provider.buildLaunch(ctx)
         let id = try sessionId(in: spec)
-        let parser = try #require(provider.makeParser() as? MuseParser)
+        let parser = try #require(provider.makeParser() as? ScriptedParser)
         #expect(parser.takePendingInput().isEmpty)
         let reply = #"{"jsonrpc":"2.0","id":2,"result":{"session":{"sessionId":""# + id
             + #"","modelId":"muse-wonder-1.0","workspaceRoot":"/tmp/clean-worktree"}}}"#
@@ -138,11 +138,11 @@ struct MuseProviderTests {
         // The log is folded again in this same process when the chat opens;
         // that parser never drains, and the live one must still get its turn.
         _ = provider.makeParser().feed(reply, stream: .stdout)
-        let live = try #require(provider.makeParser() as? MuseParser)
+        let live = try #require(provider.makeParser() as? ScriptedParser)
         _ = live.feed(reply, stream: .stdout)
         #expect(live.takePendingInput().count == 1)
         // Once drained it is gone: a later relaunch registers its own turn.
-        let again = try #require(provider.makeParser() as? MuseParser)
+        let again = try #require(provider.makeParser() as? ScriptedParser)
         _ = again.feed(reply, stream: .stdout)
         #expect(again.takePendingInput().isEmpty)
     }
@@ -151,7 +151,7 @@ struct MuseProviderTests {
         var ctx = context(.bypass)
         ctx.model = "muse-wonder-full-1.0"
         _ = provider.buildResume(ctx, resumeId: "session-9")
-        let parser = try #require(provider.makeParser() as? MuseParser)
+        let parser = try #require(provider.makeParser() as? ScriptedParser)
         let reply = #"{"jsonrpc":"2.0","id":2,"result":{"session":{"sessionId":"session-9","modelId":"muse-wonder-1.0"}}}"#
         _ = parser.feed(reply, stream: .stdout)
         let sent = parser.takePendingInput()
@@ -473,14 +473,14 @@ struct MuseProviderTests {
 
     @Test func modelCatalogOnlyOffersRowsExposedByTheCLI() {
         let response = #"{"id":2,"jsonrpc":"2.0","result":{"models":[{"modelId":"muse-wonder-1.0","displayLabel":"Muse Wonder","description":"Complex coding","isDefault":true,"variants":["low","high"],"defaultReasoningEffort":"high"},{"modelId":"muse-wonder-full-1.0","displayLabel":"Muse Wonder Full","isDefault":false,"variants":["high"]}]}}"#
-        let catalog = MuseModelDiscovery.catalog(response)
+        let catalog = MusePlugin.catalog(response)
         #expect(catalog?.models.map(\.id) == ["muse-wonder-1.0", "muse-wonder-full-1.0"])
         #expect(catalog?.accountDefault?.id == "muse-wonder-1.0")
         #expect(catalog?.models.first?.defaultEffort == "high")
         let fullOnly = #"{"id":2,"result":{"models":[{"modelId":"muse-wonder-full-1.0","isDefault":false}]}}"#
-        #expect(MuseModelDiscovery.catalog(fullOnly)?.models.map(\.id)
+        #expect(MusePlugin.catalog(fullOnly)?.models.map(\.id)
             == ["muse-wonder-1.0", "muse-wonder-full-1.0"])
-        #expect(MuseModelDiscovery.catalog(#"{"id":2,"result":{"models":[]}}"#) == nil)
+        #expect(MusePlugin.catalog(#"{"id":2,"result":{"models":[]}}"#) == nil)
     }
 
     @Test func namingUsesTheEmptyPresetAndReadsTheTerminalAnswer() throws {
@@ -515,10 +515,10 @@ struct MuseRealCLITests {
         let workspace = FileManager.default.temporaryDirectory.appendingPathComponent("abstract-muse-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: workspace) }
-        let provider = MuseProvider()
+        let provider = Agents.muse
         let binary = ProcessInfo.processInfo.environment["ABSTRACT_MUSE_BIN"] ?? provider.binary
         let engine = SessionEngine(executor: LocalExecutor.shared, logDirectory: workspace.appendingPathComponent("logs"))
-        let parser = try #require(provider.makeParser() as? MuseParser)
+        let parser = try #require(provider.makeParser() as? ScriptedParser)
 
         /// Feed the host until the turn ends, writing whatever the parser
         /// answers with, as the app does.

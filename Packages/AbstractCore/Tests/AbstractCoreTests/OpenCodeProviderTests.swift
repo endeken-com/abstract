@@ -3,7 +3,7 @@ import Testing
 @testable import AbstractCore
 
 @Suite struct OpenCodeProviderTests {
-    let provider = OpenCodeProvider()
+    let provider = Agents.opencode
 
     @Test func launchesAndResumesWithModelVariantAndFiles() {
         let context = LaunchContext(cwd: "/tmp/work", prompt: "Fix this", permissionPolicy: .ask,
@@ -104,7 +104,8 @@ import Testing
         opencode/free
         {"name":"Free","variants":{}}
         """
-        let catalog = try #require(OpenCodeProvider.modelCatalog(from: output))
+        let value = try #require(Agents.call(Agents.opencode, "OpenCodeAgent.modelCatalog", .string(output)))
+        let catalog = try #require(AgentEventJSON.decodeCodable(ModelCatalog.self, value))
         #expect(catalog.models.map(\.id) == ["openai/gpt-5.4", "opencode/free"])
         #expect(catalog.models[0].label == "GPT-5.4")
         #expect(catalog.models[0].efforts == ["low", "high"])
@@ -176,7 +177,7 @@ struct OpenCodeCompactionTests {
         let home = NSTemporaryDirectory() + "oc-\(UUID().uuidString)"
         let request = CompactionRequest(sessionId: "ses_x", cwd: NSTemporaryDirectory())
         await #expect(throws: AbstractError.message("OpenCode needs a model to compact with; choose one for this chat.")) {
-            try await OpenCodeCompactor().compact(request, executor: HomeOnly(home: home))
+            try await Agents.openCodeCompactor.compact(request, executor: HomeOnly(home: home))
         }
     }
 
@@ -189,7 +190,7 @@ struct OpenCodeCompactionTests {
             .write(toFile: server, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: server)
         let request = CompactionRequest(sessionId: "ses_x", cwd: dir, model: "opencode/x", binaryOverride: server)
-        let task = Task { try await OpenCodeCompactor().compact(request, executor: FakeCurl(dir: dir)) }
+        let task = Task { try await Agents.openCodeCompactor.compact(request, executor: FakeCurl(dir: dir)) }
         let deadline = Date().addingTimeInterval(15)
         while !FileManager.default.fileExists(atPath: dir + "curl.pid"), Date() < deadline {
             try await Task.sleep(for: .milliseconds(50))
@@ -204,9 +205,9 @@ struct OpenCodeCompactionTests {
     }
 
     @Test func openCodeCompactsThroughItsServer() {
-        #expect(OpenCodeProvider().commands.extra.contains(.compact))
-        guard case .sideChannel(let compactor)? = OpenCodeProvider().compaction else { Issue.record("no side channel"); return }
-        #expect(compactor is OpenCodeCompactor)
+        #expect(Agents.opencode.commands.extra.contains(.compact))
+        guard case .sideChannel(let compactor)? = Agents.opencode.compaction else { Issue.record("no side channel"); return }
+        #expect(compactor is ScriptedCompactor)
     }
 }
 
