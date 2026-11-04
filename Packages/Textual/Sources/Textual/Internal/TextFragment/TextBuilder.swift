@@ -22,9 +22,14 @@ extension TextFragment {
 
     @ObservationIgnored private let content: Content
     @ObservationIgnored private let cache: NSCache<KeyBox<[AttachmentKey: CGSize]>, Box<Text>>
+    /// The sizes `text` was built for. Text without attachments never changes
+    /// with the container, so a resize neither scans its runs again nor sets
+    /// `text`, which would redraw and lay it out again (Abstract, ABS-184).
+    @ObservationIgnored private var currentSizes: [AttachmentKey: CGSize]
 
     init(_ content: Content, environment: TextEnvironmentValues) {
       let attachmentSizes = content.attachmentSizes(for: .unspecified, in: environment)
+      self.currentSizes = attachmentSizes
 
       self.text = Text(
         attributedString: content,
@@ -39,7 +44,10 @@ extension TextFragment {
     }
 
     func sizeChanged(_ size: CGSize, environment: TextEnvironmentValues) {
+      guard !currentSizes.isEmpty else { return }
       let attachmentSizes = content.attachmentSizes(for: .init(size), in: environment)
+      guard attachmentSizes != currentSizes else { return }
+      currentSizes = attachmentSizes
       let cacheKey = KeyBox(attachmentSizes)
 
       if let text = cache.object(forKey: cacheKey) {
