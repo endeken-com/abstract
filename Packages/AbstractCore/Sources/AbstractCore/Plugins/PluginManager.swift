@@ -475,9 +475,10 @@ public final class PluginManager: Sendable {
 
     public static let defaultsKey = "plugins.defaults.v1"
     /// Bundled plugins installed and turned on the first time Abstract
-    /// finds them: GitHub for pull requests, Delegation for sub-tasks, the
-    /// Graphite, Paper and Ink themes and Abstract's own agents (ABS-185).
-    public static let defaultPluginIds: Set<String> = Set(["sh.abstract.github", "sh.abstract.delegation"])
+    /// finds them: GitHub for pull requests, the Graphite, Paper and Ink
+    /// themes and Abstract's own agents (ABS-185). Delegation was one until
+    /// it moved to its own repository (ABS-190).
+    public static let defaultPluginIds: Set<String> = Set(["sh.abstract.github"])
         .union(ThemeCatalog.bundledPluginIds).union(AgentPlugins.bundledPluginIds)
 
     /// The default plugins already offered on this Mac: installed once, and

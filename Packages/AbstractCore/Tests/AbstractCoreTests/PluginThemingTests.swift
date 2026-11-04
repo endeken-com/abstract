@@ -170,21 +170,6 @@ import Testing
         }
     }
 
-    @Test func followPullRequestSecondOpinionAndLessonsAreChatPanelTabs() throws {
-        for name in ["follow-pr", "second-opinion", "lessons"] {
-            let manifest = try PluginPackage.inspect(folder: pluginsFolder.appendingPathComponent("\(name).abstractplugin")).manifest
-            #expect(manifest.contributes.chatPanelTabs.count == 1, "\(name)")
-            try manifest.validate()
-        }
-    }
-
-    @Test func pluginsWithSeveralViewsUseTabs() throws {
-        for name in ["kanban", "approvals", "follow-pr"] {
-            let app = try String(contentsOf: pluginsFolder.appendingPathComponent("\(name).abstractplugin/app.js"), encoding: .utf8)
-            #expect(app.contains("ui.tabs(") || app.contains("AbstractUI.tabs("), "\(name) has no tabs")
-        }
-    }
-
     /// The kit's preview (docs/plugin-kit) draws with the host's own colours.
     @Test func theKitPreviewUsesTheHostsColours() throws {
         let url = repo.appendingPathComponent("docs/plugin-kit/tokens.js")

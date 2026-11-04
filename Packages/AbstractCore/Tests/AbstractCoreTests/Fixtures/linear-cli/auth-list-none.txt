@@ -1,2 +1,0 @@
-No workspaces configured
-Run `linear auth login` to add a workspace

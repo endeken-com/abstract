@@ -14,7 +14,8 @@ public struct PluginGitCandidate: Sendable {
 /// changes: the summary shown before you accept it.
 public struct PluginGitUpdate: Sendable, Identifiable {
     public var pluginId: String
-    public var fromCommit: String
+    /// Nil for a copy that came with the app before it moved out (ABS-190).
+    public var fromCommit: String?
     public var candidate: PluginGitCandidate
     public var changes: PluginGitChanges?
     /// More than it holds now: the ABS-98 rule makes it wait for review.
@@ -33,7 +34,8 @@ public struct PluginGitUpdate: Sendable, Identifiable {
         }
         parts.append(grants.asksForMore ? "asks for more access" : "no new access")
         let to = candidate.source.shortCommit ?? ""
-        return "\(String(fromCommit.prefix(7))) → \(to): " + parts.joined(separator: ", ") + "."
+        let from = fromCommit.map { String($0.prefix(7)) } ?? "The copy from the app"
+        return "\(from) → \(to): " + parts.joined(separator: ", ") + "."
     }
 }
 
@@ -78,8 +80,10 @@ extension PluginManager {
         var updates: [PluginGitUpdate] = []
         var problems: [String: String] = [:]
         for record in records() {
-            guard let source = record.source.git, let installed = source.commit,
+            // A listing's install may have no commit: an older copy from the app (ABS-190).
+            guard let source = record.source.git, source.commit != nil || source.listing != nil,
                   !(source.ref.map(PluginGitSource.isCommit) ?? false) else { continue }
+            let installed = source.commit
             do {
                 let candidate: PluginGitCandidate
                 if let listing = source.listing {
@@ -97,7 +101,8 @@ extension PluginManager {
                     continue
                 }
                 let previous = try? PluginPackage.inspect(folder: packageURL(for: record), fileManager: fm).manifest
-                let changes = try? await fetcher.compare(source, from: installed, to: candidate.source.commit ?? "")
+                var changes: PluginGitChanges?
+                if let installed { changes = try? await fetcher.compare(source, from: installed, to: candidate.source.commit ?? "") }
                 updates.append(PluginGitUpdate(pluginId: record.id, fromCommit: installed, candidate: candidate,
                                                changes: changes,
                                                grants: PluginGrantChanges(new: candidate.inspection.manifest,

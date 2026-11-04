@@ -41,6 +41,8 @@ final class PluginService {
         manager = PluginManager(store: store)
         // The GitHub plugin is on unless you turned it off (ABS-139).
         let bundled = PluginManager.bundledFolders(in: Bundle.main.resourceURL)
+        // Plugins that moved to their own repositories keep working (ABS-190).
+        manager.migrateMovedPlugins()
         manager.installDefaults(from: bundled)
         manager.updateBundled(from: bundled)
         refresh()
@@ -80,12 +82,35 @@ final class PluginService {
         return try manager.inspectCatalogZip(zip, entry: entry)
     }
 
-    /// Offer Bitbucket's bundled code host once a Bitbucket remote appears.
-    /// installDefaults remembers the offer, so turning it off or removing it sticks.
+    /// Turn on the Bitbucket code host once a Bitbucket remote appears,
+    /// from its reviewed listing now that the app doesn't carry it
+    /// (ABS-190). The offer is remembered, so turning it off or removing it
+    /// sticks; without the registry it waits for the next remote check.
     func enableBitbucketForRemote(_ remote: String) {
         guard let host = GitRemote.host(remote),
-              host == "bitbucket.org" || host.contains("bitbucket") || remote.lowercased().contains("/scm/") else { return }
-        if manager.installDefaults(from: bundledFolders, ids: ["sh.abstract.bitbucket"]) { refresh() }
+              host == "bitbucket.org" || host.contains("bitbucket") || remote.lowercased().contains("/scm/"),
+              !manager.offeredDefaults.contains(MovedPlugins.bitbucket), plugin(MovedPlugins.bitbucket) == nil,
+              !offeringBitbucket else { return }
+        offeringBitbucket = true
+        Task {
+            defer { offeringBitbucket = false }
+            guard let entry = await listing(for: MovedPlugins.bitbucket),
+                  (try? await manager.installOffered(entry, fetcher: gitFetcher)) == true else { return }
+            refresh()
+        }
+    }
+    @ObservationIgnored private var offeringBitbucket = false
+
+    /// The registry, read once when something needs it before the gallery has.
+    func loadRegistryIfNeeded() async -> PluginRegistry? {
+        if registry == nil, let read = try? await PluginRegistry.fetch() { registry = read }
+        return registry
+    }
+
+    /// A moved plugin's reviewed listing (ABS-190).
+    func listing(for pluginId: String) async -> PluginRegistry.Entry? {
+        guard let move = MovedPlugins.move(pluginId) else { return nil }
+        return await loadRegistryIfNeeded()?.entry(move.listing)
     }
 
     /// Enabled plugins that can run: a sidebar row each.

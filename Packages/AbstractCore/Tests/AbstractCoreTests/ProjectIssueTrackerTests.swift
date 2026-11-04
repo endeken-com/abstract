@@ -8,11 +8,10 @@ import Testing
 @Suite struct ProjectIssueTrackerTests {
     let fm = FileManager.default
 
+    /// Linear's and Jira's manifests and icons, with stand-in scripts: the
+    /// plugins themselves live in their own repositories (ABS-190).
     var plugins: URL {
-        let here = URL(fileURLWithPath: #filePath)
-        let repo = here.deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        return repo.appendingPathComponent("Abstract/Resources/Plugins")
+        get throws { try #require(Bundle.module.url(forResource: "Fixtures/trackers", withExtension: nil)) }
     }
 
     func tempRoot() throws -> URL {
@@ -29,7 +28,7 @@ import Testing
     /// Linear and Jira as bundled, installed and turned on.
     func installTrackers(_ manager: PluginManager) throws {
         for name in ["linear", "jira"] {
-            let record = try manager.install(from: plugins.appendingPathComponent("\(name).abstractplugin"), sourceKind: .bundled)
+            let record = try manager.install(from: try plugins.appendingPathComponent("\(name).abstractplugin"), sourceKind: .bundled)
             manager.setEnabled(record.id, true)
         }
     }
@@ -234,8 +233,8 @@ import Testing
     // MARK: Icons
 
     @Test func jirasIconKeepsItsColoursAndLinearsTakesTheTextColour() throws {
-        let jira = try #require(PluginPackage.fileData(in: plugins.appendingPathComponent("jira.abstractplugin"), relativePath: "icon.svg"))
-        let linear = try #require(PluginPackage.fileData(in: plugins.appendingPathComponent("linear.abstractplugin"), relativePath: "icon.svg"))
+        let jira = try #require(PluginPackage.fileData(in: try plugins.appendingPathComponent("jira.abstractplugin"), relativePath: "icon.svg"))
+        let linear = try #require(PluginPackage.fileData(in: try plugins.appendingPathComponent("linear.abstractplugin"), relativePath: "icon.svg"))
         #expect(!PluginIssueTrackerDeclaration.iconIsTemplate(jira, path: "icon.svg"))
         #expect(String(decoding: jira, as: UTF8.self).contains("linearGradient"))
         #expect(PluginIssueTrackerDeclaration.iconIsTemplate(linear, path: "icon.svg"))
@@ -295,7 +294,7 @@ import Testing
         let manager = try manager(root)
         // An older bundled Jira, on.
         let old = root.appendingPathComponent("old-jira")
-        try fm.copyItem(at: plugins.appendingPathComponent("jira.abstractplugin"), to: old)
+        try fm.copyItem(at: try plugins.appendingPathComponent("jira.abstractplugin"), to: old)
         let manifestURL = old.appendingPathComponent("manifest.json")
         let text = try String(contentsOf: manifestURL, encoding: .utf8)
             .replacingOccurrences(of: #""version": "1.1.0""#, with: #""version": "1.0.0""#)
@@ -303,11 +302,11 @@ import Testing
         try manager.install(from: old, sourceKind: .bundled)
         manager.setEnabled(Self.jira, true)
 
-        #expect(manager.updateBundled(from: [plugins.appendingPathComponent("jira.abstractplugin")]))
+        #expect(manager.updateBundled(from: [try plugins.appendingPathComponent("jira.abstractplugin")]))
         let record = try #require(manager.records().first { $0.id == Self.jira })
         #expect(record.version == "1.1.0")
         #expect(record.enabled)
         // Nothing to do the second time.
-        #expect(!manager.updateBundled(from: [plugins.appendingPathComponent("jira.abstractplugin")]))
+        #expect(!manager.updateBundled(from: [try plugins.appendingPathComponent("jira.abstractplugin")]))
     }
 }
