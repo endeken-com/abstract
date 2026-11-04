@@ -280,7 +280,7 @@ final class FakeGitHub: PluginGitFetching {
                                 locks: root.appendingPathComponent("locks"), executable: "/bin/abstract")
         let github = FakeGitHub(["endeken-com/abstract-plugin-kanban": .init(head: c1, trees: [
             c1: ["manifest.json": FakeGitHub.manifest(), "index.html": "x"]])])
-        let added = try await commands.addPlugin("endeken-com/abstract-plugin-kanban", ref: nil, fetcher: github)
+        let added = try await commands.addPlugin("endeken-com/abstract-plugin-kanban", ref: nil, fetcher: github, registry: nil)
         #expect(added.id == "dev.example.kanban" && added.commit == c1 && !added.enabled)
         #expect(added.repository == "endeken-com/abstract-plugin-kanban" && added.capabilities == ["chats.read"])
         let record = try #require(commands.plugins.records().first)
@@ -288,10 +288,10 @@ final class FakeGitHub: PluginGitFetching {
         #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("Plugins/dev.example.kanban/1.0.0/manifest.json").path))
 
         await #expect(throws: CLIError(.invalidArguments, PluginSourceError.localFolder.localizedDescription)) {
-            try await commands.addPlugin("./kanban", ref: nil, fetcher: github)
+            try await commands.addPlugin("./kanban", ref: nil, fetcher: github, registry: nil)
         }
         do {
-            _ = try await commands.addPlugin("endeken-com/missing", ref: nil, fetcher: github)
+            _ = try await commands.addPlugin("endeken-com/missing", ref: nil, fetcher: github, registry: nil)
             Issue.record("a missing repository installed")
         } catch let error as CLIError {
             #expect(error.code == .pluginFailed)

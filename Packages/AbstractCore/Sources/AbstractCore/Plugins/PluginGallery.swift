@@ -26,6 +26,16 @@ public struct PluginGalleryItem: Identifiable, Sendable {
     public let state: State
     public let installed: InstalledPlugin?
     public let catalogEntry: PluginCatalog.Entry?
+    /// Its listing in the reviewed registry (ABS-190).
+    public let listing: PluginRegistry.Entry?
+    /// For a plugin from a repository: whether a person reviewed exactly
+    /// this commit. Nil for the app's own and folder installs.
+    public let reviewed: Bool?
+
+    /// "Reviewed" or "Not reviewed", for plugins from a repository.
+    public var reviewText: String? {
+        reviewed.map { $0 ? "Reviewed" : "Not reviewed" }
+    }
 
     /// The same state wording in gallery cards and plugin details.
     public var statusText: String {
@@ -40,18 +50,23 @@ public struct PluginGalleryItem: Identifiable, Sendable {
     }
 
     /// `gitUpdates`: plugins installed from a repository whose ref moved
-    /// on, found by Check for updates (ABS-190).
+    /// on, found by Check for updates; `registry`: the reviewed listings,
+    /// listed beside the catalog (ABS-190).
     public static func items(installed: [InstalledPlugin], bundled: [PluginManifest],
-                             catalog: [PluginCatalog.Entry], gitUpdates: Set<String> = []) -> [Self] {
+                             catalog: [PluginCatalog.Entry], registry: PluginRegistry? = nil,
+                             gitUpdates: Set<String> = []) -> [Self] {
         let installedByID = Dictionary(uniqueKeysWithValues: installed.map { ($0.id, $0) })
         let bundledByID = Dictionary(uniqueKeysWithValues: bundled.map { ($0.id, $0) })
         let catalogByID = Dictionary(uniqueKeysWithValues: catalog.map { ($0.id, $0) })
-        let ids = Set(installedByID.keys).union(bundledByID.keys).union(catalogByID.keys)
+        let listings = Dictionary((registry?.plugins ?? []).map { ($0.pluginId, $0) }, uniquingKeysWith: { first, _ in first })
+        let ids = Set(installedByID.keys).union(bundledByID.keys).union(catalogByID.keys).union(listings.keys)
         return ids.map { id in
             let plugin = installedByID[id]
             let manifest = plugin?.manifest ?? bundledByID[id]
             let entry = catalogByID[id]
-            let source = plugin?.record.source ?? (bundledByID[id] == nil ? .catalog : .bundled)
+            let listing = listings[id]
+            let source = plugin?.record.source
+                ?? (bundledByID[id] != nil ? .bundled : entry != nil ? .catalog : listing.map { .git($0.source) } ?? .catalog)
             let version = plugin?.record.version ?? manifest?.version ?? entry?.version ?? ""
             let state: State
             if let plugin {
@@ -59,20 +74,27 @@ public struct PluginGalleryItem: Identifiable, Sendable {
                     state = plugin.manifest != nil && plugin.record.source != .catalog ? .needsReview : .problem
                 }
                 else if gitUpdates.contains(id) { state = .updateAvailable }
+                // A listing's install follows its approved commit.
+                else if let installed = plugin.record.source.git, installed.listing != nil, let listing,
+                        installed.listing == listing.id, installed.commit != listing.commit {
+                    state = .updateAvailable
+                }
                 else if plugin.record.source.git == nil, let entry,
                         entry.version != plugin.record.version || entry.hash != plugin.record.packageHash {
                     state = .updateAvailable
                 } else if !plugin.record.enabled { state = .disabled }
                 else { state = .installed }
             } else { state = .available }
-            return Self(id: id, name: plugin?.record.name ?? manifest?.name ?? entry?.name ?? id,
+            return Self(id: id, name: plugin?.record.name ?? manifest?.name ?? entry?.name ?? listing?.name ?? id,
                         summary: manifest?.description?.trimmingCharacters(in: .whitespacesAndNewlines)
-                            .nonEmpty ?? "See what this plugin adds to Abstract.",
+                            .nonEmpty ?? listing?.description.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
+                            ?? "See what this plugin adds to Abstract.",
                         version: version, source: source,
                         publisher: plugin?.publisher,
                         symbol: manifest?.view?.symbolOrFallback ?? PluginManifest.fallbackSymbol,
                         category: category(for: manifest), state: state, installed: plugin,
-                        catalogEntry: entry)
+                        catalogEntry: entry, listing: listing,
+                        reviewed: source.git.map { (registry ?? PluginRegistry(plugins: [])).isReviewed($0) })
         }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
@@ -83,7 +105,7 @@ public struct PluginGalleryItem: Identifiable, Sendable {
             (view == .all || (view == .installed && item.installed != nil)
                 || (view == .updates && item.state == .updateAvailable || item.state == .needsReview))
                 && (category == nil || item.category == category)
-                && (query.isEmpty || [item.name, item.summary, item.source.plainWords,
+                && (query.isEmpty || [item.name, item.summary, item.source.plainWords, item.reviewText ?? "",
                                       item.category.rawValue].contains { $0.localizedCaseInsensitiveContains(query) })
         }
     }

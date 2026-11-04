@@ -19,6 +19,9 @@ final class PluginService {
     /// Plugins whose repository couldn't be checked, with why.
     private(set) var gitUpdateProblems: [String: String] = [:]
     private(set) var checkingForUpdates = false
+    /// The reviewed registry's listings (ABS-190); nil until read, or while
+    /// it can't be. The gallery lists them beside the catalog.
+    private(set) var registry: PluginRegistry?
     @ObservationIgnored let gitFetcher: any PluginGitFetching = GitPluginFetcher()
     /// Monotonic snapshot revision, shared by every open plugin view.
     private(set) var revision = 0
@@ -55,6 +58,8 @@ final class PluginService {
     }
 
     func loadCatalog() async {
+        // The registry is optional: without it, owner/slug reads as a repository.
+        async let registry = try? PluginRegistry.fetch()
         do {
             let channel = UpdateChannel(stored: UserDefaults.standard.string(forKey: UpdateChannel.defaultsKey))
             catalog = try await PluginCatalog.fetch(channel: channel).plugins
@@ -62,6 +67,7 @@ final class PluginService {
         } catch {
             catalogProblem = error.localizedDescription
         }
+        if let read = await registry { self.registry = read }
     }
 
     func inspectCatalog(_ entry: PluginCatalog.Entry) async throws
@@ -134,15 +140,27 @@ final class PluginService {
 
     /// Fetches what's typed in "Add from GitHub…" and checks it, for the
     /// review screen. Nothing is installed.
+    /// A registry listing's `owner/slug` fetches its approved commit.
     func inspectGit(_ text: String) async throws -> PluginGitCandidate {
-        try await manager.inspectGit(PluginGitSource.parse(text), fetcher: gitFetcher)
+        let source = try (registry ?? PluginRegistry(plugins: [])).source(for: text)
+        return try await manager.inspect(source, registry: registry, fetcher: gitFetcher)
+    }
+
+    /// A gallery listing, at its approved commit.
+    func inspectListing(_ entry: PluginRegistry.Entry) async throws -> PluginGitCandidate {
+        try await manager.inspectListing(entry, fetcher: gitFetcher)
+    }
+
+    /// Whether a person reviewed exactly this commit.
+    func isReviewed(_ source: PluginGitSource) -> Bool {
+        (registry ?? PluginRegistry(plugins: [])).isReviewed(source)
     }
 
     /// Settings → Plugins → Check for updates. Nothing installs by itself.
     func checkForUpdates() async {
         checkingForUpdates = true
         defer { checkingForUpdates = false }
-        let found = await manager.checkGitUpdates(fetcher: gitFetcher)
+        let found = await manager.checkGitUpdates(fetcher: gitFetcher, registry: registry)
         for update in gitUpdates.values { try? FileManager.default.removeItem(at: update.candidate.cleanup) }
         gitUpdates = Dictionary(uniqueKeysWithValues: found.updates.map { ($0.pluginId, $0) })
         gitUpdateProblems = found.problems

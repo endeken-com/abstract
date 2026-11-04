@@ -68,9 +68,12 @@ extension PluginManager {
     /// Settings → Plugins → Check for updates: each plugin installed from a
     /// repository whose ref now points at another commit, fetched and
     /// checked, with what changed. Nothing is installed; a plugin pinned to
-    /// a commit has none. Plugins whose repository can't be reached are
+    /// a commit has none. One installed from a registry listing follows the
+    /// listing's approved commit instead, and waits while the registry
+    /// can't be read. Plugins whose repository can't be reached are
     /// returned in `problems`.
-    public func checkGitUpdates(fetcher: any PluginGitFetching, fileManager fm: FileManager = .default) async
+    public func checkGitUpdates(fetcher: any PluginGitFetching, registry: PluginRegistry? = nil,
+                                fileManager fm: FileManager = .default) async
         -> (updates: [PluginGitUpdate], problems: [String: String]) {
         var updates: [PluginGitUpdate] = []
         var problems: [String: String] = [:]
@@ -78,17 +81,23 @@ extension PluginManager {
             guard let source = record.source.git, let installed = source.commit,
                   !(source.ref.map(PluginGitSource.isCommit) ?? false) else { continue }
             do {
-                var latest = source
-                latest.commit = try await fetcher.resolve(source)
-                guard latest.commit != installed else { continue }
-                let candidate = try await inspectGit(latest, fetcher: fetcher, fileManager: fm)
+                let candidate: PluginGitCandidate
+                if let listing = source.listing {
+                    guard let entry = registry?.entry(listing), entry.commit != installed else { continue }
+                    candidate = try await inspectListing(entry, fetcher: fetcher, fileManager: fm)
+                } else {
+                    var latest = source
+                    latest.commit = try await fetcher.resolve(source)
+                    guard latest.commit != installed else { continue }
+                    candidate = try await inspectGit(latest, fetcher: fetcher, fileManager: fm)
+                }
                 guard candidate.inspection.manifest.id == record.id else {
                     try? fm.removeItem(at: candidate.cleanup)
                     problems[record.id] = "The repository now holds a different plugin, so it wasn't offered as an update."
                     continue
                 }
                 let previous = try? PluginPackage.inspect(folder: packageURL(for: record), fileManager: fm).manifest
-                let changes = try? await fetcher.compare(source, from: installed, to: latest.commit ?? "")
+                let changes = try? await fetcher.compare(source, from: installed, to: candidate.source.commit ?? "")
                 updates.append(PluginGitUpdate(pluginId: record.id, fromCommit: installed, candidate: candidate,
                                                changes: changes,
                                                grants: PluginGrantChanges(new: candidate.inspection.manifest,
