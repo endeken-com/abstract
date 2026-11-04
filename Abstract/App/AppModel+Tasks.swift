@@ -33,7 +33,8 @@ extension AppModel {
 
     /// Whether the chat's agent takes task commands at all.
     func canControlTasks(_ sessionId: String) -> Bool {
-        guard let s = session(sessionId), let provider = ProviderRegistry.provider(s.providerId) else { return false }
+        // The chat's summary, not the chat: menus ask, and redraw only when it changes.
+        guard let s = chatSummary(sessionId), let provider = ProviderRegistry.provider(s.providerId) else { return false }
         return provider.buildStopTask("", requestId: "") != nil
     }
 

@@ -6,7 +6,7 @@ import AbstractCore
 extension AppModel {
     /// Persist an automation: checks every trigger, stamps `updatedAt`,
     /// recomputes `nextRunAt` (the earliest next occurrence across its
-    /// triggers, cleared while paused), reloads and wakes the scheduler.
+    /// triggers, cleared while paused), updates its entry and wakes the scheduler.
     @discardableResult
     func saveAutomation(_ automation: Automation) throws -> Automation {
         var a = automation
@@ -14,7 +14,7 @@ extension AppModel {
         a.updatedAt = Date()
         a.nextRunAt = a.enabled ? a.nextOccurrence(after: Date()) : nil
         try store.save(a)
-        reload()
+        automations = StoreOrder.saving(a, in: automations, precedes: StoreOrder.automationPrecedes)
         scheduler?.poke()
         return a
     }
@@ -60,7 +60,9 @@ extension AppModel {
             flash(error.localizedDescription, isError: true)
             return
         }
-        reload()
+        // Its runs went with it.
+        automations.removeAll { $0.id == id }
+        latestAutomationRuns[id] = nil
         scheduler?.poke()
     }
 

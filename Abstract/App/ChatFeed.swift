@@ -79,6 +79,8 @@ final class ChatFeed {
     @ObservationIgnored private(set) var timeline = Timeline()
     /// Whether the saved log has been read, or the chat started here.
     @ObservationIgnored private(set) var isLoaded = false
+    /// Bumped at each `reset`, so a log read in the background for an earlier one is dropped.
+    @ObservationIgnored private(set) var generation = 0
     @ObservationIgnored private var flush: Task<Void, Never>?
     /// Replies already cut into blocks, by block id, while their text is unchanged.
     @ObservationIgnored private var parts: [Int: (text: String, blocks: [String])] = [:]
@@ -112,6 +114,7 @@ final class ChatFeed {
     }
 
     func reset(_ timeline: Timeline = Timeline()) {
+        generation += 1
         self.timeline = timeline
         parts = [:]
         tailOnly = false
@@ -120,6 +123,8 @@ final class ChatFeed {
     }
 
     private func publish() {
+        let interval = Perf.begin("feed.publish")
+        defer { Perf.end(interval) }
         flush?.cancel()
         flush = nil
         if tailOnly, case let .assistant(id, _, _, opensTurn) = tailBlock,
