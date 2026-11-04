@@ -36,6 +36,9 @@ import JavaScriptCore
 public final class AgentScript: @unchecked Sendable {
     public let pluginId: String
     let folder: URL
+    /// What it was loaded from, to load a context of its own for work that
+    /// may wait (a line enricher reading the worktree).
+    let source: String
     private let lock = NSRecursiveLock()
     private let context: JSContext
     /// Where the launch being built writes its files, while it's built.
@@ -48,6 +51,7 @@ public final class AgentScript: @unchecked Sendable {
     public init(pluginId: String, folder: URL, source: String) {
         self.pluginId = pluginId
         self.folder = folder
+        self.source = source
         context = JSContext()!
         context.name = pluginId
         context.exceptionHandler = { context, exception in context?.exception = exception }
@@ -79,6 +83,33 @@ public final class AgentScript: @unchecked Sendable {
         host.setObject(compactJSON, forKeyedSubscript: "compactJSON" as NSString)
         let firstObject: @convention(block) (String) -> Any = { ChatNaming.firstObject(in: $0) ?? NSNull() }
         host.setObject(firstObject, forKeyedSubscript: "firstObject" as NSString)
+        // How Abstract reads git and pull request work out of a command's
+        // output, and which tool calls are questions for you.
+        let gitFromClaude: @convention(block) (JSValue) -> Any = { value in
+            GitOperation.claude(JSONValue(any: value.toObject())).map { AgentEventJSON.encodeGit($0).anyObject }
+        }
+        host.setObject(gitFromClaude, forKeyedSubscript: "gitOperationsFromReport" as NSString)
+        let gitFallback: @convention(block) (String, String, Bool) -> Any = { command, output, succeeded in
+            GitOperation.fallback(command: command, output: output, succeeded: succeeded).map { AgentEventJSON.encodeGit($0).anyObject }
+        }
+        host.setObject(gitFallback, forKeyedSubscript: "gitOperationsFromCommand" as NSString)
+        let isQuestion: @convention(block) (String) -> Bool = { AgentQuestion.isQuestion($0) }
+        host.setObject(isQuestion, forKeyedSubscript: "isQuestion" as NSString)
+        let lineDiff: @convention(block) (String, String) -> Any = { old, new in
+            EditPreview.lineDiff(old, new).map { AgentEventJSON.encodeCodable($0).anyObject }
+        }
+        host.setObject(lineDiff, forKeyedSubscript: "lineDiff" as NSString)
+        let splitLines: @convention(block) (String) -> [String] = { EditPreview.splitLines($0) }
+        host.setObject(splitLines, forKeyedSubscript: "splitLines" as NSString)
+        // Abstract's own names and limits an agent's launch refers to.
+        let constants: [String: Any] = [
+            "codeHistory": ["server": CodeHistory.serverName, "historyTool": CodeHistory.historyTool,
+                            "excerptTool": CodeHistory.excerptTool, "instruction": CodeHistory.instruction],
+            "pluginTools": ["server": PluginTools.serverName, "timeout": PluginTools.timeout, "askTimeout": PluginTools.askTimeout],
+            "branch": ["server": BranchMCPServer.serverName],
+            "plan": ["instruction": Plan.instruction, "readOnlyInstruction": Plan.readOnlyInstruction],
+        ]
+        host.setObject(constants, forKeyedSubscript: "constants" as NSString)
         let uuid: @convention(block) () -> String = { UUID().uuidString.lowercased() }
         host.setObject(uuid, forKeyedSubscript: "uuid" as NSString)
         let random: @convention(block) (Int) -> [Int] = { count in (0..<max(0, min(count, 64))).map { _ in Int.random(in: 0...255) } }
@@ -242,8 +273,14 @@ public struct ScriptedProvider: ProviderDefinition {
 
     public func makeParser() -> OutputParser { ScriptedParser(script: script, agentId: id) }
 
+    /// The enricher runs in a context of its own: it waits on the worktree
+    /// while it reads a line, and nothing else of the plugin's may wait
+    /// behind it (with the plugin's lock held, a chat's git read could wait
+    /// on a thread its other chats' parsing holds).
     public func makeLineEnricher(executor: any Executor, cwd: String) -> (any LineEnricher)? {
-        can("lines.enrich") ? ScriptedEnricher(script: script, agentId: id, worktree: AgentWorktree(executor: executor, cwd: cwd)) : nil
+        guard can("lines.enrich") else { return nil }
+        let own = AgentScript(pluginId: script.pluginId, folder: script.folder, source: script.source)
+        return ScriptedEnricher(script: own, agentId: id, worktree: AgentWorktree(executor: executor, cwd: cwd))
     }
 
     // MARK: Stdin lines
@@ -293,9 +330,15 @@ public struct ScriptedProvider: ProviderDefinition {
     }
 
     public func discoverModels(executor: any Executor, binary: String?) async -> ModelCatalog? {
+        await discoverModels(executor: executor, binary: binary, timeout: nil)
+    }
+
+    /// The same, giving up after `timeout` at most, whatever the script asks.
+    public func discoverModels(executor: any Executor, binary: String?, timeout: Duration?) async -> ModelCatalog? {
         guard can("models.discover"),
-              let answer = try? await AgentJobs(provider: self, executor: executor, binaryOverride: binary)
-                .run("discoverModels", input: .object(["binary": .string(command(binary))])) else { return nil }
+              let answer = try? await AgentJobs(provider: self, executor: executor, binaryOverride: binary, limit: timeout)
+                .run("discoverModels", input: .object(["binary": .string(command(binary)), "config": config(executor: executor)]))
+        else { return nil }
         return AgentEventJSON.decodeCodable(ModelCatalog.self, answer)
     }
 
@@ -305,6 +348,17 @@ public struct ScriptedProvider: ProviderDefinition {
         for path in declaration.config ?? [] {
             if let data = FileManager.default.contents(atPath: (home as NSString).appendingPathComponent(path)),
                let text = String(data: data, encoding: .utf8) {
+                files[path] = .string(text)
+            }
+        }
+        return .object(files)
+    }
+
+    /// The same files read on the executor's own Mac, for jobs that run there.
+    func config(executor: any Executor) -> JSONValue {
+        var files: [String: JSONValue] = [:]
+        for path in declaration.config ?? [] {
+            if let text = try? executor.readFile((executor.homeDirectory as NSString).appendingPathComponent(path)) {
                 files[path] = .string(text)
             }
         }
@@ -352,8 +406,10 @@ public struct ScriptedProvider: ProviderDefinition {
             "prompt": .string(prompt), "home": .string(home), "model": model.map(JSONValue.string) ?? .null,
             "config": config(home: home),
         ])]) else { return nil }
+        // The prompt may go in on stdin (Claude reads it there).
         return LaunchSpec(command: binary ?? self.binary, args: prefix + Self.strings(answer["args"]),
-                          cwd: answer["cwd"]?.string ?? home, env: Self.env(answer["env"]), keepStdinOpen: false)
+                          cwd: answer["cwd"]?.string ?? home, env: Self.env(answer["env"]),
+                          stdinInitial: answer["stdin"]?.string, keepStdinOpen: false)
     }
 
     public func namingAnswer(_ output: String) -> String? {
@@ -480,9 +536,12 @@ extension AgentScript {
 }
 
 /// A file as committed at HEAD, read on the executor's host; empty when it
-/// wasn't. Lines arrive on the process's own reader queue, so waiting here
-/// holds up only this chat's next line.
+/// wasn't, or when git takes more than five seconds. Lines arrive on the
+/// process's own reader queue, so waiting here holds up only this chat's
+/// next line.
 enum AgentWorktreeGit {
+    static let timeout: TimeInterval = 5
+
     static func committed(_ path: String, executor: any Executor) -> String {
         let dir = (path as NSString).deletingLastPathComponent, name = (path as NSString).lastPathComponent
         let box = ResultBox()
@@ -493,7 +552,7 @@ enum AgentWorktreeGit {
             }
             done.signal()
         }
-        done.wait()
+        _ = done.wait(timeout: .now() + timeout)
         return box.value
     }
 
@@ -529,6 +588,8 @@ struct AgentJobs: Sendable {
     let provider: ScriptedProvider
     let executor: any Executor
     let binaryOverride: String?
+    /// The longest any one step may take, below what the script asks.
+    var limit: Duration? = nil
 
     private var script: AgentScript { provider.script }
 
@@ -570,14 +631,15 @@ struct AgentJobs: Sendable {
                           stdinInitial: value["stdin"]?.string, keepStdinOpen: value["keepStdinOpen"]?.bool ?? false)
     }
 
-    private static func seconds(_ value: JSONValue?, default fallback: Int) -> Duration {
-        .seconds(max(1, min(value?.int ?? fallback, 600)))
+    private func seconds(_ value: JSONValue?, default fallback: Int) -> Duration {
+        let asked = Duration.seconds(max(1, min(value?.int ?? fallback, 600)))
+        return limit.map { min($0, asked) } ?? asked
     }
 
     private func perform(_ effect: JSONValue, receive: Box?, started: Started) async throws -> JSONValue {
         let home = executor.homeDirectory
         if let run = effect["run"] {
-            let result = try await executor.run(spec(run, cwd: home), timeout: Self.seconds(run["timeout"], default: 30))
+            let result = try await executor.run(spec(run, cwd: home), timeout: seconds(run["timeout"], default: 30))
             return .object(["code": result.code.map { .number(Double($0)) } ?? .null, "ok": .bool(result.ok),
                             "stdout": .string(result.stdout), "stderr": .string(result.stderr), "timedOut": .bool(result.timedOut)])
         }
@@ -586,7 +648,7 @@ struct AgentJobs: Sendable {
             let script = self.script
             let value = try await SideProcess.converse(executor, spec(converse, cwd: home),
                                                        opening: ScriptedProvider.strings(converse["opening"]),
-                                                       timeout: Self.seconds(converse["timeout"], default: 30)) { line -> SideStep<JSONValue> in
+                                                       timeout: seconds(converse["timeout"], default: 30)) { line -> SideStep<JSONValue> in
                 // The `receive(line)` the yielded effect carries.
                 let (step, failed) = script.callReceive(receive.value, line)
                 if failed { return .fail("The agent's script failed.") }
@@ -600,7 +662,7 @@ struct AgentJobs: Sendable {
         if let start = effect["start"] {
             let pattern = start["until"]?.string ?? ""
             let (line, process) = try await SideProcess.start(executor, spec(start, cwd: home),
-                                                              timeout: Self.seconds(start["timeout"], default: 30)) { line in
+                                                              timeout: seconds(start["timeout"], default: 30)) { line in
                 pattern.isEmpty || line.range(of: pattern, options: .regularExpression) != nil
             }
             return .object(["line": .string(line), "handle": .number(Double(started.add(process)))])

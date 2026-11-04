@@ -233,7 +233,7 @@ import Testing
     }
 
     @Test func claudeGetsTheToolAndInstructionOnLaunchAndResume() {
-        let provider = ClaudeProvider()
+        let provider = Agents.claude
         let on = LaunchContext(cwd: "/w", prompt: "hi", permissionPolicy: .autoEdits, historyTool: tool)
         for spec in [provider.buildLaunch(on), provider.buildResume(on, resumeId: "r1")] {
             #expect(spec.args.contains("--mcp-config"))
@@ -249,7 +249,7 @@ import Testing
     }
 
     @Test func codexGetsTheToolAndJoinedInstructionsOnExecAndResume() {
-        let provider = CodexProvider()
+        let provider = Agents.codex
         let on = LaunchContext(cwd: "/w", prompt: "hi", permissionPolicy: .autoEdits, outputStyle: .concise, historyTool: tool)
         for spec in [provider.buildLaunch(on), provider.buildResume(on, resumeId: "r1")] {
             #expect(spec.args.contains { $0.hasPrefix("mcp_servers.\(CodeHistory.serverName).command=") })
@@ -263,7 +263,7 @@ import Testing
     }
 
     @Test func codexMCPCallsReadAsTools() throws {
-        let parser = CodexProvider().makeParser()
+        let parser = Agents.codex.makeParser()
         let url = try #require(Bundle.module.url(forResource: "codex-mcp", withExtension: "jsonl", subdirectory: "Fixtures"))
         let lines = try String(contentsOf: url, encoding: .utf8)
             .split(separator: "\n").map(String.init)
@@ -332,12 +332,12 @@ import Testing
         #expect(Project(name: "One", rootPath: "/tmp/one").agentHistoryEnabled == true)
         let session = Session(projectId: "p1", name: "Chat", providerId: "claude", worktreePath: "/w")
         let base = LaunchSettings(providerOverrides: [:], outputStyle: .default, claudeProfile: nil, attachmentsDirectory: "/a")
-        let noTool = AgentLaunch.spec(for: session, provider: ClaudeProvider(), prompt: "hi", resumeId: nil,
+        let noTool = AgentLaunch.spec(for: session, provider: Agents.claude, prompt: "hi", resumeId: nil,
                                       settings: base, home: "/h")
         #expect(!noTool.args.contains("--mcp-config"))
         var withTool = base
         withTool.codeHistory = CodeHistorySettings(command: "/bin/abstract")
-        let spec = AgentLaunch.spec(for: session, provider: ClaudeProvider(), prompt: "hi", resumeId: nil,
+        let spec = AgentLaunch.spec(for: session, provider: Agents.claude, prompt: "hi", resumeId: nil,
                                     settings: withTool, home: "/h")
         #expect(spec.args.contains("--mcp-config"))
     }

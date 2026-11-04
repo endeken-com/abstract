@@ -135,7 +135,7 @@ import Testing
         try store.save(rule(.command, "npm test*"))
         try store.save(rule(.command, "rm -rf*", .deny))
 
-        let provider = ClaudeProvider()
+        let provider = Agents.claude
         // A new chat in the same project: its `npm test` runs without a card.
         let allowed = PermissionRule.answer(try store.permissionRules(projectId: "p1"), toolName: "Bash",
                                             input: bash("npm test -- --watch=false"), root: "/r/api", at: Self.now)

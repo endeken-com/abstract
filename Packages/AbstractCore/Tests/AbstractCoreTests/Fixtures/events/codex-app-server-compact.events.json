@@ -1,0 +1,178 @@
+{
+  "exit:0" : [
+    {
+      "status" : "finished",
+      "type" : "status"
+    }
+  ],
+  "exit:1" : [
+    {
+      "message" : "codex exited with code 1",
+      "type" : "error"
+    },
+    {
+      "status" : "errored",
+      "type" : "status"
+    }
+  ],
+  "exit:null" : [
+    {
+      "message" : "codex exited with code null",
+      "type" : "error"
+    },
+    {
+      "status" : "errored",
+      "type" : "status"
+    }
+  ],
+  "stderr" : [
+    [
+      {
+        "line" : "{\"id\":1,\"result\":{\"userAgent\":\"abstract/1 (Mac OS 26.5.1; arm64)\",\"platformFamily\":\"unix\"}}",
+        "stream" : "stderr",
+        "type" : "raw"
+      }
+    ],
+    [
+      {
+        "line" : "{\"method\":\"thread/status/changed\",\"params\":{\"threadId\":\"t-1\",\"status\":{\"type\":\"idle\"}}}",
+        "stream" : "stderr",
+        "type" : "raw"
+      }
+    ],
+    [
+      {
+        "line" : "{\"id\":2,\"result\":{\"thread\":{\"id\":\"t-1\"}}}",
+        "stream" : "stderr",
+        "type" : "raw"
+      }
+    ],
+    [
+      {
+        "line" : "{\"method\":\"thread/tokenUsage/updated\",\"params\":{\"threadId\":\"t-1\",\"turnId\":\"u-0\",\"tokenUsage\":{\"total\":{\"totalTokens\":17251},\"last\":{\"totalTokens\":17251},\"modelContextWindow\":258400}}}",
+        "stream" : "stderr",
+        "type" : "raw"
+      }
+    ],
+    [
+      {
+        "line" : "{\"id\":3,\"result\":{}}",
+        "stream" : "stderr",
+        "type" : "raw"
+      }
+    ],
+    [
+      {
+        "line" : "{\"method\":\"turn/started\",\"params\":{\"threadId\":\"t-1\",\"turn\":{\"id\":\"u-1\",\"status\":\"inProgress\"}}}",
+        "stream" : "stderr",
+        "type" : "raw"
+      }
+    ],
+    [
+      {
+        "line" : "{\"method\":\"item/started\",\"params\":{\"item\":{\"type\":\"contextCompaction\",\"id\":\"i-1\"},\"threadId\":\"t-1\",\"turnId\":\"u-1\"}}",
+        "stream" : "stderr",
+        "type" : "raw"
+      }
+    ],
+    [
+      {
+        "line" : "{\"method\":\"thread/tokenUsage/updated\",\"params\":{\"threadId\":\"t-1\",\"turnId\":\"u-1\",\"tokenUsage\":{\"total\":{\"totalTokens\":17251},\"last\":{\"totalTokens\":5546},\"modelContextWindow\":258400}}}",
+        "stream" : "stderr",
+        "type" : "raw"
+      }
+    ],
+    [
+      {
+        "line" : "{\"method\":\"item/completed\",\"params\":{\"item\":{\"type\":\"contextCompaction\",\"id\":\"i-1\"},\"threadId\":\"t-1\",\"turnId\":\"u-1\"}}",
+        "stream" : "stderr",
+        "type" : "raw"
+      }
+    ],
+    [
+      {
+        "line" : "{\"method\":\"turn/completed\",\"params\":{\"threadId\":\"t-1\",\"turn\":{\"id\":\"u-1\",\"status\":\"completed\",\"durationMs\":4939}}}",
+        "stream" : "stderr",
+        "type" : "raw"
+      }
+    ],
+    [
+
+    ]
+  ],
+  "stdout" : [
+    [
+      {
+        "line" : "{\"id\":1,\"result\":{\"userAgent\":\"abstract/1 (Mac OS 26.5.1; arm64)\",\"platformFamily\":\"unix\"}}",
+        "stream" : "stdout",
+        "type" : "raw"
+      }
+    ],
+    [
+      {
+        "line" : "{\"method\":\"thread/status/changed\",\"params\":{\"threadId\":\"t-1\",\"status\":{\"type\":\"idle\"}}}",
+        "stream" : "stdout",
+        "type" : "raw"
+      }
+    ],
+    [
+      {
+        "line" : "{\"id\":2,\"result\":{\"thread\":{\"id\":\"t-1\"}}}",
+        "stream" : "stdout",
+        "type" : "raw"
+      }
+    ],
+    [
+      {
+        "line" : "{\"method\":\"thread/tokenUsage/updated\",\"params\":{\"threadId\":\"t-1\",\"turnId\":\"u-0\",\"tokenUsage\":{\"total\":{\"totalTokens\":17251},\"last\":{\"totalTokens\":17251},\"modelContextWindow\":258400}}}",
+        "stream" : "stdout",
+        "type" : "raw"
+      }
+    ],
+    [
+      {
+        "line" : "{\"id\":3,\"result\":{}}",
+        "stream" : "stdout",
+        "type" : "raw"
+      }
+    ],
+    [
+      {
+        "line" : "{\"method\":\"turn/started\",\"params\":{\"threadId\":\"t-1\",\"turn\":{\"id\":\"u-1\",\"status\":\"inProgress\"}}}",
+        "stream" : "stdout",
+        "type" : "raw"
+      }
+    ],
+    [
+      {
+        "line" : "{\"method\":\"item/started\",\"params\":{\"item\":{\"type\":\"contextCompaction\",\"id\":\"i-1\"},\"threadId\":\"t-1\",\"turnId\":\"u-1\"}}",
+        "stream" : "stdout",
+        "type" : "raw"
+      }
+    ],
+    [
+      {
+        "line" : "{\"method\":\"thread/tokenUsage/updated\",\"params\":{\"threadId\":\"t-1\",\"turnId\":\"u-1\",\"tokenUsage\":{\"total\":{\"totalTokens\":17251},\"last\":{\"totalTokens\":5546},\"modelContextWindow\":258400}}}",
+        "stream" : "stdout",
+        "type" : "raw"
+      }
+    ],
+    [
+      {
+        "line" : "{\"method\":\"item/completed\",\"params\":{\"item\":{\"type\":\"contextCompaction\",\"id\":\"i-1\"},\"threadId\":\"t-1\",\"turnId\":\"u-1\"}}",
+        "stream" : "stdout",
+        "type" : "raw"
+      }
+    ],
+    [
+      {
+        "line" : "{\"method\":\"turn/completed\",\"params\":{\"threadId\":\"t-1\",\"turn\":{\"id\":\"u-1\",\"status\":\"completed\",\"durationMs\":4939}}}",
+        "stream" : "stdout",
+        "type" : "raw"
+      }
+    ],
+    [
+
+    ]
+  ]
+}

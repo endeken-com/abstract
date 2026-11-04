@@ -307,7 +307,7 @@ import Testing
     let history = HistoryToolLaunch(command: "/Applications/Abstract.app/Contents/Helpers/abstract", chatId: "chat-1")
 
     @Test func claudeGetsBothServersInOneConfigWithPluginToolsAllowedByServer() throws {
-        let spec = ClaudeProvider().buildLaunch(LaunchContext(cwd: "/w", prompt: "hi", permissionPolicy: .ask,
+        let spec = Agents.claude.buildLaunch(LaunchContext(cwd: "/w", prompt: "hi", permissionPolicy: .ask,
                                                               historyTool: history, pluginTools: plugins))
         let config = try #require(spec.args.firstIndex(of: "--mcp-config").map { spec.args[$0 + 1] })
         let servers = try json(config)["mcpServers"]
@@ -318,23 +318,23 @@ import Testing
         #expect(spec.args.filter { $0 == "--mcp-config" }.count == 1)
 
         // Plugin tools alone, and neither.
-        let alone = ClaudeProvider().buildLaunch(LaunchContext(cwd: "/w", prompt: "hi", permissionPolicy: .ask, pluginTools: plugins))
+        let alone = Agents.claude.buildLaunch(LaunchContext(cwd: "/w", prompt: "hi", permissionPolicy: .ask, pluginTools: plugins))
         #expect(alone.args.contains("mcp__abstract-plugins") && !alone.args.contains("--append-system-prompt"))
-        let none = ClaudeProvider().buildLaunch(LaunchContext(cwd: "/w", prompt: "hi", permissionPolicy: .ask))
+        let none = Agents.claude.buildLaunch(LaunchContext(cwd: "/w", prompt: "hi", permissionPolicy: .ask))
         #expect(!none.args.contains("--mcp-config"))
         // A resume keeps them.
-        let resumed = ClaudeProvider().buildResume(LaunchContext(cwd: "/w", prompt: "hi", permissionPolicy: .ask, pluginTools: plugins),
+        let resumed = Agents.claude.buildResume(LaunchContext(cwd: "/w", prompt: "hi", permissionPolicy: .ask, pluginTools: plugins),
                                                    resumeId: "s1")
         #expect(resumed.args.contains("mcp__abstract-plugins"))
     }
 
     @Test func codexGetsTheServerAsConfigOverridesAndWaitsForAnAnswer() {
-        let spec = CodexProvider().buildLaunch(LaunchContext(cwd: "/w", prompt: "hi", permissionPolicy: .autoEdits, pluginTools: plugins))
+        let spec = Agents.codex.buildLaunch(LaunchContext(cwd: "/w", prompt: "hi", permissionPolicy: .autoEdits, pluginTools: plugins))
         #expect(spec.args.contains(#"mcp_servers.abstract-plugins.command="/Applications/Abstract.app/Contents/Helpers/abstract""#))
         #expect(spec.args.contains(#"mcp_servers.abstract-plugins.args=["mcp", "--chat", "chat-1", "--plugins"]"#))
         #expect(spec.args.contains("mcp_servers.abstract-plugins.tool_timeout_sec=660"))
         #expect(spec.args.last == "hi")
-        let none = CodexProvider().buildLaunch(LaunchContext(cwd: "/w", prompt: "hi", permissionPolicy: .autoEdits))
+        let none = Agents.codex.buildLaunch(LaunchContext(cwd: "/w", prompt: "hi", permissionPolicy: .autoEdits))
         #expect(!none.args.contains { $0.contains(PluginTools.serverName) })
     }
 
@@ -352,10 +352,10 @@ import Testing
     @Test func aLaunchGetsPluginToolsOnlyWhenTheAppServesThem() {
         let session = Session(id: "chat-1", projectId: "p1", name: "Chat", providerId: "claude", worktreePath: "/w")
         var settings = LaunchSettings(providerOverrides: [:], outputStyle: .default, claudeProfile: nil, attachmentsDirectory: "/a")
-        let without = AgentLaunch.spec(for: session, provider: ClaudeProvider(), prompt: "hi", resumeId: nil, settings: settings, home: "/h")
+        let without = AgentLaunch.spec(for: session, provider: Agents.claude, prompt: "hi", resumeId: nil, settings: settings, home: "/h")
         #expect(!without.args.contains("mcp__abstract-plugins"))
         settings.pluginToolsCommand = "/bin/abstract"
-        let with = AgentLaunch.spec(for: session, provider: ClaudeProvider(), prompt: "hi", resumeId: nil, settings: settings, home: "/h")
+        let with = AgentLaunch.spec(for: session, provider: Agents.claude, prompt: "hi", resumeId: nil, settings: settings, home: "/h")
         #expect(with.args.contains("mcp__abstract-plugins"))
     }
 

@@ -25,7 +25,7 @@ struct RealAgentTests {
                                                baseRef: "main", template: root.path + "-wt/{slug}", prefix: "abstract/")
         defer { try? FileManager.default.removeItem(atPath: root.path + "-wt") }
 
-        let provider = ClaudeProvider()
+        let provider = Agents.claude
         let spec = provider.buildLaunch(LaunchContext(cwd: ws.path, prompt: "Create a file named hi.txt containing the word hi. Then stop.",
                                                       permissionPolicy: .autoEdits))
         let engine = SessionEngine(executor: exec, logDirectory: root.appendingPathComponent("logs"))
@@ -110,7 +110,7 @@ struct RealAgentTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         _ = try await exec.run("git", ["init", "-q"], cwd: dir.path)
 
-        let provider = ClaudeProvider()
+        let provider = Agents.claude
         let spec = provider.buildLaunch(LaunchContext(cwd: dir.path, prompt: "Use the Bash tool to run exactly: touch probe.txt. Do nothing else.",
                                                       permissionPolicy: .ask))
         let engine = SessionEngine(executor: exec, logDirectory: dir.appendingPathComponent("logs"))
@@ -143,7 +143,7 @@ struct RealAgentTests {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let provider = ClaudeProvider()
+        let provider = Agents.claude
         let prompt = "Use the AskUserQuestion tool to ask me which color I prefer, with the options Red and Blue. "
             + "Then reply with only the color I chose, in capitals."
         let spec = provider.buildLaunch(LaunchContext(cwd: dir.path, prompt: prompt, permissionPolicy: .bypass))
@@ -234,10 +234,10 @@ struct RealAgentTests {
     }
 
     /// Claude in a fresh folder with full autonomy, on the smallest model.
-    private func launch(_ id: String, prompt: String) throws -> (SessionEngine, ClaudeProvider, URL) {
+    private func launch(_ id: String, prompt: String) throws -> (SessionEngine, ScriptedProvider, URL) {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("real-\(id)-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let provider = ClaudeProvider()
+        let provider = Agents.claude
         let spec = provider.buildLaunch(LaunchContext(cwd: dir.path, prompt: prompt, permissionPolicy: .bypass, model: "haiku"))
         let engine = SessionEngine(executor: LocalExecutor.shared, logDirectory: dir.appendingPathComponent("logs"))
         try engine.launch(sessionId: id, spec: spec)

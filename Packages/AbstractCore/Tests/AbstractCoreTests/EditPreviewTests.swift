@@ -87,7 +87,7 @@ import Testing
 
 @Suite struct ClaudePatchLineNumberTests {
     @Test func structuredPatchCarriesLineNumbersAndHunkBreaks() {
-        let parser = ClaudeProvider().makeParser()
+        let parser = Agents.claude.makeParser()
         let events = parser.feed(#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t","content":"ok"}]},"tool_use_result":{"filePath":"/a","structuredPatch":[{"oldStart":10,"newStart":10,"lines":[" keep","-old","+new"]},{"oldStart":40,"newStart":40,"lines":["+tail"]}]}}"#, stream: .stdout)
         guard case let .toolResult(_, _, _, edit?)? = events.first else { Issue.record("no edit"); return }
         #expect(edit.lines.map(\.oldLine) == [10, 11, nil, nil])

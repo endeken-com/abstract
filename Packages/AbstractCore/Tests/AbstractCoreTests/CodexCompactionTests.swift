@@ -48,9 +48,9 @@ struct CodexCompactionTests {
     }
 
     @Test func codexCompactsThroughItsAppServer() {
-        #expect(CodexProvider().commands.extra.contains(.compact))
-        guard case .sideChannel(let compactor)? = CodexProvider().compaction else { Issue.record("no side channel"); return }
-        #expect(compactor is CodexCompactor)
+        #expect(Agents.codex.commands.extra.contains(.compact))
+        guard case .sideChannel(let compactor)? = Agents.codex.compaction else { Issue.record("no side channel"); return }
+        #expect(compactor is ScriptedCompactor)
     }
 
     // MARK: - fix round 1

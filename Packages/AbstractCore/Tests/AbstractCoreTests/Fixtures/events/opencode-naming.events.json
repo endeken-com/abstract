@@ -1,0 +1,98 @@
+{
+  "exit:0" : [
+    {
+      "status" : "finished",
+      "type" : "status"
+    }
+  ],
+  "exit:1" : [
+    {
+      "message" : "opencode exited with code 1",
+      "type" : "error"
+    },
+    {
+      "status" : "errored",
+      "type" : "status"
+    }
+  ],
+  "exit:null" : [
+    {
+      "message" : "opencode exited with code null",
+      "type" : "error"
+    },
+    {
+      "status" : "errored",
+      "type" : "status"
+    }
+  ],
+  "stderr" : [
+    [
+      {
+        "line" : "{\"type\":\"step_start\",\"timestamp\":1790000000000,\"sessionID\":\"ses_c1a00000demo00000000001\",\"part\":{\"id\":\"prt_c1a0000001demoStart00000\",\"sessionID\":\"ses_c1a00000demo00000000001\",\"messageID\":\"msg_c1a0000001demoNaming0000\",\"type\":\"step-start\"}}",
+        "stream" : "stderr",
+        "type" : "raw"
+      }
+    ],
+    [
+      {
+        "line" : "{\"type\":\"text\",\"timestamp\":1790000002000,\"sessionID\":\"ses_c1a00000demo00000000001\",\"part\":{\"id\":\"prt_c1a0000002demoText000000\",\"sessionID\":\"ses_c1a00000demo00000000001\",\"messageID\":\"msg_c1a0000001demoNaming0000\",\"type\":\"text\",\"text\":\"```json\\n{\\\"title\\\": \\\"Fix the relay image push\\\", \\\"branch\\\": \\\"bugfix/relay-image-push\\\"}\\n```\",\"time\":{\"start\":1790000001000,\"end\":1790000002000}}}",
+        "stream" : "stderr",
+        "type" : "raw"
+      }
+    ],
+    [
+      {
+        "line" : "{\"type\":\"step_finish\",\"timestamp\":1790000002100,\"sessionID\":\"ses_c1a00000demo00000000001\",\"part\":{\"id\":\"prt_c1a0000003demoFinish0000\",\"sessionID\":\"ses_c1a00000demo00000000001\",\"messageID\":\"msg_c1a0000001demoNaming0000\",\"type\":\"step-finish\",\"reason\":\"stop\",\"tokens\":{\"input\":512,\"output\":24,\"reasoning\":0,\"cache\":{\"read\":0,\"write\":0}},\"cost\":0}}",
+        "stream" : "stderr",
+        "type" : "raw"
+      }
+    ],
+    [
+      {
+        "line" : "",
+        "stream" : "stderr",
+        "type" : "raw"
+      }
+    ]
+  ],
+  "stdout" : [
+    [
+      {
+        "id" : "ses_c1a00000demo00000000001",
+        "type" : "sessionId"
+      },
+      {
+        "status" : "running",
+        "type" : "status"
+      }
+    ],
+    [
+      {
+        "blockId" : "prt_c1a0000002demoText000000",
+        "partial" : false,
+        "role" : "assistant",
+        "text" : "```json\n{\"title\": \"Fix the relay image push\", \"branch\": \"bugfix/relay-image-push\"}\n```",
+        "type" : "text"
+      }
+    ],
+    [
+      {
+        "costUsd" : 0,
+        "type" : "usage",
+        "usage" : {
+          "cacheRead" : 0,
+          "cacheWrite" : 0,
+          "inputTokens" : 512,
+          "outputTokens" : 24
+        }
+      }
+    ],
+    [
+      {
+        "line" : "",
+        "stream" : "stdout",
+        "type" : "raw"
+      }
+    ]
+  ]
+}

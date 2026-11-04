@@ -22,7 +22,7 @@ import Testing
         configured.branchCommand = "/Applications/Abstract.app/Contents/Helpers/abstract"
         let session = Session(id: "chat", projectId: "p", name: "Run", providerId: "claude",
                               worktreePath: "/tmp/worktree", branch: "auto/run/2026-10-21-1200")
-        for provider in [ClaudeProvider(), CodexProvider(), Agents.opencode, Agents.muse] as [any ProviderDefinition] {
+        for provider in [Agents.claude, Agents.codex, Agents.opencode, Agents.muse] as [any ProviderDefinition] {
             let spec = AgentLaunch.spec(for: session, provider: provider, prompt: "Find the next ticket",
                                         resumeId: nil, settings: configured, home: "/tmp")
             let joined = spec.args.joined(separator: " ") + (spec.stdinInitial ?? "") + spec.env.values.joined()

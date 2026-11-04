@@ -35,7 +35,7 @@ import Testing
     // MARK: - Claude
 
     @Test func claudeFixtureReportsEachRetryAndLimitChange() throws {
-        let events = try Self.replay("claude-limits", ClaudeProvider().makeParser())
+        let events = try Self.replay("claude-limits", Agents.claude.makeParser())
         // "allowed" says nothing, and the second warning repeats the first.
         #expect(Self.notices(events) == [
             .retrying(attempt: 1, maxAttempts: 10, httpStatus: 529),
@@ -48,13 +48,13 @@ import Testing
 
     @Test func claudeRetryClearsWhenOutputResumes() throws {
         var timeline = Timeline()
-        timeline.append(contentsOf: try Self.replay("claude-limits", ClaudeProvider().makeParser()))
+        timeline.append(contentsOf: try Self.replay("claude-limits", Agents.claude.makeParser()))
         // The reply came after the retries, so neither shows; the limits stay.
         #expect(Self.notices(timeline.blocks) == [.nearLimit(resetsAt: Self.resetsAt), .limitReached(resetsAt: Self.resetsAt)])
     }
 
     @Test func claudeRetryShowsOnlyTheLatestWhileWaiting() {
-        let parser = ClaudeProvider().makeParser()
+        let parser = Agents.claude.makeParser()
         var timeline = Timeline()
         for attempt in 1...3 {
             timeline.append(contentsOf: parser.feed(#"{"type":"system","subtype":"api_retry","attempt":\#(attempt),"max_retries":10,"retry_delay_ms":500,"error_status":529,"error":"overloaded"}"#, stream: .stdout))
@@ -67,13 +67,13 @@ import Testing
     }
 
     @Test func claudeRetryWithoutAnAnswerHasNoStatus() {
-        let events = ClaudeProvider().makeParser().feed(
+        let events = Agents.claude.makeParser().feed(
             #"{"type":"system","subtype":"api_retry","attempt":4,"max_retries":10,"retry_delay_ms":8000,"error_status":null,"error":"unknown"}"#, stream: .stdout)
         #expect(events == [.notice(.retrying(attempt: 4, maxAttempts: 10, httpStatus: nil))])
     }
 
     @Test func claudeLimitWarnsAgainAfterItEases() {
-        let parser = ClaudeProvider().makeParser()
+        let parser = Agents.claude.makeParser()
         func status(_ s: String) -> [AgentEvent] {
             parser.feed(#"{"type":"rate_limit_event","rate_limit_info":{"status":"\#(s)","resetsAt":1791392400,"rateLimitType":"five_hour"}}"#, stream: .stdout)
         }
@@ -85,7 +85,7 @@ import Testing
     }
 
     @Test func claudeStillDropsFramesItDoesNotKnow() {
-        let parser = ClaudeProvider().makeParser()
+        let parser = Agents.claude.makeParser()
         #expect(parser.feed(#"{"type":"system","subtype":"some_future_frame","attempt":1}"#, stream: .stdout).isEmpty)
         #expect(parser.feed(#"{"type":"rate_limit_event"}"#, stream: .stdout).isEmpty)
         #expect(parser.feed(#"{"type":"system","subtype":"api_retry"}"#, stream: .stdout).isEmpty)
@@ -94,7 +94,7 @@ import Testing
     // MARK: - Codex
 
     @Test func codexWarningsKeepTheChatRunning() throws {
-        let events = try Self.replay("codex-warnings", CodexProvider().makeParser())
+        let events = try Self.replay("codex-warnings", Agents.codex.makeParser())
         #expect(Self.notices(events) == [
             .warning("`model_reasoning_summary` is deprecated; use `model_reasoning_summary_format` instead."),
             .warning("Reconnecting... 1/5 (stream disconnected before completion)"),
@@ -109,7 +109,7 @@ import Testing
     }
 
     @Test func codexErrorTheTurnFailsOverIsShownOnce() {
-        let parser = CodexProvider().makeParser()
+        let parser = Agents.codex.makeParser()
         var timeline = Timeline()
         timeline.append(contentsOf: parser.feed(#"{"type":"error","message":"You've hit your usage limit."}"#, stream: .stdout))
         #expect(Self.notices(timeline.blocks) == [.warning("You've hit your usage limit.")])
@@ -121,7 +121,7 @@ import Testing
     }
 
     @Test func codexEmptyWarningsSayNothing() {
-        let parser = CodexProvider().makeParser()
+        let parser = Agents.codex.makeParser()
         #expect(parser.feed(#"{"type":"item.completed","item":{"id":"item_0","type":"error","message":""}}"#, stream: .stdout).isEmpty)
         #expect(parser.feed(#"{"type":"error"}"#, stream: .stdout).isEmpty)
     }

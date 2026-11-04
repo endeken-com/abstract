@@ -27,8 +27,8 @@ struct MessageQueueTests {
         #expect(FollowUp.canSteer(.stdin, alive: true, status: .waitingInput))
         #expect(!FollowUp.canSteer(.stdin, alive: true, status: .idle))
         #expect(!FollowUp.canSteer(.respawn, alive: true, status: .running))
-        #expect(FollowUp.steerUnavailable(ClaudeProvider()) == nil)
-        #expect(FollowUp.steerUnavailable(CodexProvider()) == "Codex reads messages between turns")
+        #expect(FollowUp.steerUnavailable(Agents.claude) == nil)
+        #expect(FollowUp.steerUnavailable(Agents.codex) == "Codex reads messages between turns")
         #expect(FollowUp.steerUnavailable(Agents.opencode) == "OpenCode reads messages between turns")
     }
 
