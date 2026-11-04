@@ -3,14 +3,16 @@ import Testing
 @testable import AbstractCore
 
 /// How fast an agent plugin reads its agent's output against the Swift
-/// parser it replaces (ABS-185). Each fixture is read 40 times over, as one
+/// parser it replaces (ABS-185). Each fixture is read 3 times over, as one
 /// long log replayed (one batch call per 512 lines, as `ChatStream` does) and
 /// line by line (as a live chat reads it). Numbers go to standard error and
 /// docs/perf/ABS-185.md; the bound, against Swift measured alongside, is
 /// loose enough for a busy CI Mac.
-/// Run for numbers: swift test -c release --filter AgentParseBenchmark
+/// Kept small: it runs beside every other suite, and seconds of synchronous
+/// parsing on the shared thread pool starve the async tests around it. For
+/// numbers, ABSTRACT_BENCH_REPEATS=40 swift test --filter AgentParseBenchmark.
 @Suite(.serialized) struct AgentParseBenchmark {
-    static let repeats = 40
+    static let repeats = Int(ProcessInfo.processInfo.environment["ABSTRACT_BENCH_REPEATS"] ?? "") ?? 3
 
     static func lines(_ fixtures: [String]) throws -> [OutputLine] {
         let lines = try fixtures.flatMap { try AgentPluginParityTests.lines($0).filter { !$0.isEmpty } }
