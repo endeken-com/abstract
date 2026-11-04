@@ -407,18 +407,6 @@ import Testing
         #expect(throws: PluginValidationError.self) { _ = try store.values() }
     }
 
-    @Test func theBundledSampleManifestIsValid() throws {
-        // The sample ships in the app bundle; its source lives beside the app.
-        let here = URL(fileURLWithPath: #filePath)
-        let repo = here.deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let sample = repo.appendingPathComponent("Abstract/Resources/Plugins/chat-count.abstractplugin")
-        guard fm.fileExists(atPath: sample.path) else { return }
-        let inspection = try PluginPackage.inspect(folder: sample)
-        #expect(inspection.manifest.id == "sh.abstract.chat-count")
-        #expect(inspection.manifest.grantedCapabilities == [.chatsRead, .chatsOpen, .storageOwn])
-    }
-
     @Test func contextCarriesEveryTheme() {
         for theme in BundledThemes.all {
             let context = PluginContext.jsonValue(theme: theme, locale: "en_US", pluginId: "sh.abstract.chat-count",

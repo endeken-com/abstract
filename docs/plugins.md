@@ -278,10 +278,17 @@ and a line below.
 
 ![Skeleton](images/plugin-kit/skeleton.png)
 
-## The bundled plugins
+## First-party plugins
 
-Each in Graphite, Paper and Ink, from the demo (`--demo --snapshot`), with the Mac set to
-Light.
+Abstract ships only its agents, its themes and GitHub. Its other plugins live in their own
+repositories, `endeken-com/abstract-plugin-<name>`, each with its history, tests and CI,
+and are listed in the registry as `endeken-com/<name>` (ABS-190): install one from
+Settings › Plugins or with `abstract plugin add endeken-com/kanban`. An install from
+before the move keeps its files, settings, secrets, grants and on/off state, and becomes
+a git source pinned to the commit it was extracted at.
+
+Each in Graphite, Paper and Ink, from the demo (`--demo --snapshot`) before the move,
+with the Mac set to Light.
 
 **Kanban** — Board, List and Mine (what needs your answer or your review), remembered.
 J/K or the arrows move, H/L cross columns or groups, Enter opens, / searches, 1–3 switch tabs.
@@ -335,7 +342,7 @@ arriving and while it's on screen, and again when its status is more than four a
 half minutes old, so a change shows within five minutes. A failed lookup keeps the last
 status. Clicking the status opens the link.
 
-**Link status**, bundled, does this for GitHub pull requests (open, draft, merged or
+**Link status** (`endeken-com/link-status`) does this for GitHub pull requests (open, draft, merged or
 closed, with checks) and issues, and Linear issues (state and assignee). Private
 repositories need a GitHub token and Linear needs a Linear API key, entered under
 Settings › Plugins.
@@ -511,7 +518,7 @@ capitals, each value a key or else a name). A Linear workspace link also sets
 `ABSTRACT_LINEAR_WORKSPACE`: `ABSTRACT_LINEAR_TEAM=ENG`,
 `ABSTRACT_LINEAR_WORKSPACE=example`, `ABSTRACT_JIRA_PROJECT=PROJ`.
 
-**Linear**, bundled, uses the [Linear CLI](https://github.com/schpet/linear-cli) when
+**Linear** (`endeken-com/linear`) uses the [Linear CLI](https://github.com/schpet/linear-cli) when
 signed in on the Mac, or an optional personal Linear API key entered under Settings ›
 Plugins and sent only to api.linear.app. Its settings page lets you pick either way.
 The CLI runs through `cli` with read commands only (`auth whoami`, `auth list`,
@@ -519,11 +526,12 @@ The CLI runs through `cli` with read commands only (`auth whoami`, `auth list`,
 pick its own Linear workspace in Project Settings; searches and issue lookups use
 that workspace. The plugin's settings workspace is the default for unlinked projects
 and Search all. Abstract never reads the CLI's token. Both give the same results.
-It's turned on by itself when Abstract finds a Linear key from before it was a plugin,
-or the CLI signed in. A project can link to a workspace, a team and, optionally, one
-of its projects.
+It's installed from its registry listing and turned on by itself when Abstract finds a
+Linear key from before it was a plugin, or the CLI signed in. Bitbucket is likewise
+installed and turned on the first time a Bitbucket remote appears. A project can link
+to a workspace, a team and, optionally, one of its projects.
 
-**Jira**, bundled and off until you turn it on, reads Jira Cloud through Atlassian's
+**Jira** (`endeken-com/jira`), off until you install it, reads Jira Cloud through Atlassian's
 `acli`. A project links to one Jira project key, searched with `project = KEY`.
 
 Bundled plugins you've installed follow the copy inside Abstract when it changes,

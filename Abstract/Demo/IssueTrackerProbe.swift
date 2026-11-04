@@ -2,8 +2,8 @@ import AppKit
 import AbstractCore
 
 /// Demo mode's project tracker links check (ABS-143).
-/// `ABSTRACT_DEMO_TRACKERS=<delay>` waits, turns on the bundled Linear and
-/// Jira plugins, then links the first chat's project to neither, Linear,
+/// `ABSTRACT_DEMO_TRACKERS=<delay>` waits, turns on the Linear and Jira
+/// plugins (installed from their repositories first, ABS-190), then links the first chat's project to neither, Linear,
 /// Jira and both, turns Jira off and on, and sends a Linear and a Jira
 /// issue. It logs what the composer shows, searches and tells the agent at
 /// each step. `ABSTRACT_DEMO_TRACKERS_SHOT=<png>` saves the window at each

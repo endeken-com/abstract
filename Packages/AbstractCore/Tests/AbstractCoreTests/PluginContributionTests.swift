@@ -1,5 +1,4 @@
 import Foundation
-import JavaScriptCore
 import Testing
 @testable import AbstractCore
 
@@ -188,50 +187,6 @@ import Testing
         layout.removePluginTabs(pluginId: "sh.abstract.chat-panel")
         #expect(layout.items(of: .plugin).map(\.id) == [second])
         #expect(layout.items(of: .changes).count == 1)
-    }
-
-    // MARK: The bundled sample (Done when)
-
-    var sampleFolder: URL {
-        let here = URL(fileURLWithPath: #filePath)
-        let repo = here.deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        return repo.appendingPathComponent("Abstract/Resources/Plugins/chat-panel.abstractplugin")
-    }
-
-    @Test func theBundledChatPanelSampleShowsTheChatAndLogsInvocations() throws {
-        let inspection = try PluginPackage.inspect(folder: sampleFolder)
-        #expect(inspection.manifest.contributes.chatPanelTabs.map(\.id) == ["chat"])
-        #expect(inspection.manifest.contributes.chatMenuItems.map(\.id) == ["log-chat"])
-        #expect(inspection.manifest.contributes.paletteCommands.map(\.id) == ["open"])
-
-        let source = try String(contentsOf: sampleFolder.appendingPathComponent("panel.js"), encoding: .utf8)
-        let context = try #require(JSContext())
-        context.evaluateScript(source)
-        #expect(context.exception == nil)
-
-        // The tab shows its chat's title from the host context…
-        let granted = self.context(capabilities: [.chatsRead],
-                                   placement: PluginPlacement(place: .chatPanel, contributionId: "chat", chatId: "chat-1"))
-        context.setObject([granted.compact()], forKeyedSubscript: "__texts" as NSString)
-        let title = context.evaluateScript("ChatPanel.chatTitle(JSON.parse(__texts[0]), null)")?.toString()
-        #expect(title == "Fix the thing")
-
-        // …and nothing of the chat without the grant.
-        let ungranted = self.context(capabilities: [],
-                                     placement: PluginPlacement(place: .chatPanel, contributionId: "chat", chatId: "chat-1"))
-        context.setObject([ungranted.compact()], forKeyedSubscript: "__texts" as NSString)
-        let hidden = context.evaluateScript("ChatPanel.chatTitle(JSON.parse(__texts[0]), null)")
-        #expect(hidden?.isNull == true)
-
-        // The menu item logs the chat's id; the ⌘K command logs itself.
-        let menu = PluginInvocation(place: .chatMenu, contributionId: "log-chat", chatId: "chat-1").jsonValue().compact()
-        context.setObject([menu], forKeyedSubscript: "__texts" as NSString)
-        let line = context.evaluateScript("ChatPanel.logLine(JSON.parse(__texts[0]))")?.toString() ?? ""
-        #expect(line.contains("chat-1"))
-        let palette = PluginInvocation(place: .palette, contributionId: "open").jsonValue().compact()
-        context.setObject([palette], forKeyedSubscript: "__texts" as NSString)
-        #expect(context.evaluateScript("ChatPanel.logLine(JSON.parse(__texts[0]))")?.toString()?.contains("⌘K") == true)
     }
 
     @Test func oldSavedLayoutsStillDecode() throws {

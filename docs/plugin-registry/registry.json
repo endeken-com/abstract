@@ -1,4 +1,148 @@
 {
   "format": 1,
-  "plugins": []
+  "plugins": [
+    {
+      "owner": "endeken-com",
+      "slug": "approvals",
+      "name": "Approvals",
+      "description": "Every permission request and question waiting across your chats, in one list, oldest first. Allow, deny or answer each without opening its chat.",
+      "pluginId": "sh.abstract.approvals",
+      "repository": "endeken-com/abstract-plugin-approvals",
+      "commit": "d8ea0151ca9cf9fc1f3a3e3a43766f532263b191",
+      "screenshots": [],
+      "reviewedAt": "2026-11-04T00:00:00Z"
+    },
+    {
+      "owner": "endeken-com",
+      "slug": "bitbucket",
+      "name": "Bitbucket",
+      "description": "Pull requests, approvals, builds and merging for Bitbucket Cloud and Data Center. Uses your bkt sign-in and keeps no token of its own.",
+      "pluginId": "sh.abstract.bitbucket",
+      "repository": "endeken-com/abstract-plugin-bitbucket",
+      "commit": "5da7c96e8e41a189f9e2ce55af432afeaef1e45a",
+      "screenshots": [],
+      "reviewedAt": "2026-11-04T00:00:00Z"
+    },
+    {
+      "owner": "endeken-com",
+      "slug": "chat-count",
+      "name": "Chat count",
+      "description": "Shows how many chats need you, are working, are ready to review, or are done.",
+      "pluginId": "sh.abstract.chat-count",
+      "repository": "endeken-com/abstract-plugin-chat-count",
+      "commit": "b0b60e20ce31ea4ccdff2e2efa3ce66307f2401c",
+      "screenshots": [],
+      "reviewedAt": "2026-11-04T00:00:00Z"
+    },
+    {
+      "owner": "endeken-com",
+      "slug": "chat-panel",
+      "name": "Chat panel",
+      "description": "A sample that sits beside a chat: a side-panel tab naming the chat, a chat menu item, a ⌘K command, a Settings page and a Home card.",
+      "pluginId": "sh.abstract.chat-panel",
+      "repository": "endeken-com/abstract-plugin-chat-panel",
+      "commit": "c1a26478725b98d71cc8f20daac23ee6467486b8",
+      "screenshots": [],
+      "reviewedAt": "2026-11-04T00:00:00Z"
+    },
+    {
+      "owner": "endeken-com",
+      "slug": "dashboard",
+      "name": "Dashboard",
+      "description": "Shows what your chats need, what your agents used this month, and how recent turns ended.",
+      "pluginId": "sh.abstract.dashboard",
+      "repository": "endeken-com/abstract-plugin-dashboard",
+      "commit": "60744cbab556ac2dc2683712c8e6fd470d16eadf",
+      "screenshots": [],
+      "reviewedAt": "2026-11-04T00:00:00Z"
+    },
+    {
+      "owner": "endeken-com",
+      "slug": "delegation",
+      "name": "Delegation",
+      "description": "A chat can ask another agent to work in its own chat and branch, then receive a short report when the sub-tasks finish.",
+      "pluginId": "sh.abstract.delegation",
+      "repository": "endeken-com/abstract-plugin-delegation",
+      "commit": "7eb7e7c73aca8b441d85e04be36eeb634e3c9f92",
+      "screenshots": [],
+      "reviewedAt": "2026-11-04T00:00:00Z"
+    },
+    {
+      "owner": "endeken-com",
+      "slug": "follow-pr",
+      "name": "Follow pull request",
+      "description": "Turn on Follow in a chat's Pull Request tab, and new review comments, requested changes and failed checks go to the chat's agent as one message, a couple of minutes after they arrive. It stops when the pull request is merged or closed.",
+      "pluginId": "sh.abstract.follow-pr",
+      "repository": "endeken-com/abstract-plugin-follow-pr",
+      "commit": "ed769b9d7e3ac46ebced2e5838a9a3a22102ec4b",
+      "screenshots": [],
+      "reviewedAt": "2026-11-04T00:00:00Z"
+    },
+    {
+      "owner": "endeken-com",
+      "slug": "jira",
+      "name": "Jira",
+      "description": "Find Jira Cloud issues by key, link or words and attach them to chats. Uses Atlassian's acli sign-in on this Mac.",
+      "pluginId": "sh.abstract.jira",
+      "repository": "endeken-com/abstract-plugin-jira",
+      "commit": "1c50de6c51a6d61837c662adadeb384dbe6fbad6",
+      "screenshots": [],
+      "reviewedAt": "2026-11-04T00:00:00Z"
+    },
+    {
+      "owner": "endeken-com",
+      "slug": "kanban",
+      "name": "Kanban",
+      "description": "Shows your chats as a board, by what they need from you.",
+      "pluginId": "sh.abstract.kanban",
+      "repository": "endeken-com/abstract-plugin-kanban",
+      "commit": "8cd6a46849301a96c85c94db08e26e3ea04c2507",
+      "screenshots": [],
+      "reviewedAt": "2026-11-04T00:00:00Z"
+    },
+    {
+      "owner": "endeken-com",
+      "slug": "lessons",
+      "name": "Lessons",
+      "description": "Save what a chat learned. Its own agent writes the lessons into the project's instructions or a skill, and the edit waits in Review for you to keep or discard.",
+      "pluginId": "sh.abstract.lessons",
+      "repository": "endeken-com/abstract-plugin-lessons",
+      "commit": "e54fc29eafe8f42c1d784900f43b566df5f9c162",
+      "screenshots": [],
+      "reviewedAt": "2026-11-04T00:00:00Z"
+    },
+    {
+      "owner": "endeken-com",
+      "slug": "linear",
+      "name": "Linear",
+      "description": "Find Linear issues in the composer's issue search, by words, a key like ENG-123 or a link, and attach them to your messages. It uses the Linear CLI signed in on this Mac, or an optional personal API key kept in your keychain.",
+      "pluginId": "sh.abstract.linear",
+      "repository": "endeken-com/abstract-plugin-linear",
+      "commit": "7660c51543d5608f0b9f0c72efc6d40b71242276",
+      "screenshots": [],
+      "reviewedAt": "2026-11-04T00:00:00Z"
+    },
+    {
+      "owner": "endeken-com",
+      "slug": "link-status",
+      "name": "Link status",
+      "description": "GitHub pull requests and issues and Linear issues linked in a chat show how they stand after the link: open, draft, merged or closed, with checks, and a Linear issue's state and assignee. They refresh every five minutes while you can see them. Private repositories need a GitHub token, and Linear needs your Linear API key, both entered here in Settings.",
+      "pluginId": "sh.abstract.link-status",
+      "repository": "endeken-com/abstract-plugin-link-status",
+      "commit": "38a796a38fc888f532786b31915dab6640255038",
+      "screenshots": [],
+      "reviewedAt": "2026-11-04T00:00:00Z"
+    },
+    {
+      "owner": "endeken-com",
+      "slug": "second-opinion",
+      "name": "Second opinion",
+      "description": "Ask another agent to review a chat's changes. It reads them without changing anything, and its findings arrive as comments in Review for you to send or delete.",
+      "pluginId": "sh.abstract.second-opinion",
+      "repository": "endeken-com/abstract-plugin-second-opinion",
+      "commit": "d92acfe9bfb1919fd8b6c777e767530485c4f4a0",
+      "screenshots": [],
+      "reviewedAt": "2026-11-04T00:00:00Z"
+    }
+  ]
 }

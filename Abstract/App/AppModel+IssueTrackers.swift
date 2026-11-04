@@ -57,8 +57,8 @@ extension AppModel {
 
     // MARK: Upgrading from Linear in core
 
-    /// Linear is a bundled plugin, on when you have a way into Linear
-    /// (ABS-141). Abstract used to keep a Linear API key of its own
+    /// Linear is a plugin, on when you have a way into Linear (ABS-141),
+    /// installed from its reviewed listing since it left the app (ABS-190). Abstract used to keep a Linear API key of its own
     /// (Settings → Integrations): the first launch after Linear became a
     /// plugin installs and turns on the Linear plugin and moves the key to
     /// it. With no key, it's turned on if the Linear CLI is signed in on
@@ -71,7 +71,7 @@ extension AppModel {
         // the keychain can ask for the password.
         if UserDefaults.standard.bool(forKey: Self.legacyLinearConnectedKey),
            let key = Keychain.read(Self.legacyLinearAccount) {
-            guard turnOnLinearPlugin() else { return }
+            guard await turnOnLinearPlugin(nil) else { return }
             if !plugins.hasSecret(pluginId: pluginId, name: "api-key") {
                 plugins.setSecret(key, pluginId: pluginId, name: "api-key")
             }
@@ -80,32 +80,42 @@ extension AppModel {
             Keychain.write(Self.legacyLinearAccount, nil)
             UserDefaults.standard.removeObject(forKey: Self.legacyLinearConnectedKey)
         } else if plugins.plugin(pluginId) == nil {
-            // Couldn't tell (it timed out, say): ask again next launch.
-            guard let signedIn = await linearCLISignedIn() else { return }
-            if signedIn { guard turnOnLinearPlugin() else { return } }
+            // Without the registry, or if it couldn't tell (it timed out,
+            // say): ask again next launch.
+            guard let candidate = await linearCandidate() else { return }
+            defer { try? FileManager.default.removeItem(at: candidate.cleanup) }
+            guard let signedIn = await linearCLISignedIn(candidate.inspection.manifest.cli) else { return }
+            if signedIn { guard await turnOnLinearPlugin(candidate) else { return } }
         }
         try? store.setSetting(Self.linearAdoptedKey, true)
     }
 
-    /// Installs the bundled Linear plugin if needed and turns it on.
-    private func turnOnLinearPlugin() -> Bool {
+    /// Linear's reviewed listing, fetched at its approved commit.
+    private func linearCandidate() async -> PluginGitCandidate? {
+        guard let entry = await plugins.listing(for: PromptAttachment.linearTrackerId) else { return nil }
+        return try? await plugins.inspectListing(entry)
+    }
+
+    /// Installs Linear from its listing if needed and turns it on.
+    private func turnOnLinearPlugin(_ fetched: PluginGitCandidate?) async -> Bool {
         let pluginId = PromptAttachment.linearTrackerId
         if plugins.plugin(pluginId) == nil {
-            guard let folder = plugins.bundledFolders.first(where: { $0.lastPathComponent == "linear.abstractplugin" }),
-                  (try? plugins.install(from: folder, sourceKind: .bundled, enable: true)) != nil else { return false }
+            var candidate = fetched
+            if candidate == nil { candidate = await linearCandidate() }
+            guard let candidate else { return false }
+            defer { if fetched == nil { try? FileManager.default.removeItem(at: candidate.cleanup) } }
+            guard (try? plugins.install(candidate, enable: true)) != nil else { return false }
         } else if plugins.plugin(pluginId)?.record.enabled != true {
             setPluginEnabled(pluginId, true)
         }
         return plugins.plugin(pluginId)?.isUsable == true
     }
 
-    /// Whether `linear auth list` names a workspace: the bundled plugin's
-    /// own declared read, run the way the plugin would run it. Nil when
-    /// the CLI is there but didn't answer.
-    private func linearCLISignedIn() async -> Bool? {
-        guard let folder = plugins.bundledFolders.first(where: { $0.lastPathComponent == "linear.abstractplugin" }),
-              let cli = try? PluginPackage.inspect(folder: folder).manifest.cli,
-              let command = cli.command(for: ["auth", "list"]) else { return nil }
+    /// Whether `linear auth list` names a workspace: the plugin's own
+    /// declared read, run the way the plugin would run it. Nil when the CLI
+    /// is there but didn't answer.
+    private func linearCLISignedIn(_ declared: PluginCLI?) async -> Bool? {
+        guard let cli = declared, let command = cli.command(for: ["auth", "list"]) else { return nil }
         guard await executor.which(cli.binary) != nil else { return false }
         guard let out = try? await PluginCLIRunner().run(PluginCLIRequest(args: command.args, command: command), cli: cli,
                                                          executor: executor, cwd: nil, readable: []) else { return nil }
