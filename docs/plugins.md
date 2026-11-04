@@ -373,17 +373,21 @@ within its link, passing the project's id (else the team's) as `project` to
 linked to none shows every tracker that's on. Plugins with `projects.read` see
 `projects[].issueTrackers: [{ tracker, project, team? }]`, and the project's agents start
 with `ABSTRACT_<TRACKER>_TEAM` and `ABSTRACT_<TRACKER>_PROJECT` (the tracker's title in
-capitals, each value a key or else a name): `ABSTRACT_LINEAR_TEAM=ENG`,
-`ABSTRACT_JIRA_PROJECT=PROJ`.
+capitals, each value a key or else a name). A Linear workspace link also sets
+`ABSTRACT_LINEAR_WORKSPACE`: `ABSTRACT_LINEAR_TEAM=ENG`,
+`ABSTRACT_LINEAR_WORKSPACE=example`, `ABSTRACT_JIRA_PROJECT=PROJ`.
 
-**Linear**, bundled, does this one of two ways, picked on its settings page: a personal
-Linear API key entered under Settings › Plugins and sent only to api.linear.app, or the
-[Linear CLI](https://github.com/schpet/linear-cli) signed in on the Mac, through `cli`
-with read commands only (`auth whoami`, `auth list`, `issue query`, `issue view`,
-`team list`, `project list`) in the workspace picked there. Abstract never reads the
-CLI's token. Both give the same results. It's turned on by itself when Abstract
-finds a Linear key from before it was a plugin, or the CLI signed in. A project links to
-a Linear team and, optionally, one of its projects.
+**Linear**, bundled, uses the [Linear CLI](https://github.com/schpet/linear-cli) when
+signed in on the Mac, or an optional personal Linear API key entered under Settings ›
+Plugins and sent only to api.linear.app. Its settings page lets you pick either way.
+The CLI runs through `cli` with read commands only (`auth whoami`, `auth list`,
+`issue query`, `issue view`, `team list`, `project list`). Each Abstract project can
+pick its own Linear workspace in Project Settings; searches and issue lookups use
+that workspace. The plugin's settings workspace is the default for unlinked projects
+and Search all. Abstract never reads the CLI's token. Both give the same results.
+It's turned on by itself when Abstract finds a Linear key from before it was a plugin,
+or the CLI signed in. A project can link to a workspace, a team and, optionally, one
+of its projects.
 
 **Jira**, bundled and off until you turn it on, reads Jira Cloud through Atlassian's
 `acli`. A project links to one Jira project key, searched with `project = KEY`.
