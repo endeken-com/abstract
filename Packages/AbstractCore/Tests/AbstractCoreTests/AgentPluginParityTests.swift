@@ -20,11 +20,13 @@ import Testing
         return provider
     }
 
+    /// Hands its thread back now and then: CI runs tests on very few.
     func expectSameEvents(swift: () -> OutputParser, plugin: () -> OutputParser, lines: [String],
-                          sourceLocation: SourceLocation = #_sourceLocation) {
+                          sourceLocation: SourceLocation = #_sourceLocation) async {
         for stream in [OutputStreamKind.stdout, .stderr] {
             let a = swift(), b = plugin()
             for (index, line) in lines.enumerated() {
+                if index % 20 == 19 { await Task.yield() }
                 let expected = a.feed(line, stream: stream), actual = b.feed(line, stream: stream)
                 #expect(actual == expected, "line \(index + 1) on \(stream)", sourceLocation: sourceLocation)
             }
@@ -39,8 +41,8 @@ import Testing
     }
 
     @Test(arguments: ["opencode-messages", "opencode-mcp", "opencode-naming", "opencode-plugin-tool"])
-    func openCodeFixturesReadTheSame(_ fixture: String) throws {
+    func openCodeFixturesReadTheSame(_ fixture: String) async throws {
         let plugin = try Self.plugin("opencode")
-        expectSameEvents(swift: { OpenCodeParser() }, plugin: { plugin.makeParser() }, lines: try Self.lines(fixture) + Self.oddLines)
+        await expectSameEvents(swift: { OpenCodeParser() }, plugin: { plugin.makeParser() }, lines: try Self.lines(fixture) + Self.oddLines)
     }
 }

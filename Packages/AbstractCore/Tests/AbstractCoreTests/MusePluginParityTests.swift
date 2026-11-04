@@ -172,10 +172,12 @@ import Testing
         }
     }
 
-    /// How many stdin lines the Swift parser queued on stdout.
+    /// How many stdin lines the Swift parser queued on stdout. It hands its
+    /// thread back now and then: CI runs tests on very few, and async tests
+    /// elsewhere time out behind seconds of parsing.
     @discardableResult
     func expectSameFold(_ lines: [String], plugin: ScriptedProvider, model: String? = "muse-wonder-full-1.0",
-                        sourceLocation: SourceLocation = #_sourceLocation) -> Int {
+                        sourceLocation: SourceLocation = #_sourceLocation) async -> Int {
         var queued = 0
         let sessions = Self.sessions(in: lines) + ["s-odd"]
         for stream in [OutputStreamKind.stdout, .stderr] {
@@ -185,6 +187,7 @@ import Testing
             let bInput = b as? InputDrivingParser
             #expect(bInput != nil, sourceLocation: sourceLocation)
             for (index, line) in lines.enumerated() {
+                if index % 20 == 19 { await Task.yield() }
                 let expected = a.feed(line, stream: stream), actual = b.feed(line, stream: stream)
                 #expect(actual == expected, "line \(index + 1) on \(stream): \(line)", sourceLocation: sourceLocation)
                 let sent = Self.normalized(a.takePendingInput()), got = Self.normalized(bInput?.takePendingInput() ?? [])
@@ -208,12 +211,12 @@ import Testing
     // MARK: Folding
 
     @Test(arguments: fixtures)
-    func fixturesFoldTheSame(_ fixture: String) throws {
+    func fixturesFoldTheSame(_ fixture: String) async throws {
         let plugin = try Self.plugin()
         let lines = try Self.lines(fixture)
-        let switched = expectSameFold(lines, plugin: plugin)
-        let kept = expectSameFold(lines, plugin: plugin, model: nil)
-        let odd = expectSameFold(lines + Self.oddLines, plugin: plugin)
+        let switched = await expectSameFold(lines, plugin: plugin)
+        let kept = await expectSameFold(lines, plugin: plugin, model: nil)
+        let odd = await expectSameFold(lines + Self.oddLines, plugin: plugin)
         // A recording that loads a session sends its first turn (after a model
         // switch when the chat's model differs). The odd lines add a receipt for
         // each of their four userInput requests with an id, and load `s-odd`
@@ -224,13 +227,13 @@ import Testing
         #expect(odd == switched + (loads ? 0 : 2) + 4)
     }
 
-    @Test func oddLinesFoldTheSame() throws {
+    @Test func oddLinesFoldTheSame() async throws {
         let plugin = try Self.plugin()
-        expectSameFold(Self.oddLines, plugin: plugin)
-        expectSameFold(Array(Self.oddLines.reversed()), plugin: plugin)
+        await expectSameFold(Self.oddLines, plugin: plugin)
+        await expectSameFold(Array(Self.oddLines.reversed()), plugin: plugin)
         // Each one alone, for the exit it leaves.
-        for line in Self.oddLines { expectSameFold([line], plugin: plugin) }
-        expectSameFold([], plugin: plugin)
+        for line in Self.oddLines { await expectSameFold([line], plugin: plugin) }
+        await expectSameFold([], plugin: plugin)
     }
 
     @Test func replayDoesNotSpendTheFirstTurn() throws {
