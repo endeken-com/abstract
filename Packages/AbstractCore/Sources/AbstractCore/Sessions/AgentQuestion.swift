@@ -1,7 +1,7 @@
 import Foundation
 
-/// A question Claude asks when it needs you to choose the way forward, from
-/// its `AskUserQuestion` tool. It arrives as a permission request whose input
+/// A question an agent asks when it needs you to choose the way forward.
+/// It arrives as a permission request whose input
 /// is `{"questions":[{"question","header","options":[{"label","description"}],
 /// "multiSelect"}]}`; allowing it with `answers` added to that input (question
 /// text → the chosen labels, comma-separated, or your own words) is how the
@@ -27,7 +27,9 @@ public struct AgentQuestion: Sendable, Hashable, Identifiable {
         self.question = question; self.header = header; self.options = options; self.multiSelect = multiSelect
     }
 
-    public static func isQuestion(_ toolName: String) -> Bool { toolName == Self.toolName }
+    public static func isQuestion(_ toolName: String) -> Bool {
+        toolName == Self.toolName || toolName == "request_user_input"
+    }
 
     /// The questions in a tool input; ones without text are left out.
     public static func parse(_ input: JSONValue) -> [AgentQuestion] {
@@ -37,7 +39,8 @@ public struct AgentQuestion: Sendable, Hashable, Identifiable {
                 o["label"]?.string.map { Option(label: $0, description: o["description"]?.string.flatMap { $0.isEmpty ? nil : $0 }) }
             }
             return AgentQuestion(question: text, header: q["header"]?.string.flatMap { $0.isEmpty ? nil : $0 },
-                                 options: options, multiSelect: q["multiSelect"]?.bool == true)
+                                 options: options, multiSelect: q["multiSelect"]?.bool == true
+                                    || q["selection"]?["mode"]?.string == "multiple")
         }
     }
 
