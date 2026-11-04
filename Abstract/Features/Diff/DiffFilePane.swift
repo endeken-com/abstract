@@ -580,19 +580,11 @@ final class DiffHighlights {
 
         var lines: [LineKey: AttributedString] = [:]
         var hunk: [NumberedLine] = []
-        /// Colours one side of a hunk (its unchanged lines give the grammar
-        /// context) and keeps the lines of `kinds`.
-        func colour(_ side: [NumberedLine], keeping kinds: Set<NumberedLine.Kind>) async {
-            guard side.contains(where: { kinds.contains($0.kind) }),
-                  let tokens = await CodeHighlighter.shared.lines(side.map(\.text).joined(separator: "\n"), language: language)
-            else { return }
-            for (line, tokens) in zip(side, tokens) where kinds.contains(line.kind) {
-                lines[LineKey(kind: line.kind, old: line.old, new: line.new)] = SyntaxStyle.attributed(tokens)
-            }
-        }
         func flush() async {
-            await colour(hunk.filter { $0.kind != .added && $0.kind != .note }, keeping: [.removed])
-            await colour(hunk.filter { $0.kind != .removed && $0.kind != .note }, keeping: [.context, .added])
+            let coloured = await SyntaxStyle.hunk(hunk.map { (kind: $0.kind.syntax, text: $0.text) }, language: language)
+            for (line, code) in zip(hunk, coloured) {
+                if let code { lines[LineKey(kind: line.kind, old: line.old, new: line.new)] = code }
+            }
             hunk.removeAll()
         }
         for row in file.unified {
@@ -604,6 +596,17 @@ final class DiffHighlights {
         }
         await flush()
         byFile[file.path] = (signature, lines)
+    }
+}
+
+private extension NumberedLine.Kind {
+    var syntax: DiffSyntax.Kind {
+        switch self {
+        case .context: .context
+        case .added: .added
+        case .removed: .removed
+        case .note: .other
+        }
     }
 }
 

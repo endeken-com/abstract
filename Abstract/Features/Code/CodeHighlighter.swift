@@ -1,6 +1,7 @@
 import Foundation
 import JavaScriptCore
 import SwiftUI
+import AbstractCore
 
 /// Syntax colour for code in the diff and the file reader. It runs the Prism
 /// grammars Textual already ships (the same ones that colour code blocks in
@@ -151,6 +152,39 @@ enum SyntaxStyle {
         case "deleted": .btRemoved
         default: nil
         }
+    }
+}
+
+extension SyntaxStyle {
+    /// A diff hunk's lines coloured, each from its own side (`DiffSyntax`);
+    /// nil for a line that stays plain. Review and the chat's edit rows both
+    /// colour through it.
+    static func hunk(_ lines: [(kind: DiffSyntax.Kind, text: String)], language: String) async -> [AttributedString?] {
+        await DiffSyntax.hunk(lines) { await CodeHighlighter.shared.lines($0, language: language) }.map { $0.map(attributed) }
+    }
+}
+
+/// A chat's edits coloured, kept per edit and theme, so scrolling back to one
+/// never colours it again.
+final class EditHighlights {
+    static let shared = EditHighlights()
+    private var lines: [DiffSyntax.EditKey: [AttributedString?]] = [:]
+    private var order: [DiffSyntax.EditKey] = []
+    private let capacity = 500
+
+    func cached(_ key: DiffSyntax.EditKey) -> [AttributedString?]? { lines[key] }
+
+    /// `key`'s edit coloured, once; nil when its language is unknown or the
+    /// edit is too long to colour.
+    func load(_ key: DiffSyntax.EditKey) async -> [AttributedString?]? {
+        if let lines = lines[key] { return lines }
+        guard key.edit.lines.count <= DiffSyntax.editLimit, let language = CodeHighlighter.language(for: key.edit.filePath) else { return nil }
+        let tokens = await DiffSyntax.edit(key.edit) { await CodeHighlighter.shared.lines($0, language: language) }
+        let coloured = tokens.map { $0.map(SyntaxStyle.attributed) }
+        if lines[key] == nil { order.append(key) }
+        lines[key] = coloured
+        if order.count > capacity { lines[order.removeFirst()] = nil }
+        return coloured
     }
 }
 

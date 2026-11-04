@@ -323,7 +323,11 @@ struct ToolCallView: View {
     private var details: some View {
         switch kind {
         case .edit:
-            if let edit = call.edit { EditDiff(edit: edit, key: "diff:\(call.id)") } else { InputFields(input: call.input) }
+            if let edit = call.edit {
+                EditDiff(edit: edit, key: "diff:\(call.id)", streaming: outcome == .running && approval == nil && model.isAlive(sessionId))
+            } else {
+                InputFields(input: call.input)
+            }
         case .todo:
             TodoChecklist(items: ToolPresentation.todos(call.input))
         case .plan:
@@ -597,7 +601,8 @@ private struct ToolTargetView: View {
 }
 
 /// An edit's changed lines with line numbers where known, washed green and
-/// red in the flow of the text. Long diffs show their start and expand.
+/// red in the flow of the text, syntax-coloured as in Review. Long diffs show
+/// their start and expand.
 struct EditDiff: View {
     @Environment(\.transcriptExpansion) private var expansion
     @Environment(\.transcriptRow) private var row
@@ -605,7 +610,10 @@ struct EditDiff: View {
     /// Its place in the chat's record of what's open.
     var key: String? = nil
     var limit = 14
+    /// Still arriving: it stays plain until the edit completes.
+    var streaming = false
     @State private var local = false
+    @State private var coloured: (key: DiffSyntax.EditKey, lines: [AttributedString?])?
 
     private var showAll: Bool { key.flatMap { ExpansionSwitch(key: $0, expansion: expansion, row: row).value(local: local) } ?? local }
 
@@ -614,6 +622,8 @@ struct EditDiff: View {
         let shown = showAll ? all : Array(all.prefix(limit))
         let numbers = all.compactMap { $0.newLine ?? $0.oldLine }
         let gutter = numbers.isEmpty ? 0 : CGFloat(String(numbers.max() ?? 0).count) * 6.7 + 10
+        let colourKey = DiffSyntax.EditKey(edit: edit, theme: ThemeState.shared.choice.rawValue)
+        let code = streaming ? nil : coloured.flatMap { $0.key == colourKey ? $0.lines : nil } ?? EditHighlights.shared.cached(colourKey)
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(shown.enumerated()), id: \.offset) { index, line in
@@ -623,7 +633,7 @@ struct EditDiff: View {
                             .padding(.leading, gutter + 4)
                             .padding(.vertical, 2)
                     }
-                    DiffLineRow(line: line, gutter: gutter)
+                    DiffLineRow(line: line, gutter: gutter, code: code.flatMap { index < $0.count ? $0[index] : nil })
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
@@ -642,12 +652,18 @@ struct EditDiff: View {
             }
         }
         .textSelection(.enabled)
+        // Coloured off the main thread, once per edit and theme.
+        .task(id: streaming ? nil : colourKey) {
+            guard !streaming, code == nil, let lines = await EditHighlights.shared.load(colourKey) else { return }
+            coloured = (colourKey, lines)
+        }
     }
 }
 
 private struct DiffLineRow: View {
     let line: EditPreview.Line
     let gutter: CGFloat
+    let code: AttributedString?
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 0) {
@@ -661,8 +677,9 @@ private struct DiffLineRow: View {
             Text(line.origin == .added ? "+" : line.origin == .removed ? "−" : " ")
                 .foregroundStyle(line.origin == .added ? Color.btAdded : line.origin == .removed ? Color.btRemoved : Color.btTextTertiary)
                 .frame(width: 16)
-            Text(line.content.isEmpty ? " " : TextClip.line(line.content, max: 2_000))
+            Text(line.content.isEmpty ? AttributedString(" ") : code ?? AttributedString(TextClip.line(line.content, max: DiffSyntax.clippedLine)))
                 .foregroundStyle(line.origin == .context ? Color.btTextSecondary : Color.btText)
+                .opacity(line.origin == .context && code != nil ? 0.78 : 1)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
