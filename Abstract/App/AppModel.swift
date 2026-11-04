@@ -32,6 +32,13 @@ struct ChatSummary: Equatable {
     }
 }
 
+/// Whether a chat is the one showing, observed chat by chat, so opening one
+/// redraws only the sidebar rows of the chat left and the chat opened (ABS-184).
+@Observable
+final class ShownMark {
+    fileprivate(set) var isShown = false
+}
+
 struct PendingPermission: Identifiable, Hashable {
     var id: String { requestId }
     let requestId: String
@@ -83,6 +90,10 @@ final class AppModel {
     private(set) var chatSummaries: [String: ChatSummary] = [:]
     /// Unarchived chats, most recently active first; changes only when the order does.
     private(set) var recentChats: [String] = []
+    /// The first nine unarchived chats in the list's order, for the Go menu's ⌘1 to ⌘9.
+    private(set) var menuChats: [String] = []
+    /// What the menu bar shows; see AppModel+Menus.
+    var menuFacts = MenuFacts()
     var automations: [Automation] = []
     /// Each automation's newest run, for the list's last-run outcome.
     var latestAutomationRuns: [String: AutomationRun] = [:]
@@ -133,6 +144,8 @@ final class AppModel {
     }
     /// Panel layouts by chat id; see AppModel+Panes.
     var layouts: [String: PanelLayout] = [:]
+    /// Layouts as last read from the store, for chats whose panels haven't changed this run.
+    @ObservationIgnored var storedLayouts: [String: PanelLayout] = [:]
     /// A plugin menu item or ⌘K command waiting to be handed to that
     /// plugin's screen, by plugin id; see AppModel+Plugins.
     var pluginInvocations: [String: PluginInvocation] = [:]
@@ -249,7 +262,27 @@ final class AppModel {
     var currentRepoStates: [String: RepoBranchState] = [:]
 
     // Navigation & transient UI
-    var destination: Destination = .home { didSet { if destination != oldValue { syncLocks(); followCLIChat() } } }
+    var destination: Destination = .home {
+        didSet {
+            guard destination != oldValue else { return }
+            Perf.measure("destination.didSet") {
+                if case .session(let id) = oldValue { shownMarks[id]?.isShown = false }
+                if case .session(let id) = destination { shownMarks[id]?.isShown = true }
+                syncLocks()
+                followCLIChat()
+            }
+        }
+    }
+    @ObservationIgnored private var shownMarks: [String: ShownMark] = [:]
+
+    func shownMark(_ sessionId: String) -> ShownMark {
+        if let mark = shownMarks[sessionId] { return mark }
+        let mark = ShownMark()
+        // Read without observing, so the row asking observes only its mark.
+        if case .session(let id) = _destination { mark.isShown = id == sessionId }
+        shownMarks[sessionId] = mark
+        return mark
+    }
     var collapsedProjects: Set<String> = []
     /// Archived chats show in the sidebar too, dimmed. Kept across launches.
     var showArchived = UserDefaults.standard.bool(forKey: "sidebar.showArchived") {
@@ -351,6 +384,10 @@ final class AppModel {
     @ObservationIgnored var appAgents: [String: AgentRecord] = [:]
     /// Where following each chat's log got to: the byte after the last line read, and its number.
     @ObservationIgnored private var tailPositions: [String: (byte: UInt64, seq: Int)] = [:]
+    /// Long chats' whole logs being read in the background, behind their newest page.
+    @ObservationIgnored private var timelineLoads: [String: Task<Void, Never>] = [:]
+    /// Bumped per read of who drives what from the command line, so a slow read can't overwrite a newer one.
+    @ObservationIgnored var cliDrivenReads = 0
     @ObservationIgnored var storeObserver: Int32?
     /// Where `abstract` hands the app the agents of chats it makes; see AppModel+SessionLocks.
     @ObservationIgnored var appLink: AppLink.Server?
@@ -396,13 +433,25 @@ final class AppModel {
         pauseState = store.setting("pauseState", as: PauseState.self) ?? PauseState()
     }
 
-    private func save<T: Codable>(_ key: String, _ value: T) {
-        try? store.setSetting(key, value)
+    /// Settings are written in the background, in order, so a tab or a
+    /// toggle never waits on the disk (ABS-184). Quitting waits for them.
+    nonisolated private static let settingsWrites = DispatchQueue(label: "sh.abstract.settings")
+
+    func save<T: Codable & Sendable>(_ key: String, _ value: T) {
+        let store = store
+        Self.settingsWrites.async { try? store.setSetting(key, value) }
+    }
+
+    /// Waits for settings still being written.
+    func flushSettings() {
+        Self.settingsWrites.sync {}
     }
 
     // MARK: - Bootstrap
 
     func bootstrap() async {
+        if HangMonitor.wanted { HangMonitor.shared.start() }
+        watchMenuFacts()
         try? store.seedStarterProfilesIfNeeded()
         // A chat whose agent still runs from the command line wasn't interrupted.
         refreshCLIDriven()
@@ -445,7 +494,7 @@ final class AppModel {
         Notifier.shared.requestAuthorization()
     }
 
-    private func updateChatNames() {
+    private func updateChatNames() { Perf.measure("updateChatNames") {
         let names = Dictionary(sessions.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
         if names != chatNames { chatNames = names }
         let summaries = Dictionary(sessions.map { ($0.id, ChatSummary($0)) }, uniquingKeysWith: { first, _ in first })
@@ -453,7 +502,9 @@ final class AppModel {
         let recent = sessions.filter { $0.archivedAt == nil }
             .sorted { ($0.lastEventAt ?? $0.createdAt) > ($1.lastEventAt ?? $1.createdAt) }.map(\.id)
         if recent != recentChats { recentChats = recent }
-    }
+        let menu = sessions.lazy.filter { $0.archivedAt == nil }.prefix(9).map(\.id)
+        if !menu.elementsEqual(menuChats) { menuChats = Array(menu) }
+    } }
 
     /// A chat's summary, here or on another Mac.
     func chatSummary(_ id: String) -> ChatSummary? {
@@ -465,7 +516,7 @@ final class AppModel {
         id.hasPrefix(RemoteService.mirrorPrefix) ? remote.mirror(id)?.name : chatNames[id]
     }
 
-    func reload() {
+    func reload() { Perf.measure("reload") {
         projects = (try? store.projects()) ?? []
         reloadSessions()
         automations = (try? store.automations()) ?? []
@@ -475,12 +526,12 @@ final class AppModel {
         reloadSkills()
         permissionRules = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, (try? store.permissionRules(projectId: $0.id)) ?? []) })
         toolServers = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, (try? store.toolServers(projectId: $0.id)) ?? []) })
-    }
+    } }
 
-    func reloadSessions() {
+    func reloadSessions() { Perf.measure("reloadSessions") {
         sessions = (try? store.sessions()) ?? []
         alive = engine.aliveSessionIds
-    }
+    } }
 
     func detectProviders() async {
         for provider in ProviderRegistry.all {
@@ -661,14 +712,14 @@ final class AppModel {
     // MARK: - Navigation
 
     /// Show a chat: its tab, or in place of the chat showing (a new tab when asked).
-    func open(_ sessionId: String, newTab: Bool = false) {
+    func open(_ sessionId: String, newTab: Bool = false) { Perf.measure("open") {
         mainTabs.openChat(sessionId, newTab: newTab)
         if case .session(let current) = destination, current == sessionId { return }
         destination = .session(sessionId)
         // A chat on another Mac streams its transcript from there.
         if sessionId.hasPrefix(RemoteService.mirrorPrefix) { remote.subscribe(sessionId); return }
         loadTimelineIfNeeded(sessionId)
-    }
+    } }
 
     /// The New Chat sheet, for `projectId`, or for a standalone chat (one
     /// with no project) when `standalone`.
@@ -716,7 +767,10 @@ final class AppModel {
                               defaultProviderId: providerId, defaultPermissionPolicy: policy,
                               nestedRepos: probe.nestedRepos, sortOrder: projects.count)
         try store.save(project)
-        reload()
+        // Saved as it is: a new project has no rules or servers yet.
+        projects = StoreOrder.saving(project, in: projects, precedes: StoreOrder.projectPrecedes)
+        permissionRules[project.id] = []
+        toolServers[project.id] = []
         flash("\(project.name) added")
     }
 
@@ -724,12 +778,14 @@ final class AppModel {
     func moveProject(_ id: String, relativeTo target: String, after: Bool) {
         let order = Ordering.move(id, in: projects.map(\.id), to: target, after: after)
         guard order != projects.map(\.id) else { return }
+        var moved: [Project] = []
         for (index, pid) in order.enumerated() {
             guard var p = project(pid), p.sortOrder != index else { continue }
             p.sortOrder = index
             try? store.save(p)
+            moved.append(p)
         }
-        reload()
+        projects = StoreOrder.reordering(moved, in: projects, precedes: StoreOrder.projectPrecedes)
     }
 
     func removeProject(_ id: String) {
@@ -742,7 +798,7 @@ final class AppModel {
 
     func updateProject(_ project: Project) {
         try? store.save(project)
-        reload()
+        projects = StoreOrder.reordering([project], in: projects, precedes: StoreOrder.projectPrecedes)
     }
 
     // MARK: - Profiles
@@ -800,6 +856,8 @@ final class AppModel {
                    name: String? = nil, nameSource: ChatNameSource = .manual, slug: String? = nil, automationId: String? = nil,
                    profile: ProfileSnapshot? = nil, workflow: WorkflowProgress? = nil, reviewing: String? = nil,
                    parentId: String? = nil, select: Bool = true) async throws -> String {
+        let interval = Perf.begin("startChat")
+        defer { Perf.end(interval) }
         let project = project(projectId)
         if projectId != nil, project == nil { throw AbstractError.notFound("project") }
         // A workflow's first step has the chat from the start, with its
@@ -847,7 +905,7 @@ final class AppModel {
             session.branch = existing.branch
         }
         try store.save(session)
-        reloadSessions()
+        sessions = StoreOrder.saving(session, in: sessions, precedes: StoreOrder.sessionPrecedes)
         feed(session.id).reset()
         if select { open(session.id, newTab: true) }
         engine.recordInput(sessionId: session.id, text: prompt)
@@ -1077,6 +1135,10 @@ final class AppModel {
 
     /// Spawn (or respawn) the agent for a session.
     func launch(_ session: Session, prompt: String, resume: Bool, images: [String] = []) throws {
+        try Perf.measure("launch") { try launchNow(session, prompt: prompt, resume: resume, images: images) }
+    }
+
+    private func launchNow(_ session: Session, prompt: String, resume: Bool, images: [String]) throws {
         // A project chat always works in its worktree, never a fallback folder.
         if session.projectId != nil, session.worktreePath == nil {
             throw AbstractError.message("This chat handed its worktree to a newer chat, so its agent can't run here again.")
@@ -1098,6 +1160,7 @@ final class AppModel {
                 flash("The earlier conversation wasn't found, so the agent starts fresh in this worktree.")
             }
         }
+        let settingsInterval = Perf.begin("launch.settings")
         var settings = LaunchSettings(providerOverrides: providerOverrides, outputStyle: outputStyle, claudeProfile: claudeProfile,
                                       standardClaudeProfile: accounts.standardProfilePath, attachmentsDirectory: AttachmentStore.root.path,
                                       agentDefaults: agentDefaults, modelCatalogs: modelCatalogs,
@@ -1111,6 +1174,7 @@ final class AppModel {
         settings.addSkills(for: session, project: project(session.projectId), profile: profile(session.profileId),
                            sources: skillSources, dataDirectory: dataDirectory)
         settings.environment.merge(projectIssueTrackers(session.projectId).environment) { $1 }
+        Perf.end(settingsInterval)
         if !resume, let note = SkillLibrary.unsupportedNote(provider: provider, skills: settings.skills) {
             engine.record(sessionId: session.id, OutputLine(stream: .note, line: note))
         }
@@ -1127,7 +1191,9 @@ final class AppModel {
                                                    model: session.model ?? settings.agentDefaults[provider.id]?.model
                                                        ?? provider.configuredDefaultModel(home: executor.homeDirectory),
                                                    effort: session.effort ?? settings.agentDefaults[provider.id]?.effort)
-        try engine.launch(sessionId: session.id, spec: spec, enricher: enrichers[enricherKey], launchRecord: launchRecord)
+        try Perf.measure("launch.engine") {
+            try engine.launch(sessionId: session.id, spec: spec, enricher: enrichers[enricherKey], launchRecord: launchRecord)
+        }
         alive.insert(session.id)
         publishAgent(session.id, providerId: provider.id)
         turnStartedAt[session.id] = Date()
@@ -1137,6 +1203,10 @@ final class AppModel {
     /// `chain`: the automations that led to this message (see `eventChains`);
     /// none for one you send.
     func sendFollowUp(_ sessionId: String, text: String, attachments: [PromptAttachment] = [], chain: Set<String> = []) throws {
+        try Perf.measure("sendFollowUp") { try sendFollowUpNow(sessionId, text: text, attachments: attachments, chain: chain) }
+    }
+
+    private func sendFollowUpNow(_ sessionId: String, text: String, attachments: [PromptAttachment], chain: Set<String>) throws {
         if sessionId.hasPrefix(RemoteService.mirrorPrefix) {
             throw AbstractError.message("Send this message from the remote chat's composer.")
         }
@@ -1173,7 +1243,7 @@ final class AppModel {
             Task { await handOver(session, message: message, images: images, queued: queued) }
             return
         }
-        engine.recordInput(sessionId: sessionId, text: message, queued: queued.map(\.id))
+        Perf.measure("deliver.recordInput") { engine.recordInput(sessionId: sessionId, text: message, queued: queued.map(\.id)) }
         if !queued.isEmpty { refreshQueue(sessionId) }
         interrupting.remove(sessionId)
         // A new agent, model or effort takes effect by restarting between
@@ -1766,7 +1836,7 @@ final class AppModel {
         composerDrafts.remove(sessionId)
         enrichers = enrichers.filter { !$0.key.hasPrefix(sessionId + "/") }
         if case .session(let id) = destination, id == sessionId { destination = .home }
-        reload()
+        sessions = StoreOrder.deleting(sessionId, from: sessions)
         return leftFiles.map(BulkChatDelete.Outcome.leftFiles) ?? .deleted
     }
 
@@ -1778,7 +1848,7 @@ final class AppModel {
         }
     }
 
-    private func handle(_ event: EngineEvent) {
+    private func handle(_ event: EngineEvent) { Perf.measure("engine.event") {
         switch event {
         case let .line(sessionId, seq, line):
             guard seq > (seenSeq[sessionId] ?? 0) else { return }
@@ -1871,7 +1941,7 @@ final class AppModel {
             permissions[sessionId] = nil
             if let status = session(sessionId)?.status { ended = (status, false) }
         }
-    }
+    } }
 
     /// Closes an in-stream compaction whose process just exited, from the same
     /// exit events the rest of the exit handling reads: Claude may have finished
@@ -2003,7 +2073,7 @@ final class AppModel {
         feed(sessionId).append(event, at: at)
     }
 
-    func setStatus(_ sessionId: String, _ status: SessionStatus, detail: String? = nil) {
+    func setStatus(_ sessionId: String, _ status: SessionStatus, detail: String? = nil) { Perf.measure("setStatus") {
         // Claude repeats "running" on every message; rewriting the chat for it
         // would redraw every view that shows chats, and hit the disk, each time.
         if let s = session(sessionId), (s.status, s.statusDetail) == (status, detail) { return }
@@ -2022,7 +2092,7 @@ final class AppModel {
             let outcome = status == .errored ? "failed" : stopRequests[sessionId] != nil ? "stopped" : "done"
             Task { await recordTurn(sessionId, outcome: outcome) }
         }
-    }
+    } }
 
     /// A finished turn, for plugins' background scripts (ABS-93); an
     /// automation's run finishes with its chat's first turn.
@@ -2044,25 +2114,60 @@ final class AppModel {
                             changedFiles: turn?.files.count ?? 0)
     }
 
-    private func replaceSession(_ s: Session) {
+    func replaceSession(_ s: Session) {
         if let i = sessions.firstIndex(where: { $0.id == s.id }) { sessions[i] = s }
     }
 
-    func loadTimelineIfNeeded(_ sessionId: String) {
-        guard !feed(sessionId).isLoaded, let s = session(sessionId) else { return }
-        let (replay, end, lastSeq) = engine.tail(sessionId: sessionId, fromByte: 0, firstSeq: 1)
+    /// Reads a chat's log into its transcript the first time it's needed. A
+    /// long log shows its newest page at once, and the whole of it, read and
+    /// replayed in the background, takes its place a moment later (ABS-184).
+    func loadTimelineIfNeeded(_ sessionId: String) { Perf.measure("loadTimeline") {
+        guard !feed(sessionId).isLoaded, timelineLoads[sessionId] == nil, let s = session(sessionId) else { return }
+        let provider = s.handoffFrom ?? s.providerId
+        let engine = engine
+        guard let page = Perf.measure("loadTimeline.newest", { TimelinePage.newest(engine: engine, sessionId: sessionId, providerId: provider) }) else {
+            finishLoading(sessionId, TimelinePage.whole(engine: engine, sessionId: sessionId, providerId: provider), catchUp: false)
+            return
+        }
+        let feed = feed(sessionId)
+        feed.reset(page)
+        let generation = feed.generation
+        timelineLoads[sessionId] = Task {
+            let whole = await Task.detached(priority: .userInitiated) {
+                TimelinePage.whole(engine: engine, sessionId: sessionId, providerId: provider)
+            }.value
+            timelineLoads[sessionId] = nil
+            // Deleted, or started over, meanwhile.
+            guard feeds[sessionId] === feed, feed.generation == generation else { return }
+            Perf.measure("loadTimeline.whole") { finishLoading(sessionId, whole, catchUp: true) }
+        }
+    } }
+
+    /// The whole log in place. `catchUp`: read what was logged since, too.
+    private func finishLoading(_ sessionId: String, _ whole: TimelinePage.Whole, catchUp: Bool) {
+        var timeline = whole.timeline
+        var (end, lastSeq) = (whole.end, whole.lastSeq)
+        if catchUp {
+            let later = engine.tail(sessionId: sessionId, fromByte: end, firstSeq: lastSeq + 1)
+            for (_, line) in later.lines {
+                for event in whole.stream.feed(line) {
+                    // As in a replay: a question from before is either answered or pending already.
+                    if case .permissionRequest = event { continue }
+                    timeline.append(event, at: line.at)
+                }
+            }
+            (end, lastSeq) = (later.end, later.lastSeq)
+        }
         tailPositions[sessionId] = (end, lastSeq)
-        let lines = replay.map(\.line)
-        // Each agent's part of the log is read by its own parser.
-        let stream = ChatStream(providerId: ChatStream.firstProvider(in: lines, current: s.handoffFrom ?? s.providerId))
-        feed(sessionId).reset(stream.replay(lines))
+        engine.noteLength(sessionId: sessionId, bytes: end, lines: lastSeq)
+        feed(sessionId).reset(timeline)
         // Abstract quit mid-compaction: that one will never report back.
         if !compacting.contains(sessionId), !isAlive(sessionId), feed(sessionId).timeline.hasRunningCompaction {
             engine.record(sessionId: sessionId, CompactionMarker.failed("Abstract closed before compacting finished.").line)
         }
         seedPlan(sessionId)
-        seenSeq[sessionId] = max(seenSeq[sessionId] ?? 0, replay.last?.seq ?? 0)
-        streams[sessionId] = streams[sessionId] ?? stream
+        seenSeq[sessionId] = max(seenSeq[sessionId] ?? 0, lastSeq)
+        streams[sessionId] = streams[sessionId] ?? whole.stream
     }
 
     /// Reads what's new in a chat's log into its transcript: the log another
@@ -2070,11 +2175,31 @@ final class AppModel {
     /// is already in the store.
     func tailLog(_ sessionId: String) {
         guard feed(sessionId).isLoaded else { loadTimelineIfNeeded(sessionId); return }
+        guard timelineLoads[sessionId] == nil else { return }
         // From where it last got to; the first time, from the top (once).
         let from = tailPositions[sessionId] ?? (0, 0)
-        let (lines, end, lastSeq) = engine.tail(sessionId: sessionId, fromByte: from.byte, firstSeq: from.seq + 1)
-        tailPositions[sessionId] = (end, lastSeq)
-        for (seq, line) in lines where seq > (seenSeq[sessionId] ?? 0) {
+        let read = engine.tail(sessionId: sessionId, fromByte: from.byte, firstSeq: from.seq + 1)
+        applyTail(sessionId, read)
+    }
+
+    /// The same, with the log read away from the main thread.
+    func tailLogInBackground(_ sessionId: String) async {
+        guard feed(sessionId).isLoaded else { loadTimelineIfNeeded(sessionId); return }
+        guard timelineLoads[sessionId] == nil else { return }
+        let from = tailPositions[sessionId] ?? (0, 0)
+        let engine = engine
+        let read = await Task.detached(priority: .userInitiated) {
+            engine.tail(sessionId: sessionId, fromByte: from.byte, firstSeq: from.seq + 1)
+        }.value
+        // Read again meanwhile, or the agent wrote more here: the next look catches up.
+        let now = tailPositions[sessionId] ?? (0, 0)
+        guard now.byte == from.byte, now.seq == from.seq, timelineLoads[sessionId] == nil else { return }
+        applyTail(sessionId, read)
+    }
+
+    private func applyTail(_ sessionId: String, _ read: (lines: [(seq: Int, line: OutputLine)], end: UInt64, lastSeq: Int)) {
+        tailPositions[sessionId] = (read.end, read.lastSeq)
+        for (seq, line) in read.lines where seq > (seenSeq[sessionId] ?? 0) {
             seenSeq[sessionId] = seq
             guard let stream = stream(for: sessionId) else { return }
             for event in stream.feed(line) { append(event, to: sessionId, at: line.at) }

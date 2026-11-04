@@ -6,6 +6,8 @@ import AbstractCore
 extension AppModel {
     /// Every chat the sidebar can show: this Mac's, then those on paired Macs connected now.
     func sidebarChats() -> [SidebarChats.Chat] {
+        let interval = Perf.begin("sidebarChats")
+        defer { Perf.end(interval) }
         let here = remote.identity.name
         // Projects and their icons are resolved once here, not once per chat:
         // a linear project lookup and an icon-file check per chat made every

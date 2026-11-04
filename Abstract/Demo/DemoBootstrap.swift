@@ -76,6 +76,7 @@ final class DemoBootstrap {
         ReviewFindProbe.runIfRequested(model)
         IssueTrackerProbe.runIfRequested(model)
         BulkDeleteProbe.runIfRequested(model)
+        NavigationProbe.runIfRequested(model, repo: abstract)
 
         let running = abstract.map { p in Task { await self.chat(model, p, "Add a command palette with fuzzy search", .autoEdits) } }
         _ = running

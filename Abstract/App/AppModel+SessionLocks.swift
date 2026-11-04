@@ -50,18 +50,42 @@ extension AppModel {
 
     /// Who drives what from the command line, from the locks folder.
     func refreshCLIDriven() {
-        let names = (try? FileManager.default.contentsOfDirectory(atPath: locksDirectory.path)) ?? []
+        cliDrivenReads += 1
+        apply(cliDriven: Self.readCLIDriven(in: locksDirectory, besides: Set(heldLocks.keys)))
+    }
+
+    /// The same, read away from the main thread: the folder holds a file
+    /// per chat looked at (ABS-184).
+    func refreshCLIDrivenInBackground() async {
+        cliDrivenReads += 1
+        let read = cliDrivenReads
+        let directory = locksDirectory
+        let held = Set(heldLocks.keys)
+        let driven = await Task.detached(priority: .userInitiated) { Self.readCLIDriven(in: directory, besides: held) }.value
+        guard read == cliDrivenReads else { return }
+        // Taken here meanwhile: the app drives those.
+        apply(cliDriven: driven.filter { heldLocks[$0.key] == nil })
+    }
+
+    private func apply(cliDriven driven: [String: SessionLockInfo]) {
+        if driven != cliDriven { cliDriven = driven }
+    }
+
+    nonisolated private static func readCLIDriven(in directory: URL, besides held: Set<String>) -> [String: SessionLockInfo] {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
         var driven: [String: SessionLockInfo] = [:]
         for name in names where name.hasSuffix(".json") {
             let id = String(name.dropLast(5))
-            guard heldLocks[id] == nil, let holder = SessionLock.holder(of: id, in: locksDirectory), holder.driver == .cli else { continue }
+            guard !held.contains(id), let holder = SessionLock.holder(of: id, in: directory), holder.driver == .cli else { continue }
             driven[id] = holder
         }
-        if driven != cliDriven { cliDriven = driven }
+        return driven
     }
 
     /// Holds the locks of the chats the app drives now (the one showing, and
     /// those whose agent it runs or is restarting) and lets go of the rest.
+    /// Who drives the others is read in the background, then the chat
+    /// showing is asked for if `abstract` runs it.
     func syncLocks() {
         var wanted = alive.union(relaunching).union(handingOff)
         if let id = selectedSessionId, !id.hasPrefix(RemoteService.mirrorPrefix) { wanted.insert(id) }
@@ -70,15 +94,19 @@ extension AppModel {
             heldLocks[id] = nil
         }
         for id in wanted where heldLocks[id] == nil { _ = try? holdLock(id) }
-        refreshCLIDriven()
-        claimShownChat()
+        Task {
+            await refreshCLIDrivenInBackground()
+            await claimShownChat()
+        }
     }
 
     /// The chat showing is one `abstract`'s agent runs: ask its host for it.
     /// Asking again changes nothing, so every look can ask.
-    private func claimShownChat() {
-        guard let id = selectedSessionId, heldLocks[id] == nil, let holder = cliDriven[id], holder.agent != nil,
-              SessionLock.holder(of: id, in: locksDirectory)?.pid == holder.pid else { return }
+    private func claimShownChat() async {
+        guard let id = selectedSessionId, heldLocks[id] == nil, let holder = cliDriven[id], holder.agent != nil else { return }
+        let directory = locksDirectory
+        let current = await Task.detached { SessionLock.holder(of: id, in: directory) }.value
+        guard current?.pid == holder.pid else { return }
         kill(holder.pid, SIGUSR1)
     }
 
@@ -110,7 +138,7 @@ extension AppModel {
     /// a respawn). Never while the app runs the chat's agent itself.
     func followCLIChat() {
         guard let id = selectedSessionId, !id.hasPrefix(RemoteService.mirrorPrefix), !alive.contains(id) else { return }
-        tailLog(id)
+        Task { await tailLogInBackground(id) }
     }
 
     // MARK: Chats `abstract` makes while the app is open

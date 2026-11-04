@@ -16,6 +16,7 @@ struct ConversationView: View {
     @AppStorage("chat.transcript") private var transcript: TranscriptMode = .normal
 
     var body: some View {
+        let _ = Perf.event("body.ConversationView")
         // Reads only what changes when a call starts or ends; the rows
         // themselves are observed by the list, a row at a time.
         let feed = model.feed(session.id)
@@ -163,6 +164,7 @@ struct BlockView: View, Equatable {
     let live: Bool
 
     var body: some View {
+        let _ = Perf.event("body.BlockView")
         switch block {
         case let .user(_, text):
             UserBubble(text: text)
@@ -444,6 +446,7 @@ private struct UserBubble: View {
     private static let foldCharacters = 1_600
 
     var body: some View {
+        let _ = Perf.event("body.UserBubble")
         // Attachments show as chips under what was typed.
         let (typed, chips) = PromptAttachments.split(text)
         VStack(alignment: .trailing, spacing: 6) {

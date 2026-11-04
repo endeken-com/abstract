@@ -13,10 +13,16 @@ extension AppModel {
         guard p != before else { return }
         do {
             try store.save(p)
+            updateEntry(p)
         } catch {
             flash(error.localizedDescription, isError: true)
+            reload()
         }
-        reload()
+    }
+
+    /// The project's entry as saved, without reading every table again (ABS-184).
+    private func updateEntry(_ project: Project) {
+        projects = StoreOrder.reordering([project], in: projects, precedes: StoreOrder.projectPrecedes)
     }
 
     func renameProject(_ id: String, to name: String) {
@@ -34,7 +40,7 @@ extension AppModel {
         item.iconImagePath = nil
         do {
             try store.save(item)
-            reload()
+            updateEntry(item)
             ProjectIconStore.discard(old)
         } catch { flash(error.localizedDescription, isError: true) }
     }
@@ -52,7 +58,7 @@ extension AppModel {
             item.iconImagePath = path
             do {
                 try store.save(item)
-                reload()
+                updateEntry(item)
                 ProjectIconStore.discard(old)
             } catch {
                 ProjectIconStore.discard(path)

@@ -35,6 +35,7 @@ struct RootView: View {
     }
 
     var body: some View {
+        let _ = Perf.event("body.Root")
         @Bindable var model = model
         VStack(spacing: 0) {
             PauseBanner()
@@ -113,6 +114,7 @@ struct DetailView: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
+        let _ = Perf.event("body.Detail")
         content
             .navigationTitle(title)
     }

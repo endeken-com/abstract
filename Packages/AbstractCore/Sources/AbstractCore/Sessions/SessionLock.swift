@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import Synchronization
 
 /// Who is driving a chat.
 public enum SessionDriver: String, Codable, Sendable {
@@ -53,6 +54,14 @@ public final class SessionLock: @unchecked Sendable {
     private let mutex = NSLock()
     private var fd: Int32
     private var agent: AgentRecord?
+    /// The app's writes of who holds what, in order, so taking or letting go
+    /// of the chat showing never waits on the disk on the main thread
+    /// (ABS-184). `abstract` writes as it goes.
+    private static let files = DispatchQueue(label: "sh.abstract.session-locks")
+    /// Lock files whose release is still queued: taking one again waits for it.
+    private static let releasing = Mutex<Set<String>>([])
+    /// When this process started, asked of the kernel once.
+    private static let ownStart = processStartTime(getpid()) ?? 0
 
     /// `locks/` beside the database.
     public static func defaultDirectory() -> URL {
@@ -67,9 +76,14 @@ public final class SessionLock: @unchecked Sendable {
 
     /// Takes the chat's lock, or throws `SessionLockError.held`.
     public static func acquire(_ sessionId: String, as driver: SessionDriver, in directory: URL = defaultDirectory()) throws -> SessionLock {
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let path = directory.appendingPathComponent("\(sessionId).lock").path
-        let fd = open(path, O_RDWR | O_CREAT | O_CLOEXEC, 0o600)
+        let path = directory.appendingPathComponent("\(sessionId).lock", isDirectory: false).path
+        // Our own release of it, still queued, lets go first.
+        if releasing.withLock({ $0.contains(path) }) { files.sync {} }
+        var fd = open(path, O_RDWR | O_CREAT | O_CLOEXEC, 0o600)
+        if fd < 0, errno == ENOENT {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            fd = open(path, O_RDWR | O_CREAT | O_CLOEXEC, 0o600)
+        }
         guard fd >= 0 else { throw AbstractError.message("Could not open \(path): \(String(cString: strerror(errno)))") }
         guard flock(fd, LOCK_EX | LOCK_NB) == 0 else {
             close(fd)
@@ -86,7 +100,7 @@ public final class SessionLock: @unchecked Sendable {
     public static func inherited(_ descriptor: Int32, sessionId: String, driver: SessionDriver,
                                  in directory: URL = defaultDirectory()) throws -> SessionLock {
         var handed = stat(), file = stat()
-        guard fstat(descriptor, &handed) == 0, stat(directory.appendingPathComponent("\(sessionId).lock").path, &file) == 0,
+        guard fstat(descriptor, &handed) == 0, stat(directory.appendingPathComponent("\(sessionId).lock", isDirectory: false).path, &file) == 0,
               handed.st_dev == file.st_dev, handed.st_ino == file.st_ino, flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
             throw AbstractError.message("This process wasn't handed session \(sessionId)'s lock.")
         }
@@ -114,10 +128,18 @@ public final class SessionLock: @unchecked Sendable {
     public func release() {
         mutex.withLock {
             guard fd >= 0 else { return }
-            try? FileManager.default.removeItem(at: infoURL)
-            flock(fd, LOCK_UN)
-            close(fd)
-            fd = -1
+            let (fd, info) = (fd, infoURL)
+            let path = directory.appendingPathComponent("\(sessionId).lock", isDirectory: false).path
+            self.fd = -1
+            // Never `self` in the work: a lock let go of in `deinit` is gone by then.
+            let queued = driver == .app
+            if queued { Self.releasing.withLock { _ = $0.insert(path) } }
+            write {
+                try? FileManager.default.removeItem(at: info)
+                flock(fd, LOCK_UN)
+                close(fd)
+                if queued { Self.releasing.withLock { _ = $0.remove(path) } }
+            }
         }
     }
 
@@ -125,10 +147,11 @@ public final class SessionLock: @unchecked Sendable {
     /// Only safe when no one else can know its id: another process holding
     /// the old file open would otherwise lock a different one than the next taker.
     public func discard() {
+        Self.files.sync {}
         mutex.withLock {
             guard fd >= 0 else { return }
             try? FileManager.default.removeItem(at: infoURL)
-            try? FileManager.default.removeItem(at: directory.appendingPathComponent("\(sessionId).lock"))
+            try? FileManager.default.removeItem(at: directory.appendingPathComponent("\(sessionId).lock", isDirectory: false))
             flock(fd, LOCK_UN)
             close(fd)
             fd = -1
@@ -147,20 +170,32 @@ public final class SessionLock: @unchecked Sendable {
 
     /// Who drives the chat, when anyone does.
     public static func holder(of sessionId: String, in directory: URL = defaultDirectory()) -> SessionLockInfo? {
-        guard let data = try? Data(contentsOf: directory.appendingPathComponent("\(sessionId).json")),
+        // This process's own writes are read back as written.
+        files.sync {}
+        guard let data = try? Data(contentsOf: directory.appendingPathComponent("\(sessionId).json", isDirectory: false)),
               let info = try? JSONDecoder().decode(SessionLockInfo.self, from: data),
               let started = processStartTime(info.pid), abs(started - info.pidStartedAt) < 0.001
         else { return nil }
         return info
     }
 
-    private var infoURL: URL { directory.appendingPathComponent("\(sessionId).json") }
+    private var infoURL: URL { directory.appendingPathComponent("\(sessionId).json", isDirectory: false) }
 
     private func publish() throws {
-        let pid = getpid()
-        let info = mutex.withLock { SessionLockInfo(driver: driver, pid: pid, pidStartedAt: Self.processStartTime(pid) ?? 0, agent: agent) }
+        let info = mutex.withLock { SessionLockInfo(driver: driver, pid: getpid(), pidStartedAt: Self.ownStart, agent: agent) }
+        let data = try JSONEncoder().encode(info)
+        let url = infoURL
         // Replaced whole, so a reader never sees half of it.
-        try JSONEncoder().encode(info).write(to: infoURL, options: .atomic)
+        if driver == .app {
+            write { try? data.write(to: url, options: .atomic) }
+        } else {
+            try data.write(to: url, options: .atomic)
+        }
+    }
+
+    /// The app's file work goes on in the background, in order; `abstract`'s now.
+    private func write(_ work: @escaping @Sendable () -> Void) {
+        if driver == .app { Self.files.async(execute: work) } else { work() }
     }
 
     /// When a process started, in seconds since 1970; nil when there's no such process.

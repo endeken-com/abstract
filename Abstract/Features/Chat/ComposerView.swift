@@ -77,6 +77,7 @@ struct ComposerView: View {
     }
 
     var body: some View {
+        let _ = Perf.event("body.ComposerView")
         let composerRadius: CGFloat = 22
         let actionInset: CGFloat = 8
         let actionRadius = composerRadius - actionInset

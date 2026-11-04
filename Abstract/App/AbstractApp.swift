@@ -124,6 +124,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         TerminalRegistry.shared.closeAll()
         model.composerDrafts.flush()
+        model.flushSettings()
         model.appLink?.stop()
         model.pluginToolLink?.stop()
     }
@@ -139,9 +140,12 @@ struct AbstractCommands: Commands {
     let updater: Updater
 
     var body: some Commands {
+        // Every menu is rebuilt whenever what this reads changes: only the
+        // facts the items show (ABS-184).
+        let facts = model.menuFacts
         // While an image shows, ⌘0 and ⌘1 zoom it, as in Preview, instead of
         // starting a chat and opening the first one.
-        let image = model.activeImageDocument
+        let image = facts.hasImage
         CommandGroup(after: .appInfo) {
             CheckForUpdatesButton(updater: updater)
         }
@@ -160,7 +164,7 @@ struct AbstractCommands: Commands {
         CommandGroup(replacing: .saveItem) {
             Button("Save") { model.saveActiveFile() }
                 .keyboardShortcut("s")
-                .disabled(model.activeFileDocument == nil)
+                .disabled(!facts.hasFile)
             Button("Close Tab") {
                 if let tab = model.activeTab, case .session = model.destination { model.closeTab(tab.id) }
                 else { NSApp.keyWindow?.performClose(nil) }
@@ -175,7 +179,7 @@ struct AbstractCommands: Commands {
         CommandGroup(after: .textEditing) {
             // Each goes where it's chosen: the chat, file or review in front, or
             // the terminal while it has the keyboard, which the menu can't watch.
-            let noChat = model.selectedSessionId == nil
+            let noChat = !facts.onChat
             Button("Find…") { model.performFind(.find) }
                 .keyboardShortcut("f")
                 .disabled(noChat)
@@ -184,7 +188,7 @@ struct AbstractCommands: Commands {
                 .disabled(noChat)
             Button("Search in Files…") { if let s = model.selectedSession { model.searchInFiles(s.id) } }
                 .keyboardShortcut("f", modifiers: [.command, .shift])
-                .disabled(model.selectedSession == nil)
+                .disabled(!facts.hasChat)
             Button("Find Next") { model.performFind(.next) }
                 .keyboardShortcut("g")
                 .disabled(noChat)
@@ -196,18 +200,18 @@ struct AbstractCommands: Commands {
                 .disabled(noChat)
         }
         CommandGroup(after: .toolbar) {
-            Button("Actual Size") { image?.zoomToActualSize() }
-                .keyboardShortcut(image == nil ? nil : KeyboardShortcut("1"))
-                .disabled(image == nil)
-            Button("Zoom to Fit") { image?.zoomToFit() }
-                .keyboardShortcut(image == nil ? nil : KeyboardShortcut("0"))
-                .disabled(image == nil)
-            Button("Zoom In") { image?.zoom(in: true) }
+            Button("Actual Size") { model.activeImageDocument?.zoomToActualSize() }
+                .keyboardShortcut(image ? KeyboardShortcut("1") : nil)
+                .disabled(!image)
+            Button("Zoom to Fit") { model.activeImageDocument?.zoomToFit() }
+                .keyboardShortcut(image ? KeyboardShortcut("0") : nil)
+                .disabled(!image)
+            Button("Zoom In") { model.activeImageDocument?.zoom(in: true) }
                 .keyboardShortcut("=")
-                .disabled(image == nil)
-            Button("Zoom Out") { image?.zoom(in: false) }
+                .disabled(!image)
+            Button("Zoom Out") { model.activeImageDocument?.zoom(in: false) }
                 .keyboardShortcut("-")
-                .disabled(image == nil)
+                .disabled(!image)
             Divider()
         }
         CommandMenu("Go") {
@@ -215,48 +219,48 @@ struct AbstractCommands: Commands {
                 .keyboardShortcut("k")
             Divider()
             Button("New") { model.startNew() }
-                .keyboardShortcut(image == nil ? KeyboardShortcut("0") : nil)
+                .keyboardShortcut(image ? nil : KeyboardShortcut("0"))
             Button("Automations") { model.destination = .automations }
                 .keyboardShortcut("a", modifiers: [.command, .shift])
             Button("Worktrees") { model.destination = .worktrees }
                 .keyboardShortcut("w", modifiers: [.command, .shift])
             Divider()
-            ForEach(Array(model.sessions.filter { $0.archivedAt == nil }.prefix(9).enumerated()), id: \.element.id) { i, s in
-                Button(s.name) { model.open(s.id) }
-                    .keyboardShortcut(i == 0 && image != nil ? nil : KeyboardShortcut(KeyEquivalent(Character("\(i + 1)"))))
+            ForEach(Array(facts.chats.enumerated()), id: \.element.id) { i, chat in
+                Button(chat.name) { model.open(chat.id) }
+                    .keyboardShortcut(i == 0 && image ? nil : KeyboardShortcut(KeyEquivalent(Character("\(i + 1)"))))
             }
         }
         CommandMenu("Chat") {
             Button("Side Panel") { if let s = model.selectedSession { model.togglePanel(.side, in: s.id) } }
                 .keyboardShortcut("b", modifiers: [.command, .option])
-                .disabled(model.selectedSession == nil)
+                .disabled(!facts.hasChat)
             Button("Bottom Panel") { if let s = model.selectedSession { model.togglePanel(.bottom, in: s.id) } }
                 .keyboardShortcut("j")
-                .disabled(model.selectedSession == nil)
+                .disabled(!facts.hasChat)
             Divider()
             Button("Review Changes") { if let s = model.selectedSession { model.togglePane(.changes, in: s.id) } }
                 .keyboardShortcut("d")
-                .disabled(model.selectedSession == nil)
+                .disabled(!facts.hasChat)
             Button("Files") { if let s = model.selectedSession { model.togglePane(.files, in: s.id) } }
                 .keyboardShortcut("e", modifiers: [.command, .shift])
-                .disabled(model.selectedSession == nil)
+                .disabled(!facts.hasChat)
             Button("Terminal") { if let s = model.selectedSession { model.togglePane(.terminal, in: s.id) } }
                 .keyboardShortcut("`", modifiers: .control)
-                .disabled(model.selectedSession == nil)
+                .disabled(!facts.hasChat)
             Button("New Terminal") { if let s = model.selectedSession { model.newTerminal(in: s.id) } }
                 .keyboardShortcut("`", modifiers: [.control, .shift])
-                .disabled(model.selectedSession == nil)
+                .disabled(!facts.hasChat)
             Button("Reset Layout") { if let s = model.selectedSession { model.resetLayout(s.id) } }
-                .disabled(model.selectedSession == nil)
+                .disabled(!facts.hasChat)
             Divider()
             // A side-channel compaction runs no agent, but Stop is what cancels it.
             Button("Stop Agent") { if let s = model.selectedSession { model.stop(s.id) } }
                 .keyboardShortcut(".", modifiers: .command)
-                .disabled(model.selectedSession.map { !model.isAlive($0.id) && !model.isCompactingAside($0.id) } ?? true)
+                .disabled(!facts.canStop)
             Button("Resume Agent") { if let s = model.selectedSession { model.resume(s.id) } }
-                .disabled(model.selectedSession.map { model.isAlive($0.id) || model.isCompactingAside($0.id) } ?? true)
+                .disabled(!facts.canResume)
             Divider()
-            if model.everythingPaused {
+            if facts.everythingPaused {
                 Button("Resume Everything") { model.resumeEverything() }
             } else {
                 Button("Pause Everything") { model.pauseEverything() }
@@ -264,13 +268,13 @@ struct AbstractCommands: Commands {
             // As Ctrl+B in Claude Code: the command or subagent at work carries on while the chat does.
             Button("Run in Background") { if let s = model.selectedSession { model.moveToBackground(s.id) } }
                 .keyboardShortcut("b", modifiers: .control)
-                .disabled(model.selectedSession.map { model.foregroundTasks($0.id).isEmpty } ?? true)
+                .disabled(!facts.canRunInBackground)
             Button("Background Tasks") { if let s = model.selectedSession { model.tasksOpen = TasksFocus(sessionId: s.id) } }
-                .disabled(model.selectedSession.map { model.backgroundTasks($0.id).isEmpty } ?? true)
+                .disabled(!facts.hasBackgroundTasks)
             Divider()
             Button("Archive Chat") { if let s = model.selectedSession { model.requestArchive = s.id } }
                 .keyboardShortcut(.delete, modifiers: [.command, .shift])
-                .disabled(model.selectedSession == nil)
+                .disabled(!facts.hasChat)
         }
     }
 }

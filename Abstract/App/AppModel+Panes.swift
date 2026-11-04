@@ -6,9 +6,12 @@ extension AppModel {
     private func layoutKey(_ sessionId: String) -> String { "panels.\(sessionId)" }
 
     /// The chat's panels; new chats start with the standard arrangement.
+    /// Read from the store once per chat: views ask on every redraw (ABS-184).
     func layout(for sessionId: String) -> PanelLayout {
-        if let cached = layouts[sessionId] { return cached }
-        return store.setting(layoutKey(sessionId), as: PanelLayout.self) ?? .standard()
+        if let cached = layouts[sessionId] ?? storedLayouts[sessionId] { return cached }
+        let layout = store.setting(layoutKey(sessionId), as: PanelLayout.self) ?? .standard()
+        storedLayouts[sessionId] = layout
+        return layout
     }
 
     /// Change a chat's panels and remember them. A terminal tab that goes
@@ -18,7 +21,7 @@ extension AppModel {
         let before = Set(layout.items(of: .terminal).map(\.id))
         change(&layout)
         layouts[sessionId] = layout
-        try? store.setSetting(layoutKey(sessionId), layout)
+        save(layoutKey(sessionId), layout)
         for id in before.subtracting(layout.items(of: .terminal).map(\.id)) { TerminalRegistry.shared.close(paneId: id) }
     }
 
@@ -67,7 +70,8 @@ extension AppModel {
         pendingChangeSelection[sessionId] = nil
         FilesPaneState.shared.discard(sessionId)
         layouts[sessionId] = nil
-        try? store.setSetting(layoutKey(sessionId), nil as PanelLayout?)
+        storedLayouts[sessionId] = nil
+        save(layoutKey(sessionId), nil as PanelLayout?)
     }
 }
 

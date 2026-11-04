@@ -6,6 +6,7 @@ struct ChatView: View {
     let sessionId: String
 
     var body: some View {
+        let _ = Perf.event("body.ChatView")
         if let session = model.session(sessionId) {
             PanelWorkspace(session: session)
                 // Arriving some other way than a tab (a notification, a search):
