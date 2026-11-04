@@ -6,9 +6,10 @@ import { remote, type RemoteClient } from './remote';
 import { capabilityLine, setPluginEnabledArgs, setPluginTranscriptProjectsArgs, transcriptProjectNames } from './plugins';
 import type { InstalledPlugin, PluginProjectChoice } from './types';
 import type { PluginRoute } from './PluginView';
+import { onTheme, themedStyles, palette } from './theme';
 
-const ink = '#ECECEF', muted = '#A4A4AD', tertiary = '#75757E';
-const bg = '#1E1E21', panel = '#252529', inset = '#303036', border = 'rgba(255,255,255,0.075)';
+let ink = '', muted = '', tertiary = '', bg = '', panel = '', inset = '', border = '';
+onTheme(t => { ink = t.text; muted = t.textSecondary; tertiary = t.textTertiary; bg = t.canvas; panel = t.surface; inset = t.inset; border = t.border; });
 
 function useRemote() {
   const [, rerender] = useState(0);
@@ -57,7 +58,7 @@ function PluginRow({ mac, hostId, plugin, choices, online, navigation }: {
     {plugin.requestedCapabilities.length > 0 && <Text style={styles.note}>
       {plugin.requestedCapabilities.map(cap => capabilityLine(cap, names)).sort().join(' · ')}
     </Text>}
-    {plugin.problem ? <Text style={[styles.note, { color: '#EF8582' }]}>{plugin.problem}</Text>
+    {plugin.problem ? <Text style={[styles.note, { color: palette.removed }]}>{plugin.problem}</Text>
       : plugin.lastError ? <Text style={styles.note}>Last error: {plugin.lastError}</Text> : null}
     {plugin.appearances.length > 0 && <Text style={styles.note}>{plugin.appearances.join(' ')}</Text>}
 
@@ -137,7 +138,7 @@ export function PluginsScreen({ navigation }: any) {
   </ScrollView>;
 }
 
-const styles = StyleSheet.create({
+const styles = themedStyles(() => StyleSheet.create({
   content: { padding: 18, gap: 16, paddingBottom: 32 },
   title: { color: ink, fontFamily: 'Inter', fontSize: 25, fontWeight: '600' },
   lead: { color: muted, fontFamily: 'Inter', fontSize: 14, lineHeight: 21 },
@@ -161,4 +162,4 @@ const styles = StyleSheet.create({
   primaryText: { color: bg, fontFamily: 'Inter', fontSize: 13, fontWeight: '600' },
   secondary: { backgroundColor: inset, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10 },
   secondaryText: { color: ink, fontFamily: 'Inter', fontSize: 13, fontWeight: '500' },
-});
+}));

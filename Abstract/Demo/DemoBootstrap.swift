@@ -300,13 +300,14 @@ struct Snapshotter {
 
         shootAppIcon()
 
-        let themes: [ThemeChoice] = ProcessInfo.processInfo.arguments.contains("--quick") ? [.graphite] : [.graphite, .paper, .ink]
+        // The bundled themes by their old names, which read as the theme plugins (ABS-185).
+        let themes = ProcessInfo.processInfo.arguments.contains("--quick") ? ["graphite"] : ["graphite", "paper", "ink"]
         // `--plugins-only`: just the bundled plugins, in each theme.
         let pluginsOnly = ProcessInfo.processInfo.arguments.contains("--plugins-only")
         for theme in themes {
-            UserDefaults.standard.set(theme.rawValue, forKey: "theme")
+            UserDefaults.standard.set(ThemeChoice(rawValue: theme).rawValue, forKey: "theme")
             try? await Task.sleep(for: .milliseconds(500))
-            let t = theme.rawValue
+            let t = theme
             if pluginsOnly {
                 await shootPlugins(theme: t, beside: idle?.id)
                 continue
@@ -460,14 +461,14 @@ struct Snapshotter {
             await shootPlugins(theme: t, beside: idle?.id)
         }
         if !pluginsOnly { await shootEditColours(themes: themes) }
-        UserDefaults.standard.set(ThemeChoice.graphite.rawValue, forKey: "theme")
+        UserDefaults.standard.set(ThemeChoice.default.rawValue, forKey: "theme")
         await projectLifecycleCheck()
     }
 
     /// A chat's edit rows syntax-coloured as in Review (ABS-183): JavaScript,
     /// Swift, CSS and JSON, and a file of no known language that stays plain.
     /// Last, since it replaces the Codex chat's history.
-    private func shootEditColours(themes: [ThemeChoice]) async {
+    private func shootEditColours(themes: [String]) async {
         guard let chat = model.sessions.first(where: { $0.providerId == "codex" }) else { return }
         let cwd = chat.worktreePath ?? "/tmp/demo"
         func json(_ object: [String: Any]) -> OutputLine {
@@ -503,8 +504,8 @@ struct Snapshotter {
         model.open(chat.id)
         UserDefaults.standard.set(TranscriptMode.verbose.rawValue, forKey: "chat.transcript")
         for theme in themes {
-            UserDefaults.standard.set(theme.rawValue, forKey: "theme")
-            await shot("\(theme.rawValue)-43-chat-edit-colours", settle: 1.5)
+            UserDefaults.standard.set(ThemeChoice(rawValue: theme).rawValue, forKey: "theme")
+            await shot("\(theme)-43-chat-edit-colours", settle: 1.5)
         }
         UserDefaults.standard.set(TranscriptMode.normal.rawValue, forKey: "chat.transcript")
     }

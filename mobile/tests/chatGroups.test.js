@@ -139,7 +139,7 @@ test('the second line puts identity on the left and the pull request on the righ
   const checks = trailing.props.children.props.children[2];
   const [symbol, word] = checks.props.children;
   assert.equal(symbol.props.name.ios, 'xmark', 'not colour alone');
-  assert.equal(styleOf(word).color, '#EF6461');
+  assert.equal(styleOf(word).color, '#ef6461');
 });
 
 test('passed and running checks carry their own symbols', () => {
@@ -182,7 +182,7 @@ test('why a chat needs you leads its line in words, ahead of its project', () =>
   assert.ok(!g.lineIsEmpty(g.lineOf(chat('b', 'errored'), false)), 'a failed chat always says so');
   assert.equal(g.lineOf(chat('c', 'running'), true).attention, undefined, 'working is the badge, not a word');
   const failed = SecondLine({ line: g.lineOf(chat('b', 'errored'), true) }).props.children[0].props.children[0].props.children[0];
-  assert.equal(styleOf(failed).color, '#EF6461');
+  assert.equal(styleOf(failed).color, '#ef6461');
 });
 
 test('the badge follows the Mac: unreachable, then stalled, then the agent\'s state, then background work', () => {

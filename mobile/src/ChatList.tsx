@@ -7,14 +7,15 @@ import { ProviderLogo } from './ProviderLogo';
 import { ProjectIcon } from './ProjectIcon';
 import { PullRequestIcon } from './PullRequestIcon';
 import { swiftDate } from './types';
+import { onTheme, themedStyles } from './theme';
 import {
   activeAt, age, agentNames, badgeOf, chatKey, defaultPrefs, filterIsEmpty, groupTitles, lineIsEmpty, lineOf, lineText,
   parsePrefs, rowLabel, sections, standalone, statusOf, type ChatFacts, type ChatGroup, type ChatListPrefs, type ChatLine,
 } from './chatGroups';
 
 // Graphite values come from Abstract/Theme/Palette.swift.
-const ink = '#ECECEF', muted = '#A4A4AD', tertiary = '#75757E', sidebar = '#19191C', raised = '#2B2B30', inset = '#303036';
-const removed = '#EF6461', running = '#4CC38A', warning = '#D2D2D8', pressedRipple = 'rgba(236,236,239,0.08)';
+let ink = '', muted = '', tertiary = '', sidebar = '', raised = '', inset = '', removed = '', running = '', warning = '', pressedRipple = '';
+onTheme(t => { ink = t.text; muted = t.textSecondary; tertiary = t.textTertiary; sidebar = t.sidebar; raised = t.surfaceRaised; inset = t.inset; removed = t.removed; running = t.added; warning = t.warning; pressedRipple = t.selection; });
 const markSize = 22;
 // A check's state as a symbol beside its word, as the Mac's sidebar shows it.
 const checkSymbols = {
@@ -22,7 +23,7 @@ const checkSymbols = {
   failing: { ios: 'xmark', android: 'close', web: 'close' },
   running: { ios: 'clock', android: 'schedule', web: 'schedule' },
 };
-const checkColors = { passed: running, failing: removed, running: muted };
+const checkColors = { get passed() { return running; }, get failing() { return removed; }, get running() { return muted; } };
 const prefsKey = 'chat-list';
 // The groups that ask something of you lead in full ink; the rest stay quiet.
 const loudGroups: ChatGroup[] = ['needsYou', 'readyToReview'];
@@ -241,7 +242,7 @@ export function SecondLine({ line, stacked = false, symbolScale = 1 }: { line: C
   return <View style={styles.secondLine} accessibilityLabel={lineText(line)}>{rows.filter(Boolean)}</View>;
 }
 
-const styles = StyleSheet.create({
+const styles = themedStyles(() => StyleSheet.create({
   header: { marginTop: 10, paddingLeft: 18, paddingRight: 6, minHeight: 44, flexDirection: 'row', alignItems: 'center' },
   headerTitle: { color: tertiary, fontFamily: 'Inter', fontSize: 14, flex: 1 },
   headerButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
@@ -286,4 +287,4 @@ const styles = StyleSheet.create({
   older: { minHeight: 44, marginHorizontal: 8, paddingLeft: 48, flexDirection: 'row', alignItems: 'center', gap: 5 },
   olderText: { color: tertiary, fontFamily: 'Inter', fontSize: 13 },
   empty: { color: muted, fontFamily: 'Inter', fontSize: 12, margin: 18 },
-});
+}));

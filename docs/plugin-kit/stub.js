@@ -11,6 +11,7 @@
     root.style.setProperty("color-scheme", payload.colorScheme);
     root.style.setProperty("background-color", payload.tokens.canvas);
     root.setAttribute("data-abstract-theme", payload.theme);
+    root.setAttribute("data-abstract-appearance", payload.colorScheme);
   }
   apply(theme);
 

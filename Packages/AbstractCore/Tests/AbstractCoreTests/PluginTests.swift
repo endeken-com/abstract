@@ -420,10 +420,10 @@ import Testing
     }
 
     @Test func contextCarriesEveryTheme() {
-        for theme in Theme.allCases {
+        for theme in BundledThemes.all {
             let context = PluginContext.jsonValue(theme: theme, locale: "en_US", pluginId: "sh.abstract.chat-count",
                                                   pluginVersion: "1.0.0", capabilities: [.chatsRead])
-            #expect(context["theme"] == .string(theme.rawValue))
+            #expect(context["theme"] == .string(theme.shortId))
             #expect(context["tokens"]?["canvas"]?.string?.hasPrefix("#") == true)
             #expect(context["tokens"]?["text"]?.string?.hasPrefix("#") == true)
         }

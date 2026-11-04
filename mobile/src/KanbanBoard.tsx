@@ -9,10 +9,11 @@ import { chatsFromMacs } from './chatGroups';
 import { useTicking } from './ChatList';
 import { ProviderLogo } from './ProviderLogo';
 import { buildBoard, emptyFilter, isFilterActive, normalizeFilter, pruneFilter, type BoardCard, type BoardFilter } from './kanban';
+import { onTheme, themedStyles } from './theme';
 
 // Graphite values come from Abstract/Theme/Palette.swift.
-const ink = '#ECECEF', muted = '#A4A4AD', tertiary = '#75757E', panel = '#252529', raised = '#2B2B30', inset = '#303036';
-const border = 'rgba(255,255,255,0.075)';
+let ink = '', muted = '', tertiary = '', panel = '', raised = '', inset = '', border = '';
+onTheme(t => { ink = t.text; muted = t.textSecondary; tertiary = t.textTertiary; panel = t.surface; raised = t.surfaceRaised; inset = t.inset; border = t.border; });
 const prefsKey = 'kanban-board';
 
 function useBoardFilter(): [BoardFilter, (next: BoardFilter) => void] {
@@ -129,7 +130,7 @@ function BoardFilterMenu({ filter, setFilter, projects, agents, macs }: {
   </MenuView>;
 }
 
-const styles = StyleSheet.create({
+const styles = themedStyles(() => StyleSheet.create({
   screen: { flex: 1 },
   toolbar: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingTop: 10 },
   search: { flex: 1, height: 38, borderRadius: 10, backgroundColor: inset, paddingHorizontal: 12, justifyContent: 'center' },
@@ -153,4 +154,4 @@ const styles = StyleSheet.create({
   empty: { color: muted, fontFamily: 'Inter', fontSize: 13, margin: 18 },
   clear: { marginHorizontal: 18 },
   clearText: { color: ink, fontFamily: 'Inter', fontSize: 13, fontWeight: '600' },
-});
+}));

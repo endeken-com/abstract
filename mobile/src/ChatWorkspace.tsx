@@ -37,22 +37,24 @@ import { swiftDate, type InstalledPlugin, type PendingPermission, type Permissio
 import { chatPauseRow } from './pause';
 import { composerActions, queuedMessages, settledByQueue } from './messageQueue';
 import { contributionsFor } from './plugins';
+import { onTheme, themedStyles, palette } from './theme';
 
-const ink = '#ECECEF', muted = '#A4A4AD', tertiary = '#75757E', canvas = '#1E1E21', panel = '#252529', raised = '#2B2B30', border = 'rgba(255,255,255,0.075)', warning = '#D2D2D8';
-const editStyles = StyleSheet.create({
+let ink = '', muted = '', tertiary = '', canvas = '', panel = '', raised = '', border = '', warning = '';
+onTheme(t => { ink = t.text; muted = t.textSecondary; tertiary = t.textTertiary; canvas = t.canvas; panel = t.surface; raised = t.surfaceRaised; border = t.border; warning = t.warning; });
+const editStyles = themedStyles(() => StyleSheet.create({
   previews: { marginLeft: 22, gap: 8, paddingBottom: 6 },
   preview: { backgroundColor: panel, borderRadius: 6, overflow: 'hidden' },
   path: { color: muted, fontFamily: 'JetBrainsMono', fontSize: 10, paddingHorizontal: 10, paddingVertical: 7 },
   line: { color: ink, fontFamily: 'JetBrainsMono', fontSize: 11, lineHeight: 19, paddingHorizontal: 8 },
   number: { color: tertiary },
-  plus: { color: '#4CC38A' },
-  minus: { color: '#EF6461' },
-  added: { backgroundColor: 'rgba(76,195,138,0.09)' },
-  removed: { backgroundColor: 'rgba(239,100,97,0.09)' },
+  plus: { color: palette.added },
+  minus: { color: palette.removed },
+  added: { backgroundColor: palette.addedWash },
+  removed: { backgroundColor: palette.removedWash },
   gap: { color: tertiary, fontFamily: 'JetBrainsMono', fontSize: 11, lineHeight: 19, paddingHorizontal: 8 },
   more: { paddingHorizontal: 10, paddingVertical: 7 },
   moreText: { color: muted, fontFamily: 'Inter', fontSize: 11 },
-});
+}));
 const iconMap: Record<string, string> = { menu: 'sidebar.left', review: 'plusminus', files: 'doc.text', terminal: 'terminal', pr: 'arrow.triangle.pull', manage: 'ellipsis', attach: 'plus', send: 'arrow.up', stop: 'stop.fill', chevron: 'chevron.down', close: 'xmark' };
 const androidIcons: Record<string, string> = { menu: 'menu', review: 'difference', files: 'description', terminal: 'terminal', pr: 'merge', manage: 'more_horiz', attach: 'add', send: 'arrow_upward', stop: 'stop', chevron: 'keyboard_arrow_down', close: 'close', 'arrow.down': 'arrow_downward', sparkles: 'auto_awesome', 'doc.text': 'description', 'doc.badge.plus': 'note_add', pencil: 'edit', magnifyingglass: 'search', globe: 'public', checklist: 'checklist', 'list.bullet.clipboard': 'assignment', 'person.2': 'group', 'book.closed': 'menu_book', 'questionmark.bubble': 'help', 'puzzlepiece.extension': 'extension', hammer: 'handyman', network: 'lan', macwindow: 'web_asset', 'wrench.and.screwdriver': 'build', 'exclamationmark.triangle': 'warning', 'exclamationmark.circle.fill': 'error', 'pause.circle.fill': 'pause_circle', 'wifi.slash': 'wifi_off', 'slider.horizontal.3': 'tune' };
 function Glyph({ name, size = 14, color = muted }: { name: string; size?: number; color?: string }) { return <SymbolView name={{ ios: iconMap[name] || name, android: androidIcons[name] || (name === 'checkmark' ? 'check' : name), web: androidIcons[name] || (name === 'checkmark' ? 'check' : name) } as any} size={size} tintColor={color} style={{ width: size, height: size }} />; }
@@ -73,7 +75,7 @@ function ConnectionEdge({ notice, reduceMotion, onAction }: { notice: Connection
       <Text style={composerStyles.connectionTitle}>{notice.title}</Text>
       {!!notice.detail && <Text style={composerStyles.connectionDetail}>{notice.detail}</Text>}
     </View>
-    {notice.action && <Pressable accessibilityRole="button" accessibilityLabel={actionLabel} accessibilityHint={notice.action === 'retry' ? 'Tries to reach the Mac again' : 'Opens Settings to pair a Mac'} onPress={() => { Haptics.selectionAsync().catch(() => {}); onAction(); }} android_ripple={{ color: 'rgba(255,255,255,0.12)', borderless: true }} style={({ pressed }) => [composerStyles.connectionAction, pressed && Platform.OS === 'ios' && { opacity: 0.5 }]}><Text style={composerStyles.connectionActionLabel}>{actionLabel}</Text></Pressable>}
+    {notice.action && <Pressable accessibilityRole="button" accessibilityLabel={actionLabel} accessibilityHint={notice.action === 'retry' ? 'Tries to reach the Mac again' : 'Opens Settings to pair a Mac'} onPress={() => { Haptics.selectionAsync().catch(() => {}); onAction(); }} android_ripple={{ color: palette.borderStrong, borderless: true }} style={({ pressed }) => [composerStyles.connectionAction, pressed && Platform.OS === 'ios' && { opacity: 0.5 }]}><Text style={composerStyles.connectionActionLabel}>{actionLabel}</Text></Pressable>}
   </Animated.View>;
 }
 // Agent, model, effort and mode behind one platform menu; the trigger reads them in one line.
@@ -99,8 +101,8 @@ function SlashPopup({ title, items, maxHeight, onBack }: { title: string; items:
     </ScrollView>
   </View>;
 }
-const slashStyles = StyleSheet.create({
-  popup: { position: 'absolute', bottom: '100%', left: 10, right: 10, marginBottom: 8, zIndex: 10, backgroundColor: '#303035', borderRadius: 13, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.2)', overflow: 'hidden', shadowColor: '#000', shadowOpacity: 0.28, shadowRadius: 16, shadowOffset: { width: 0, height: 8 }, elevation: 12 },
+const slashStyles = themedStyles(() => StyleSheet.create({
+  popup: { position: 'absolute', bottom: '100%', left: 10, right: 10, marginBottom: 8, zIndex: 10, backgroundColor: palette.inset, borderRadius: 13, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.2)', overflow: 'hidden', shadowColor: '#000', shadowOpacity: 0.28, shadowRadius: 16, shadowOffset: { width: 0, height: 8 }, elevation: 12 },
   header: { minHeight: 39, flexDirection: 'row', alignItems: 'center', gap: 7, paddingHorizontal: 13, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border },
   back: { width: 26, height: 29, alignItems: 'center', justifyContent: 'center' },
   backText: { color: ink, fontFamily: 'Inter', fontSize: 25, lineHeight: 27 },
@@ -108,13 +110,13 @@ const slashStyles = StyleSheet.create({
   count: { color: tertiary, fontFamily: 'JetBrainsMono', fontSize: 10 },
   list: { padding: 5 },
   row: { minHeight: 51, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 10, borderRadius: 8 },
-  rowPressed: { backgroundColor: '#414148' },
+  rowPressed: { backgroundColor: palette.selection },
   rowText: { flex: 1, minWidth: 0, gap: 2 },
   command: { color: ink, fontFamily: 'JetBrainsMono', fontSize: 13 },
   detail: { color: muted, fontFamily: 'Inter', fontSize: 11 },
   next: { color: tertiary, fontFamily: 'Inter', fontSize: 22 },
   empty: { color: muted, fontFamily: 'Inter', fontSize: 12, paddingHorizontal: 10, paddingVertical: 16 },
-});
+}));
 type LinkKind = 'issue' | 'linkPr';
 type LinkItem = { number: number; title: string; url: string; body?: string; state?: string; isDraft?: boolean; baseRefName?: string; headRefName?: string };
 function LinkPickerSheet({ kind, query, setQuery, results, loading, search, select, close }: { kind: LinkKind | null; query: string; setQuery: (value: string) => void; results: LinkItem[]; loading: boolean; search: () => void; select: (item: LinkItem) => void; close: () => void }) {
@@ -131,7 +133,7 @@ function LinkPickerSheet({ kind, query, setQuery, results, loading, search, sele
     </KeyboardAvoidingView>
   </Modal>;
 }
-const ruleStyles = StyleSheet.create({
+const ruleStyles = themedStyles(() => StyleSheet.create({
   body: { gap: 14, paddingBottom: 28 },
   lead: { color: muted, fontFamily: 'Inter', fontSize: 13, lineHeight: 19 },
   label: { color: muted, fontFamily: 'Inter', fontSize: 12, fontWeight: '600' },
@@ -141,7 +143,7 @@ const ruleStyles = StyleSheet.create({
   remember: { backgroundColor: ink, borderRadius: 8, paddingHorizontal: 16, paddingVertical: 12, alignSelf: 'flex-start' },
   rememberDisabled: { opacity: 0.4 },
   rememberText: { color: canvas, fontFamily: 'Inter', fontSize: 14, fontWeight: '600' },
-});
+}));
 /// Writing one remembered permission answer for the chat's project, as on
 /// the Mac: pre-filled from the request, `*` where the rest may differ.
 function PermissionRuleSheet({ mac, sessionId, request, projectId, root, initialDecision, close }: { mac: RemoteClient; sessionId: string; request: PendingPermission; projectId: string; root: string; initialDecision: PermissionDecision; close: () => void }) {
@@ -254,9 +256,9 @@ function ToolRowIcon({ indicator, failed, path }: { indicator: ToolIndicator; fa
   const glyph = indicator.kind === 'brand' ? brandGlyph(indicator.id) : null;
   return <View accessibilityLabel={indicator.label} style={s.toolIcon}>
     {path ? <FileIcon path={path} size={15} /> : glyph ? <Svg width={15} height={15} viewBox="0 0 24 24"><Path d={glyph} fill={tertiary} fillRule={indicator.kind === 'brand' && indicator.id === 'Abstract' ? 'evenodd' : 'nonzero'} /></Svg>
-      : monogram ? <View style={{ width: 15, height: 15, borderRadius: 4, backgroundColor: monogramColors[monogram.colorIndex], alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '700' }}>{monogram.letter}</Text></View>
+      : monogram ? <View style={{ width: 15, height: 15, borderRadius: 4, backgroundColor: monogramColors[monogram.colorIndex], alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: palette.text, fontSize: 10, fontWeight: '700' }}>{monogram.letter}</Text></View>
       : <Glyph name={indicator.kind === 'symbol' ? indicator.symbol : 'wrench.and.screwdriver'} size={15} color={tertiary} />}
-    {failed && <View style={{ position: 'absolute', right: 0, bottom: 0, backgroundColor: canvas, borderRadius: 5 }}><Glyph name="exclamationmark.circle.fill" size={8} color="#EF6461" /></View>}
+    {failed && <View style={{ position: 'absolute', right: 0, bottom: 0, backgroundColor: canvas, borderRadius: 5 }}><Glyph name="exclamationmark.circle.fill" size={8} color={palette.removed} /></View>}
   </View>;
 }
 function TranscriptRow({ row, plugins, expandedRows, onToggle }: { row: ChatItem; plugins: InstalledPlugin[]; expandedRows: Record<string, boolean>; onToggle: (id: string) => void }) {
@@ -267,11 +269,11 @@ function TranscriptRow({ row, plugins, expandedRows, onToggle }: { row: ChatItem
   if (row.kind === 'tool') return <View><Pressable accessibilityRole="button" accessibilityLabel={`${row.text} ${row.target || ''}`} onPress={() => { if (row.detail || row.edits?.length) onToggle(row.id); }} style={s.toolRow}>
     <ToolRowIcon indicator={resolveToolIndicator(row.toolName || '', row.toolInput, plugins)} failed={row.failed} path={row.path && toolKind(row.toolName || '') === 'edit' ? row.path : undefined} />
     <Text style={s.toolVerb}>{row.text}</Text>{!!row.target && <Text numberOfLines={1} style={s.toolLabel}>{row.target}</Text>}
-    {(row.additions !== undefined || row.deletions !== undefined) && <Text style={{ fontFamily: 'JetBrainsMono', fontSize: 10, flexShrink: 0 }}><Text style={{ color: '#4CC38A' }}>+{row.additions || 0}</Text><Text style={{ color: tertiary }}> </Text><Text style={{ color: '#EF6461' }}>−{row.deletions || 0}</Text></Text>}
+    {(row.additions !== undefined || row.deletions !== undefined) && <Text style={{ fontFamily: 'JetBrainsMono', fontSize: 10, flexShrink: 0 }}><Text style={{ color: palette.added }}>+{row.additions || 0}</Text><Text style={{ color: tertiary }}> </Text><Text style={{ color: palette.removed }}>−{row.deletions || 0}</Text></Text>}
     {row.failed && <Text style={s.toolFailed}>Failed</Text>}{row.pending && <Text style={s.toolPending}>Working</Text>}
     {(!!row.detail || !!row.edits?.length) && <Glyph name={expanded ? 'chevron.up' : 'chevron.down'} size={10} color={tertiary} />}
   </Pressable>{expanded && !!row.edits?.length && <View style={editStyles.previews}>{row.edits.map((edit, index) => { const previewId = `${row.id}:preview:${edit.path}:${index}`; return <ToolEditPreview key={`${edit.path}-${index}`} edit={edit} showAll={!!expandedRows[previewId]} onShowAll={() => onToggle(previewId)} />; })}</View>}{expanded && !!row.detail && (!row.edits?.length || row.failed) && <Text selectable style={s.toolDetail}>{row.detail}</Text>}</View>;
-  if (row.kind === 'error') return <Text style={[s.prose, { color: '#F08A84' }]}>{row.text}</Text>;
+  if (row.kind === 'error') return <Text style={[s.prose, { color: palette.removed }]}>{row.text}</Text>;
   return <Markdown style={markdownStyles} rules={codeRules}>{row.text}</Markdown>;
 }
 const codeRules = {
@@ -729,7 +731,7 @@ export function ChatWorkspace({ route, navigation }: any) {
   // Native visible-row preservation helps with older rows, but resizing an open
   // tool preview can make its anchor pull the transcript upward.
   return <SafeAreaView edges={['left', 'right']} style={s.root}>
-    {pauseRow && <View style={s.pauseBanner}><Glyph name="pause.circle.fill" size={16} color="#E8B34A" /><Text style={s.pauseBannerText}>{pauseRow.text}</Text><Pressable accessibilityRole="button" accessibilityLabel={pauseRow.button} accessibilityState={{ disabled: !pauseRow.canAct }} disabled={!pauseRow.canAct} onPress={() => mac.request(pauseRow.request.name, pauseRow.request.args).catch(error => Alert.alert('Abstract', String(error.message || error)))} style={[s.pauseBannerButton, !pauseRow.canAct && { opacity: 0.45 }]}><Text style={s.pauseBannerButtonText}>{pauseRow.button}</Text></Pressable></View>}
+    {pauseRow && <View style={s.pauseBanner}><Glyph name="pause.circle.fill" size={16} color={palette.warning} /><Text style={s.pauseBannerText}>{pauseRow.text}</Text><Pressable accessibilityRole="button" accessibilityLabel={pauseRow.button} accessibilityState={{ disabled: !pauseRow.canAct }} disabled={!pauseRow.canAct} onPress={() => mac.request(pauseRow.request.name, pauseRow.request.args).catch(error => Alert.alert('Abstract', String(error.message || error)))} style={[s.pauseBannerButton, !pauseRow.canAct && { opacity: 0.45 }]}><Text style={s.pauseBannerButtonText}>{pauseRow.button}</Text></Pressable></View>}
     <SwipeForward onSwipe={() => navigation.navigate('Review', { hostId, sessionId: id })} onBack={() => navigation.goBack()}><BlurTargetView ref={blurTarget} style={{ flex: 1 }}><FlatList ref={scroll} style={s.transcript} contentInsetAdjustmentBehavior="automatic" contentContainerStyle={[s.transcriptContent, { paddingBottom: bottomPanelHeight + keyboardOffset + 20 }]} data={transcriptRows} keyExtractor={transcriptKey} renderItem={({ item }) => renderTranscriptItem(item, mac.snapshot?.plugins || [], expandedRows, toggleTranscriptRow)} initialNumToRender={14} maxToRenderPerBatch={12} windowSize={7} updateCellsBatchingPeriod={30} maintainVisibleContentPosition={anchored ? { minIndexForVisible: 1 } : undefined} ListHeaderComponent={hasOlder || loadingHistory ? <Pressable accessibilityRole="button" accessibilityLabel="Load older messages" disabled={loadingHistory} onPress={loadEarlier} style={{ alignItems: 'center', paddingVertical: 10 }}>{loadingHistory ? <ActivityIndicator size="small" color={muted} /> : <Text style={s.thinkingLabel}>Load older messages</Text>}</Pressable> : null} ListFooterComponent={transcriptFooter} onContentSizeChange={onTranscriptSize} onLayout={scheduleFollow} onScroll={onTranscriptScroll} onScrollBeginDrag={onTranscriptDrag} onScrollEndDrag={event => updateScroll(event, true)} onMomentumScrollBegin={event => { follow.current.beginGesture(event.nativeEvent.contentOffset.y); if (follow.current.shouldAnchor) setAnchored(true); }} onMomentumScrollEnd={event => updateScroll(event, true)} scrollEventThrottle={16} keyboardShouldPersistTaps="handled" />{!atBottom && <Pressable accessibilityLabel="Jump to latest" style={[s.jump, { bottom: bottomPanelHeight + keyboardOffset + 12 }]} onPress={jumpToLatest}><Glyph name="arrow.down" size={14} color={ink} /></Pressable>}</BlurTargetView></SwipeForward>
     <ProgressiveBlur edge="bottom" blurTarget={blurTarget} style={[s.bottomBlur, { bottom: keyboardOffset, height: bottomPanelHeight + 24 }]} />
     <View style={[s.bottomPanel, { bottom: keyboardOffset }]} onLayout={event => {
@@ -767,7 +769,7 @@ export function ChatWorkspace({ route, navigation }: any) {
         </View>
         <View style={composerStyles.actions}>
           {sending
-            ? <Pressable accessibilityRole="button" accessibilityLabel="Attach files" accessibilityState={{ disabled: sending || !!editingQueued }} disabled={sending || !!editingQueued} onPress={pickFiles} android_ripple={{ color: 'rgba(255,255,255,0.12)', borderless: true }} style={({ pressed }) => [composerStyles.iconButton, (sending || !!editingQueued) && { opacity: 0.4 }, pressed && Platform.OS === 'ios' && { opacity: 0.5 }]}><Glyph name="attach" size={20} color={muted} /></Pressable>
+            ? <Pressable accessibilityRole="button" accessibilityLabel="Attach files" accessibilityState={{ disabled: sending || !!editingQueued }} disabled={sending || !!editingQueued} onPress={pickFiles} android_ripple={{ color: palette.borderStrong, borderless: true }} style={({ pressed }) => [composerStyles.iconButton, (sending || !!editingQueued) && { opacity: 0.4 }, pressed && Platform.OS === 'ios' && { opacity: 0.5 }]}><Glyph name="attach" size={20} color={muted} /></Pressable>
             : <MenuView title="Add to message" actions={addActions} onPressAction={({ nativeEvent }) => nativeEvent.event === 'attach' ? pickFiles() : nativeEvent.event === 'photos' ? pickFromLibrary() : openLinks(nativeEvent.event as LinkKind)}><View accessible accessibilityRole="button" accessibilityLabel={root ? 'Add files, photos, issues or pull requests' : 'Add files or photos'} style={composerStyles.iconButton}><Glyph name="attach" size={20} color={muted} /></View></MenuView>}
           <ComposerSettingsMenu settings={settings} provider={chat.providerId} summary={settingsSummary} onChoose={chooseSetting} />
           {!!message && <Pressable accessibilityRole="button" accessibilityLabel={previewingMarkdown ? 'Edit Markdown' : 'Preview Markdown'} onPress={() => setPreviewingMarkdown(!previewingMarkdown)} style={({ pressed }) => [composerStyles.textButton, pressed && { opacity: 0.5 }]}><Text maxFontSizeMultiplier={1.4} style={composerStyles.textButtonLabel}>{previewingMarkdown ? 'Edit' : 'Preview'}</Text></Pressable>}
@@ -781,7 +783,7 @@ export function ChatWorkspace({ route, navigation }: any) {
     </View>
   </SafeAreaView>;
 }
-const queueStyles = StyleSheet.create({
+const queueStyles = themedStyles(() => StyleSheet.create({
   bubble: { opacity: 0.7, borderStyle: 'dashed', borderWidth: 1, borderColor: border },
   editing: { borderColor: muted },
   actions: { flexDirection: 'row', marginTop: 2 },
@@ -790,11 +792,11 @@ const queueStyles = StyleSheet.create({
   control: { paddingHorizontal: 12, minHeight: 32, justifyContent: 'center', borderRadius: 16, backgroundColor: raised },
   controlLabel: { color: ink, fontFamily: 'Inter', fontSize: 13, fontWeight: '600' },
   reason: { flex: 1, color: tertiary, fontFamily: 'Inter', fontSize: 12 },
-});
-const composerStyles = StyleSheet.create({
+}));
+const composerStyles = themedStyles(() => StyleSheet.create({
   // A filled surface with a hairline, never an outline; focus only lifts the hairline.
-  box: { borderRadius: 20, backgroundColor: panel, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.1)', paddingHorizontal: 6, paddingTop: 4, overflow: 'hidden' },
-  boxFocused: { borderColor: 'rgba(255,255,255,0.24)' },
+  box: { borderRadius: 20, backgroundColor: panel, borderWidth: StyleSheet.hairlineWidth, borderColor: palette.fieldBorder, paddingHorizontal: 6, paddingTop: 4, overflow: 'hidden' },
+  boxFocused: { borderColor: palette.fieldBorderFocused },
   actions: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 2 },
   iconButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   settingsMenu: { flex: 1, minWidth: 0 },
@@ -804,34 +806,34 @@ const composerStyles = StyleSheet.create({
   textButton: { minHeight: 44, paddingHorizontal: 8, alignItems: 'center', justifyContent: 'center' },
   textButtonLabel: { color: muted, fontFamily: 'Inter', fontSize: 13, fontWeight: '500' },
   sendTarget: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  send: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: '#38383E' },
+  send: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: palette.inset },
   sendReady: { backgroundColor: ink },
-  connection: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 44, marginHorizontal: -6, marginTop: -4, marginBottom: 2, paddingLeft: 12, paddingRight: 4, paddingVertical: 6, backgroundColor: 'rgba(255,255,255,0.035)', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border },
+  connection: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 44, marginHorizontal: -6, marginTop: -4, marginBottom: 2, paddingLeft: 12, paddingRight: 4, paddingVertical: 6, backgroundColor: palette.hover, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border },
   connectionIcon: { width: 20, alignItems: 'center' },
   connectionText: { flex: 1, minWidth: 0, gap: 1 },
   connectionTitle: { color: ink, fontFamily: 'Inter', fontSize: 13, fontWeight: '600', lineHeight: 18 },
   connectionDetail: { color: muted, fontFamily: 'Inter', fontSize: 12, lineHeight: 16 },
   connectionAction: { minHeight: 44, minWidth: 44, paddingHorizontal: 10, alignItems: 'center', justifyContent: 'center' },
   connectionActionLabel: { color: ink, fontFamily: 'Inter', fontSize: 13, fontWeight: '600' },
-});
-const chrome = StyleSheet.create({
+}));
+const chrome = themedStyles(() => StyleSheet.create({
   toolbarButton: { width: 40, height: 44, alignItems: 'center', justifyContent: 'center' },
   nativeActions: { flexDirection: 'row', alignItems: 'center', gap: 0 },
-});
-const markdownStyles = StyleSheet.create({ body: { color: ink, fontFamily: 'Inter', fontSize: 15, lineHeight: 23 }, paragraph: { marginTop: 0, marginBottom: 10 }, heading1: { color: ink, fontFamily: 'Inter', fontSize: 19, fontWeight: '600', marginVertical: 8 }, heading2: { color: ink, fontFamily: 'Inter', fontSize: 16, fontWeight: '600', marginVertical: 8 }, heading3: { color: ink, fontFamily: 'Inter', fontSize: 14, fontWeight: '600', marginVertical: 6 }, code_inline: { color: ink, backgroundColor: '#303036', fontFamily: 'JetBrainsMono', fontSize: 12 }, code_block: { color: ink, backgroundColor: panel, fontFamily: 'JetBrainsMono', fontSize: 11, padding: 9, borderRadius: 6 }, fence: { color: ink, backgroundColor: panel, fontFamily: 'JetBrainsMono', fontSize: 11, padding: 9, borderRadius: 6 }, link: { color: '#91B8F6' }, bullet_list: { marginBottom: 10 }, ordered_list: { marginBottom: 10 }, blockquote: { backgroundColor: 'transparent', borderLeftColor: '#55555E', borderLeftWidth: 2, paddingLeft: 10 }, strong: { fontWeight: '700' } });
-const s = StyleSheet.create({
+}));
+const markdownStyles = themedStyles(() => StyleSheet.create({ body: { color: ink, fontFamily: 'Inter', fontSize: 15, lineHeight: 23 }, paragraph: { marginTop: 0, marginBottom: 10 }, heading1: { color: ink, fontFamily: 'Inter', fontSize: 19, fontWeight: '600', marginVertical: 8 }, heading2: { color: ink, fontFamily: 'Inter', fontSize: 16, fontWeight: '600', marginVertical: 8 }, heading3: { color: ink, fontFamily: 'Inter', fontSize: 14, fontWeight: '600', marginVertical: 6 }, code_inline: { color: ink, backgroundColor: palette.inset, fontFamily: 'JetBrainsMono', fontSize: 12 }, code_block: { color: ink, backgroundColor: panel, fontFamily: 'JetBrainsMono', fontSize: 11, padding: 9, borderRadius: 6 }, fence: { color: ink, backgroundColor: panel, fontFamily: 'JetBrainsMono', fontSize: 11, padding: 9, borderRadius: 6 }, link: { color: palette.textSecondary }, bullet_list: { marginBottom: 10 }, ordered_list: { marginBottom: 10 }, blockquote: { backgroundColor: 'transparent', borderLeftColor: palette.borderStrong, borderLeftWidth: 2, paddingLeft: 10 }, strong: { fontWeight: '700' } }));
+const s = themedStyles(() => StyleSheet.create({
   pendingAttachment: { color: muted, fontFamily: 'Inter', fontSize: 12, marginTop: 4 },
   pendingStatus: { color: tertiary, fontFamily: 'Inter', fontSize: 11, marginTop: 4 },
-  sendError: { color: '#F08A84', fontFamily: 'Inter', fontSize: 12, lineHeight: 17, paddingHorizontal: 8, paddingBottom: 6 },
+  sendError: { color: palette.removed, fontFamily: 'Inter', fontSize: 12, lineHeight: 17, paddingHorizontal: 8, paddingBottom: 6 },
   bottomBlur: { top: undefined, bottom: 0, zIndex: 1 },
   bottomPanel: { position: 'absolute', left: 0, right: 0, zIndex: 2 },
   contextRow: { height: 40, marginHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 6 },
-  changesPill: { flexShrink: 0, minHeight: 32, flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 9, borderRadius: 16, backgroundColor: raised, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.16)' },
+  changesPill: { flexShrink: 0, minHeight: 32, flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 9, borderRadius: 16, backgroundColor: raised, borderWidth: StyleSheet.hairlineWidth, borderColor: palette.borderStrong },
   changesPillLabel: { color: ink, fontFamily: 'Inter', fontSize: 11, fontWeight: '600' },
-  changesAdded: { color: '#4CC38A', fontFamily: 'JetBrainsMono', fontSize: 10 },
-  changesRemoved: { color: '#EF6461', fontFamily: 'JetBrainsMono', fontSize: 10 },
-  prContext: { flexShrink: 0, minHeight: 32, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, borderRadius: 16, backgroundColor: raised, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.16)' },
+  changesAdded: { color: palette.added, fontFamily: 'JetBrainsMono', fontSize: 10 },
+  changesRemoved: { color: palette.removed, fontFamily: 'JetBrainsMono', fontSize: 10 },
+  prContext: { flexShrink: 0, minHeight: 32, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, borderRadius: 16, backgroundColor: raised, borderWidth: StyleSheet.hairlineWidth, borderColor: palette.borderStrong },
   prContextLabel: { color: muted, fontFamily: 'Inter', fontSize: 11, fontWeight: '600' },
   composerTextRow: { flexDirection: 'row' },
   composerInput: { flex: 1, color: ink, fontFamily: 'Inter', fontSize: 15, lineHeight: 22, paddingHorizontal: 4, paddingTop: 6, paddingBottom: 6 },
-  root: { flex: 1, backgroundColor: canvas }, pauseBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(232,179,74,0.12)', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border, paddingHorizontal: 14, paddingVertical: 8 }, pauseBannerText: { color: ink, fontFamily: 'Inter', fontSize: 13, lineHeight: 18, flex: 1 }, pauseBannerButton: { paddingHorizontal: 8, paddingVertical: 4 }, pauseBannerButtonText: { color: ink, fontFamily: 'Inter', fontSize: 13, fontWeight: '600' }, sheetRoot: { flex: 1, backgroundColor: canvas }, sheetBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.55)' }, sheetPanel: { backgroundColor: canvas, minHeight: 390, maxHeight: '85%', borderTopLeftRadius: 18, borderTopRightRadius: 18, paddingHorizontal: 16 }, sheetHandle: { alignSelf: 'center', width: 36, height: 4, borderRadius: 2, backgroundColor: '#5C5C65', marginTop: 10, marginBottom: 12 }, sheetHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 15 }, sheetTitle: { color: ink, fontFamily: 'Inter', fontSize: 19, fontWeight: '600' }, sheetClose: { width: 38, height: 38, borderRadius: 19, backgroundColor: raised, alignItems: 'center', justifyContent: 'center' }, sheetSearch: { minHeight: 50, borderRadius: 10, backgroundColor: panel, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12 }, sheetInput: { flex: 1, minWidth: 0, color: ink, fontFamily: 'Inter', fontSize: 15 }, sheetSearchButton: { minHeight: 38, justifyContent: 'center', paddingHorizontal: 6 }, sheetSearchButtonText: { color: ink, fontFamily: 'Inter', fontSize: 13, fontWeight: '600' }, sheetResults: { paddingTop: 12, paddingBottom: 25 }, sheetResult: { minHeight: 62, flexDirection: 'row', alignItems: 'center', gap: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border }, sheetReference: { color: muted, fontFamily: 'JetBrainsMono', fontSize: 12 }, sheetResultTitle: { color: ink, fontFamily: 'Inter', fontSize: 14.5, lineHeight: 20 }, sheetResultMeta: { color: tertiary, fontFamily: 'Inter', fontSize: 11, marginTop: 2 }, sheetEmpty: { color: tertiary, fontFamily: 'Inter', fontSize: 13, textAlign: 'center', paddingTop: 28 }, waiting: { flex: 1, justifyContent: 'center', padding: 18, backgroundColor: canvas }, faint: { color: tertiary, fontFamily: 'Inter', fontSize: 10 }, chip: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', gap: 5, paddingHorizontal: 9, paddingVertical: 7, borderRadius: 5 }, chipActive: { backgroundColor: '#303036' }, chipLabel: { color: muted, fontFamily: 'Inter', fontSize: 11.5, fontWeight: '500', maxWidth: 145 }, transcript: { flex: 1 }, transcriptContent: { paddingHorizontal: 16, paddingTop: 18, paddingBottom: 44, gap: 14 }, transcriptFooter: { gap: 12 }, userRow: { alignItems: 'flex-end' }, userBubble: { backgroundColor: raised, borderRadius: 11, paddingHorizontal: 13, paddingVertical: 10, maxWidth: '94%' }, prose: { color: ink, fontFamily: 'Inter', fontSize: 15, lineHeight: 23 }, thinkingRow: { gap: 4, paddingVertical: 2 }, thinkingLabel: { color: tertiary, fontFamily: 'Inter', fontSize: 12 }, thinkingText: { color: tertiary, fontFamily: 'Inter', fontSize: 13, lineHeight: 20, fontStyle: 'italic' }, turnRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 4 }, turnRule: { height: StyleSheet.hairlineWidth, backgroundColor: border, flex: 1 }, toolRow: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 38, paddingHorizontal: 2 }, toolIcon: { width: 20, height: 20, alignItems: 'center', justifyContent: 'center' }, toolVerb: { color: muted, fontFamily: 'Inter', fontWeight: '500', fontSize: 13.5 }, toolLabel: { flex: 1, color: tertiary, fontFamily: 'JetBrainsMono', fontSize: 12.5 }, toolFailed: { color: '#EF6461', fontFamily: 'Inter', fontSize: 10 }, toolPending: { color: tertiary, fontFamily: 'Inter', fontSize: 10 }, toolDetail: { color: tertiary, backgroundColor: panel, fontFamily: 'JetBrainsMono', fontSize: 11.5, lineHeight: 18, padding: 10, marginLeft: 22, borderRadius: 5 }, permission: { padding: 10, backgroundColor: raised, borderRadius: 8, gap: 7 }, permissionTitle: { color: ink, fontWeight: '600', fontSize: 12 }, permissionInput: { color: ink, padding: 7, backgroundColor: canvas, borderRadius: 5 }, permissionActions: { flexDirection: 'row' }, working: { flexDirection: 'row', alignItems: 'center', gap: 7 }, dotGrid: { width: 8, height: 13, flexDirection: 'row', flexWrap: 'wrap', columnGap: 2, rowGap: 2 }, dot: { width: 3, height: 3, borderRadius: 2, backgroundColor: muted }, workingLabel: { color: muted, fontFamily: 'Inter', fontSize: 13 }, workingDuration: { color: tertiary, fontFamily: 'Inter', fontSize: 13, fontVariant: ['tabular-nums'] }, jump: { position: 'absolute', right: 13, bottom: 12, width: 38, height: 38, borderRadius: 19, backgroundColor: raised, alignItems: 'center', justifyContent: 'center' }, slashMenu: { maxHeight: 220, backgroundColor: raised, borderTopColor: border, borderTopWidth: 1, padding: 5 }, slashRow: { flexDirection: 'row', alignItems: 'center', gap: 9, minHeight: 40, paddingHorizontal: 7 }, slashCommand: { color: ink, fontFamily: 'JetBrainsMono', fontSize: 11, minWidth: 55 }, slashDetail: { color: tertiary, fontFamily: 'Inter', fontSize: 10, flex: 1 }, menu: { maxHeight: 220, padding: 6, backgroundColor: raised, borderTopColor: border, borderTopWidth: 1 }, menuInput: { color: ink, fontSize: 14, padding: 9 }, linkSearch: { flexDirection: 'row', alignItems: 'center' }, linkResult: { flexDirection: 'row', alignItems: 'center', gap: 7, minHeight: 30, paddingHorizontal: 7 }, linkReference: { color: tertiary, fontFamily: 'JetBrainsMono', fontSize: 10 }, linkTitle: { color: ink, fontFamily: 'Inter', fontSize: 11, flex: 1 }, composerWrap: { paddingHorizontal: 10, paddingTop: 7, paddingBottom: 8 }, attachments: { maxHeight: 30 } });
+  root: { flex: 1, backgroundColor: canvas }, pauseBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: palette.hover, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border, paddingHorizontal: 14, paddingVertical: 8 }, pauseBannerText: { color: ink, fontFamily: 'Inter', fontSize: 13, lineHeight: 18, flex: 1 }, pauseBannerButton: { paddingHorizontal: 8, paddingVertical: 4 }, pauseBannerButtonText: { color: ink, fontFamily: 'Inter', fontSize: 13, fontWeight: '600' }, sheetRoot: { flex: 1, backgroundColor: canvas }, sheetBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.55)' }, sheetPanel: { backgroundColor: canvas, minHeight: 390, maxHeight: '85%', borderTopLeftRadius: 18, borderTopRightRadius: 18, paddingHorizontal: 16 }, sheetHandle: { alignSelf: 'center', width: 36, height: 4, borderRadius: 2, backgroundColor: palette.textTertiary, marginTop: 10, marginBottom: 12 }, sheetHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 15 }, sheetTitle: { color: ink, fontFamily: 'Inter', fontSize: 19, fontWeight: '600' }, sheetClose: { width: 38, height: 38, borderRadius: 19, backgroundColor: raised, alignItems: 'center', justifyContent: 'center' }, sheetSearch: { minHeight: 50, borderRadius: 10, backgroundColor: panel, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12 }, sheetInput: { flex: 1, minWidth: 0, color: ink, fontFamily: 'Inter', fontSize: 15 }, sheetSearchButton: { minHeight: 38, justifyContent: 'center', paddingHorizontal: 6 }, sheetSearchButtonText: { color: ink, fontFamily: 'Inter', fontSize: 13, fontWeight: '600' }, sheetResults: { paddingTop: 12, paddingBottom: 25 }, sheetResult: { minHeight: 62, flexDirection: 'row', alignItems: 'center', gap: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border }, sheetReference: { color: muted, fontFamily: 'JetBrainsMono', fontSize: 12 }, sheetResultTitle: { color: ink, fontFamily: 'Inter', fontSize: 14.5, lineHeight: 20 }, sheetResultMeta: { color: tertiary, fontFamily: 'Inter', fontSize: 11, marginTop: 2 }, sheetEmpty: { color: tertiary, fontFamily: 'Inter', fontSize: 13, textAlign: 'center', paddingTop: 28 }, waiting: { flex: 1, justifyContent: 'center', padding: 18, backgroundColor: canvas }, faint: { color: tertiary, fontFamily: 'Inter', fontSize: 10 }, chip: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', gap: 5, paddingHorizontal: 9, paddingVertical: 7, borderRadius: 5 }, chipActive: { backgroundColor: palette.inset }, chipLabel: { color: muted, fontFamily: 'Inter', fontSize: 11.5, fontWeight: '500', maxWidth: 145 }, transcript: { flex: 1 }, transcriptContent: { paddingHorizontal: 16, paddingTop: 18, paddingBottom: 44, gap: 14 }, transcriptFooter: { gap: 12 }, userRow: { alignItems: 'flex-end' }, userBubble: { backgroundColor: raised, borderRadius: 11, paddingHorizontal: 13, paddingVertical: 10, maxWidth: '94%' }, prose: { color: ink, fontFamily: 'Inter', fontSize: 15, lineHeight: 23 }, thinkingRow: { gap: 4, paddingVertical: 2 }, thinkingLabel: { color: tertiary, fontFamily: 'Inter', fontSize: 12 }, thinkingText: { color: tertiary, fontFamily: 'Inter', fontSize: 13, lineHeight: 20, fontStyle: 'italic' }, turnRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 4 }, turnRule: { height: StyleSheet.hairlineWidth, backgroundColor: border, flex: 1 }, toolRow: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 38, paddingHorizontal: 2 }, toolIcon: { width: 20, height: 20, alignItems: 'center', justifyContent: 'center' }, toolVerb: { color: muted, fontFamily: 'Inter', fontWeight: '500', fontSize: 13.5 }, toolLabel: { flex: 1, color: tertiary, fontFamily: 'JetBrainsMono', fontSize: 12.5 }, toolFailed: { color: palette.removed, fontFamily: 'Inter', fontSize: 10 }, toolPending: { color: tertiary, fontFamily: 'Inter', fontSize: 10 }, toolDetail: { color: tertiary, backgroundColor: panel, fontFamily: 'JetBrainsMono', fontSize: 11.5, lineHeight: 18, padding: 10, marginLeft: 22, borderRadius: 5 }, permission: { padding: 10, backgroundColor: raised, borderRadius: 8, gap: 7 }, permissionTitle: { color: ink, fontWeight: '600', fontSize: 12 }, permissionInput: { color: ink, padding: 7, backgroundColor: canvas, borderRadius: 5 }, permissionActions: { flexDirection: 'row' }, working: { flexDirection: 'row', alignItems: 'center', gap: 7 }, dotGrid: { width: 8, height: 13, flexDirection: 'row', flexWrap: 'wrap', columnGap: 2, rowGap: 2 }, dot: { width: 3, height: 3, borderRadius: 2, backgroundColor: muted }, workingLabel: { color: muted, fontFamily: 'Inter', fontSize: 13 }, workingDuration: { color: tertiary, fontFamily: 'Inter', fontSize: 13, fontVariant: ['tabular-nums'] }, jump: { position: 'absolute', right: 13, bottom: 12, width: 38, height: 38, borderRadius: 19, backgroundColor: raised, alignItems: 'center', justifyContent: 'center' }, slashMenu: { maxHeight: 220, backgroundColor: raised, borderTopColor: border, borderTopWidth: 1, padding: 5 }, slashRow: { flexDirection: 'row', alignItems: 'center', gap: 9, minHeight: 40, paddingHorizontal: 7 }, slashCommand: { color: ink, fontFamily: 'JetBrainsMono', fontSize: 11, minWidth: 55 }, slashDetail: { color: tertiary, fontFamily: 'Inter', fontSize: 10, flex: 1 }, menu: { maxHeight: 220, padding: 6, backgroundColor: raised, borderTopColor: border, borderTopWidth: 1 }, menuInput: { color: ink, fontSize: 14, padding: 9 }, linkSearch: { flexDirection: 'row', alignItems: 'center' }, linkResult: { flexDirection: 'row', alignItems: 'center', gap: 7, minHeight: 30, paddingHorizontal: 7 }, linkReference: { color: tertiary, fontFamily: 'JetBrainsMono', fontSize: 10 }, linkTitle: { color: ink, fontFamily: 'Inter', fontSize: 11, flex: 1 }, composerWrap: { paddingHorizontal: 10, paddingTop: 7, paddingBottom: 8 }, attachments: { maxHeight: 30 } }));

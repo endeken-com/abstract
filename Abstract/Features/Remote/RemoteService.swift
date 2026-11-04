@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Network
 import CryptoKit
@@ -485,7 +486,16 @@ final class RemoteService {
                               pluginProjects: model.pluginProjectChoices().map {
                                   RemotePluginProject(key: $0.key, name: $0.name)
                               },
-                              pluginsSupported: true)
+                              pluginsSupported: true,
+                              theme: Self.theming())
+    }
+
+    /// The theme this Mac draws in, as colours for the phone (ABS-185).
+    private static func theming() -> RemoteTheming {
+        let state = ThemeState.shared
+        let look = ThemeState.look(of: NSApp.effectiveAppearance)
+        return RemoteTheming(choice: state.current, catalog: state.currentCatalog, picks: state.currentPicks,
+                             increasedContrast: look.increasedContrast)
     }
 
     /// Each project's uploaded icon as bytes, so a viewing Mac can show it

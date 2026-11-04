@@ -6,9 +6,11 @@ import * as Haptics from 'expo-haptics';
 import { remote } from './remote';
 import { useKeyboardHeight } from './useKeyboardVisible';
 import assets from './terminalAssets.json';
+import { themedStyles, palette, theme, useThemeVersion, type ThemeTokens } from './theme';
 
-const html = `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/><style>@font-face{font-family:JetBrainsMono;src:url(data:font/truetype;base64,${assets.font})}html,body,#terminal{margin:0;width:100%;height:100%;background:#1e1e21;overflow:hidden}*{box-sizing:border-box}${assets.css}</style></head><body><div id="terminal"></div><script>${assets.script}</script><script>${assets.fit}</script><script>
-const terminal = new Terminal({cursorBlink:true,scrollback:5000,fontFamily:'JetBrainsMono, monospace',fontSize:12.5,lineHeight:1.2,theme:{background:'#1e1e21',foreground:'#c8c8ce',cursor:'#ececef',selectionBackground:'#5b9cf666',black:'#3e3e46',red:'#ef6461',green:'#4cc38a',yellow:'#e5a33a',blue:'#5b9cf6',magenta:'#c080e8',cyan:'#4ebfc7',white:'#c8c8ce',brightBlack:'#74747e',brightRed:'#ff8a86',brightGreen:'#72dba6',brightYellow:'#f5c26b',brightBlue:'#88b9ff',brightMagenta:'#d8a8f8',brightCyan:'#7dd8de',brightWhite:'#f4f4f6'}});
+// The terminal page in the current theme: its canvas, text and 16 ANSI colours (ABS-185).
+const terminalHtml = (t: ThemeTokens) => `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/><style>@font-face{font-family:JetBrainsMono;src:url(data:font/truetype;base64,${assets.font})}html,body,#terminal{margin:0;width:100%;height:100%;background:${t.canvas};overflow:hidden}*{box-sizing:border-box}${assets.css}</style></head><body><div id="terminal"></div><script>${assets.script}</script><script>${assets.fit}</script><script>
+const terminal = new Terminal({cursorBlink:true,scrollback:5000,fontFamily:'JetBrainsMono, monospace',fontSize:12.5,lineHeight:1.2,theme:{background:'${t.canvas}',foreground:'${t.terminalWhite}',cursor:'${t.text}',selectionBackground:'${t.terminalBlue}66',black:'${t.terminalBlack}',red:'${t.terminalRed}',green:'${t.terminalGreen}',yellow:'${t.terminalYellow}',blue:'${t.terminalBlue}',magenta:'${t.terminalMagenta}',cyan:'${t.terminalCyan}',white:'${t.terminalWhite}',brightBlack:'${t.terminalBrightBlack}',brightRed:'${t.terminalBrightRed}',brightGreen:'${t.terminalBrightGreen}',brightYellow:'${t.terminalBrightYellow}',brightBlue:'${t.terminalBrightBlue}',brightMagenta:'${t.terminalBrightMagenta}',brightCyan:'${t.terminalBrightCyan}',brightWhite:'${t.terminalBrightWhite}'}});
 const fit = new FitAddon.FitAddon(); terminal.loadAddon(fit); terminal.open(document.getElementById('terminal'));
 const post=(type,fields={})=>window.ReactNativeWebView.postMessage(JSON.stringify({type,...fields}));
 terminal.onData(data=>post('input',{data}));
@@ -48,7 +50,8 @@ export function TerminalView({ hostId, id, root }: { hostId: string; id: number 
     const delta = output.slice(sent.current);
     if (delta) { web.current.injectJavaScript(`window.termWrite(${JSON.stringify(delta)});true;`); sent.current = output.length; }
   }, [ready, output]);
-  const source = useMemo(() => ({ html, baseUrl: 'about:blank' }), []);
+  const themeVersion = useThemeVersion();
+  const source = useMemo(() => ({ html: terminalHtml(theme().tokens), baseUrl: 'about:blank' }), [themeVersion]);
   const sendKey = (data: string, signal = false) => {
     if (id === null) return;
     if (signal) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
@@ -56,9 +59,9 @@ export function TerminalView({ hostId, id, root }: { hostId: string; id: number 
     mac.terminalInput(id, data).catch(() => {});
     setCtrl(false);
   };
-  return <View style={{ flex: 1, backgroundColor: '#1E1E21', paddingBottom: Platform.OS === 'ios' ? Math.max(0, keyboard - safeArea.bottom) : 0 }}>
+  return <View style={{ flex: 1, backgroundColor: palette.canvas, paddingBottom: Platform.OS === 'ios' ? Math.max(0, keyboard - safeArea.bottom) : 0 }}>
     <View style={styles.locationBar}><View style={[styles.statusDot, !ready && styles.statusDotWaiting]} /><View style={styles.locationText}><Text style={styles.locationLabel}>{ready ? 'TERMINAL' : 'CONNECTING'}</Text><Text numberOfLines={1} ellipsizeMode="middle" style={styles.locationPath}>{root}</Text></View></View>
-    {id === null ? <Text style={{ color: '#A4A4AD', padding: 12 }}>Opening terminal…</Text> : <WebView key={revision} ref={web} source={source} originWhitelist={['*']} javaScriptEnabled keyboardDisplayRequiresUserAction={false} scrollEnabled={false} bounces={false} style={{ flex: 1, backgroundColor: '#1E1E21' }} onMessage={event => {
+    {id === null ? <Text style={{ color: palette.textSecondary, padding: 12 }}>Opening terminal…</Text> : <WebView key={revision} ref={web} source={source} originWhitelist={['*']} javaScriptEnabled keyboardDisplayRequiresUserAction={false} scrollEnabled={false} bounces={false} style={{ flex: 1, backgroundColor: palette.canvas }} onMessage={event => {
       let message: any; try { message = JSON.parse(event.nativeEvent.data); } catch { return; }
       if (message.type === 'ready') setReady(true);
       if (message.type === 'input' && typeof message.data === 'string') {
@@ -79,24 +82,24 @@ export function TerminalView({ hostId, id, root }: { hostId: string; id: number 
   </View>;
 }
 
-const styles = StyleSheet.create({
+const styles = themedStyles(() => StyleSheet.create({
   locationBar: { minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: 'rgba(255,255,255,0.08)' },
-  statusDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#4CC38A' },
-  statusDotWaiting: { backgroundColor: '#75757E' },
+  statusDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: palette.added },
+  statusDotWaiting: { backgroundColor: palette.textTertiary },
   locationText: { flex: 1, minWidth: 0, gap: 2 },
-  locationLabel: { color: '#A4A4AD', fontFamily: 'Inter', fontSize: 9, fontWeight: '700', letterSpacing: 0.7 },
-  locationPath: { color: '#ECECEF', fontFamily: 'JetBrainsMono', fontSize: 11 },
-  commandRail: { flexGrow: 0, backgroundColor: '#252529', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: 'rgba(255,255,255,0.12)' },
+  locationLabel: { color: palette.textSecondary, fontFamily: 'Inter', fontSize: 9, fontWeight: '700', letterSpacing: 0.7 },
+  locationPath: { color: palette.text, fontFamily: 'JetBrainsMono', fontSize: 11 },
+  commandRail: { flexGrow: 0, backgroundColor: palette.surface, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: palette.borderStrong },
   commandRailContent: { alignItems: 'center', paddingHorizontal: 12, paddingTop: 8, paddingBottom: 10, gap: 14 },
   keyGroup: { gap: 5 },
-  groupLabel: { color: '#75757E', fontFamily: 'Inter', fontSize: 9, fontWeight: '700', letterSpacing: 0.7, paddingLeft: 2 },
+  groupLabel: { color: palette.textTertiary, fontFamily: 'Inter', fontSize: 9, fontWeight: '700', letterSpacing: 0.7, paddingLeft: 2 },
   keyGroupRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  key: { minWidth: 43, height: 36, paddingHorizontal: 10, borderRadius: 7, backgroundColor: '#34343B', borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.13)', alignItems: 'center', justifyContent: 'center' },
-  keySelected: { backgroundColor: '#5B9CF6', borderColor: '#5B9CF6' },
-  signalKey: { backgroundColor: '#3A3034', borderColor: 'rgba(239,100,97,0.24)' },
+  key: { minWidth: 43, height: 36, paddingHorizontal: 10, borderRadius: 7, backgroundColor: palette.inset, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.13)', alignItems: 'center', justifyContent: 'center' },
+  keySelected: { backgroundColor: palette.terminalBlue, borderColor: palette.terminalBlue },
+  signalKey: { backgroundColor: palette.removedWash, borderColor: palette.removed },
   keyPressed: { opacity: 0.65 },
   keyDisabled: { opacity: 0.45 },
-  keyText: { color: '#ECECEF', fontFamily: 'JetBrainsMono', fontSize: 12 },
-  keyTextSelected: { color: '#1E1E21' },
-  signalKeyText: { color: '#EEA09E' },
-});
+  keyText: { color: palette.text, fontFamily: 'JetBrainsMono', fontSize: 12 },
+  keyTextSelected: { color: palette.canvas },
+  signalKeyText: { color: palette.removed },
+}));
