@@ -27,6 +27,8 @@ public struct CLIError: Error, Equatable, Sendable {
         case worktreeFailed = "worktree_failed"
         /// The project's setup script failed in the new worktree. `create` rolled everything back.
         case setupFailed = "setup_failed"
+        /// The plugin couldn't be fetched, or isn't a valid Abstract plugin.
+        case pluginFailed = "plugin_failed"
         case internalError = "internal"
     }
 

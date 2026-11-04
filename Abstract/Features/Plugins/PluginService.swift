@@ -13,6 +13,13 @@ final class PluginService {
     private(set) var catalog: [PluginCatalog.Entry] = []
     private(set) var catalogProblem: String?
     private(set) var orphans: [(name: String, problem: String)] = []
+    /// Newer commits for plugins installed from a repository (ABS-190),
+    /// found by Check for updates and waiting to be accepted.
+    private(set) var gitUpdates: [String: PluginGitUpdate] = [:]
+    /// Plugins whose repository couldn't be checked, with why.
+    private(set) var gitUpdateProblems: [String: String] = [:]
+    private(set) var checkingForUpdates = false
+    @ObservationIgnored let gitFetcher: any PluginGitFetching = GitPluginFetcher()
     /// Monotonic snapshot revision, shared by every open plugin view.
     private(set) var revision = 0
     /// Background scripts stopped for misbehaving (ABS-93), with why.
@@ -125,6 +132,35 @@ final class PluginService {
         try manager.inspectPicked(url)
     }
 
+    /// Fetches what's typed in "Add from GitHub…" and checks it, for the
+    /// review screen. Nothing is installed.
+    func inspectGit(_ text: String) async throws -> PluginGitCandidate {
+        try await manager.inspectGit(PluginGitSource.parse(text), fetcher: gitFetcher)
+    }
+
+    /// Settings → Plugins → Check for updates. Nothing installs by itself.
+    func checkForUpdates() async {
+        checkingForUpdates = true
+        defer { checkingForUpdates = false }
+        let found = await manager.checkGitUpdates(fetcher: gitFetcher)
+        for update in gitUpdates.values { try? FileManager.default.removeItem(at: update.candidate.cleanup) }
+        gitUpdates = Dictionary(uniqueKeysWithValues: found.updates.map { ($0.pluginId, $0) })
+        gitUpdateProblems = found.problems
+    }
+
+    /// Installs a reviewed package fetched from a repository, pinned to its commit.
+    @discardableResult
+    func install(_ candidate: PluginGitCandidate, enable: Bool, transcriptProjectKeys: [String] = []) throws -> PluginRecord {
+        let record = try manager.install(candidate)
+        manager.setEnabled(record.id, enable, transcriptProjectKeys: transcriptProjectKeys)
+        if let update = gitUpdates.removeValue(forKey: record.id) {
+            try? FileManager.default.removeItem(at: update.candidate.cleanup)
+        }
+        gitUpdateProblems[record.id] = nil
+        refresh()
+        return record
+    }
+
     @discardableResult
     func install(from folder: URL, sourceKind: PluginSource, enable: Bool,
                  transcriptProjectKeys: [String] = []) throws -> PluginRecord {
@@ -189,6 +225,9 @@ final class PluginService {
             }
         }
         manager.remove(id)
+        if let update = gitUpdates.removeValue(forKey: id) {
+            try? FileManager.default.removeItem(at: update.candidate.cleanup)
+        }
         backgroundProblems[id] = nil
         badges[id] = nil
         refresh()

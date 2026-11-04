@@ -39,8 +39,10 @@ public struct PluginGalleryItem: Identifiable, Sendable {
         }
     }
 
+    /// `gitUpdates`: plugins installed from a repository whose ref moved
+    /// on, found by Check for updates (ABS-190).
     public static func items(installed: [InstalledPlugin], bundled: [PluginManifest],
-                             catalog: [PluginCatalog.Entry]) -> [Self] {
+                             catalog: [PluginCatalog.Entry], gitUpdates: Set<String> = []) -> [Self] {
         let installedByID = Dictionary(uniqueKeysWithValues: installed.map { ($0.id, $0) })
         let bundledByID = Dictionary(uniqueKeysWithValues: bundled.map { ($0.id, $0) })
         let catalogByID = Dictionary(uniqueKeysWithValues: catalog.map { ($0.id, $0) })
@@ -56,7 +58,9 @@ public struct PluginGalleryItem: Identifiable, Sendable {
                 if plugin.problem != nil {
                     state = plugin.manifest != nil && plugin.record.source != .catalog ? .needsReview : .problem
                 }
-                else if let entry, entry.version != plugin.record.version || entry.hash != plugin.record.packageHash {
+                else if gitUpdates.contains(id) { state = .updateAvailable }
+                else if plugin.record.source.git == nil, let entry,
+                        entry.version != plugin.record.version || entry.hash != plugin.record.packageHash {
                     state = .updateAvailable
                 } else if !plugin.record.enabled { state = .disabled }
                 else { state = .installed }
