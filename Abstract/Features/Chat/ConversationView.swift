@@ -103,10 +103,13 @@ enum TranscriptRows {
         switch row.block {
         case .system: false
         case .thinking: mode.showsThinking
-        case .raw: UserDefaults.standard.bool(forKey: "showRawAgentOutput")
+        case .raw: showsRaw
         default: true
         }
     }
+
+    /// Settings › General: frames no parser understood show in the transcript.
+    static var showsRaw: Bool { UserDefaults.standard.bool(forKey: "showRawAgentOutput") }
 
     /// A row's words, for copying a selection that runs through it.
     static func plainText(_ block: TimelineBlock) -> String {
