@@ -182,11 +182,31 @@ function PermissionRuleSheet({ mac, sessionId, request, projectId, root, initial
   </Modal>;
 }
 function PermissionCard({ mac, sessionId, request, projectId, root, canRemember }: { mac: RemoteClient; sessionId: string; request: PendingPermission; projectId?: string | null; root: string; canRemember?: boolean }) {
-  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [selected, setSelected] = useState<Record<string, string[]>>({});
+  const [custom, setCustom] = useState<Record<string, string>>({});
   const [remember, setRemember] = useState<PermissionDecision | null>(null);
-  const questions = request.toolName === 'AskUserQuestion' ? request.input?.questions || [] : [];
-  const submit = (allow: boolean) => mac.request(questions.length && allow ? 'answerQuestion' : 'answer', questions.length && allow ? { sessionId, requestId: request.requestId, answers } : { sessionId, requestId: request.requestId, allow }).catch(e => Alert.alert('Abstract', String(e)));
-  return <View style={s.permission}><Text style={s.permissionTitle}>{questions.length ? 'Question from agent' : `Permission · ${request.toolName}`}</Text>{questions.length ? questions.map((q: any) => <View key={q.question}><Text style={s.prose}>{q.question}</Text>{q.options?.map((o: any) => <Chip key={o.label} label={o.label} active={answers[q.question] === o.label} onPress={() => setAnswers({ ...answers, [q.question]: o.label })} />)}<TextInput value={answers[q.question] || ''} onChangeText={v => setAnswers({ ...answers, [q.question]: v })} placeholder="Your answer" placeholderTextColor={tertiary} style={s.permissionInput} /></View>) : <Text style={s.toolDetail}>{JSON.stringify(request.input, null, 2)}</Text>}<View style={s.permissionActions}><Chip label={questions.length ? 'Send answers' : 'Allow'} onPress={() => submit(true)} /><Chip label={questions.length ? 'Skip' : 'Deny'} onPress={() => submit(false)} /></View>{!!canRemember && !!projectId && !questions.length && <View style={[s.permissionActions, { flexWrap: 'wrap' }]}><Chip label="Always allow…" onPress={() => setRemember('allow')} /><Chip label="Always deny…" onPress={() => setRemember('deny')} /></View>}{remember && projectId && <PermissionRuleSheet key={`${request.requestId}-${remember}`} mac={mac} sessionId={sessionId} request={request} projectId={projectId} root={root} initialDecision={remember} close={() => setRemember(null)} />}</View>;
+  const questions = request.toolName === 'AskUserQuestion' || request.toolName === 'request_user_input' ? request.input?.questions || [] : [];
+  const submit = (allow: boolean) => {
+    const answers: Record<string, string> = Object.fromEntries(questions.map((q: any) => [
+      q.question, [...(selected[q.question] || []), custom[q.question]?.trim()].filter(Boolean).join(', '),
+    ]).filter((entry: string[]) => entry[1]));
+    if (allow && request.toolName === 'request_user_input' && questions.some((q: any) => !answers[q.question]?.trim())) {
+      Alert.alert('Answer every question or tap Skip');
+      return;
+    }
+    mac.request(questions.length && allow ? 'answerQuestion' : 'answer', questions.length && allow ? { sessionId, requestId: request.requestId, answers } : { sessionId, requestId: request.requestId, allow }).catch(e => Alert.alert('Abstract', String(e)));
+  };
+  return <View style={s.permission}><Text style={s.permissionTitle}>{questions.length ? 'Question from agent' : `Permission · ${request.toolName}`}</Text>{questions.length ? questions.map((q: any) => {
+    const multiple = q.multiSelect === true || q.selection?.mode === 'multiple';
+    return <View key={q.question}><Text style={s.prose}>{q.question}</Text>{q.options?.map((o: any) => <Chip key={o.label} label={o.label} active={selected[q.question]?.includes(o.label)} onPress={() => {
+      const previous = selected[q.question] || [];
+      setSelected({ ...selected, [q.question]: multiple ? previous.includes(o.label) ? previous.filter(label => label !== o.label) : [...previous, o.label] : [o.label] });
+      if (!multiple) setCustom({ ...custom, [q.question]: '' });
+    }} />)}<TextInput value={custom[q.question] || ''} onChangeText={value => {
+      setCustom({ ...custom, [q.question]: value });
+      if (!multiple && value) setSelected({ ...selected, [q.question]: [] });
+    }} maxLength={request.toolName === 'request_user_input' ? 500 : undefined} placeholder="Your answer" placeholderTextColor={tertiary} style={s.permissionInput} /></View>;
+  }) : <Text style={s.toolDetail}>{JSON.stringify(request.input, null, 2)}</Text>}<View style={s.permissionActions}><Chip label={questions.length ? 'Send answers' : 'Allow'} onPress={() => submit(true)} /><Chip label={questions.length ? 'Skip' : 'Deny'} onPress={() => submit(false)} /></View>{!!canRemember && !!projectId && !questions.length && <View style={[s.permissionActions, { flexWrap: 'wrap' }]}><Chip label="Always allow…" onPress={() => setRemember('allow')} /><Chip label="Always deny…" onPress={() => setRemember('deny')} /></View>}{remember && projectId && <PermissionRuleSheet key={`${request.requestId}-${remember}`} mac={mac} sessionId={sessionId} request={request} projectId={projectId} root={root} initialDecision={remember} close={() => setRemember(null)} />}</View>;
 }
 function PlanCard({ mac, sessionId, plan, permissions, onRequestChanges }: { mac: RemoteClient; sessionId: string; plan: PlanState; permissions?: PendingPermission[]; onRequestChanges: (quoted: string) => void }) {
   const [busy, setBusy] = useState<string | null>(null);

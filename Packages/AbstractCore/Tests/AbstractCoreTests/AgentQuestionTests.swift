@@ -24,6 +24,12 @@ import AbstractCore
         #expect(AgentQuestion.parse(.object([:])).isEmpty)
     }
 
+    @Test func parsesMuseSelectionMode() {
+        let input = JSONValue.parse(#"{"questions":[{"id":"targets","question":"Which targets?","selection":{"mode":"multiple"},"options":[{"label":"Mac"},{"label":"Phone"}]}]}"#)!
+        #expect(AgentQuestion.isQuestion("request_user_input"))
+        #expect(AgentQuestion.parse(input) == [AgentQuestion(question: "Which targets?", options: [.init(label: "Mac"), .init(label: "Phone")], multiSelect: true)])
+    }
+
     @Test func joinsChosenLabelsAndTypedTextLikeTheSDK() {
         #expect(AgentQuestion.answer(chosen: ["macOS", "iOS"]) == "macOS, iOS")
         #expect(AgentQuestion.answer(chosen: ["Patch"], other: "  but keep the API  ") == "Patch, but keep the API")

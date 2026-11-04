@@ -95,7 +95,7 @@ enum ToolKind: Equatable {
         case "todowrite", "todolist", "todo_list": self = .todo
         case "exitplanmode": self = .plan
         case "task", "agent": self = .delegate
-        case "askuserquestion": self = .question
+        case "askuserquestion", "request_user_input": self = .question
         default: self = .other
         }
     }
@@ -809,7 +809,7 @@ enum ToolPresentation {
         case "exitplanmode": "list.bullet.clipboard"
         case "task", "agent": "person.2"
         case "skill": "book.closed"
-        case "askuserquestion": "questionmark.bubble"
+        case "askuserquestion", "request_user_input": "questionmark.bubble"
         default: name.hasPrefix("mcp__") ? "puzzlepiece.extension" : "wrench.and.screwdriver"
         }
     }
@@ -840,7 +840,7 @@ enum ToolPresentation {
             case "todowrite", "todolist", "todo_list": return "Updating plan"
             case "exitplanmode": return "Proposed a plan"
             case "skill": return "Using skill"
-            case "askuserquestion": return "Asking"
+            case "askuserquestion", "request_user_input": return "Asking"
             default: break
             }
         }
@@ -859,7 +859,7 @@ enum ToolPresentation {
         case "todowrite", "todolist", "todo_list": "Updated plan"
         case "exitplanmode": "Proposed a plan"
         case "skill": "Used skill"
-        case "askuserquestion": "Asked"
+        case "askuserquestion", "request_user_input": "Asked"
         default: name.hasPrefix("mcp__") ? "Used" : displayName(name)
         }
     }
@@ -876,7 +876,7 @@ enum ToolPresentation {
         case "read", "read_file": "Read"
         case "exitplanmode": "Start on this plan"
         case "skill": "Use skill"
-        case "askuserquestion": "Needs your input"
+        case "askuserquestion", "request_user_input": "Needs your input"
         default: name.hasPrefix("mcp__") ? "Use" : "Use \(displayName(name))"
         }
     }
