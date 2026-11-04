@@ -40,8 +40,11 @@ struct ScriptedAgent {
     var calls: Int { Int((try? String(contentsOfFile: dir + "/count", encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "") ?? 0 }
     func prompt(_ n: Int) -> String { (try? String(contentsOfFile: "\(dir)/prompt-\(n)", encoding: .utf8)) ?? "" }
 
+    /// `timeout` is long by default: on a CI runner busy with other tests'
+    /// processes, a scripted answer has taken over 10 seconds to arrive, and a
+    /// timeout there reads as the agent giving no answer.
     func suggest(instructions: String = abstractInstructions, task: String = "The relay image push fails", focus: String = "",
-                 attempts: Int = 2, timeout: Duration = .seconds(10)) async -> Result<ChatNaming.Suggestion, ChatNaming.Failure> {
+                 attempts: Int = 2, timeout: Duration = .seconds(60)) async -> Result<ChatNaming.Suggestion, ChatNaming.Failure> {
         await ChatNaming.suggest(executor: LocalExecutor.shared, provider: Agents.claude, binary: binary,
                                  instructions: instructions, task: task, focus: focus, attempts: attempts, timeout: timeout)
     }

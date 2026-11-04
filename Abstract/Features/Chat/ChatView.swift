@@ -107,12 +107,7 @@ struct ChatToolbarControls: View {
         }
     }
 
-    private var latestLaunch: LaunchRecord? {
-        for case let .turn(_, info) in model.feed(session.id).timeline.blocks.reversed() {
-            if let launch = info.launch { return launch }
-        }
-        return nil
-    }
+    private var latestLaunch: LaunchRecord? { model.feed(session.id).latestLaunch }
 
     /// Hand this chat to the workflow's first step, to carry on the work in it.
     private func runWorkflow(_ workflow: Workflow) {
