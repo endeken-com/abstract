@@ -2,13 +2,13 @@
   "api": 2,
   "id": "sh.abstract.linear",
   "name": "Linear",
-  "version": "1.1.0",
-  "description": "Find Linear issues in the composer's issue search, by words, a key like ENG-123 or a link, and attach them to your messages. It connects with a personal Linear API key, kept in your keychain, or with the Linear CLI signed in on this Mac.",
+  "version": "1.2.0",
+  "description": "Find Linear issues in the composer's issue search, by words, a key like ENG-123 or a link, and attach them to your messages. It uses the Linear CLI signed in on this Mac, or an optional personal API key kept in your keychain.",
   "entry": "index.html",
   "capabilities": ["network", "secrets", "storage.own", "cli"],
   "network": { "hosts": ["api.linear.app"] },
   "secrets": [
-    { "name": "api-key", "title": "Linear API key" }
+    { "name": "api-key", "title": "Optional Linear API key" }
   ],
   "cli": {
     "binary": "linear",

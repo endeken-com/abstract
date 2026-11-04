@@ -197,6 +197,35 @@ import Testing
                                          Self.linear: .searchIssues(query: "login", project: "team:ENG")])
     }
 
+    @Test func abstractProjectsKeepSeparateLinearWorkspaces() throws {
+        let root = try tempRoot()
+        let manager = try manager(root)
+        try installTrackers(manager)
+        let first = TrackerProjectLink(team: Self.core.team, workspace: "example")
+        let second = TrackerProjectLink(team: Self.core.team, workspace: "sandbox")
+        let storage = manager.storage(for: Self.linear)
+        #expect(TrackerProjectLink.write(first, to: storage, projectId: "first"))
+        #expect(TrackerProjectLink.write(second, to: storage, projectId: "second"))
+        #expect(TrackerProjectLink.read(storage, projectId: "first") == first)
+        #expect(TrackerProjectLink.read(storage, projectId: "second") == second)
+        #expect(trackers(manager, projectId: "first").scopes() == [Self.linear: "workspace:example|team:ENG"])
+        #expect(trackers(manager, projectId: "second").scopes() == [Self.linear: "workspace:sandbox|team:ENG"])
+        #expect(trackers(manager, projectId: "second").environment["ABSTRACT_LINEAR_WORKSPACE"] == "sandbox")
+
+        let wholeWorkspace = TrackerProjectLink(workspace: "sandbox")
+        #expect(TrackerProjectLink(wholeWorkspace.jsonValue()) == wholeWorkspace)
+        #expect(wholeWorkspace.scope == "workspace:sandbox")
+        #expect(TrackerProjectLink(.object(["workspace": .string("bad|slug")])) == nil)
+    }
+
+    @Test func aKeySearchKeepsItsProjectScope() {
+        let linear = PluginIssueTrackerDeclaration(title: "Linear", keyExample: "ENG-1", keyPattern: "[A-Za-z]+-[0-9]+")
+        #expect(PluginIssueTrackers.request(for: "ENG-12", tracker: linear,
+                                            project: "workspace:sandbox|team:ENG")
+                == .searchIssues(query: "ENG-12", project: "workspace:sandbox|team:ENG"))
+        #expect(PluginIssueTrackers.request(for: "ENG-12", tracker: linear) == .issue("ENG-12"))
+    }
+
     actor Asked {
         var requests: [String: TrackerRequest] = [:]
         func add(_ id: String, _ request: TrackerRequest) { requests[id] = request }

@@ -42,8 +42,9 @@ extension AppModel {
     /// If that fails it goes as it was listed.
     func completeTrackerIssue(_ attachment: PromptAttachment) async -> PromptAttachment {
         guard attachment.kind == .trackerIssue, let reference = attachment.reference,
-              let tracker = issueTrackers.first(where: { $0.pluginId == attachment.tracker }),
-              case .issue(let issue?) = await askTracker(tracker, .issue(reference)) else { return attachment }
+              let tracker = issueTrackers.first(where: { $0.pluginId == attachment.tracker }) else { return attachment }
+        let lookup = tracker.pluginId == PromptAttachment.linearTrackerId ? (attachment.url ?? reference) : reference
+        guard case .issue(let issue?) = await askTracker(tracker, .issue(lookup)) else { return attachment }
         var whole = issue.attachment(trackerId: tracker.pluginId, trackerName: tracker.title)
         whole.id = attachment.id
         return whole
