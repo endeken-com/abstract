@@ -8,6 +8,10 @@ struct PluginAddJSON: Encodable {
     let repository: String
     let ref: String?
     let commit: String
+    /// The registry listing it came from, `owner/slug`; null for a repository.
+    let listing: String?
+    /// Whether a person reviewed this exact commit (ABS-190).
+    let reviewed: Bool
     /// Off until it's reviewed in Settings → Plugins, unless it updated one
     /// that was on and asks for nothing new.
     let enabled: Bool
@@ -15,7 +19,7 @@ struct PluginAddJSON: Encodable {
     let capabilities: [String]
     let message: String
 
-    private enum Keys: String, CodingKey { case id, name, version, repository, ref, commit, enabled, capabilities, message }
+    private enum Keys: String, CodingKey { case id, name, version, repository, ref, commit, listing, reviewed, enabled, capabilities, message }
 
     func encode(to encoder: any Encoder) throws {
         var c = encoder.container(keyedBy: Keys.self)
@@ -25,6 +29,8 @@ struct PluginAddJSON: Encodable {
         try c.encode(repository, forKey: .repository)
         try c.encode(ref, forKey: .ref)
         try c.encode(commit, forKey: .commit)
+        try c.encode(listing, forKey: .listing)
+        try c.encode(reviewed, forKey: .reviewed)
         try c.encode(enabled, forKey: .enabled)
         try c.encode(capabilities, forKey: .capabilities)
         try c.encode(message, forKey: .message)
@@ -39,17 +45,19 @@ extension Commands {
                              dataRoot: base.appendingPathComponent("PluginData"))
     }
 
-    /// `abstract plugin add <source> [--ref <ref>]` (ABS-190): fetches the
-    /// repository at that ref, checks the package as the app does, and
-    /// installs it pinned to the commit — off, since what it may access is
-    /// reviewed in the app when it's turned on.
-    func addPlugin(_ text: String, ref: String?, fetcher: any PluginGitFetching) async throws -> PluginAddJSON {
+    /// `abstract plugin add <source> [--ref <ref>]` (ABS-190): a registry
+    /// listing's `owner/slug` installs its approved commit; a repository is
+    /// fetched at that ref. Either is checked as the app checks a package
+    /// and installed pinned to the commit — off, since what it may access
+    /// is reviewed in the app when it's turned on.
+    func addPlugin(_ text: String, ref: String?, fetcher: any PluginGitFetching,
+                   registry: PluginRegistry?) async throws -> PluginAddJSON {
         let source: PluginGitSource
-        do { source = try PluginGitSource.parse(text, ref: ref) }
+        do { source = try (registry ?? PluginRegistry(plugins: [])).source(for: text, ref: ref) }
         catch { throw CLIError(.invalidArguments, error.localizedDescription) }
         let manager = plugins
         let candidate: PluginGitCandidate
-        do { candidate = try await manager.inspectGit(source, fetcher: fetcher) }
+        do { candidate = try await manager.inspect(source, registry: registry, fetcher: fetcher) }
         catch let error as PluginValidationError { throw CLIError(.pluginFailed, error.description) }
         catch { throw CLIError(.pluginFailed, error.localizedDescription) }
         defer { try? FileManager.default.removeItem(at: candidate.cleanup) }
@@ -62,7 +70,8 @@ extension Commands {
         return PluginAddJSON(
             id: record.id, name: record.name, version: record.version,
             repository: candidate.source.repository, ref: candidate.source.ref,
-            commit: candidate.source.commit ?? "", enabled: record.enabled,
+            commit: candidate.source.commit ?? "", listing: candidate.source.listing,
+            reviewed: (registry ?? PluginRegistry(plugins: [])).isReviewed(candidate.source), enabled: record.enabled,
             capabilities: manifest.capabilities.sorted(),
             message: record.enabled
                 ? "\(record.name) is updated to \(candidate.source.shortCommit ?? "") and stays on."

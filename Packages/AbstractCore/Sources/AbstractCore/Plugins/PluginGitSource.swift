@@ -16,11 +16,14 @@ public struct PluginGitSource: Sendable, Hashable, Codable {
     public var commit: String?
     /// The git URL of a repository not on GitHub; nil on GitHub.
     public var url: String?
+    /// The reviewed registry listing (`owner/slug`) it was installed from:
+    /// it follows that listing's approved commit, never the branch.
+    public var listing: String?
 
     public init(owner: String, repo: String, path: String? = nil, ref: String? = nil,
-                commit: String? = nil, url: String? = nil) {
+                commit: String? = nil, url: String? = nil, listing: String? = nil) {
         self.owner = owner; self.repo = repo; self.path = path; self.ref = ref
-        self.commit = commit; self.url = url
+        self.commit = commit; self.url = url; self.listing = listing
     }
 
     public var isGitHub: Bool { url == nil }

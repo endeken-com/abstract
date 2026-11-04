@@ -11,7 +11,7 @@ import Synchronization
 ///     abstract agent respawn    --session <id> --agent claude --prompt-file <path|->
 ///     abstract history          <file>[:<line>[-<line>]] [--project <p>]
 ///     abstract branch name      <exact-name>  (from an automation chat's worktree)
-///     abstract plugin add       <owner/repo[/path][@ref] | git URL> [--ref <ref>]
+///     abstract plugin add       <owner/slug | owner/repo[/path][@ref] | git URL> [--ref <ref>]
 ///     abstract mcp              --chat <id>   (the code-history tools, over stdio)
 ///     abstract mcp              --chat <id> --plugins   (the chat's plugin tools, over stdio)
 ///     abstract mcp              --chat <id> --branch    (the chat's branch-name tool, over stdio)
@@ -115,7 +115,10 @@ public enum CommandLineTool {
                     || (options.count == 1 && options[0].hasPrefix("--ref=")) else {
                 throw CLIError(.invalidArguments, "Only --ref <ref> may follow the repository.")
             }
-            return try await Commands.open().addPlugin(source, ref: option("ref", in: options), fetcher: GitPluginFetcher())
+            // Without the registry, owner/slug is read as a repository.
+            let registry = try? await PluginRegistry.fetch()
+            return try await Commands.open().addPlugin(source, ref: option("ref", in: options), fetcher: GitPluginFetcher(),
+                                                       registry: registry)
         case ("branch", "name"):
             guard rest.count == 1 else { throw CLIError(.invalidArguments, "Use abstract branch name <exact-name>.") }
             return try await Commands.open().nameRunBranch(rest[0], in: FileManager.default.currentDirectoryPath)

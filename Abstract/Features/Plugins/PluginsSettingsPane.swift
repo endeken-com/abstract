@@ -44,7 +44,7 @@ struct PluginsSettingsPane: View {
     private var items: [PluginGalleryItem] {
         PluginGalleryItem.items(installed: model.plugins.installed,
                                 bundled: bundled.map { $0.inspection.manifest }, catalog: model.plugins.catalog,
-                                gitUpdates: Set(model.plugins.gitUpdates.keys))
+                                registry: model.plugins.registry, gitUpdates: Set(model.plugins.gitUpdates.keys))
     }
 
     var body: some View {
@@ -267,6 +267,7 @@ struct PluginsSettingsPane: View {
                 manifest: item.inspection.manifest,
                 source: item.source,
                 publisher: try? PluginSignature.publisher(in: item.folder, hash: item.inspection.hash),
+                reviewed: item.source.git.map { model.plugins.isReviewed($0) },
                 update: item.update,
                 changes: model.plugins.plugin(item.inspection.manifest.id).map {
                     PluginGrantChanges(new: item.inspection.manifest, old: $0.record, previous: $0.manifest)
@@ -329,6 +330,7 @@ struct PluginsSettingsPane: View {
                     views: [PluginManifest.View(id: "main", title: plugin.record.name)]),
                 source: plugin.record.source,
                 publisher: plugin.publisher,
+                reviewed: plugin.record.source.git.map { model.plugins.isReviewed($0) },
                 update: nil,
                 changes: nil,
                 primaryLabel: "Enable",
@@ -414,7 +416,7 @@ struct PluginsSettingsPane: View {
             Spacer(minLength: 0)
             HStack(spacing: Space.xs) {
                 statusLabel(item)
-                Text("· \(item.source.plainWords)")
+                Text("· \(item.reviewText ?? item.source.plainWords)")
                     .font(.btCaption).foregroundStyle(Color.btTextTertiary)
                     .lineLimit(1)
             }
@@ -462,6 +464,8 @@ struct PluginsSettingsPane: View {
                                                  cleanup: nil, source: .git(update.candidate.source),
                                                  candidate: update.candidate, update: update)
                     }
+                } else if let listing = item.listing, item.installed?.record.source.git?.listing == listing.id {
+                    afterClosingDetails { fetchListing(listing) }
                 } else if let entry = item.catalogEntry { afterClosingDetails { download(entry) } }
             }
                 .buttonStyle(.bt(.secondary, size: .small))
@@ -493,6 +497,27 @@ struct PluginsSettingsPane: View {
                                      cleanup: nil, source: .bundled)
         } else if let entry = item.catalogEntry {
             download(entry)
+        } else if let listing = item.listing {
+            fetchListing(listing)
+        }
+    }
+
+    /// A reviewed listing, fetched at its approved commit (ABS-190).
+    private func fetchListing(_ listing: PluginRegistry.Entry) {
+        catalogBusy = listing.pluginId
+        pickedProblem = nil
+        Task {
+            defer { catalogBusy = nil }
+            do {
+                let candidate = try await model.plugins.inspectListing(listing)
+                pending = PendingInstall(folder: candidate.folder, inspection: candidate.inspection,
+                                         cleanup: candidate.cleanup, source: .git(candidate.source),
+                                         candidate: candidate)
+            } catch let error as PluginValidationError {
+                pickedProblem = error.description
+            } catch {
+                pickedProblem = error.localizedDescription
+            }
         }
     }
 
@@ -522,7 +547,15 @@ struct PluginsSettingsPane: View {
                     Text("Version \(item.version) · \(item.source.plainWords) · \(item.publisher.map { "Verified publisher: \($0)" } ?? "Unverified")")
                         .font(.btCaption).foregroundStyle(Color.btTextSecondary)
                     if let git = item.source.git {
-                        PluginGitOrigin(source: git)
+                        PluginGitOrigin(source: git, reviewed: item.reviewed)
+                    }
+                    if let screenshot = item.listing?.screenshots.first {
+                        AsyncImage(url: screenshot) { image in
+                            image.resizable().scaledToFit()
+                                .clipShape(RoundedRectangle(cornerRadius: Radius.md, style: .continuous))
+                        } placeholder: { EmptyView() }
+                        .frame(maxHeight: 260)
+                        .accessibilityLabel("Screenshot of \(item.name)")
                     }
                     if let update = model.plugins.gitUpdates[item.id] {
                         Text("Update available: \(update.summary)")
@@ -766,6 +799,8 @@ private struct PluginReviewSheet: View {
     let manifest: PluginManifest
     let source: PluginSource
     let publisher: String?
+    /// For a plugin from a repository, whether a person reviewed this commit.
+    let reviewed: Bool?
     /// A newer commit of a plugin installed from a repository (ABS-190).
     let update: PluginGitUpdate?
     let changes: PluginGrantChanges?
@@ -860,7 +895,7 @@ private struct PluginReviewSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let git = source.git {
-                PluginGitOrigin(source: git)
+                PluginGitOrigin(source: git, reviewed: reviewed)
             }
             Text(publisher.map { "Verified publisher: \($0)" }
                  ?? source.git.map { "Published by \($0.owner)\($0.isGitHub ? " on GitHub" : ""), not verified" }
@@ -996,6 +1031,7 @@ private struct PluginSecretRow: View {
 /// the commit it's pinned to and the ref it follows (ABS-190).
 private struct PluginGitOrigin: View {
     let source: PluginGitSource
+    let reviewed: Bool?
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.xxs) {
@@ -1005,6 +1041,12 @@ private struct PluginGitOrigin: View {
             } else {
                 Text("Repository: \(source.repository)")
                     .font(.btCaption).foregroundStyle(Color.btTextSecondary)
+            }
+            if let reviewed {
+                Text(reviewed ? "Reviewed: a person checked this exact commit for the Abstract plugin registry."
+                              : "Not reviewed: nobody has checked this commit for the Abstract plugin registry.")
+                    .font(.btCaption).foregroundStyle(Color.btTextSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Text("Commit \(source.shortCommit ?? "unknown") · \(source.ref.map { PluginGitSource.isCommit($0) ? "pinned to this commit" : "follows \($0)" } ?? "follows the default branch")")
                 .font(.btCaption).foregroundStyle(Color.btTextSecondary)
@@ -1027,7 +1069,7 @@ private struct AddFromGitHubSheet: View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: Space.md) {
                 Text("Add a plugin from GitHub").font(.btHeadline).foregroundStyle(Color.btText)
-                Text("Type a repository, like owner/repo. Add /folder for a plugin inside a repository, and @tag, @branch or @commit for a version. Private repositories install with your GitHub access.")
+                Text("Type a registry listing or a repository, like owner/repo. Add /folder for a plugin inside a repository, and @tag, @branch or @commit for a version. Private repositories install with your GitHub access.")
                     .font(.btBody).foregroundStyle(Color.btTextSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                 TextField("owner/repo", text: $text)

@@ -556,6 +556,17 @@ installed at a commit stays there.
 `abstract plugin add` installs it off and prints its id, commit and the capabilities
 it asks for; turning it on in Settings is the review.
 
+### The reviewed registry
+
+`registry.json` in `endeken-com/abstract-plugins` lists plugins a person reviewed, each
+pinned to one commit (`docs/plugin-registry/` holds the proposed README, review policy
+and format). The gallery lists them beside the catalog, marked **Reviewed**;
+`abstract plugin add owner/slug` installs a listing's approved commit, whatever its
+branch holds now, and Check for Updates offers the next commit the registry approves.
+A direct repository install says **Not reviewed** unless it happens to sit on a listing's
+approved folder and commit. Add `github:` (or a ref or a folder) to install a repository
+whose name is also a listing.
+
 ## Previewing a plugin
 
 `python3 docs/plugin-kit/preview.py` serves the bundled plugins, the kit and a stand-in
