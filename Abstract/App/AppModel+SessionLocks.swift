@@ -44,6 +44,8 @@ extension AppModel {
     /// `abstract` changed something: chats, their status, who drives them.
     func commandLineChanged() {
         reload()
+        // `abstract plugin add` installs beside the app (ABS-190).
+        if plugins.manager.records() != plugins.installed.map(\.record) { plugins.refresh() }
         syncLocks()
         followCLIChat()
     }

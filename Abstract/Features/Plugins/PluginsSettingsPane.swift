@@ -18,6 +18,10 @@ struct PluginsSettingsPane: View {
     @State private var catalogLoading = true
     /// A usable plugin whose own Settings page is showing (ABS-96).
     @State private var settingsPageFor: InstalledPlugin?
+    /// "Add from GitHub…" (ABS-190): the field's sheet, and the package it
+    /// fetched, reviewed once that sheet has closed.
+    @State private var addingFromGitHub = false
+    @State private var fetchedFromGitHub: PendingInstall?
 
     struct PendingInstall: Identifiable {
         let id = UUID()
@@ -25,6 +29,10 @@ struct PluginsSettingsPane: View {
         var inspection: PluginPackage.Inspection
         var cleanup: URL?
         var source: PluginSource
+        /// Fetched from a repository (ABS-190), pinned to `source`'s commit.
+        var candidate: PluginGitCandidate? = nil
+        /// A newer commit of an installed one, with its summary.
+        var update: PluginGitUpdate? = nil
     }
 
     private var bundled: [(folder: URL, inspection: PluginPackage.Inspection)] {
@@ -35,7 +43,8 @@ struct PluginsSettingsPane: View {
 
     private var items: [PluginGalleryItem] {
         PluginGalleryItem.items(installed: model.plugins.installed,
-                                bundled: bundled.map { $0.inspection.manifest }, catalog: model.plugins.catalog)
+                                bundled: bundled.map { $0.inspection.manifest }, catalog: model.plugins.catalog,
+                                gitUpdates: Set(model.plugins.gitUpdates.keys))
     }
 
     var body: some View {
@@ -51,6 +60,21 @@ struct PluginsSettingsPane: View {
             }
         }
         .sheet(item: $pending) { item in pendingReview(item) }
+        .sheet(isPresented: $addingFromGitHub, onDismiss: {
+            if let fetched = fetchedFromGitHub {
+                fetchedFromGitHub = nil
+                pending = fetched
+            }
+        }) {
+            AddFromGitHubSheet { candidate in
+                fetchedFromGitHub = PendingInstall(folder: candidate.folder, inspection: candidate.inspection,
+                                                   cleanup: candidate.cleanup, source: .git(candidate.source),
+                                                   candidate: candidate)
+                addingFromGitHub = false
+            } cancel: {
+                addingFromGitHub = false
+            }
+        }
         .sheet(item: $settingsPageFor) { plugin in settingsPage(plugin) }
         .sheet(item: $enabling) { plugin in enableReview(plugin) }
         .confirmationDialog(
@@ -75,6 +99,7 @@ struct PluginsSettingsPane: View {
             filterBar
             if !all.isEmpty { categoryBar(all) }
             catalogStatus(all)
+            if model.plugins.installed.contains(where: { $0.record.source.git != nil }) { updatesStatus }
             if let pickedProblem {
                 notice("This plugin could not be opened", detail: pickedProblem, symbol: "exclamationmark.triangle")
             }
@@ -109,11 +134,15 @@ struct PluginsSettingsPane: View {
             HStack {
                 viewPicker
                 Spacer(minLength: Space.sm)
+                addFromGitHubButton
                 installFromDiskButton
             }
             VStack(alignment: .leading, spacing: Space.sm) {
                 viewPicker
-                installFromDiskButton
+                HStack(spacing: Space.sm) {
+                    addFromGitHubButton
+                    installFromDiskButton
+                }
             }
         }
     }
@@ -154,6 +183,32 @@ struct PluginsSettingsPane: View {
             HStack(spacing: Space.sm) {
                 ProgressView().controlSize(.small)
                 Text("Checking the catalog…").font(.btCaption).foregroundStyle(Color.btTextSecondary)
+            }
+        }
+    }
+
+    /// Plugins installed from a repository update only when you ask and
+    /// accept (ABS-190).
+    private var updatesStatus: some View {
+        let plugins = model.plugins
+        return VStack(alignment: .leading, spacing: Space.xs) {
+            HStack(spacing: Space.sm) {
+                Button(plugins.checkingForUpdates ? "Checking…" : "Check for Updates") {
+                    Task { await plugins.checkForUpdates() }
+                }
+                .buttonStyle(.bt(.secondary, size: .small))
+                .disabled(plugins.checkingForUpdates)
+                if !plugins.gitUpdates.isEmpty {
+                    Text(plugins.gitUpdates.count == 1 ? "1 plugin has an update." : "\(plugins.gitUpdates.count) plugins have an update.")
+                        .font(.btCaption).foregroundStyle(Color.btTextSecondary)
+                } else {
+                    Text("Plugins installed from GitHub only update when you check and accept.")
+                        .font(.btCaption).foregroundStyle(Color.btTextSecondary)
+                }
+            }
+            ForEach(plugins.gitUpdateProblems.keys.sorted(), id: \.self) { id in
+                Text("\(plugins.plugin(id)?.record.name ?? id): \(plugins.gitUpdateProblems[id] ?? "")")
+                    .font(.btCaption).foregroundStyle(Color.btRemoved)
             }
         }
     }
@@ -212,6 +267,7 @@ struct PluginsSettingsPane: View {
                 manifest: item.inspection.manifest,
                 source: item.source,
                 publisher: try? PluginSignature.publisher(in: item.folder, hash: item.inspection.hash),
+                update: item.update,
                 changes: model.plugins.plugin(item.inspection.manifest.id).map {
                     PluginGrantChanges(new: item.inspection.manifest, old: $0.record, previous: $0.manifest)
                 },
@@ -221,8 +277,10 @@ struct PluginsSettingsPane: View {
                 initialProjectKeys: []
             ) { enable, transcriptProjectKeys in
                 do {
-                    let record = try model.plugins.install(from: item.folder, sourceKind: item.source, enable: enable,
-                                                           transcriptProjectKeys: transcriptProjectKeys)
+                    let record = try item.candidate.map {
+                        try model.plugins.install($0, enable: enable, transcriptProjectKeys: transcriptProjectKeys)
+                    } ?? model.plugins.install(from: item.folder, sourceKind: item.source, enable: enable,
+                                               transcriptProjectKeys: transcriptProjectKeys)
                     model.flash(enable ? "\(record.name) is installed and on" : "\(record.name) is installed")
                 } catch let error as PluginValidationError {
                     pickedProblem = error.description
@@ -271,6 +329,7 @@ struct PluginsSettingsPane: View {
                     views: [PluginManifest.View(id: "main", title: plugin.record.name)]),
                 source: plugin.record.source,
                 publisher: plugin.publisher,
+                update: nil,
                 changes: nil,
                 primaryLabel: "Enable",
                 secondaryLabel: nil,
@@ -320,6 +379,11 @@ struct PluginsSettingsPane: View {
         }
         .pickerStyle(.segmented)
         .frame(maxWidth: 360)
+    }
+
+    private var addFromGitHubButton: some View {
+        Button("Add from GitHub…") { pickedProblem = nil; addingFromGitHub = true }
+            .buttonStyle(.btSecondary)
     }
 
     private var installFromDiskButton: some View {
@@ -391,7 +455,14 @@ struct PluginsSettingsPane: View {
                 .disabled(catalogBusy != nil)
         case .updateAvailable:
             Button(catalogBusy == item.id ? "Loading…" : "Update") {
-                if let entry = item.catalogEntry { afterClosingDetails { download(entry) } }
+                if let update = model.plugins.gitUpdates[item.id] {
+                    // The fetched package stays the service's until accepted.
+                    afterClosingDetails {
+                        pending = PendingInstall(folder: update.candidate.folder, inspection: update.candidate.inspection,
+                                                 cleanup: nil, source: .git(update.candidate.source),
+                                                 candidate: update.candidate, update: update)
+                    }
+                } else if let entry = item.catalogEntry { afterClosingDetails { download(entry) } }
             }
                 .buttonStyle(.bt(.secondary, size: .small))
                 .disabled(catalogBusy != nil)
@@ -450,6 +521,13 @@ struct PluginsSettingsPane: View {
                     Text(item.summary).font(.btBody).foregroundStyle(Color.btTextSecondary)
                     Text("Version \(item.version) · \(item.source.plainWords) · \(item.publisher.map { "Verified publisher: \($0)" } ?? "Unverified")")
                         .font(.btCaption).foregroundStyle(Color.btTextSecondary)
+                    if let git = item.source.git {
+                        PluginGitOrigin(source: git)
+                    }
+                    if let update = model.plugins.gitUpdates[item.id] {
+                        Text("Update available: \(update.summary)")
+                            .font(.btCaption).foregroundStyle(Color.btTextSecondary)
+                    }
                     if let manifest = item.installed?.manifest ?? bundled.first(where: { $0.inspection.manifest.id == item.id })?.inspection.manifest {
                         Divider().padding(.vertical, Space.xs)
                         Text("What it adds").font(.btBodyMedium).foregroundStyle(Color.btText)
@@ -688,6 +766,8 @@ private struct PluginReviewSheet: View {
     let manifest: PluginManifest
     let source: PluginSource
     let publisher: String?
+    /// A newer commit of a plugin installed from a repository (ABS-190).
+    let update: PluginGitUpdate?
     let changes: PluginGrantChanges?
     let primaryLabel: String
     let secondaryLabel: String?
@@ -746,6 +826,17 @@ private struct PluginReviewSheet: View {
 
     private var reviewContent: some View {
         VStack(alignment: .leading, spacing: Space.lg) {
+            if let update {
+                VStack(alignment: .leading, spacing: Space.sm) {
+                    Text("What changed").font(.btBodyMedium).foregroundStyle(Color.btText)
+                    Text(update.summary).font(.btBody).foregroundStyle(Color.btTextSecondary)
+                    let files = update.changes?.files ?? []
+                    ForEach(files.prefix(8), id: \.self) { file in reviewItem(file) }
+                    if files.count > 8 {
+                        Text("And \(files.count - 8) more.").font(.btCaption).foregroundStyle(Color.btTextSecondary)
+                    }
+                }
+            }
             if let changes, changes.asksForMore {
                 VStack(alignment: .leading, spacing: Space.sm) {
                     Text("This update asks for more").font(.btBodyMedium).foregroundStyle(Color.btText)
@@ -768,7 +859,12 @@ private struct PluginReviewSheet: View {
                 Text(description).font(.btBody).foregroundStyle(Color.btTextSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Text(publisher.map { "Verified publisher: \($0)" } ?? "Unverified publisher")
+            if let git = source.git {
+                PluginGitOrigin(source: git)
+            }
+            Text(publisher.map { "Verified publisher: \($0)" }
+                 ?? source.git.map { "Published by \($0.owner)\($0.isGitHub ? " on GitHub" : ""), not verified" }
+                 ?? "Unverified publisher")
                 .font(.btCaption).foregroundStyle(Color.btTextSecondary)
             if publisher == nil {
                 Text(manifest.networkHosts.isEmpty
@@ -893,5 +989,92 @@ private struct PluginSecretRow: View {
             }
         }
         .onAppear { entered = model.plugins.hasSecret(pluginId: pluginId, name: secret.name) }
+    }
+}
+
+/// Where a plugin installed from a repository comes from: the repository,
+/// the commit it's pinned to and the ref it follows (ABS-190).
+private struct PluginGitOrigin: View {
+    let source: PluginGitSource
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Space.xxs) {
+            if let url = source.webURL {
+                Link("Repository: \(source.repository)", destination: url)
+                    .font(.btCaption)
+            } else {
+                Text("Repository: \(source.repository)")
+                    .font(.btCaption).foregroundStyle(Color.btTextSecondary)
+            }
+            Text("Commit \(source.shortCommit ?? "unknown") · \(source.ref.map { PluginGitSource.isCommit($0) ? "pinned to this commit" : "follows \($0)" } ?? "follows the default branch")")
+                .font(.btCaption).foregroundStyle(Color.btTextSecondary)
+                .textSelection(.enabled)
+        }
+    }
+}
+
+/// "Add from GitHub…": a repository, folder or git URL, fetched and checked
+/// before the review screen opens (ABS-190).
+private struct AddFromGitHubSheet: View {
+    @Environment(AppModel.self) private var model
+    let fetched: (PluginGitCandidate) -> Void
+    let cancel: () -> Void
+    @State private var text = ""
+    @State private var busy = false
+    @State private var problem: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: Space.md) {
+                Text("Add a plugin from GitHub").font(.btHeadline).foregroundStyle(Color.btText)
+                Text("Type a repository, like owner/repo. Add /folder for a plugin inside a repository, and @tag, @branch or @commit for a version. Private repositories install with your GitHub access.")
+                    .font(.btBody).foregroundStyle(Color.btTextSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                TextField("owner/repo", text: $text)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.btMono)
+                    .disabled(busy)
+                    .onSubmit(add)
+                    .accessibilityLabel("Repository")
+                if let problem {
+                    Text(problem).font(.btCaption).foregroundStyle(Color.btRemoved)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Text("Nothing is installed until you review what it can access.")
+                    .font(.btCaption).foregroundStyle(Color.btTextSecondary)
+            }
+            .padding(Space.xl)
+            Divider()
+            HStack(spacing: Space.sm) {
+                if busy { ProgressView().controlSize(.small) }
+                Spacer()
+                Button("Cancel", role: .cancel, action: cancel)
+                    .buttonStyle(.btGhost)
+                    .keyboardShortcut(.cancelAction)
+                Button(busy ? "Fetching…" : "Continue", action: add)
+                    .buttonStyle(.btPrimary)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(busy || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            .padding(.horizontal, Space.xl)
+            .padding(.vertical, Space.md)
+        }
+        .frame(width: 480)
+    }
+
+    private func add() {
+        guard !busy else { return }
+        busy = true
+        problem = nil
+        Task {
+            defer { busy = false }
+            do {
+                fetched(try await model.plugins.inspectGit(text))
+            } catch let error as PluginValidationError {
+                problem = error.description
+            } catch {
+                problem = error.localizedDescription
+            }
+        }
     }
 }

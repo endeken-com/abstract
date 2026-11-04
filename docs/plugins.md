@@ -529,6 +529,33 @@ of its projects.
 Bundled plugins you've installed follow the copy inside Abstract when it changes,
 keeping their grants and on/off state unless the new one asks for more.
 
+## Installing from GitHub
+
+Settings › Plugins › **Add from GitHub…**, or `abstract plugin add`, takes:
+
+| Form | Example |
+|---|---|
+| A repository | `acme/abstract-review` |
+| A folder in a repository | `acme/monorepo/plugins/review` |
+| A branch, tag or commit | `acme/monorepo/plugins/review@v1.2`, or `--ref v1.2` |
+| A GitHub link | `https://github.com/acme/monorepo/tree/main/plugins/review` |
+| Another git host | `git:https://git.example.com/acme/mono.git:plugins/review`, `git@git.example.com:acme/review.git` |
+
+Abstract fetches that one commit shallowly with the Mac's git, using the GitHub CLI's
+login for github.com when `gh` is installed, and git's own credentials otherwise, so a
+private repository you can clone installs too. Only `https` and `ssh` addresses are
+accepted. The package is checked exactly like a folder install (no executables, links
+or paths outside it), and the review shows the repository, the commit and the publisher,
+which is only verified when the package is signed. The install is pinned to that commit.
+
+Nothing updates by itself. **Check for Updates** looks at the ref each one follows;
+a newer commit shows what changed (commits, files, new access) and installs only when
+you accept it. An update that asks for more stays off until it's reviewed. A plugin
+installed at a commit stays there.
+
+`abstract plugin add` installs it off and prints its id, commit and the capabilities
+it asks for; turning it on in Settings is the review.
+
 ## Previewing a plugin
 
 `python3 docs/plugin-kit/preview.py` serves the bundled plugins, the kit and a stand-in

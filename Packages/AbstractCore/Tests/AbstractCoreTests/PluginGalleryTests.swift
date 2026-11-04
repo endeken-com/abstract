@@ -56,6 +56,12 @@ import Testing
         #expect(offline[0].state == .installed)
         #expect(offline[0].installed?.id == plugin.id)
         #expect(PluginGalleryItem.filter(offline, query: "", view: .installed, category: nil).count == 1)
+        // A plugin from a repository shows an update once Check for updates finds one,
+        // never from the catalog.
+        let fromGit = installed(manifest, source: .git(PluginGitSource(owner: "o", repo: "r", commit: String(repeating: "1", count: 40))))
+        #expect(PluginGalleryItem.items(installed: [fromGit], bundled: [], catalog: [catalog(manifest.id)])[0].state == .installed)
+        #expect(PluginGalleryItem.items(installed: [fromGit], bundled: [], catalog: [],
+                                        gitUpdates: [manifest.id])[0].state == .updateAvailable)
         #expect(PluginGalleryItem.items(installed: [installed(manifest, problem: "Changed")],
                                         bundled: [], catalog: [])[0].state == .needsReview)
     }

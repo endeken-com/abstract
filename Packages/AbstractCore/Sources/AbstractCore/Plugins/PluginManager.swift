@@ -1,16 +1,60 @@
 import Foundation
 
 /// Where an installed plugin came from.
-public enum PluginSource: String, Sendable, Hashable, Codable {
+public enum PluginSource: Sendable, Hashable, Codable {
     case bundled
     case user
     case catalog
+    /// A git repository, pinned to a commit (ABS-190).
+    case git(PluginGitSource)
+
+    /// The kind alone, as records before ABS-190 stored it.
+    public var rawValue: String {
+        switch self {
+        case .bundled: "bundled"
+        case .user: "user"
+        case .catalog: "catalog"
+        case .git: "git"
+        }
+    }
+
+    public var git: PluginGitSource? {
+        if case .git(let source) = self { source } else { nil }
+    }
 
     public var plainWords: String {
         switch self {
         case .bundled: "With Abstract"
         case .user: "Installed by you"
         case .catalog: "From the Catalog"
+        case .git(let source): "From \(source.repository)"
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey { case git }
+
+    // The three first kinds stay plain strings, so older records still read.
+    public init(from decoder: Decoder) throws {
+        if let kind = try? decoder.singleValueContainer().decode(String.self) {
+            switch kind {
+            case "bundled": self = .bundled
+            case "user": self = .user
+            case "catalog": self = .catalog
+            default: throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath,
+                                                             debugDescription: "Unknown plugin source \(kind)"))
+            }
+            return
+        }
+        self = .git(try decoder.container(keyedBy: CodingKeys.self).decode(PluginGitSource.self, forKey: .git))
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        if case .git(let source) = self {
+            var box = encoder.container(keyedBy: CodingKeys.self)
+            try box.encode(source, forKey: .git)
+        } else {
+            var box = encoder.singleValueContainer()
+            try box.encode(rawValue)
         }
     }
 }
