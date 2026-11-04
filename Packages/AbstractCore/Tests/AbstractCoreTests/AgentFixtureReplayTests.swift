@@ -19,6 +19,11 @@ import Testing
         return try #require(try JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: url)).object)
     }
 
+    static func lines(_ name: String) throws -> [String] {
+        let url = try #require(Bundle.module.url(forResource: name, withExtension: "jsonl", subdirectory: "Fixtures"))
+        return try String(contentsOf: url, encoding: .utf8).split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    }
+
     static func events(_ value: JSONValue?) -> [AgentEvent] {
         (value?.array ?? []).compactMap(AgentEventJSON.decode)
     }
@@ -27,7 +32,7 @@ import Testing
     func replaysAsTheSwiftParserDid(_ fixture: String) throws {
         let agent = String(fixture.prefix { $0 != "-" })
         let plugin = try #require(AgentPlugins.shared.anyAgent(agent), "no bundled agent plugin for \(agent)")
-        let lines = try AgentPluginParityTests.lines(fixture)
+        let lines = try Self.lines(fixture)
         let golden = try Self.golden(fixture)
         for stream in [OutputStreamKind.stdout, .stderr] {
             let expected = try #require(golden[stream.rawValue]?.array)

@@ -29,7 +29,7 @@ import Testing
         #expect(!provider.buildLaunch(edits).args.contains("--auto"))
         #expect(provider.buildLaunch(bypass).args.contains("--auto"))
         #expect(provider.permissionDetail(.ask) != PermissionPolicy.ask.detail)
-        #expect(ClaudeProvider().permissionDetail(.ask) == PermissionPolicy.ask.detail)
+        #expect(Agents.claude.permissionDetail(.ask) == PermissionPolicy.ask.detail)
     }
 
     @Test func readsTheConfiguredModel() throws {

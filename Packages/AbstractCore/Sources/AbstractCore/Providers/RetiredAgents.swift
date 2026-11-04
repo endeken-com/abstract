@@ -21,7 +21,8 @@ public enum RetiredAgents {
     }
 
     static func makeParser(_ id: String) -> (any OutputParser)? {
-        ids.contains(id) ? LocalModelParser(CodexProvider().makeParser()) : nil
+        guard ids.contains(id), let codex = AgentPlugins.shared.anyAgent("codex") else { return nil }
+        return LocalModelParser(codex.makeParser())
     }
 }
 

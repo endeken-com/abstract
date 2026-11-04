@@ -276,7 +276,7 @@ import Testing
         var settings = LaunchSettings(providerOverrides: [:], outputStyle: .default, claudeProfile: nil,
                                       attachmentsDirectory: "/tmp/attachments")
         settings.addIssueTrackers(for: session, plugins: manager)
-        let spec = AgentLaunch.spec(for: session, provider: ClaudeProvider(), prompt: "hi", resumeId: nil,
+        let spec = AgentLaunch.spec(for: session, provider: Agents.claude, prompt: "hi", resumeId: nil,
                                     settings: settings, home: "/tmp")
         #expect(spec.env["ABSTRACT_JIRA_PROJECT"] == "PROJ")
         #expect(spec.env["ABSTRACT_LINEAR_TEAM"] == "ENG")

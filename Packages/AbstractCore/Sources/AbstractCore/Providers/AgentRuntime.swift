@@ -320,8 +320,13 @@ public struct ScriptedProvider: ProviderDefinition {
     }
 
     public func discoverModels(executor: any Executor, binary: String?) async -> ModelCatalog? {
+        await discoverModels(executor: executor, binary: binary, timeout: nil)
+    }
+
+    /// The same, giving up after `timeout` at most, whatever the script asks.
+    public func discoverModels(executor: any Executor, binary: String?, timeout: Duration?) async -> ModelCatalog? {
         guard can("models.discover"),
-              let answer = try? await AgentJobs(provider: self, executor: executor, binaryOverride: binary)
+              let answer = try? await AgentJobs(provider: self, executor: executor, binaryOverride: binary, limit: timeout)
                 .run("discoverModels", input: .object(["binary": .string(command(binary)), "config": config(executor: executor)]))
         else { return nil }
         return AgentEventJSON.decodeCodable(ModelCatalog.self, answer)
@@ -570,6 +575,8 @@ struct AgentJobs: Sendable {
     let provider: ScriptedProvider
     let executor: any Executor
     let binaryOverride: String?
+    /// The longest any one step may take, below what the script asks.
+    var limit: Duration? = nil
 
     private var script: AgentScript { provider.script }
 
@@ -611,14 +618,15 @@ struct AgentJobs: Sendable {
                           stdinInitial: value["stdin"]?.string, keepStdinOpen: value["keepStdinOpen"]?.bool ?? false)
     }
 
-    private static func seconds(_ value: JSONValue?, default fallback: Int) -> Duration {
-        .seconds(max(1, min(value?.int ?? fallback, 600)))
+    private func seconds(_ value: JSONValue?, default fallback: Int) -> Duration {
+        let asked = Duration.seconds(max(1, min(value?.int ?? fallback, 600)))
+        return limit.map { min($0, asked) } ?? asked
     }
 
     private func perform(_ effect: JSONValue, receive: Box?, started: Started) async throws -> JSONValue {
         let home = executor.homeDirectory
         if let run = effect["run"] {
-            let result = try await executor.run(spec(run, cwd: home), timeout: Self.seconds(run["timeout"], default: 30))
+            let result = try await executor.run(spec(run, cwd: home), timeout: seconds(run["timeout"], default: 30))
             return .object(["code": result.code.map { .number(Double($0)) } ?? .null, "ok": .bool(result.ok),
                             "stdout": .string(result.stdout), "stderr": .string(result.stderr), "timedOut": .bool(result.timedOut)])
         }
@@ -627,7 +635,7 @@ struct AgentJobs: Sendable {
             let script = self.script
             let value = try await SideProcess.converse(executor, spec(converse, cwd: home),
                                                        opening: ScriptedProvider.strings(converse["opening"]),
-                                                       timeout: Self.seconds(converse["timeout"], default: 30)) { line -> SideStep<JSONValue> in
+                                                       timeout: seconds(converse["timeout"], default: 30)) { line -> SideStep<JSONValue> in
                 // The `receive(line)` the yielded effect carries.
                 let (step, failed) = script.callReceive(receive.value, line)
                 if failed { return .fail("The agent's script failed.") }
@@ -641,7 +649,7 @@ struct AgentJobs: Sendable {
         if let start = effect["start"] {
             let pattern = start["until"]?.string ?? ""
             let (line, process) = try await SideProcess.start(executor, spec(start, cwd: home),
-                                                              timeout: Self.seconds(start["timeout"], default: 30)) { line in
+                                                              timeout: seconds(start["timeout"], default: 30)) { line in
                 pattern.isEmpty || line.range(of: pattern, options: .regularExpression) != nil
             }
             return .object(["line": .string(line), "handle": .number(Double(started.add(process)))])

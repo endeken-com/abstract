@@ -43,7 +43,7 @@ struct PromptAttachmentTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let png = dir.appendingPathComponent("a.png")
         try Data([0x89, 0x50, 0x4E, 0x47]).write(to: png)
-        let line = try #require(ClaudeProvider().buildUserMessage("look", images: [png.path, dir.appendingPathComponent("gone.png").path]))
+        let line = try #require(Agents.claude.buildUserMessage("look", images: [png.path, dir.appendingPathComponent("gone.png").path]))
         let json = try JSONDecoder().decode(JSONValue.self, from: Data(line.utf8))
         let content = try #require(json["message"]?["content"]?.array)
         #expect(content.count == 2)
@@ -53,12 +53,12 @@ struct PromptAttachmentTests {
     }
 
     @Test func claudeMayReadTheAttachmentsFolder() {
-        let spec = ClaudeProvider().buildLaunch(LaunchContext(cwd: "/wt", prompt: "p", permissionPolicy: .ask, readableDirs: ["/att"]))
+        let spec = Agents.claude.buildLaunch(LaunchContext(cwd: "/wt", prompt: "p", permissionPolicy: .ask, readableDirs: ["/att"]))
         #expect(spec.args.joined(separator: " ").contains("--add-dir /att"))
     }
 
     @Test func codexGetsImagesBeforeAnEndOfOptions() {
-        let spec = CodexProvider().buildLaunch(LaunchContext(cwd: "/wt", prompt: "look", permissionPolicy: .ask, images: ["/a.png", "/b.png"]))
+        let spec = Agents.codex.buildLaunch(LaunchContext(cwd: "/wt", prompt: "look", permissionPolicy: .ask, images: ["/a.png", "/b.png"]))
         #expect(Array(spec.args.suffix(6)) == ["--image", "/a.png", "--image", "/b.png", "--", "look"])
     }
 }

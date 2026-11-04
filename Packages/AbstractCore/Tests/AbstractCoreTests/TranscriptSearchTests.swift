@@ -8,7 +8,7 @@ struct TranscriptSearchTests {
     /// after a message of yours and some thinking.
     private func recorded() throws -> Timeline {
         let url = try #require(Bundle.module.url(forResource: "claude-stream", withExtension: "jsonl", subdirectory: "Fixtures"))
-        let parser = ClaudeProvider().makeParser()
+        let parser = Agents.claude.makeParser()
         var t = Timeline()
         t.append(.text(role: .user, text: "Please make HI.TXT", blockId: nil, partial: false))
         t.append(.thinking(text: "I'll write hi.txt with one line.", blockId: "th", partial: false))

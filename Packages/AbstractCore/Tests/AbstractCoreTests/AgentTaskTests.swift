@@ -7,7 +7,7 @@ import AbstractCore
     /// shell command, then the turns the CLI starts itself as each one ends.
     static func fixtureEvents() throws -> [AgentEvent] {
         let url = try #require(Bundle.module.url(forResource: "claude-background", withExtension: "jsonl", subdirectory: "Fixtures"))
-        let parser = ClaudeProvider().makeParser()
+        let parser = Agents.claude.makeParser()
         return try String(contentsOf: url, encoding: .utf8)
             .components(separatedBy: "\n")
             .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
@@ -179,16 +179,16 @@ import AbstractCore
     // MARK: - control
 
     @Test func stopsATaskOverTheControlChannel() throws {
-        let line = try #require(ClaudeProvider().buildStopTask("a19", requestId: "stop-1"))
+        let line = try #require(Agents.claude.buildStopTask("a19", requestId: "stop-1"))
         #expect(line == #"{"type":"control_request","request_id":"stop-1","request":{"subtype":"stop_task","task_id":"a19"}}"# + "\n")
-        #expect(CodexProvider().buildStopTask("a19", requestId: "r") == nil)
+        #expect(Agents.codex.buildStopTask("a19", requestId: "r") == nil)
     }
 
     @Test func movesWorkToTheBackgroundLikeCtrlB() throws {
-        let one = try #require(ClaudeProvider().buildBackground(toolUseId: "toolu_9", requestId: "bg-1"))
+        let one = try #require(Agents.claude.buildBackground(toolUseId: "toolu_9", requestId: "bg-1"))
         #expect(one == #"{"type":"control_request","request_id":"bg-1","request":{"subtype":"background_tasks","tool_use_id":"toolu_9"}}"# + "\n")
-        let all = try #require(ClaudeProvider().buildBackground(toolUseId: nil, requestId: "bg-2"))
+        let all = try #require(Agents.claude.buildBackground(toolUseId: nil, requestId: "bg-2"))
         #expect(all == #"{"type":"control_request","request_id":"bg-2","request":{"subtype":"background_tasks"}}"# + "\n")
-        #expect(CodexProvider().buildBackground(toolUseId: nil, requestId: "r") == nil)
+        #expect(Agents.codex.buildBackground(toolUseId: nil, requestId: "r") == nil)
     }
 }

@@ -6,7 +6,7 @@ import Testing
 struct ClaudeCompactionTests {
     static func events() throws -> [AgentEvent] {
         let url = try #require(Bundle.module.url(forResource: "claude-compact", withExtension: "jsonl", subdirectory: "Fixtures"))
-        let parser = ClaudeProvider().makeParser()
+        let parser = Agents.claude.makeParser()
         return try String(contentsOf: url, encoding: .utf8).split(separator: "\n").flatMap { parser.feed(String($0), stream: .stdout) }
     }
 
@@ -33,20 +33,20 @@ struct ClaudeCompactionTests {
     }
 
     @Test func aResultWithoutASummaryStillFinishesIt() {
-        let parser = ClaudeProvider().makeParser()
+        let parser = Agents.claude.makeParser()
         _ = parser.feed(#"{"type":"system","subtype":"compact_boundary","compact_metadata":{"trigger":"auto","pre_tokens":100,"post_tokens":10}}"#, stream: .stdout)
         let events = parser.feed(#"{"type":"result","subtype":"success","is_error":false,"result":"","usage":{}}"#, stream: .stdout)
         #expect(events.first == .compaction(.finished(CompactionResult(tokensBefore: 100, tokensAfter: 10), trigger: .auto, durationMs: nil)))
     }
 
     @Test func anExitWithoutASummaryStillFinishesIt() {
-        let parser = ClaudeProvider().makeParser()
+        let parser = Agents.claude.makeParser()
         _ = parser.feed(#"{"type":"system","subtype":"compact_boundary","compact_metadata":{"trigger":"manual","pre_tokens":100}}"#, stream: .stdout)
         #expect(parser.onExit(code: 0).first == .compaction(.finished(CompactionResult(tokensBefore: 100), trigger: .manual, durationMs: nil)))
     }
 
     @Test func otherStatusesSayNothing() {
-        let parser = ClaudeProvider().makeParser()
+        let parser = Agents.claude.makeParser()
         #expect(parser.feed(#"{"type":"system","subtype":"status","status":"requesting"}"#, stream: .stdout) == [])
     }
 
@@ -57,7 +57,7 @@ struct ClaudeCompactionTests {
     }
 
     @Test func claudeCompactsInStream() {
-        guard case let .inStream(prompt)? = ClaudeProvider().compaction else { Issue.record("not in-stream"); return }
+        guard case let .inStream(prompt)? = Agents.claude.compaction else { Issue.record("not in-stream"); return }
         #expect(prompt == "/compact")
     }
 }

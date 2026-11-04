@@ -82,8 +82,8 @@ struct SlashCommandsTests {
     }
 
     @Test func claudeAddsTasksAndTakesOverPermissions() {
-        #expect(ClaudeProvider().commands == ProviderCommands(extra: [.tasks, .compact], replaces: ["permissions": .mode]))
-        #expect(CodexProvider().commands == ProviderCommands(extra: [.compact]))
+        #expect(Agents.claude.commands == ProviderCommands(extra: [.tasks, .compact], replaces: ["permissions": .mode]))
+        #expect(Agents.codex.commands == ProviderCommands(extra: [.compact]))
     }
 
     @Test func compactIsTheAppsForAgentsThatCanCompact() {

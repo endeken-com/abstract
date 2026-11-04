@@ -117,7 +117,7 @@ struct TimelineTests {
     @Test func claudeFixtureAssemblesIntoReadableBlocks() throws {
         let url = try #require(Bundle.module.url(forResource: "claude-stream", withExtension: "jsonl", subdirectory: "Fixtures"))
         let text = try String(contentsOf: url, encoding: .utf8)
-        let parser = ClaudeProvider().makeParser()
+        let parser = Agents.claude.makeParser()
         var t = Timeline()
         for line in text.split(separator: "\n") { t.append(contentsOf: parser.feed(String(line), stream: .stdout)) }
         let blocks = t.blocks

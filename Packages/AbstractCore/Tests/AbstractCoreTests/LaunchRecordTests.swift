@@ -6,7 +6,7 @@ struct LaunchRecordTests {
     @Test func threeAgentsKeepTheirActualLaunchChoices() {
         let context = LaunchContext(cwd: "/tmp/project", prompt: "Fix it", permissionPolicy: .autoEdits,
                                     model: "chosen-model", effort: "high")
-        let providers: [any ProviderDefinition] = [ClaudeProvider(), CodexProvider(), Agents.opencode]
+        let providers: [any ProviderDefinition] = [Agents.claude, Agents.codex, Agents.opencode]
         for provider in providers {
             let spec = provider.buildLaunch(context)
             let record = LaunchRecord(spec: spec, prompt: context.prompt, model: context.model, effort: context.effort)

@@ -10,7 +10,7 @@ import AbstractCore
     // MARK: - Launch specs
 
     @Test func claudePlanAndAskUsePlanMode() throws {
-        let provider = ClaudeProvider()
+        let provider = Agents.claude
         for policy in [PermissionPolicy.plan, .readOnly] {
             let args = provider.buildLaunch(context(policy)).args
             let mode = try #require(args.firstIndex(of: "--permission-mode"))
@@ -21,7 +21,7 @@ import AbstractCore
     }
 
     @Test func codexPlanAndAskAreReadOnlyAndPlanStopsAfterPlanning() {
-        let provider = CodexProvider()
+        let provider = Agents.codex
         for policy in [PermissionPolicy.plan, .readOnly] {
             let args = provider.buildLaunch(context(policy)).args
             #expect(args.contains("read-only"))
@@ -60,7 +60,7 @@ import AbstractCore
 
     @Test func readsAPlanFromClaudesExitPlanModeFixture() throws {
         let url = try #require(Bundle.module.url(forResource: "claude-plan", withExtension: "jsonl", subdirectory: "Fixtures"))
-        let parser = ClaudeProvider().makeParser()
+        let parser = Agents.claude.makeParser()
         let events = try String(contentsOf: url, encoding: .utf8)
             .components(separatedBy: "\n")
             .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }

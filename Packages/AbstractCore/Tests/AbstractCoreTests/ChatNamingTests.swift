@@ -42,7 +42,7 @@ struct ScriptedAgent {
 
     func suggest(instructions: String = abstractInstructions, task: String = "The relay image push fails", focus: String = "",
                  attempts: Int = 2, timeout: Duration = .seconds(10)) async -> Result<ChatNaming.Suggestion, ChatNaming.Failure> {
-        await ChatNaming.suggest(executor: LocalExecutor.shared, provider: ClaudeProvider(), binary: binary,
+        await ChatNaming.suggest(executor: LocalExecutor.shared, provider: Agents.claude, binary: binary,
                                  instructions: instructions, task: task, focus: focus, attempts: attempts, timeout: timeout)
     }
 }
@@ -147,12 +147,12 @@ struct ScriptedAgent {
 /// Each agent's own naming call and how its answer is read.
 @Suite struct ProviderNamingTests {
     @Test func claudeNamesWithHaikuAndNoTools() throws {
-        let spec = try #require(ClaudeProvider().namingLaunch(prompt: "Name it", home: "/tmp/home", binary: nil, model: "opus"))
+        let spec = try #require(Agents.claude.namingLaunch(prompt: "Name it", home: "/tmp/home", binary: nil, model: "opus"))
         #expect(spec.command == "claude" && spec.cwd == "/tmp/home")
         #expect(spec.args == ["-p", "--tools", "", "--model", "haiku", "--output-format", "json", "--no-session-persistence"])
         #expect(spec.stdinInitial == "Name it" && !spec.keepStdinOpen)
 
-        let provider = ClaudeProvider()
+        let provider = Agents.claude
         let fenced = #"{"type":"result","is_error":false,"result":"```json\n{\n  \"title\": \"Fix the login button alignment\",\n  \"branch\": \"fix/Login-Button\"\n}\n```"}"#
         #expect(provider.namingAnswer(fenced).flatMap(ChatNaming.parse) == .init(title: "Fix the login button alignment", branch: "fix/login-button"))
         #expect(provider.namingAnswer(#"{"is_error":true,"result":"{\"title\":\"x\",\"branch\":\"y\"}"}"#) == nil)
@@ -162,7 +162,7 @@ struct ScriptedAgent {
     }
 
     @Test func codexNamesAtLowEffortInAReadOnlySandbox() throws {
-        let spec = try #require(CodexProvider().namingLaunch(prompt: "-Name it", home: "/tmp/home", binary: "/bin/codex", model: "gpt-test"))
+        let spec = try #require(Agents.codex.namingLaunch(prompt: "-Name it", home: "/tmp/home", binary: "/bin/codex", model: "gpt-test"))
         #expect(spec.command == "/bin/codex")
         #expect(spec.args == ["exec", "--json", "-C", "/tmp/home", "--skip-git-repo-check", "-s", "read-only",
                               "-c", "model_reasoning_effort=\"low\"", "-m", "gpt-test", "--", "-Name it"])
@@ -174,9 +174,9 @@ struct ScriptedAgent {
             {"type":"item.completed","item":{"type":"agent_message","text":"{\\"title\\":\\"Fix login button\\",\\"branch\\":\\"bugfix/login-button\\"}"}}
             {"type":"turn.completed"}
             """
-        #expect(CodexProvider().namingAnswer(output).flatMap(ChatNaming.parse) == .init(title: "Fix login button", branch: "bugfix/login-button"))
-        #expect(CodexProvider().namingAnswer(#"{"type":"turn.failed"}"#) == nil)
-        #expect(CodexProvider().namingError(output) == nil)
+        #expect(Agents.codex.namingAnswer(output).flatMap(ChatNaming.parse) == .init(title: "Fix login button", branch: "bugfix/login-button"))
+        #expect(Agents.codex.namingAnswer(#"{"type":"turn.failed"}"#) == nil)
+        #expect(Agents.codex.namingError(output) == nil)
 
         // The API's message, out of the JSON Codex wraps it in.
         let failed = """
@@ -184,8 +184,8 @@ struct ScriptedAgent {
             {"type":"turn.started"}
             {"type":"turn.failed","error":{"message":"{\\"type\\":\\"error\\",\\"status\\":400,\\"error\\":{\\"type\\":\\"invalid_request_error\\",\\"message\\":\\"The 'gpt-test' model is not supported.\\"}}"}}
             """
-        #expect(CodexProvider().namingError(failed) == "The 'gpt-test' model is not supported.")
-        #expect(CodexProvider().namingError(#"{"type":"error","message":"Reconnecting…"}"#) == "Reconnecting…")
+        #expect(Agents.codex.namingError(failed) == "The 'gpt-test' model is not supported.")
+        #expect(Agents.codex.namingError(#"{"type":"error","message":"Reconnecting…"}"#) == "Reconnecting…")
     }
 
     @Test func openCodeNamesThroughRunWithAnAgentThatHasNoTools() throws {
@@ -236,7 +236,7 @@ struct ScriptedAgent {
         #expect(!provider.namingCheckPasses(resolved.replacingOccurrences(of: #""name": "abstract-naming""#, with: #""name": "build""#)))
         #expect(!provider.namingCheckPasses(#"{"name":"abstract-naming","tools":{},"permission":[{"permission":"*","pattern":"*","action":"deny"}]}"#))
         #expect(!provider.namingCheckPasses("Agent abstract-naming not found, run 'opencode agent list' to get an agent list"))
-        #expect(ClaudeProvider().namingCheck(home: "/tmp", binary: nil) == nil && CodexProvider().namingCheck(home: "/tmp", binary: nil) == nil)
+        #expect(Agents.claude.namingCheck(home: "/tmp", binary: nil) == nil && Agents.codex.namingCheck(home: "/tmp", binary: nil) == nil)
     }
 
     @Test func anOpenCodeThatWouldKeepItsToolsIsNeverAsked() async throws {

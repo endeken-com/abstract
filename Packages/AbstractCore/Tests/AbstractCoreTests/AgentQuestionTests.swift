@@ -42,7 +42,7 @@ import AbstractCore
         #expect(answered["questions"] == Self.input["questions"])
         #expect(answered["answers"] == .object(["Which approach?": .string("Patch")]))
 
-        let line = try #require(ClaudeProvider().buildPermissionResponse(requestId: "q-1", allow: true, input: answered))
+        let line = try #require(Agents.claude.buildPermissionResponse(requestId: "q-1", allow: true, input: answered))
         let response = try #require(JSONValue.parse(line))["response"]?["response"]
         #expect(response?["behavior"]?.string == "allow")
         #expect(response?["updatedInput"]?["answers"]?["Which approach?"]?.string == "Patch")
