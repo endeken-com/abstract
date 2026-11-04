@@ -232,8 +232,7 @@ function PlanCard({ mac, sessionId, plan, permissions, onRequestChanges }: { mac
   };
   return <View style={s.permission}><View style={s.permissionActions}><Glyph name="list.bullet.clipboard" size={14} color={muted} /><Text style={s.permissionTitle}>{planTitle(plan)}{plan.status === 'changesRequested' ? ' · changes requested' : ''}</Text></View>{!!current && <Markdown style={markdownStyles} rules={codeRules}>{current}</Markdown>}{history.length > 0 && <><Chip label={showsHistory ? 'Hide earlier revisions' : `Show ${history.length} earlier ${history.length === 1 ? 'revision' : 'revisions'}`} onPress={() => setShowsHistory(!showsHistory)} />{showsHistory && history.map((revision, index) => <View key={index} style={{ opacity: 0.7 }}><Text style={s.thinkingLabel}>Revision {index + 1}</Text><Markdown style={markdownStyles} rules={codeRules}>{revision}</Markdown></View>)}</>}<View style={s.permissionActions}><Chip label={busy === 'approve' ? 'Starting…' : 'Approve and start'} active onPress={() => act('approve')} /><Chip label="Request changes" onPress={() => act('changes')} /><Chip label="Discard" onPress={() => act('discard')} /></View></View>;
 }
-function ToolEditPreview({ edit }: { edit: EditPreview }) {
-  const [showAll, setShowAll] = useState(false);
+function ToolEditPreview({ edit, showAll, onShowAll }: { edit: EditPreview; showAll: boolean; onShowAll: () => void }) {
   const highlighted = useMemo(() => highlightDiffLines(edit.lines, edit.path), [edit]);
   const shown = showAll ? edit.lines : edit.lines.slice(0, 14);
   return <View style={editStyles.preview}>
@@ -246,7 +245,7 @@ function ToolEditPreview({ edit }: { edit: EditPreview }) {
         {highlighted[index].map((part, partIndex) => <Text key={partIndex} style={{ color: part.color }}>{part.text}</Text>)}
       </Text>
     </React.Fragment>)}</View></ScrollView>
-    {edit.lines.length > shown.length && <Pressable onPress={() => setShowAll(true)} style={editStyles.more}><Text style={editStyles.moreText}>Show {edit.lines.length - shown.length} more lines</Text></Pressable>}
+    {edit.lines.length > shown.length && <Pressable onPress={onShowAll} style={editStyles.more}><Text style={editStyles.moreText}>Show {edit.lines.length - shown.length} more lines</Text></Pressable>}
   </View>;
 }
 const monogramColors = ['#4A4A51', '#7A7A83', '#8E877C', '#7C8B74', '#9E7F7F', '#86778A', '#A09780'];
@@ -260,18 +259,18 @@ function ToolRowIcon({ indicator, failed, path }: { indicator: ToolIndicator; fa
     {failed && <View style={{ position: 'absolute', right: 0, bottom: 0, backgroundColor: canvas, borderRadius: 5 }}><Glyph name="exclamationmark.circle.fill" size={8} color="#EF6461" /></View>}
   </View>;
 }
-function TranscriptRow({ row, plugins }: { row: ChatItem; plugins: InstalledPlugin[] }) {
-  const [expanded, setExpanded] = useState(false);
+function TranscriptRow({ row, plugins, expandedRows, onToggle }: { row: ChatItem; plugins: InstalledPlugin[]; expandedRows: Record<string, boolean>; onToggle: (id: string) => void }) {
+  const expanded = !!expandedRows[row.id];
   if (row.kind === 'thinking') return <View style={s.thinkingRow}><Text style={s.thinkingLabel}>{row.pending ? 'Thinking' : 'Thought'}</Text><Text style={s.thinkingText}>{row.text.trim()}</Text></View>;
   if (row.kind === 'turn') return <View style={s.turnRow}><View style={s.turnRule} /><Text style={s.thinkingLabel}>{duration(row.durationMs || 0)}</Text><View style={s.turnRule} /></View>;
   if (row.kind === 'user') return <View style={s.userRow}><View style={s.userBubble}><Text style={s.prose}>{row.text}</Text></View></View>;
-  if (row.kind === 'tool') return <View><Pressable accessibilityRole="button" accessibilityLabel={`${row.text} ${row.target || ''}`} onPress={() => setExpanded(!expanded)} style={s.toolRow}>
+  if (row.kind === 'tool') return <View><Pressable accessibilityRole="button" accessibilityLabel={`${row.text} ${row.target || ''}`} onPress={() => { if (row.detail || row.edits?.length) onToggle(row.id); }} style={s.toolRow}>
     <ToolRowIcon indicator={resolveToolIndicator(row.toolName || '', row.toolInput, plugins)} failed={row.failed} path={row.path && toolKind(row.toolName || '') === 'edit' ? row.path : undefined} />
     <Text style={s.toolVerb}>{row.text}</Text>{!!row.target && <Text numberOfLines={1} style={s.toolLabel}>{row.target}</Text>}
     {(row.additions !== undefined || row.deletions !== undefined) && <Text style={{ fontFamily: 'JetBrainsMono', fontSize: 10, flexShrink: 0 }}><Text style={{ color: '#4CC38A' }}>+{row.additions || 0}</Text><Text style={{ color: tertiary }}> </Text><Text style={{ color: '#EF6461' }}>−{row.deletions || 0}</Text></Text>}
     {row.failed && <Text style={s.toolFailed}>Failed</Text>}{row.pending && <Text style={s.toolPending}>Working</Text>}
     {(!!row.detail || !!row.edits?.length) && <Glyph name={expanded ? 'chevron.up' : 'chevron.down'} size={10} color={tertiary} />}
-  </Pressable>{expanded && !!row.edits?.length && <View style={editStyles.previews}>{row.edits.map((edit, index) => <ToolEditPreview key={`${edit.path}-${index}`} edit={edit} />)}</View>}{expanded && !!row.detail && (!row.edits?.length || row.failed) && <Text selectable style={s.toolDetail}>{row.detail}</Text>}</View>;
+  </Pressable>{expanded && !!row.edits?.length && <View style={editStyles.previews}>{row.edits.map((edit, index) => { const previewId = `${row.id}:preview:${edit.path}:${index}`; return <ToolEditPreview key={`${edit.path}-${index}`} edit={edit} showAll={!!expandedRows[previewId]} onShowAll={() => onToggle(previewId)} />; })}</View>}{expanded && !!row.detail && (!row.edits?.length || row.failed) && <Text selectable style={s.toolDetail}>{row.detail}</Text>}</View>;
   if (row.kind === 'error') return <Text style={[s.prose, { color: '#F08A84' }]}>{row.text}</Text>;
   return <Markdown style={markdownStyles} rules={codeRules}>{row.text}</Markdown>;
 }
@@ -330,8 +329,8 @@ function groupToolRows(rows: ChatItem[]): Array<ChatItem | TranscriptGroupItem> 
   }
   return result;
 }
-function ToolGroupRow({ group, plugins }: { group: TranscriptGroupItem; plugins: InstalledPlugin[] }) {
-  const [expanded, setExpanded] = useState(group.groupKind === 'command');
+function ToolGroupRow({ group, plugins, expandedRows, onToggle }: { group: TranscriptGroupItem; plugins: InstalledPlugin[]; expandedRows: Record<string, boolean>; onToggle: (id: string, defaultExpanded?: boolean) => void }) {
+  const expanded = expandedRows[group.id] ?? group.groupKind === 'command';
   const pending = group.rows.some(row => row.pending);
   const failed = group.rows.filter(row => row.failed).length;
   const summary = group.groupKind === 'command' ? `${group.rows.length} commands` : (() => {
@@ -343,14 +342,14 @@ function ToolGroupRow({ group, plugins }: { group: TranscriptGroupItem; plugins:
     const other = group.rows.length - reads.length - searches - web - pages;
     return [files && `${files} file${files === 1 ? '' : 's'}`, searches && `${searches} search${searches === 1 ? '' : 'es'}`, web && `${web} web search${web === 1 ? '' : 'es'}`, pages && `${pages} page${pages === 1 ? '' : 's'}`, other > 0 && `${other} lookup${other === 1 ? '' : 's'}`].filter(Boolean).join(', ');
   })();
-  return <View><Pressable accessibilityRole="button" accessibilityLabel={`${pending ? 'Running' : 'Ran'} ${summary}`} onPress={() => setExpanded(!expanded)} style={s.toolRow}>
+  return <View><Pressable accessibilityRole="button" accessibilityLabel={`${pending ? 'Running' : 'Ran'} ${summary}`} onPress={() => onToggle(group.id, group.groupKind === 'command')} style={s.toolRow}>
     <ToolRowIcon indicator={group.groupKind === 'command' && group.rows.every(row => JSON.stringify(resolveToolIndicator(row.toolName || '', row.toolInput, plugins)) === JSON.stringify(resolveToolIndicator(group.rows[0].toolName || '', group.rows[0].toolInput, plugins))) ? resolveToolIndicator(group.rows[0].toolName || '', group.rows[0].toolInput, plugins) : { kind: 'symbol', symbol: group.groupKind === 'command' ? 'terminal' : 'magnifyingglass', label: 'Tool' }} failed={failed > 0} />
     <Text style={s.toolVerb}>{group.groupKind === 'command' ? pending ? 'Running' : 'Ran' : pending ? 'Exploring' : 'Explored'}</Text>
     <Text style={s.toolLabel}>{summary}</Text>{failed > 0 && <Text style={s.toolFailed}>{failed} failed</Text>}
     <Glyph name={expanded ? 'chevron.up' : 'chevron.down'} size={10} color={tertiary} />
-  </Pressable>{expanded && <View style={{ marginLeft: 9, paddingLeft: 10, borderLeftWidth: 1, borderLeftColor: border }}>{group.rows.map(row => <TranscriptRow key={row.id} row={row} plugins={plugins} />)}</View>}</View>;
+  </Pressable>{expanded && <View style={{ marginLeft: 9, paddingLeft: 10, borderLeftWidth: 1, borderLeftColor: border }}>{group.rows.map(row => <TranscriptRow key={row.id} row={row} plugins={plugins} expandedRows={expandedRows} onToggle={onToggle} />)}</View>}</View>;
 }
-const renderTranscriptItem = (item: ChatItem | TranscriptGroupItem, plugins: InstalledPlugin[]) => item.kind === 'group' ? <ToolGroupRow group={item} plugins={plugins} /> : <TranscriptRow row={item} plugins={plugins} />;
+const renderTranscriptItem = (item: ChatItem | TranscriptGroupItem, plugins: InstalledPlugin[], expandedRows: Record<string, boolean>, onToggle: (id: string, defaultExpanded?: boolean) => void) => item.kind === 'group' ? <ToolGroupRow group={item} plugins={plugins} expandedRows={expandedRows} onToggle={onToggle} /> : <TranscriptRow row={item} plugins={plugins} expandedRows={expandedRows} onToggle={onToggle} />;
 const transcriptKey = (row: ChatItem | TranscriptGroupItem) => row.id;
 export function ChatWorkspace({ route, navigation }: any) {
   const [, force] = useState(0);
@@ -380,6 +379,8 @@ export function ChatWorkspace({ route, navigation }: any) {
   const [composerFocused, setComposerFocused] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
   const [anchored, setAnchored] = useState(false);
+  // FlatList recycles offscreen rows; keep disclosures open across remounts.
+  const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
   const [attachments, setAttachments] = useState<PickedAttachment[]>([]);
   const [menu, setMenu] = useState<'manage' | null>(null);
   const [slashChoosing, setSlashChoosing] = useState<SlashChoiceKind | null>(null);
@@ -467,17 +468,29 @@ export function ChatWorkspace({ route, navigation }: any) {
       ? follow.current.endGesture(contentOffset.y, layoutMeasurement.height, contentSize.height)
       : follow.current.scroll(contentOffset.y, layoutMeasurement.height, contentSize.height);
     setAtBottom(previous => previous === next ? previous : next);
+    if (ended && next) setAnchored(false);
     if (follow.current.isGestureActive && mayLoadOlder.current && contentOffset.y < 180 && mac.hasOlder(id)) loadEarlier();
   }, [id, loadEarlier]);
   const onTranscriptScroll = React.useCallback((event: any) => {
     updateScroll(event);
   }, [updateScroll]);
   const onTranscriptSize = React.useCallback(() => scheduleFollow(), [scheduleFollow]);
-  const onTranscriptDrag = React.useCallback(() => { cancelFollow(); follow.current.beginGesture(); setAnchored(true); mayLoadOlder.current = true; }, [cancelFollow]);
+  const onTranscriptDrag = React.useCallback((event: any) => { cancelFollow(); follow.current.beginGesture(event.nativeEvent.contentOffset.y); if (follow.current.shouldAnchor) setAnchored(true); mayLoadOlder.current = true; }, [cancelFollow]);
+  const onInspect = React.useCallback(() => {
+    cancelFollow();
+    follow.current.inspect();
+    setAtBottom(false);
+    setAnchored(false);
+  }, [cancelFollow]);
+  const toggleTranscriptRow = React.useCallback((rowId: string, defaultExpanded = false) => {
+    onInspect();
+    setExpandedRows(current => ({ ...current, [rowId]: !(current[rowId] ?? defaultExpanded) }));
+  }, [onInspect]);
   useEffect(() => {
     follow.current.jump();
     mayLoadOlder.current = false;
     setAtBottom(true);
+    setExpandedRows({});
     scheduleFollow();
   }, [id, scheduleFollow]);
   useEffect(() => {
@@ -710,13 +723,14 @@ export function ChatWorkspace({ route, navigation }: any) {
   const jumpToLatest = () => {
     follow.current.jump();
     setAtBottom(true);
+    setAnchored(false);
     scheduleFollow();
   };
-  // Native visible-row preservation fights scrollToEnd as streamed rows change height.
-  // Keep it from the reader's first touch until the transcript follows new output again.
+  // Native visible-row preservation helps with older rows, but resizing an open
+  // tool preview can make its anchor pull the transcript upward.
   return <SafeAreaView edges={['left', 'right']} style={s.root}>
     {pauseRow && <View style={s.pauseBanner}><Glyph name="pause.circle.fill" size={16} color="#E8B34A" /><Text style={s.pauseBannerText}>{pauseRow.text}</Text><Pressable accessibilityRole="button" accessibilityLabel={pauseRow.button} accessibilityState={{ disabled: !pauseRow.canAct }} disabled={!pauseRow.canAct} onPress={() => mac.request(pauseRow.request.name, pauseRow.request.args).catch(error => Alert.alert('Abstract', String(error.message || error)))} style={[s.pauseBannerButton, !pauseRow.canAct && { opacity: 0.45 }]}><Text style={s.pauseBannerButtonText}>{pauseRow.button}</Text></Pressable></View>}
-    <SwipeForward onSwipe={() => navigation.navigate('Review', { hostId, sessionId: id })} onBack={() => navigation.goBack()}><BlurTargetView ref={blurTarget} style={{ flex: 1 }}><FlatList ref={scroll} style={s.transcript} contentInsetAdjustmentBehavior="automatic" contentContainerStyle={[s.transcriptContent, { paddingBottom: bottomPanelHeight + keyboardOffset + 20 }]} data={transcriptRows} keyExtractor={transcriptKey} renderItem={({ item }) => renderTranscriptItem(item, mac.snapshot?.plugins || [])} initialNumToRender={14} maxToRenderPerBatch={12} windowSize={7} updateCellsBatchingPeriod={30} maintainVisibleContentPosition={anchored ? { minIndexForVisible: 1 } : undefined} ListHeaderComponent={hasOlder || loadingHistory ? <Pressable accessibilityRole="button" accessibilityLabel="Load older messages" disabled={loadingHistory} onPress={loadEarlier} style={{ alignItems: 'center', paddingVertical: 10 }}>{loadingHistory ? <ActivityIndicator size="small" color={muted} /> : <Text style={s.thinkingLabel}>Load older messages</Text>}</Pressable> : null} ListFooterComponent={transcriptFooter} onContentSizeChange={onTranscriptSize} onLayout={scheduleFollow} onScroll={onTranscriptScroll} onScrollBeginDrag={onTranscriptDrag} onScrollEndDrag={event => updateScroll(event, true)} onMomentumScrollBegin={() => { follow.current.beginGesture(); setAnchored(true); }} onMomentumScrollEnd={event => updateScroll(event, true)} scrollEventThrottle={16} keyboardShouldPersistTaps="handled" />{!atBottom && <Pressable accessibilityLabel="Jump to latest" style={[s.jump, { bottom: bottomPanelHeight + keyboardOffset + 12 }]} onPress={jumpToLatest}><Glyph name="arrow.down" size={14} color={ink} /></Pressable>}</BlurTargetView></SwipeForward>
+    <SwipeForward onSwipe={() => navigation.navigate('Review', { hostId, sessionId: id })} onBack={() => navigation.goBack()}><BlurTargetView ref={blurTarget} style={{ flex: 1 }}><FlatList ref={scroll} style={s.transcript} contentInsetAdjustmentBehavior="automatic" contentContainerStyle={[s.transcriptContent, { paddingBottom: bottomPanelHeight + keyboardOffset + 20 }]} data={transcriptRows} keyExtractor={transcriptKey} renderItem={({ item }) => renderTranscriptItem(item, mac.snapshot?.plugins || [], expandedRows, toggleTranscriptRow)} initialNumToRender={14} maxToRenderPerBatch={12} windowSize={7} updateCellsBatchingPeriod={30} maintainVisibleContentPosition={anchored ? { minIndexForVisible: 1 } : undefined} ListHeaderComponent={hasOlder || loadingHistory ? <Pressable accessibilityRole="button" accessibilityLabel="Load older messages" disabled={loadingHistory} onPress={loadEarlier} style={{ alignItems: 'center', paddingVertical: 10 }}>{loadingHistory ? <ActivityIndicator size="small" color={muted} /> : <Text style={s.thinkingLabel}>Load older messages</Text>}</Pressable> : null} ListFooterComponent={transcriptFooter} onContentSizeChange={onTranscriptSize} onLayout={scheduleFollow} onScroll={onTranscriptScroll} onScrollBeginDrag={onTranscriptDrag} onScrollEndDrag={event => updateScroll(event, true)} onMomentumScrollBegin={event => { follow.current.beginGesture(event.nativeEvent.contentOffset.y); if (follow.current.shouldAnchor) setAnchored(true); }} onMomentumScrollEnd={event => updateScroll(event, true)} scrollEventThrottle={16} keyboardShouldPersistTaps="handled" />{!atBottom && <Pressable accessibilityLabel="Jump to latest" style={[s.jump, { bottom: bottomPanelHeight + keyboardOffset + 12 }]} onPress={jumpToLatest}><Glyph name="arrow.down" size={14} color={ink} /></Pressable>}</BlurTargetView></SwipeForward>
     <ProgressiveBlur edge="bottom" blurTarget={blurTarget} style={[s.bottomBlur, { bottom: keyboardOffset, height: bottomPanelHeight + 24 }]} />
     <View style={[s.bottomPanel, { bottom: keyboardOffset }]} onLayout={event => {
       const measuredHeight = event?.nativeEvent?.layout?.height;
