@@ -459,8 +459,54 @@ struct Snapshotter {
             }
             await shootPlugins(theme: t, beside: idle?.id)
         }
+        if !pluginsOnly { await shootEditColours(themes: themes) }
         UserDefaults.standard.set(ThemeChoice.graphite.rawValue, forKey: "theme")
         await projectLifecycleCheck()
+    }
+
+    /// A chat's edit rows syntax-coloured as in Review (ABS-183): JavaScript,
+    /// Swift, CSS and JSON, and a file of no known language that stays plain.
+    /// Last, since it replaces the Codex chat's history.
+    private func shootEditColours(themes: [ThemeChoice]) async {
+        guard let chat = model.sessions.first(where: { $0.providerId == "codex" }) else { return }
+        let cwd = chat.worktreePath ?? "/tmp/demo"
+        func json(_ object: [String: Any]) -> OutputLine {
+            let data = (try? JSONSerialization.data(withJSONObject: object, options: [.withoutEscapingSlashes])) ?? Data()
+            return OutputLine(stream: .stdout, line: String(data: data, encoding: .utf8) ?? "{}")
+        }
+        let edits: [(path: String, start: Int, lines: [String])] = [
+            ("src/app.js", 4, ["   // Reserve the cover's space so the hero doesn't shift.", "-  const cover = document.querySelector('.cover');",
+                               "+  const cover = document.querySelector('#hero .cover');", "+  cover.style.aspectRatio = '16 / 9';", "   return render(cover, { lazy: true });"]),
+            ("src/pages/Hero.swift", 1, ["-let headline = \"Build faster with your whole team\"", "+let headline = \"Ship faster, together.\" // shorter",
+                                         " let maxWidth: CGFloat = 640"]),
+            ("src/styles.css", 12, [" .hero {", "-  min-height: 100vh;", "+  min-height: 80svh; /* mobile toolbars */", "   color: #1f2937;", " }"]),
+            ("package.json", 2, ["   \"private\": true,", "-  \"version\": \"1.3.0\",", "+  \"version\": \"1.4.0\",", "   \"scripts\": { \"start\": \"node server.js\" }"]),
+            ("notes.hero", 1, ["-Hero copy: long", "+Hero copy: short, says what it does"]),
+        ]
+        var lines = [json(["type": "system", "subtype": "init", "session_id": "demo-edits", "cwd": cwd, "model": "claude-opus-5", "permissionMode": "acceptEdits"]),
+                     json(["type": "user", "session_id": "demo-edits", "message": ["role": "user", "content": "Tighten the hero copy and fix layout shift on mobile"]])]
+        for (i, edit) in edits.enumerated() {
+            let id = "toolu_demo_colour_\(i)"
+            let path = "\(cwd)/\(edit.path)"
+            let old = edit.lines.filter { !$0.hasPrefix("+") }.map { String($0.dropFirst()) }.joined(separator: "\n")
+            let new = edit.lines.filter { !$0.hasPrefix("-") }.map { String($0.dropFirst()) }.joined(separator: "\n")
+            lines.append(json(["type": "assistant", "session_id": "demo-edits", "message": ["id": "msg_\(id)", "role": "assistant", "content": [
+                ["type": "tool_use", "id": id, "name": "Edit", "input": ["file_path": path, "old_string": old, "new_string": new]]]]]))
+            let removed = edit.lines.filter { !$0.hasPrefix("+") }.count, added = edit.lines.filter { !$0.hasPrefix("-") }.count
+            lines.append(json(["type": "user", "session_id": "demo-edits", "message": ["role": "user", "content": [
+                ["tool_use_id": id, "type": "tool_result", "content": "The file has been updated."]]],
+                "tool_use_result": ["type": "update", "filePath": path, "structuredPatch": [[
+                    "oldStart": edit.start, "oldLines": removed, "newStart": edit.start, "newLines": added, "lines": edit.lines]]]]))
+        }
+        lines.append(json(["type": "result", "subtype": "success", "session_id": "demo-edits", "is_error": false, "duration_ms": 9_000, "num_turns": 1, "result": "Done."]))
+        model.feed(chat.id).reset(ChatStream.timeline(lines, currentProvider: "claude"))
+        model.open(chat.id)
+        UserDefaults.standard.set(TranscriptMode.verbose.rawValue, forKey: "chat.transcript")
+        for theme in themes {
+            UserDefaults.standard.set(theme.rawValue, forKey: "theme")
+            await shot("\(theme.rawValue)-43-chat-edit-colours", settle: 1.5)
+        }
+        UserDefaults.standard.set(TranscriptMode.normal.rawValue, forKey: "chat.transcript")
     }
 
     /// Every bundled plugin, on (ABS-134): each screen, Kanban's three tabs,
