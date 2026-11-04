@@ -28,8 +28,10 @@ import Testing
         (value?.array ?? []).compactMap(AgentEventJSON.decode)
     }
 
+    /// It hands its thread back now and then: CI runs tests on very few, and
+    /// async tests elsewhere time out behind seconds of parsing.
     @Test(arguments: fixtures)
-    func replaysAsTheSwiftParserDid(_ fixture: String) throws {
+    func replaysAsTheSwiftParserDid(_ fixture: String) async throws {
         let agent = String(fixture.prefix { $0 != "-" })
         let plugin = try #require(AgentPlugins.shared.anyAgent(agent), "no bundled agent plugin for \(agent)")
         let lines = try Self.lines(fixture)
@@ -39,6 +41,7 @@ import Testing
             #expect(expected.count == lines.count)
             let parser = plugin.makeParser()
             for (index, (line, want)) in zip(lines, expected).enumerated() {
+                if index % 20 == 19 { await Task.yield() }
                 #expect(parser.feed(line, stream: stream) == Self.events(want), "\(fixture) line \(index + 1) on \(stream)")
             }
             // Read in one batch, as a log is replayed, it's the same again.
