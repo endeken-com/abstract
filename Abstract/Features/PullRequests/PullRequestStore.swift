@@ -283,7 +283,7 @@ extension AppModel {
         pullRequests[sessionId] = PullRequestAssociation.retained(pullRequests[sessionId],
                                                                   pinned: pinnedPullRequests[sessionId])
         pullRequestLookupsAt[sessionId] = nil
-        reloadSessions()
+        replaceSession(session)
     }
 
     /// Before the chat's branch is pushed or proposed: the one its worktree

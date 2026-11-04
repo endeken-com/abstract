@@ -11,6 +11,7 @@ struct AutomationsView: View {
     @State private var creating = false
 
     var body: some View {
+        let _ = Perf.event("body.Automations")
         Group {
             if creating {
                 AutomationPage(existing: nil, draft: .new(for: model),

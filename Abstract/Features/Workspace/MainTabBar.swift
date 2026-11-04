@@ -13,6 +13,7 @@ struct MainTabBar: View {
     var inTitleBand = false
 
     var body: some View {
+        let _ = Perf.event("body.MainTabBar")
         HStack(spacing: Space.sm) {
             // The + follows the last tab; when the tabs outgrow the row they
             // scroll, with the + at their end. One scroll view at every

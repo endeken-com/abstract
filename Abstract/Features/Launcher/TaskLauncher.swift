@@ -59,6 +59,7 @@ struct TaskLauncher: View {
     }
 
     var body: some View {
+        let _ = Perf.event("body.TaskLauncher")
         VStack(alignment: .leading, spacing: 0) {
             GrowingTextEditor(text: promptBinding, placeholder: "Describe the task. Be as specific as you would with a colleague.",
                               font: BTFont.ui(14), lineSpacing: 3, lines: 3...14, focused: $focused)

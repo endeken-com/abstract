@@ -21,15 +21,17 @@ extension AppModel {
     }
 
     func activateTab(_ id: String) {
-        mainTabs.activate(id)
-        follow()
+        Perf.measure("activateTab") {
+            mainTabs.activate(id)
+            follow()
+        }
     }
 
     func keepTab(_ id: String) { mainTabs.keep(id) }
 
     /// The file showing, when a file tab is.
     var activeFileDocument: EditorDocument? {
-        guard case let .file(sessionId, path)? = mainTabs.active?.kind, let root = session(sessionId)?.worktreePath else { return nil }
+        guard case let .file(sessionId, path)? = mainTabs.active?.kind, let root = chatSummary(sessionId)?.worktreePath else { return nil }
         return EditorStore.shared.existing(root: root, path: path, in: sessionId)
     }
 

@@ -18,6 +18,7 @@ struct SidebarView: View {
     @State private var showOlderDone = false
 
     var body: some View {
+        let _ = Perf.event("body.Sidebar")
         VStack(spacing: 0) {
             list
             Text("Version \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—")")
@@ -32,6 +33,8 @@ struct SidebarView: View {
                 .padding(.horizontal, Rail.inset)
                 .padding(.vertical, 6)
         }
+        // Apart from the list, so opening a chat doesn't rebuild every row (ABS-184).
+        .background(ShownChatWatcher())
     }
 
     private var filter: SidebarChats.Filter {
@@ -139,10 +142,6 @@ struct SidebarView: View {
             if kept != model.archivedSelection { model.archivedSelection = kept }
         }
         .onChange(of: model.archivedSelection) { _, picked in if picked.count > 1 { focused = true } }
-        // Opening a chat outside the picks lets them go.
-        .onChange(of: model.selectedSessionId) { _, id in
-            if let id, !model.archivedSelection.contains(id) { model.archivedSelection = ChatSelection() }
-        }
     }
 
     /// The Archived group's chats as shown, the ones that can be picked
@@ -234,6 +233,17 @@ struct SidebarView: View {
         let next = current.map { min(max($0 + delta, 0), unique.count - 1) } ?? (delta > 0 ? 0 : unique.count - 1)
         model.open(unique[next])
         return .handled
+    }
+}
+
+/// Opening a chat outside the archived picks lets them go.
+private struct ShownChatWatcher: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        Color.clear.onChange(of: model.selectedSessionId) { _, id in
+            if let id, !model.archivedSelection.contains(id) { model.archivedSelection = ChatSelection() }
+        }
     }
 }
 
@@ -639,8 +649,10 @@ struct RailChatRow: View {
     @FocusState private var fieldFocused: Bool
 
     var body: some View {
+        let _ = Perf.event("body.RailChatRow")
         let picked = pickOrder != nil && !model.archivedSelection.isEmpty
-        let selected = picked ? model.archivedSelection.contains(session.id) : model.selectedSessionId == session.id
+        // Its own mark, not the chat showing: opening a chat redraws only the two rows it changes.
+        let selected = picked ? model.archivedSelection.contains(session.id) : model.shownMark(session.id).isShown
         let unreachable = model.remote.unreachableMessage(session.id)
         let stalled = unreachable == nil && (model.stallState(session.id)?.isStalled ?? false)
         let line = SidebarChats.line(for: chat, showProject: showProject)

@@ -171,7 +171,7 @@ extension AppModel {
         s.apply(profile.snapshot)
         s.workflow = progress
         try? store.save(s)
-        reload()
+        replaceSession(s)
         // New instructions and permissions take effect when the agent starts again.
         if instructionsChanged, isAlive(sessionId) { needsRelaunch.insert(sessionId) }
         engine.record(sessionId: sessionId, OutputLine(stream: .note, line: WorkflowEngine.stepNote(
@@ -185,7 +185,7 @@ extension AppModel {
         guard progress != s.workflow else { return }
         s.workflow = progress
         try? store.save(s)
-        reload()
+        replaceSession(s)
     }
 
     // MARK: Events

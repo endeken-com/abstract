@@ -11,6 +11,7 @@ struct HomeView: View {
     }
 
     var body: some View {
+        let _ = Perf.event("body.Home")
         ScrollView {
             VStack(spacing: 0) {
                 VStack(spacing: Space.md) {

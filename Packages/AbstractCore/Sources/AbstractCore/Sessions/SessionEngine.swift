@@ -22,6 +22,8 @@ public final class SessionEngine: Sendable {
     private let state = Mutex<[String: Running]>([:])
     /// Each chat's queued messages, read from beside its log when first asked for.
     private let queues = Mutex<[String: [QueuedMessage]]>([:])
+    /// Lines in each log, with the size it had then, by path: see `lineCount`.
+    private let lineCounts = Mutex<[String: (size: UInt64, lines: Int)]>([:])
 
     private struct Running: @unchecked Sendable {
         let process: RunningProcess
@@ -77,6 +79,7 @@ public final class SessionEngine: Sendable {
                 guard let self else { return }
                 _ = self.state.withLock { $0.removeValue(forKey: sessionId) }
                 writer.close()
+                self.remember(logURL, lines: writer.count)
                 self.continuation.yield(.exit(sessionId: sessionId, code: code))
             }
         )
@@ -202,7 +205,7 @@ public final class SessionEngine: Sendable {
     }
 
     private func queueFile(_ sessionId: String) -> URL {
-        logDirectory.appendingPathComponent("\(sessionId).queue.json")
+        logDirectory.appendingPathComponent("\(sessionId).queue.json", isDirectory: false)
     }
 
     /// Logs a line of Abstract's own (what you sent, a handoff) and reports it
@@ -219,6 +222,7 @@ public final class SessionEngine: Sendable {
             let once = LogWriter(url: url, startingAt: lineCount(url))
             n = once.append(line)
             once.close()
+            remember(url, lines: n)
         }
         continuation.yield(.line(sessionId: sessionId, seq: n, line))
         return n
@@ -326,17 +330,52 @@ public final class SessionEngine: Sendable {
 
     public func deleteLog(sessionId: String) {
         try? FileManager.default.removeItem(at: logFile(sessionId))
+        lineCounts.withLock { _ = $0.removeValue(forKey: logFile(sessionId).path) }
         queues.withLock { _ = $0.removeValue(forKey: sessionId) }
         try? FileManager.default.removeItem(at: queueFile(sessionId))
     }
 
     private func logFile(_ sessionId: String) -> URL {
-        logDirectory.appendingPathComponent("\(sessionId).jsonl")
+        logDirectory.appendingPathComponent("\(sessionId).jsonl", isDirectory: false)
     }
 
+    /// Lines in a log. Remembered with the file's size, so a chat's next
+    /// message or launch doesn't read its whole log again (ABS-184); a log
+    /// written to elsewhere since is counted again.
     private func lineCount(_ url: URL) -> Int {
-        guard let data = try? Data(contentsOf: url) else { return 0 }
-        return data.reduce(0) { $0 + ($1 == 0x0A ? 1 : 0) }
+        let size = Self.size(of: url)
+        if let size, let known = lineCounts.withLock({ $0[url.path] }), known.size == size { return known.lines }
+        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else { return 0 }
+        let lines = data.withUnsafeBytes(Self.newlines)
+        lineCounts.withLock { $0[url.path] = (UInt64(data.count), lines) }
+        return lines
+    }
+
+    /// The chat's log, read whole elsewhere, was `lines` lines in its first
+    /// `bytes`: its next message is numbered without reading it again.
+    public func noteLength(sessionId: String, bytes: UInt64, lines: Int) {
+        lineCounts.withLock { $0[logFile(sessionId).path] = (bytes, lines) }
+    }
+
+    private func remember(_ url: URL, lines: Int) {
+        guard let size = Self.size(of: url) else { return }
+        lineCounts.withLock { $0[url.path] = (size, lines) }
+    }
+
+    private static func size(of url: URL) -> UInt64? {
+        var info = stat()
+        return stat(url.path, &info) == 0 ? UInt64(info.st_size) : nil
+    }
+
+    static func newlines(in bytes: UnsafeRawBufferPointer) -> Int {
+        guard var next = bytes.baseAddress else { return 0 }
+        let end = next + bytes.count
+        var count = 0
+        while next < end, let hit = memchr(next, 0x0A, end - next) {
+            count += 1
+            next = UnsafeRawPointer(hit) + 1
+        }
+        return count
     }
 }
 

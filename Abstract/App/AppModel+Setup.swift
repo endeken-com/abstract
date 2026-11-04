@@ -256,7 +256,7 @@ extension AppModel {
             current.worktreePath = provisioned.path
             current.branch = provisioned.branch
             try? store.save(current)
-            reload()
+            replaceSession(current)
             guard !Task.isCancelled else { return }
             setup.finish(.worktree)
         } else if setup.phase(.worktree) != .done {
