@@ -377,3 +377,15 @@ public enum ModelPricing {
         return Double(t.cacheRead) * (r.input - r.cacheRead) / 1_000_000
     }
 }
+
+/// What one `session/tokenUsage` step used. Muse counts cached input inside
+/// `inputTokens` and reasoning inside `outputTokens`; the chat counts input
+/// not served from the cache, as for the other agents.
+enum MuseUsage {
+    static func totals(_ usage: JSONValue) -> UsageTotals {
+        let read = usage["cacheReadTokens"]?.int ?? 0
+        let write = usage["cacheWriteTokens"]?.int ?? 0
+        return UsageTotals(inputTokens: max(0, (usage["inputTokens"]?.int ?? 0) - read - write),
+                           outputTokens: usage["outputTokens"]?.int ?? 0, cacheRead: read, cacheWrite: write)
+    }
+}

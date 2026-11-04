@@ -4,10 +4,10 @@ import Testing
 
 @Suite("Stopping a turn")
 struct TurnStopTests {
-    private static let agents: [any ProviderDefinition] = [ClaudeProvider(), CodexProvider(), OpenCodeProvider()]
+    private static let agents: [any ProviderDefinition] = [Agents.claude, Agents.codex, Agents.opencode]
 
     private static func feed(_ lines: [String]) -> [AgentEvent] {
-        let parser = ClaudeProvider().makeParser()
+        let parser = Agents.claude.makeParser()
         return lines.flatMap { parser.feed($0, stream: .stdout) }
     }
 
@@ -28,20 +28,20 @@ struct TurnStopTests {
     ]
 
     @Test func claudeIsInterruptedOverItsControlChannel() throws {
-        let line = try #require(ClaudeProvider().buildInterrupt(requestId: "stop-1"))
+        let line = try #require(Agents.claude.buildInterrupt(requestId: "stop-1"))
         #expect(line == #"{"type":"control_request","request_id":"stop-1","request":{"subtype":"interrupt"}}"# + "\n")
         let json = try JSONDecoder().decode(JSONValue.self, from: Data(line.utf8))
         #expect(json["request"]?["subtype"]?.string == "interrupt")
     }
 
     @Test func midTurnClaudeIsInterruptedAndTheOthersAreEnded() {
-        let claude = ClaudeProvider()
+        let claude = Agents.claude
         for status in [SessionStatus.running, .waitingInput] {
             #expect(TurnStop.action(claude, status: status, requestId: "r") == .interrupt(claude.buildInterrupt(requestId: "r")!))
         }
         // Between turns there is nothing to interrupt.
         #expect(TurnStop.action(claude, status: .idle, requestId: "r") == .terminate)
-        for agent in [CodexProvider(), OpenCodeProvider()] as [any ProviderDefinition] {
+        for agent in [Agents.codex, Agents.opencode] as [any ProviderDefinition] {
             #expect(agent.buildInterrupt(requestId: "r") == nil)
             #expect(TurnStop.action(agent, status: .running, requestId: "r") == .terminate)
         }
@@ -55,7 +55,7 @@ struct TurnStopTests {
         // Prints the first line it is sent, as an agent reading its stdin would get it.
         try engine.launch(sessionId: "c", spec: LaunchSpec(command: "/bin/sh", args: ["-c", "read line; printf '%s\\n' \"$line\""],
                                                            cwd: dir.path, keepStdinOpen: true))
-        guard case let .interrupt(line) = TurnStop.action(ClaudeProvider(), status: .running, requestId: "stop-3") else {
+        guard case let .interrupt(line) = TurnStop.action(Agents.claude, status: .running, requestId: "stop-3") else {
             Issue.record("Claude should be interrupted"); return
         }
         try engine.write(sessionId: "c", line)

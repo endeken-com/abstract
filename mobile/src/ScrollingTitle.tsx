@@ -3,6 +3,7 @@ import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
 import MaskedView from '@react-native-masked-view/masked-view';
 import { LinearGradient } from 'expo-linear-gradient';
 import { ProviderLogo } from './ProviderLogo';
+import { themedStyles, palette } from './theme';
 
 export function ScrollingTitle({ title, provider, width, subtitle }: { title: string; provider: string; width: number; subtitle?: string | null }) {
   const [textWidth, setTextWidth] = useState(0);
@@ -33,12 +34,12 @@ export function ScrollingTitle({ title, provider, width, subtitle }: { title: st
   </View>;
 }
 
-const styles = StyleSheet.create({
+const styles = themedStyles(() => StyleSheet.create({
   column: { justifyContent: 'center' },
   row: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  subtitle: { color: '#A4A4AD', fontFamily: 'Inter', fontSize: 10.5, marginLeft: 20, marginTop: -3 },
+  subtitle: { color: palette.textSecondary, fontFamily: 'Inter', fontSize: 10.5, marginLeft: 20, marginTop: -3 },
   viewport: { height: 28, justifyContent: 'center', overflow: 'hidden' },
   moving: { position: 'absolute', left: 0, top: 4, flexDirection: 'row', alignItems: 'center' },
   solidMask: { flex: 1, backgroundColor: 'black' },
-  title: { color: '#ECECEF', fontFamily: 'Inter', fontSize: 14, fontWeight: '600' },
-});
+  title: { color: palette.text, fontFamily: 'Inter', fontSize: 14, fontWeight: '600' },
+}));

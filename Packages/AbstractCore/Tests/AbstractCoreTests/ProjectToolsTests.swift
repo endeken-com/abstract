@@ -37,7 +37,7 @@ import Testing
         #expect(server.access(server.tools[0]) == .allowed)
         #expect(server.access(server.tools[1]) == .askFirst)
         #expect(server.access(server.tools[2]) == .off)
-        let launch = try Self.launch(server, ClaudeProvider())
+        let launch = try Self.launch(server, Agents.claude)
         #expect(launch.allowed == ["list_issues"])
         #expect(launch.askFirst == ["create_issue"])
         #expect(launch.off == ["delete_issue"])
@@ -53,7 +53,7 @@ import Testing
         server.tools.append(.init(name: "y,Bash", readOnly: true))
         server.tools.append(.init(name: "z,Read"))
         server.access["z,Read"] = .off
-        let args = ClaudeProvider().buildLaunch(Self.context([try Self.launch(server, ClaudeProvider())])).args
+        let args = Agents.claude.buildLaunch(Self.context([try Self.launch(server, Agents.claude)])).args
         let allowed = try #require(Self.value(after: "--allowedTools", in: args)).split(separator: ",")
         #expect(allowed == ["mcp__linear__list_issues", "mcp__linear__y_Bash"])
         let off = try #require(Self.value(after: "--disallowedTools", in: args)).split(separator: ",")
@@ -62,14 +62,14 @@ import Testing
 
     @Test func onlyTheChosenAgentsThatCanTakeItGetTheServer() {
         let server = Self.linear(agents: ["claude", "muse"])
-        #expect(server.launch(for: ClaudeProvider()) != nil)
-        #expect(server.launch(for: CodexProvider()) == nil)
+        #expect(server.launch(for: Agents.claude) != nil)
+        #expect(server.launch(for: Agents.codex) == nil)
         // Muse can't keep a tool out, so it gets none, even when chosen.
-        #expect(server.launch(for: MuseProvider()) == nil)
-        #expect(MuseProvider().toolServerSupport == .none)
-        #expect(ClaudeProvider().toolServerSupport == .askFirst)
-        #expect(CodexProvider().toolServerSupport == .allowOrOff)
-        #expect(OpenCodeProvider().toolServerSupport == .allowOrOff)
+        #expect(server.launch(for: Agents.muse) == nil)
+        #expect(Agents.muse.toolServerSupport == .none)
+        #expect(Agents.claude.toolServerSupport == .askFirst)
+        #expect(Agents.codex.toolServerSupport == .allowOrOff)
+        #expect(Agents.opencode.toolServerSupport == .allowOrOff)
     }
 
     // MARK: - Per-agent config rendering
@@ -78,9 +78,9 @@ import Testing
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("tools-\(UUID().uuidString)").path
         defer { try? FileManager.default.removeItem(atPath: directory) }
         let history = HistoryToolLaunch(command: "/bin/abstract", chatId: "chat-1")
-        var ctx = Self.context([try Self.launch(Self.linear(), ClaudeProvider())], directory: directory)
+        var ctx = Self.context([try Self.launch(Self.linear(), Agents.claude)], directory: directory)
         ctx.historyTool = history
-        let args = ClaudeProvider().buildLaunch(ctx).args
+        let args = Agents.claude.buildLaunch(ctx).args
         let path = try #require(Self.value(after: "--mcp-config", in: args))
         #expect(path == directory + "/claude-mcp.json")
         // The key stays out of argv.
@@ -106,7 +106,7 @@ import Testing
         let server = ProjectToolServer(projectId: "p1", name: "sentry",
                                        connection: .command(["npx", "-y", "@sentry/mcp-server"], env: ["SENTRY_TOKEN": "t"]),
                                        tools: [.init(name: "find_errors", readOnly: true)])
-        let args = ClaudeProvider().buildLaunch(Self.context([try Self.launch(server, ClaudeProvider())])).args
+        let args = Agents.claude.buildLaunch(Self.context([try Self.launch(server, Agents.claude)])).args
         let config = try JSONDecoder().decode(JSONValue.self, from: Data(try #require(Self.value(after: "--mcp-config", in: args)).utf8))
         let entry = config["mcpServers"]?["sentry"]
         #expect(entry?["command"]?.string == "npx")
@@ -115,12 +115,12 @@ import Testing
     }
 
     @Test func codexGetsConfigOverridesWithSecretsInItsEnvironment() throws {
-        let linear = try Self.launch(Self.linear(), CodexProvider())
+        let linear = try Self.launch(Self.linear(), Agents.codex)
         let sentry = try Self.launch(ProjectToolServer(projectId: "p1", name: "sentry",
                                                        connection: .command(["sentry-mcp", "--stdio"], env: ["SENTRY_TOKEN": "t"])),
-                                     CodexProvider())
-        for spec in [CodexProvider().buildLaunch(Self.context([linear, sentry])),
-                     CodexProvider().buildResume(Self.context([linear, sentry]), resumeId: "thread")] {
+                                     Agents.codex)
+        for spec in [Agents.codex.buildLaunch(Self.context([linear, sentry])),
+                     Agents.codex.buildResume(Self.context([linear, sentry]), resumeId: "thread")] {
             let args = spec.args
             #expect(args.contains(#"mcp_servers.linear.url="https://mcp.linear.app/mcp""#))
             #expect(args.contains(#"mcp_servers.linear.env_http_headers={ "Authorization" = "ABSTRACT_MCP_LINEAR_AUTHORIZATION" }"#))
@@ -140,11 +140,11 @@ import Testing
     @Test func openCodeGetsTheServersInItsConfigEnvironment() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("tools-\(UUID().uuidString)").path
         defer { try? FileManager.default.removeItem(atPath: directory) }
-        let linear = try Self.launch(Self.linear(), OpenCodeProvider())
+        let linear = try Self.launch(Self.linear(), Agents.opencode)
         let local = try Self.launch(ProjectToolServer(projectId: "p1", name: "db", connection: .command(["db-mcp"], env: ["DB_URL": "x"]),
                                                       tools: [.init(name: "run.query")], access: ["run.query": .off]),
-                                    OpenCodeProvider())
-        let spec = OpenCodeProvider().buildLaunch(Self.context([linear, local], directory: directory))
+                                    Agents.opencode)
+        let spec = Agents.opencode.buildLaunch(Self.context([linear, local], directory: directory))
         let config = try JSONDecoder().decode(JSONValue.self, from: Data(try #require(spec.env["OPENCODE_CONFIG_CONTENT"]).utf8))
         #expect(config["mcp"]?["linear"]?["type"]?.string == "remote")
         #expect(config["mcp"]?["linear"]?["headers"]?["Authorization"]?.string == "Bearer lin_test")
@@ -166,17 +166,17 @@ import Testing
         let settings = LaunchSettings(providerOverrides: [:], outputStyle: .default, claudeProfile: nil,
                                       attachmentsDirectory: "/a", toolServers: [Self.linear()])
         let session = Session(projectId: "p1", name: "Chat", providerId: "muse", worktreePath: "/w")
-        #expect(settings.toolServers(for: session, provider: MuseProvider()).isEmpty)
+        #expect(settings.toolServers(for: session, provider: Agents.muse).isEmpty)
     }
 
     // MARK: - Ask first in Claude
 
     @Test func askFirstGivesClaudeAnAskRuleInEveryMode() throws {
-        let launch = try Self.launch(Self.linear(), ClaudeProvider())
+        let launch = try Self.launch(Self.linear(), Agents.claude)
         for policy in PermissionPolicy.autonomyCases {
             var ctx = Self.context([launch], policy: policy)
             ctx.outputStyle = .concise
-            let args = ClaudeProvider().buildLaunch(ctx).args
+            let args = Agents.claude.buildLaunch(ctx).args
             // Claude's ask rules ask even under full autonomy, through the
             // permission prompt tool every mode keeps.
             #expect(args.contains("--permission-prompt-tool"))
@@ -189,7 +189,7 @@ import Testing
 
     @Test func anAskFirstCallReachesTheChatAsAPermissionRequest() {
         // As claude 2.1.283 sends it for a tool under an ask rule.
-        let parser = ClaudeProvider().makeParser()
+        let parser = Agents.claude.makeParser()
         let events = parser.feed(#"{"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool","tool_name":"mcp__linear__create_issue","mcp_server":{"name":"linear","source":"dynamic"},"display_name":"Create Issue","input":{"title":"x"},"decision_reason_type":"rule","tool_use_id":"toolu_1"}}"#, stream: .stdout)
         #expect(events.contains(.permissionRequest(requestId: "r1", toolName: "mcp__linear__create_issue",
                                                    input: .object(["title": .string("x")]))))
@@ -203,15 +203,15 @@ import Testing
         let settings = LaunchSettings(providerOverrides: [:], outputStyle: .default, claudeProfile: nil,
                                       attachmentsDirectory: "/a", toolServers: [Self.linear(), other])
         let mine = Session(projectId: "p1", name: "Chat", providerId: "claude", worktreePath: "/w")
-        #expect(settings.toolServers(for: mine, provider: ClaudeProvider()).map(\.name) == ["linear"])
+        #expect(settings.toolServers(for: mine, provider: Agents.claude).map(\.name) == ["linear"])
         let theirs = Session(projectId: "p2", name: "Chat", providerId: "claude", worktreePath: "/w")
-        #expect(settings.toolServers(for: theirs, provider: ClaudeProvider()).map(\.name) == ["sentry"])
+        #expect(settings.toolServers(for: theirs, provider: Agents.claude).map(\.name) == ["sentry"])
         let standalone = Session(projectId: nil, name: "Chat", providerId: "claude", worktreePath: "/w")
-        #expect(settings.toolServers(for: standalone, provider: ClaudeProvider()).isEmpty)
-        let spec = AgentLaunch.spec(for: standalone, provider: ClaudeProvider(), prompt: "hi", resumeId: nil,
+        #expect(settings.toolServers(for: standalone, provider: Agents.claude).isEmpty)
+        let spec = AgentLaunch.spec(for: standalone, provider: Agents.claude, prompt: "hi", resumeId: nil,
                                     settings: settings, home: "/h")
         #expect(!spec.args.contains("--mcp-config"))
-        let own = AgentLaunch.spec(for: mine, provider: ClaudeProvider(), prompt: "hi", resumeId: nil,
+        let own = AgentLaunch.spec(for: mine, provider: Agents.claude, prompt: "hi", resumeId: nil,
                                    settings: settings, home: "/h")
         let config = try #require(Self.value(after: "--mcp-config", in: own.args))
         #expect(config.contains("mcp.linear.app") && !config.contains("sentry"))
@@ -225,7 +225,7 @@ import Testing
         let settings = LaunchSettings(providerOverrides: [:], outputStyle: .default, claudeProfile: nil,
                                       attachmentsDirectory: "/a", toolServers: [shadow, Self.linear(), twin])
         let session = Session(projectId: "p1", name: "Chat", providerId: "claude", worktreePath: "/w")
-        #expect(settings.toolServers(for: session, provider: ClaudeProvider()).map(\.name) == ["linear"])
+        #expect(settings.toolServers(for: session, provider: Agents.claude).map(\.name) == ["linear"])
     }
 
     // MARK: - Store

@@ -11,7 +11,8 @@ struct ProviderLogo: View {
     var monochrome = false
 
     var body: some View {
-        if let asset = ProviderRegistry.provider(providerId)?.logoAsset {
+        let provider = ProviderRegistry.provider(providerId)
+        if let asset = provider?.logoAsset, !asset.isEmpty {
             Image(asset)
                 .resizable()
                 .renderingMode(Self.templates.contains(asset) || monochrome ? .template : .original)
@@ -20,6 +21,16 @@ struct ProviderLogo: View {
                 .foregroundStyle(monochrome ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.btText))
                 .frame(width: size, height: size)
                 .accessibilityLabel(ProviderRegistry.provider(providerId)?.name ?? providerId)
+        } else if let url = (provider as? ScriptedProvider)?.iconURL, let image = NSImage(contentsOf: url) {
+            // An installed agent's own SVG (ABS-185), drawn in the text colour.
+            Image(nsImage: image)
+                .resizable()
+                .renderingMode(.template)
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+                .foregroundStyle(monochrome ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.btText))
+                .frame(width: size, height: size)
+                .accessibilityLabel(provider?.name ?? providerId)
         } else {
             Image(systemName: "sparkles")
                 .font(.system(size: size * 0.8, weight: .regular))

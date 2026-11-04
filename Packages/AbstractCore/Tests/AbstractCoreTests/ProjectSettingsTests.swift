@@ -345,7 +345,7 @@ struct RealNamingTests {
     @Test(.timeLimit(.minutes(1)))
     func claudeSuggestsATitleAndABranchFollowingTheInstructions() async throws {
         let suggestion = try await ChatNaming.suggest(
-            executor: LocalExecutor.shared, provider: ClaudeProvider(), binary: nil,
+            executor: LocalExecutor.shared, provider: Agents.claude, binary: nil,
             instructions: "Branches start with a type folder: fix/ for bugs, feat/ for features. Titles are in sentence case.",
             task: "The login button is misaligned on small screens; it overlaps the password field.").get()
         #expect(!suggestion.title.isEmpty)

@@ -197,8 +197,5 @@ public enum PluginContext {
         return .object(object)
     }
 
-    static func css(_ swatch: Swatch) -> String {
-        let hex = String(format: "%06x", swatch.hex)
-        return swatch.alpha >= 1 ? "#\(hex)" : "#\(hex)\(String(format: "%02x", Int((swatch.alpha * 255).rounded())))"
-    }
+    static func css(_ swatch: Swatch) -> String { swatch.css }
 }

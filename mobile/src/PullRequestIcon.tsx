@@ -1,6 +1,7 @@
 import React from 'react';
 import Svg, { Path } from 'react-native-svg';
 import type { PullRequest } from './types';
+import { palette } from './theme';
 
 // The same Primer Octicon paths and dark theme ink colors used by Abstract on macOS.
 const paths = {
@@ -11,16 +12,16 @@ const paths = {
 };
 export function PullRequestIcon({ pr, size = 16, color }: { pr?: PullRequest | null; size?: number; color?: string }) {
   const state = pr?.isDraft || pr?.state?.toLowerCase() === 'draft' ? 'draft' : pr?.state?.toLowerCase() === 'merged' ? 'merged' : pr?.state?.toLowerCase() === 'closed' ? 'closed' : 'open';
-  const tint = color || (state === 'open' && pr?.checks?.some(check => check.outcome === 'failed') ? '#EF6461' : { open: '#6BC98A', draft: '#A0A8B2', merged: '#B79CF0', closed: '#F08A84' }[state]);
+  const tint = color || (state === 'open' && pr?.checks?.some(check => check.outcome === 'failed') ? palette.removed : { open: palette.pullRequestOpenInk, draft: palette.pullRequestDraftInk, merged: palette.pullRequestMergedInk, closed: palette.removed }[state]);
   return <Svg width={size} height={size} viewBox="0 0 16 16" accessibilityLabel={`Pull request ${state}`}><Path d={paths[state]} fill={tint} /></Svg>;
 }
 
 // Abstract/Features/Attachments/AttachmentViews.swift uses this Primer issue mark.
-export function IssueIcon({ size = 16, color = '#A4A4AD' }: { size?: number; color?: string }) {
+export function IssueIcon({ size = 16, color = palette.textSecondary }: { size?: number; color?: string }) {
   return <Svg width={size} height={size} viewBox="0 0 16 16" accessibilityLabel="GitHub issue"><Path d="M8 9.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z" fill={color} /><Path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Z" fill={color} /></Svg>;
 }
 
 // The git-branch Octicon from Abstract/Components/Octicon.swift, used wherever a branch name is shown.
-export function BranchIcon({ size = 16, color = '#A4A4AD' }: { size?: number; color?: string }) {
+export function BranchIcon({ size = 16, color = palette.textSecondary }: { size?: number; color?: string }) {
   return <Svg width={size} height={size} viewBox="0 0 16 16" accessibilityLabel="Branch"><Path d="M9.5 3.25a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 1 10 8.5H6a1 1 0 0 0-1 1v1.128a2.251 2.251 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.5 0v1.836A2.493 2.493 0 0 1 6 7h4a1 1 0 0 0 1-1v-.628A2.25 2.25 0 0 1 9.5 3.25Zm-6 0a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Zm8.25-.75a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5ZM4.25 12a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Z" fill={color} /></Svg>;
 }

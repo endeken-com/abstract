@@ -93,6 +93,10 @@ final class PluginService {
         orphans = manager.orphanedProblems()
         switches = manager.switches()
         trackerLinks = [:]
+        // Settings → Appearance lists the themes of the plugins that can run (ABS-185).
+        ThemeState.apply(installed: ThemeCatalog.themes(of: installed))
+        // And the agents of the plugins that can run, beside the built-in ones.
+        AgentPlugins.shared.setInstalled(installed, offered: manager.offeredDefaults)
         onChange()
     }
 

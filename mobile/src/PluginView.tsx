@@ -6,8 +6,10 @@ import { Buffer } from 'buffer';
 import { remote } from './remote';
 import { buildPluginDocument, hostMessageJS, invokeEnvelope, pluginMessageArgs, pluginShowingArgs } from './plugins';
 import type { PluginPlace } from './types';
+import { onTheme, themedStyles, palette } from './theme';
 
-const ink = '#ECECEF', muted = '#A4A4AD', bg = '#1E1E21';
+let ink = '', muted = '', bg = '';
+onTheme(t => { ink = t.text; muted = t.textSecondary; bg = t.canvas; });
 
 export type PluginRoute = {
   hostId: string; pluginId: string; title: string;
@@ -105,13 +107,13 @@ export function PluginScreen({ route, navigation }: any) {
   return <View style={{ flex: 1, backgroundColor: bg, paddingTop: headerHeight }}><PluginView route={params} navigation={navigation} /></View>;
 }
 
-const styles = StyleSheet.create({
+const styles = themedStyles(() => StyleSheet.create({
   center: { alignItems: 'center', justifyContent: 'center', padding: 24, gap: 8, backgroundColor: bg },
   title: { color: ink, fontFamily: 'Inter', fontSize: 15, fontWeight: '600', textAlign: 'center' },
   note: { color: muted, fontFamily: 'Inter', fontSize: 13, lineHeight: 19, textAlign: 'center' },
   actions: { flexDirection: 'row', gap: 8, marginTop: 6 },
   primary: { backgroundColor: ink, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 10 },
   primaryText: { color: bg, fontFamily: 'Inter', fontSize: 13, fontWeight: '600' },
-  secondary: { backgroundColor: '#303036', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 10 },
+  secondary: { backgroundColor: palette.inset, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 10 },
   secondaryText: { color: ink, fontFamily: 'Inter', fontSize: 13, fontWeight: '600' },
-});
+}));

@@ -6,38 +6,72 @@ import Synchronization
 
 extension ThemeChoice {
     var title: String {
-        switch self {
-        case .system: "Match System"
-        case .graphite: "Graphite"
-        case .paper: "Paper"
-        case .ink: "Ink"
-        }
+        isSystem ? "Match System" : ThemeState.shared.catalog.theme(rawValue).name
     }
 
     var colorScheme: ColorScheme? {
-        isDark.map { $0 ? .dark : .light }
+        isDark(in: ThemeState.shared.catalog).map { $0 ? .dark : .light }
     }
 }
 
-/// The theme picked in Settings, readable from any thread: AppKit resolves
-/// dynamic colours on whatever thread draws. SwiftUI views that read a
-/// colour observe it, so they redraw when it changes even when the
-/// appearance doesn't (Graphite and Ink are both dark).
+/// The theme picked in Settings, the Match System picks and the installed
+/// themes (ABS-185), readable from any thread: AppKit resolves dynamic
+/// colours on whatever thread draws. SwiftUI views that read a colour
+/// observe them, so they redraw when one changes even when the appearance
+/// doesn't (Graphite and Ink are both dark).
 nonisolated final class ThemeState: Observable, Sendable {
     static let shared = ThemeState()
 
+    static let lightPickKey = "theme.light", darkPickKey = "theme.dark"
+
+    private struct Stored: Sendable {
+        var choice: ThemeChoice
+        var picks: ThemePicks
+        var catalog: ThemeCatalog
+        /// Bumped when the picks or the installed themes change, so every
+        /// colour is handed out afresh.
+        var generation = 0
+    }
+
     private let registrar = ObservationRegistrar()
-    private let stored = Mutex(ThemeChoice(rawValue: UserDefaults.standard.string(forKey: "theme") ?? "") ?? .graphite)
+    private let stored: Mutex<Stored>
+
+    private init() {
+        let defaults = UserDefaults.standard
+        let choice = ThemeChoice(rawValue: defaults.string(forKey: "theme") ?? ThemeChoice.default.rawValue)
+        let picks = ThemePicks(light: defaults.string(forKey: Self.lightPickKey) ?? ThemeCatalog.paperId,
+                               dark: defaults.string(forKey: Self.darkPickKey) ?? ThemeCatalog.graphiteId)
+        // The bundled themes, read from the app before any plugin loads: the
+        // first frame is already in the theme.
+        let bundled = ThemeCatalog.themes(inFolders: PluginManager.bundledFolders(in: Bundle.main.resourceURL))
+        stored = Mutex(Stored(choice: choice, picks: picks, catalog: ThemeCatalog(listed: [], fallbacks: bundled)))
+    }
 
     var choice: ThemeChoice {
         get {
             registrar.access(self, keyPath: \.choice)
-            return stored.withLock { $0 }
+            return stored.withLock { $0.choice }
         }
         set {
             guard newValue != current else { return }
-            registrar.withMutation(of: self, keyPath: \.choice) { stored.withLock { $0 = newValue } }
+            registrar.withMutation(of: self, keyPath: \.choice) { stored.withLock { $0.choice = newValue } }
         }
+    }
+
+    /// The installed themes, and the bundled ones to fall back on.
+    var catalog: ThemeCatalog {
+        registrar.access(self, keyPath: \.catalog)
+        return stored.withLock { $0.catalog }
+    }
+
+    var picks: ThemePicks {
+        registrar.access(self, keyPath: \.catalog)
+        return stored.withLock { $0.picks }
+    }
+
+    var generation: Int {
+        registrar.access(self, keyPath: \.catalog)
+        return stored.withLock { $0.generation }
     }
 
     /// Posted when the choice changes, for AppKit views that hold resolved colours.
@@ -48,6 +82,35 @@ nonisolated final class ThemeState: Observable, Sendable {
     @MainActor static func apply(_ choice: ThemeChoice) {
         guard choice != shared.current else { return }
         shared.choice = choice
+        redraw()
+    }
+
+    /// Takes new Match System picks.
+    @MainActor static func apply(picks: ThemePicks) {
+        guard picks != shared.currentPicks else { return }
+        shared.update { $0.picks = picks }
+        redraw()
+    }
+
+    /// Takes the themes of the plugins that can run now.
+    @MainActor static func apply(installed themes: [Theme]) {
+        let current = shared.currentCatalog
+        let catalog = ThemeCatalog(listed: themes, fallbacks: current.fallbacks)
+        guard catalog != current else { return }
+        shared.update { $0.catalog = catalog }
+        redraw()
+    }
+
+    private func update(_ change: (inout Stored) -> Void) {
+        registrar.withMutation(of: self, keyPath: \.catalog) {
+            stored.withLock {
+                change(&$0)
+                $0.generation += 1
+            }
+        }
+    }
+
+    @MainActor private static func redraw() {
         NotificationCenter.default.post(name: didChange, object: nil)
         for window in NSApp.windows {
             guard let root = window.contentView?.superview ?? window.contentView else { continue }
@@ -60,13 +123,22 @@ nonisolated final class ThemeState: Observable, Sendable {
     }
 
     /// The choice, without observing it: for drawing.
-    var current: ThemeChoice { stored.withLock { $0 } }
+    var current: ThemeChoice { stored.withLock { $0.choice } }
+    var currentCatalog: ThemeCatalog { stored.withLock { $0.catalog } }
+    var currentPicks: ThemePicks { stored.withLock { $0.picks } }
+    var currentGeneration: Int { stored.withLock { $0.generation } }
 
-    /// The palette an appearance draws in under the current choice.
-    func theme(for appearance: NSAppearance) -> Theme {
+    /// The palette an appearance draws in under the current choice, and
+    /// whether a light theme's borders are strengthened.
+    func resolve(for appearance: NSAppearance) -> (theme: Theme, strongerBorders: Bool) {
         let look = Self.look(of: appearance)
-        return current.theme(dark: look.dark, increasedContrast: look.increasedContrast)
+        let state = stored.withLock { $0 }
+        let theme = state.choice.theme(dark: look.dark, increasedContrast: look.increasedContrast,
+                                       catalog: state.catalog, picks: state.picks)
+        return (theme, state.choice.strongerBorders(dark: look.dark, increasedContrast: look.increasedContrast))
     }
+
+    func theme(for appearance: NSAppearance) -> Theme { resolve(for: appearance).theme }
 
     static func look(of appearance: NSAppearance) -> (dark: Bool, increasedContrast: Bool) {
         let names: [NSAppearance.Name] = [.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua]
@@ -77,8 +149,9 @@ nonisolated final class ThemeState: Observable, Sendable {
 }
 
 /// Semantic colours. Each resolves per appearance and per the theme picked,
-/// so a view written once reads well in Graphite (dark gray), Paper (white)
-/// and Ink (black) alike. The values live in `PaletteRole`.
+/// so a view written once reads well in Graphite (dark gray), Paper (white),
+/// Ink (black) and any installed theme alike. The values come from the
+/// theme's plugin, through `ThemeDerivation`.
 nonisolated extension Color {
     // Surfaces, back to front.
     static var btCanvas: Color { themed(.canvas) }
@@ -171,21 +244,27 @@ nonisolated extension Color {
     /// value to resolve; all copies resolve from the current choice, so a
     /// colour AppKit already holds is right the next time it draws.
     private static func themed(_ role: PaletteRole) -> Color {
-        ThemedColors.all[ThemeState.shared.choice]![role]!
+        let state = ThemeState.shared
+        return ThemedColors.colors(for: "\(state.choice.rawValue)#\(state.generation)")[role]!
     }
 }
 
 nonisolated private enum ThemedColors {
-    static let all: [ThemeChoice: [PaletteRole: Color]] = Dictionary(uniqueKeysWithValues: ThemeChoice.allCases.map { choice in
-        (choice, Dictionary(uniqueKeysWithValues: PaletteRole.allCases.map { ($0, dynamic($0)) }))
-    })
+    private static let cache = Mutex<[String: [PaletteRole: Color]]>([:])
+
+    static func colors(for key: String) -> [PaletteRole: Color] {
+        cache.withLock { cache in
+            if let colors = cache[key] { return colors }
+            let colors = Dictionary(uniqueKeysWithValues: PaletteRole.allCases.map { ($0, dynamic($0)) })
+            cache[key] = colors
+            return colors
+        }
+    }
 
     private static func dynamic(_ role: PaletteRole) -> Color {
         Color(nsColor: NSColor(name: nil) { @Sendable appearance in
-            let look = ThemeState.look(of: appearance)
-            let choice = ThemeState.shared.current
-            let theme = choice.theme(dark: look.dark, increasedContrast: look.increasedContrast)
-            return NSColor(role.swatch(in: theme, strongerBorders: choice.strongerBorders(dark: look.dark, increasedContrast: look.increasedContrast)))
+            let (theme, strong) = ThemeState.shared.resolve(for: appearance)
+            return NSColor(role.swatch(in: theme, strongerBorders: strong))
         })
     }
 }

@@ -85,6 +85,7 @@ final class AgentHost: @unchecked Sendable {
         self.lock = lock
         storePath = Store.defaultPath()
         store = try Store(path: storePath)
+        AgentPlugins.shared.setInstalled(from: PluginManager(store: store))
         guard let session = try store.session(sessionId) else { throw AbstractError.notFound("session \(sessionId)") }
         guard let provider = ProviderRegistry.provider(session.providerId) else {
             throw AbstractError.message("Unknown agent “\(session.providerId)”.")

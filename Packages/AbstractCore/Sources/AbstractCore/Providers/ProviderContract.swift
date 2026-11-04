@@ -387,7 +387,14 @@ public enum CompactionEvent: Sendable, Hashable {
 public protocol OutputParser: AnyObject {
     /// One raw line from the agent. Must never throw or crash on bad input.
     func feed(_ line: String, stream: OutputStreamKind) -> [AgentEvent]
+    /// Many lines, each one's events in order: the same as feeding them one
+    /// by one. An agent plugin reads a batch in one call (ABS-185).
+    func feed(lines: [OutputLine]) -> [[AgentEvent]]
     func onExit(code: Int32?) -> [AgentEvent]
+}
+
+public extension OutputParser {
+    func feed(lines: [OutputLine]) -> [[AgentEvent]] { lines.map { feed($0.line, stream: $0.stream) } }
 }
 
 /// A parser that also drives the agent: some protocols must answer one

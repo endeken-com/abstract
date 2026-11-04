@@ -3,12 +3,12 @@ import Testing
 import AbstractCore
 
 @Suite struct ClaudeProviderTests {
-    let provider = ClaudeProvider()
+    let provider = Agents.claude
     let ctx = LaunchContext(cwd: "/tmp/work", prompt: "make hi.txt", permissionPolicy: .autoEdits)
 
     static func fixtureEvents() throws -> [AgentEvent] {
         let url = try #require(Bundle.module.url(forResource: "claude-stream", withExtension: "jsonl", subdirectory: "Fixtures"))
-        let parser = ClaudeProvider().makeParser()
+        let parser = Agents.claude.makeParser()
         return try String(contentsOf: url, encoding: .utf8)
             .components(separatedBy: "\n")
             .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
@@ -16,7 +16,7 @@ import AbstractCore
     }
 
     static func feed(_ lines: [String]) -> [AgentEvent] {
-        let parser = ClaudeProvider().makeParser()
+        let parser = Agents.claude.makeParser()
         return lines.flatMap { parser.feed($0, stream: .stdout) }
     }
 
@@ -68,7 +68,7 @@ import AbstractCore
         let line = try #require(provider.buildPermissionModeChange(.bypass, requestId: "mode-1"))
         #expect(line == #"{"type":"control_request","request_id":"mode-1","request":{"subtype":"set_permission_mode","mode":"bypassPermissions"}}"# + "\n")
         #expect(provider.buildPermissionModeChange(.ask, requestId: "r")?.contains(#""mode":"default""#) == true)
-        #expect(CodexProvider().buildPermissionModeChange(.ask, requestId: "r") == nil)
+        #expect(Agents.codex.buildPermissionModeChange(.ask, requestId: "r") == nil)
         // A refusal reaches the reader; a success says nothing.
         let parser = provider.makeParser()
         #expect(parser.feed(#"{"type":"control_response","response":{"subtype":"success","request_id":"m","response":{"mode":"default"}}}"#, stream: .stdout).isEmpty)
@@ -423,7 +423,7 @@ import AbstractCore
 struct ClaudeNewerFramesTests {
     /// Frames captured from a real claude run that the original fixture lacks.
     @Test func bookkeepingSystemFramesAreSilent() {
-        let parser = ClaudeProvider().makeParser()
+        let parser = Agents.claude.makeParser()
         let frames = [
             #"{"type":"system","subtype":"thinking_tokens","estimated_tokens":50,"estimated_tokens_delta":50,"session_id":"s"}"#,
             #"{"type":"system","subtype":"permission_denied","tool_name":"Bash","tool_use_id":"t","decision_reason_type":"subcommandResults","message":"needs approval","session_id":"s"}"#,
@@ -438,7 +438,7 @@ struct ClaudeNewerFramesTests {
     @Test func approvalsAreAlwaysRoutedToAbstract() {
         // Even full autonomy keeps the route, so switching back to Ask live
         // still reaches Abstract instead of claude silently denying.
-        let p = ClaudeProvider()
+        let p = Agents.claude
         for policy in PermissionPolicy.allCases {
             let args = p.buildLaunch(LaunchContext(cwd: "/w", prompt: "x", permissionPolicy: policy)).args
             #expect(args.contains("--permission-prompt-tool"), "\(policy) must ask Abstract, or claude silently denies")
@@ -447,7 +447,7 @@ struct ClaudeNewerFramesTests {
     }
 
     @Test func aRealCanUseToolRequestBecomesAPermissionRequest() {
-        let parser = ClaudeProvider().makeParser()
+        let parser = Agents.claude.makeParser()
         let frame = #"{"type":"control_request","request_id":"13ba9586","request":{"subtype":"can_use_tool","tool_name":"Bash","display_name":"Bash","input":{"command":"touch probe.txt && ls","description":"Create probe file"},"description":"Create probe file"}}"#
         let events = parser.feed(frame, stream: .stdout)
         #expect(events.contains { if case let .permissionRequest(id, tool, input) = $0 { return id == "13ba9586" && tool == "Bash" && input["command"]?.string == "touch probe.txt && ls" }; return false })
@@ -456,7 +456,7 @@ struct ClaudeNewerFramesTests {
 
 @Suite struct ClaudePromptSuggestionTests {
     @Test func suggestionLinesBecomeEventsAndLastUntilYouReply() {
-        let parser = ClaudeProvider().makeParser()
+        let parser = Agents.claude.makeParser()
         let events = parser.feed(#"{"type":"prompt_suggestion","suggestion":"do option 1","uuid":"u","session_id":"s"}"#, stream: .stdout)
         #expect(events == [.promptSuggestion("do option 1")])
         #expect(parser.feed(#"{"type":"prompt_suggestion","suggestion":""}"#, stream: .stdout).isEmpty)
@@ -474,7 +474,7 @@ struct ClaudeNewerFramesTests {
 @Suite("Claude synthetic messages")
 struct ClaudeSyntheticMessageTests {
     @Test func skillInstructionsArentShownAsYourMessage() {
-        let parser = ClaudeProvider().makeParser()
+        let parser = Agents.claude.makeParser()
         let skill = #"{"type":"user","isSynthetic":true,"message":{"role":"user","content":[{"type":"text","text":"Base directory for this skill: /x"}]}}"#
         #expect(parser.feed(skill, stream: .stdout).isEmpty)
         let real = #"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"hi"}]}}"#

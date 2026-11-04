@@ -15,26 +15,30 @@ import Testing
 
     // MARK: The theme comes from Abstract, not the Mac
 
+    var catalog: ThemeCatalog { BundledThemes.catalog }
+
     @Test(arguments: [
         // Picked theme, Mac in Dark, Increase contrast, what a plugin gets.
-        (ThemeChoice.graphite, false, false, Theme.graphite),
-        (.graphite, true, false, .graphite),
-        (.graphite, false, true, .graphite),
-        (.ink, false, false, .ink),
-        (.ink, true, true, .ink),
-        (.paper, true, false, .paper),
-        (.paper, true, true, .paper),
-        (.system, false, false, .paper),
-        (.system, true, false, .graphite),
-        (.system, true, true, .ink),
+        ("graphite", false, false, "graphite"),
+        ("graphite", true, false, "graphite"),
+        ("graphite", false, true, "graphite"),
+        ("ink", false, false, "ink"),
+        ("ink", true, true, "ink"),
+        ("paper", true, false, "paper"),
+        ("paper", true, true, "paper"),
+        ("system", false, false, "paper"),
+        ("system", true, false, "graphite"),
+        ("system", true, true, "ink"),
     ])
-    func colourVariablesFollowTheChosenTheme(choice: ThemeChoice, macDark: Bool, contrast: Bool, expected: Theme) throws {
-        let appearance = PluginAppearance.resolve(choice: choice, systemDark: macDark, increasedContrast: contrast)
+    func colourVariablesFollowTheChosenTheme(picked: String, macDark: Bool, contrast: Bool, expectedName: String) throws {
+        let choice = ThemeChoice(rawValue: picked)
+        let expected = catalog.theme(ThemeChoice(rawValue: expectedName).rawValue)
+        let appearance = PluginAppearance.resolve(choice: choice, systemDark: macDark, increasedContrast: contrast, catalog: catalog)
         #expect(appearance.theme == expected)
-        #expect(appearance.colorScheme == (expected == .paper ? "light" : "dark"))
+        #expect(appearance.colorScheme == (expected.isDark ? "dark" : "light"))
         let context = PluginContext.jsonValue(appearance: appearance, locale: "en_US", pluginId: "sh.example.p",
                                               pluginVersion: "1.0.0", capabilities: [])
-        #expect(context["theme"] == .string(expected.rawValue))
+        #expect(context["theme"] == .string(expectedName))
         #expect(context["colorScheme"] == .string(appearance.colorScheme))
         for role in PaletteRole.allCases {
             let value = PluginContext.css(role.swatch(in: expected, strongerBorders: appearance.strongerBorders))
@@ -43,18 +47,29 @@ import Testing
     }
 
     @Test func graphiteOnALightMacIsNeverPaperWhite() {
-        let appearance = PluginAppearance.resolve(choice: .graphite, systemDark: false, increasedContrast: false)
+        let appearance = PluginAppearance.resolve(choice: ThemeChoice(.graphite), systemDark: false, increasedContrast: false,
+                                                  catalog: catalog)
         #expect(appearance.tokens["canvas"] == "#1e1e21")
         #expect(appearance.tokens["canvas"] != PluginAppearance(theme: .paper).tokens["canvas"])
-        let ink = PluginAppearance.resolve(choice: .ink, systemDark: false, increasedContrast: false)
+        let ink = PluginAppearance.resolve(choice: ThemeChoice(.ink), systemDark: false, increasedContrast: false, catalog: catalog)
         #expect(ink.tokens["canvas"] == "#000000")
     }
 
     @Test func matchSystemStrengthensPaperBordersWithIncreasedContrast() {
-        let strong = PluginAppearance.resolve(choice: .system, systemDark: false, increasedContrast: true)
+        let strong = PluginAppearance.resolve(choice: .system, systemDark: false, increasedContrast: true, catalog: catalog)
         #expect(strong.theme == .paper && strong.strongerBorders)
         #expect(strong.tokens["border"] == PluginContext.css(PaletteRole.border.swatch(in: .paper, strongerBorders: true)))
-        #expect(!PluginAppearance.resolve(choice: .paper, systemDark: false, increasedContrast: true).strongerBorders)
+        #expect(!PluginAppearance.resolve(choice: ThemeChoice(.paper), systemDark: false, increasedContrast: true,
+                                          catalog: catalog).strongerBorders)
+    }
+
+    @Test func aThirdPartyThemeReachesThePageLikeABundledOne() throws {
+        let mocha = Theme(pluginId: "sh.example.catppuccin", contribution: ThemePaletteTests.mocha)
+        let appearance = PluginAppearance(theme: mocha)
+        #expect(appearance.jsonValue()["theme"] == .string("mocha"))
+        #expect(appearance.tokens["canvas"] == "#1e1e2e")
+        let (_, attributes) = try runDocumentStart(appearance)
+        #expect(attributes["data-abstract-appearance"] == "dark")
     }
 
     // MARK: The colours are in the page before its CSS
@@ -77,7 +92,7 @@ import Testing
         return (properties, attributes)
     }
 
-    @Test(arguments: Theme.allCases)
+    @Test(arguments: BundledThemes.all)
     func colourVariablesAreSetAtDocumentStart(theme: Theme) throws {
         let appearance = PluginAppearance(theme: theme)
         let (properties, attributes) = try runDocumentStart(appearance)
@@ -87,7 +102,8 @@ import Testing
         #expect(properties["color-scheme"] == appearance.colorScheme)
         #expect(properties["background-color"] == appearance.tokens["canvas"])
         #expect(properties["--abstract-font"] == PluginTheming.fontFamily)
-        #expect(attributes["data-abstract-theme"] == theme.rawValue)
+        #expect(attributes["data-abstract-theme"] == theme.shortId)
+        #expect(attributes["data-abstract-appearance"] == appearance.colorScheme)
     }
 
     @Test func theDocumentStartScriptIsTheSameCodeTheContextMessageUses() throws {
@@ -144,6 +160,8 @@ import Testing
         #expect(folders.count >= 7)
         for folder in folders {
             let manifest = try PluginPackage.inspect(folder: folder).manifest
+            // A theme plugin has no screen (ABS-185).
+            guard !manifest.isPageless else { continue }
             let html = try String(contentsOf: folder.appendingPathComponent(manifest.entry), encoding: .utf8)
             #expect(html.contains("href=\"/_abstract/abstract-ui.css\""), "\(manifest.id) doesn't link the kit")
             // Its own CSS uses no colour of its own: the kit's names, or the host's tokens.
@@ -170,8 +188,8 @@ import Testing
     /// The kit's preview (docs/plugin-kit) draws with the host's own colours.
     @Test func theKitPreviewUsesTheHostsColours() throws {
         let url = repo.appendingPathComponent("docs/plugin-kit/tokens.js")
-        let themes = Dictionary(uniqueKeysWithValues: Theme.allCases.map {
-            ($0.rawValue, JSONValue.object(PluginAppearance(theme: $0).jsonValue()))
+        let themes = Dictionary(uniqueKeysWithValues: BundledThemes.all.map {
+            ($0.shortId, JSONValue.object(PluginAppearance(theme: $0).jsonValue()))
         })
         let expected = "// The host's colours for each theme, from PaletteRole. PluginThemingTests checks it.\n"
             + "window.ABSTRACT_THEMES = \(JSONValue.object(themes).pretty());\n"

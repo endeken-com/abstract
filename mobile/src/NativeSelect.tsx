@@ -3,6 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import type { MenuAction } from '@react-native-menu/menu';
 import { CompactMenu as MenuView } from './CompactMenu';
 import { SymbolView } from 'expo-symbols';
+import { themedStyles, palette } from './theme';
 
 type Choice = { id: string; title: string; selected?: boolean; image?: string };
 
@@ -26,14 +27,14 @@ export function NativeSelect({ label, value, choices, onSelect, flex = 1, align 
     <View accessibilityRole="button" accessibilityLabel={`${label}: ${value}`} style={[styles.trigger, align === 'left' && styles.triggerLeft]}>
       {leading}
       <Text numberOfLines={1} style={styles.value}>{value}</Text>
-      <SymbolView name={{ ios: 'chevron.down', android: 'keyboard_arrow_down' }} size={11} tintColor="#85858E" style={styles.chevron} />
+      <SymbolView name={{ ios: 'chevron.down', android: 'keyboard_arrow_down' }} size={11} tintColor={palette.textTertiary} style={styles.chevron} />
     </View>
   </MenuView>;
 }
 
-const styles = StyleSheet.create({
+const styles = themedStyles(() => StyleSheet.create({
   trigger: { height: 42, minWidth: 0, paddingHorizontal: 6, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 },
   triggerLeft: { justifyContent: 'flex-start' },
-  value: { minWidth: 0, flexShrink: 1, color: '#A4A4AD', fontFamily: 'Inter', fontSize: 12.5, fontWeight: '500' },
+  value: { minWidth: 0, flexShrink: 1, color: palette.textSecondary, fontFamily: 'Inter', fontSize: 12.5, fontWeight: '500' },
   chevron: { width: 11, height: 11 },
-});
+}));

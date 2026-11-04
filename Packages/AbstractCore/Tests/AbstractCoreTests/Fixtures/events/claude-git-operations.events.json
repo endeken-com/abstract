@@ -1,0 +1,132 @@
+{
+  "exit:0" : [
+    {
+      "status" : "finished",
+      "type" : "status"
+    }
+  ],
+  "exit:1" : [
+    {
+      "message" : "claude exited with code 1",
+      "type" : "error"
+    },
+    {
+      "status" : "errored",
+      "type" : "status"
+    }
+  ],
+  "exit:null" : [
+    {
+      "message" : "claude exited with code null",
+      "type" : "error"
+    },
+    {
+      "status" : "errored",
+      "type" : "status"
+    }
+  ],
+  "stderr" : [
+    [
+      {
+        "line" : "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"commit-1\",\"content\":\"[work a1b2c3d] Update the app\"}]},\"tool_use_result\":{\"gitOperation\":{\"commit\":{\"sha\":\"a1b2c3d\",\"kind\":\"committed\",\"branch\":\"feature/work\"}}}}",
+        "stream" : "stderr",
+        "type" : "raw"
+      }
+    ],
+    [
+      {
+        "line" : "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"push-1\",\"content\":\"To github.com:example/app.git\"}]},\"tool_use_result\":{\"gitOperation\":{\"push\":{\"branch\":\"feature/work\"}}}}",
+        "stream" : "stderr",
+        "type" : "raw"
+      }
+    ],
+    [
+      {
+        "line" : "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"pr-1\",\"content\":\"https://github.com/example/app/pull/42\"}]},\"tool_use_result\":{\"gitOperation\":{\"pr\":{\"number\":42,\"url\":\"https://github.com/example/app/pull/42\",\"action\":\"created\"}}}}",
+        "stream" : "stderr",
+        "type" : "raw"
+      }
+    ],
+    [
+      {
+        "line" : "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"merge-1\",\"content\":\"Merged pull request #42\"}]},\"tool_use_result\":{\"gitOperation\":{\"pr\":{\"number\":42,\"url\":\"https://github.com/example/app/pull/42\",\"action\":\"merged\"}}}}",
+        "stream" : "stderr",
+        "type" : "raw"
+      }
+    ],
+    [
+
+    ]
+  ],
+  "stdout" : [
+    [
+      {
+        "isError" : false,
+        "output" : "[work a1b2c3d] Update the app",
+        "toolUseId" : "commit-1",
+        "type" : "toolResult"
+      },
+      {
+        "operation" : {
+          "branch" : "feature/work",
+          "commitKind" : "committed",
+          "kind" : "commit",
+          "sha" : "a1b2c3d"
+        },
+        "type" : "gitOperation"
+      }
+    ],
+    [
+      {
+        "isError" : false,
+        "output" : "To github.com:example/app.git",
+        "toolUseId" : "push-1",
+        "type" : "toolResult"
+      },
+      {
+        "operation" : {
+          "branch" : "feature/work",
+          "kind" : "push"
+        },
+        "type" : "gitOperation"
+      }
+    ],
+    [
+      {
+        "isError" : false,
+        "output" : "https://github.com/example/app/pull/42",
+        "toolUseId" : "pr-1",
+        "type" : "toolResult"
+      },
+      {
+        "operation" : {
+          "action" : "created",
+          "kind" : "pullRequest",
+          "number" : 42,
+          "url" : "https://github.com/example/app/pull/42"
+        },
+        "type" : "gitOperation"
+      }
+    ],
+    [
+      {
+        "isError" : false,
+        "output" : "Merged pull request #42",
+        "toolUseId" : "merge-1",
+        "type" : "toolResult"
+      },
+      {
+        "operation" : {
+          "action" : "merged",
+          "kind" : "pullRequest",
+          "number" : 42,
+          "url" : "https://github.com/example/app/pull/42"
+        },
+        "type" : "gitOperation"
+      }
+    ],
+    [
+
+    ]
+  ]
+}

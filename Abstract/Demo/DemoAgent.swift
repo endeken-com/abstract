@@ -21,7 +21,7 @@ enum DemoAgent {
     }
 
     static func followUpLine(_ text: String) -> String {
-        ClaudeProvider().buildUserMessage(text) ?? "\(text)\n"
+        ProviderRegistry.provider("claude")?.buildUserMessage(text) ?? "\(text)\n"
     }
 
     // MARK: - Script building

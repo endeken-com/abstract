@@ -6,8 +6,9 @@ manifest, capabilities, bridge) is in [spikes/ABS-84.md](spikes/ABS-84.md).
 ## Theme
 
 A plugin draws in the theme picked in Abstract (Settings › Appearance): **Graphite**,
-**Paper** or **Ink**, or whichever of them **Match System** resolves to. A named theme
-holds whatever the Mac is set to, so Graphite stays dark on a Mac set to Light.
+**Paper**, **Ink** or any theme a plugin adds (below), or whichever **Match System**
+resolves to. A named theme holds whatever the Mac is set to, so Graphite stays dark on a
+Mac set to Light.
 
 The host gives the page its colours before any of the page's own CSS loads, in a script
 that runs at document start, so the first frame is already in the theme. It sets, on
@@ -19,11 +20,144 @@ that runs at document start, so the first frame is already in the theme. It sets
 | `--abstract-font` | the system UI font |
 | `color-scheme` | `dark` or `light`, so scrollbars and form controls match |
 | `background-color` | the canvas, so nothing white shows behind the page |
-| `data-abstract-theme` | `graphite`, `paper` or `ink` |
+| `data-abstract-theme` | the theme's own id: `graphite`, `paper`, `ink`, or a plugin theme's |
+| `data-abstract-appearance` | `dark` or `light`, for CSS that differs by side |
 
 When the theme changes, the same values are set again (no reload), and the plugin hears
 `themeChanged` with the new `context`. The `context` message carries `theme`,
 `colorScheme` and `tokens` too.
+
+## Adding a theme
+
+A theme is a plugin contribution (ABS-185), with the schema Paseo uses for its theme
+plugins: an id, a name, `light` or `dark`, and eight colours. Abstract derives every
+other colour from them: surfaces, text levels, hairlines, washes, diff and pull request
+colours, syntax and the terminal's 16. Graphite, Paper and Ink are themselves bundled
+theme plugins (`Abstract/Resources/Plugins/theme-*.abstractplugin`).
+
+```json
+{
+  "api": 2, "id": "sh.example.catppuccin", "name": "Catppuccin", "version": "1.0.0",
+  "capabilities": [],
+  "contributes": {
+    "themes": [
+      {
+        "id": "mocha", "name": "Catppuccin Mocha", "appearance": "dark",
+        "colors": {
+          "background": "#1e1e2e", "foreground": "#cdd6f4", "raised": "#313244",
+          "control": "#45475a", "border": "#45475a", "accent": "#cba6f7",
+          "mutedForeground": "#a6adc8", "ring": "#6c7086"
+        },
+        "tokens": { "syntaxKeyword": "#cba6f7" }
+      }
+    ]
+  }
+}
+```
+
+| Colour | Becomes |
+|---|---|
+| `background` | The canvas; the sidebar and code a step behind it on a dark theme |
+| `foreground` | Text, prose a touch softer, the accent when there's no `accent` |
+| `raised` | Surfaces and, on a light theme, the sidebar |
+| `control` | Insets, and raised surfaces on a dark theme |
+| `border` | Hairlines; stronger hairlines and field edges from it |
+| `accent` | Primary buttons, focus and selection marks. Optional |
+| `mutedForeground` | Secondary text, and warnings toward `foreground` |
+| `ring` | Focused field edges, and tertiary text with `mutedForeground` |
+
+Every colour is `#rgb`, `#rrggbb` or `#rrggbbaa`; anything else, or a key Abstract doesn't
+know, refuses the plugin. `tokens` sets any palette role (the `--abstract-*` names above)
+outright. A derived text or status colour that wouldn't read is lifted until it clears
+4.5:1 on every surface (text 7:1), so an eight-colour theme passes Ink's contrast test;
+what you write in `tokens` is used as written. A plugin of themes alone needs no
+`entry`, no script and no capabilities, and adds up to eight. Settings › Appearance lists
+every theme of every plugin that's on; Match System picks a light one and a dark one.
+Turn the plugin off and a window drawing in its theme falls back to Graphite. The phone
+gets the colours from the Mac and runs nothing.
+
+## Adding an agent
+
+An agent is a plugin contribution too (ABS-185), after Paseo's provider plugins:
+Claude Code, Codex, OpenCode and Muse Code are bundled agent plugins
+(`Abstract/Resources/Plugins/agent-*.abstractplugin`), and one you install runs
+chats without a new Abstract. What differs from Paseo: **the plugin never
+starts anything.** Abstract runs the program the manifest names, through the
+chat's own executor (so paired Macs, per-chat MCP servers and skills keep
+working), and hands each line it prints to the plugin's agent script.
+
+```json
+{
+  "api": 2, "id": "sh.example.my-agent", "name": "My agent", "version": "1.0.0",
+  "capabilities": ["agents"],
+  "agent": "agent.js",
+  "contributes": {
+    "agents": [
+      {
+        "id": "my-agent", "label": "My agent", "icon": "icon.svg",
+        "command": ["my-agent", "--json"], "install": "brew install my-agent",
+        "capabilities": ["prompt.message", "prompt.steer", "permission", "session.persistence"],
+        "skills": "addedDirectory", "toolServers": "askFirst",
+        "config": [".config/my-agent/config.json"]
+      }
+    ]
+  }
+}
+```
+
+`command[0]` is a plain program name on the login shell's PATH, never a shell,
+interpreter or `git`, and it's the only thing the agent ever runs; the review
+screen names it, and an update that changes it is reviewed again. The
+capabilities say what it can do, and Abstract leaves out any it doesn't know (as
+Paseo negotiates). Without one, Abstract says the agent can't:
+
+| Capability | What it turns on |
+|---|---|
+| `prompt.message` | Required: it takes a prompt |
+| `prompt.image` | Pictures ride with the prompt |
+| `prompt.steer` | Follow-ups go to the running program's stdin; without it each turn starts it again |
+| `interrupt`, `permission`, `permission.mode` | Stop a turn, answer its permission requests, change its mode while it runs |
+| `session.persistence` | A later turn resumes the conversation |
+| `task.stop`, `task.background` | Stop one of its background tasks, move work to the background |
+| `naming`, `compaction`, `models.discover` | Name chats, `/compact`, list the account's models |
+| `lines.enrich` | Fill in a line from the chat's worktree before it's logged |
+
+The agent script is plain JavaScript in a context of its own: no page, no
+network, no timers, no files. It registers each agent:
+
+```js
+AbstractAgent.register({
+  id: "my-agent",
+  launch(ctx, resumeId) {           // ctx: the prompt, folder, model, policy, MCP servers…
+    return { args: ["run", ctx.prompt], env: {}, stdin: null, keepStdinOpen: false };
+  },
+  parser() {                        // one per chat, fed a batch of lines at a time
+    return {
+      feed(lines) { return lines.map(({ line, stream }) => [{ type: "text", role: "assistant", text: line }]); },
+      exit(code) { return [{ type: "status", status: code === 0 ? "finished" : "errored" }]; },
+    };
+  },
+  message({ text, images, sessionId }) { return JSON.stringify({ type: "user", text }) + "\n"; },
+  catalog() { return { models: [{ id: "big", label: "Big", efforts: [] }], versions: [] }; },
+  *discoverModels() { const r = yield { run: { args: ["models"] } }; return parseModels(r.stdout); },
+});
+```
+
+`feed` returns, for each line, the events it made, as `{ type, … }` objects
+(`text`, `thinking`, `toolUse` with an `edit` preview, `toolResult`, `usage`,
+`sessionId`, `turnEnd`, `permissionRequest`, `notice`, `task`, `error`, `raw`…).
+It must be a function of the lines alone: the same log folds to the same chat
+on every Mac. Jobs (`discoverModels`, `compact`) are generators whose every
+`yield` is one thing Abstract does and hands back: run the agent's own program
+(`run`), talk to it a line at a time (`converse`), start it and wait for a line
+(`start`, `stop`), or call a server it started on the chat's own Mac (`http`,
+loopback only). `AbstractAgent` also offers `editPreview(tool, input)`,
+`compactJSON(value)`, `uuid()` and `writeConfigFile(name, text)` (into the
+chat's own config folder, while a launch is built).
+
+The sample in `Packages/AbstractCore/Tests/AbstractCoreTests/Fixtures/agent-direct-example.abstractplugin`,
+adapted from Paseo's `provider-direct`, runs a whole chat with `echo` as its
+program.
 
 ## The kit
 

@@ -47,7 +47,7 @@ public enum PluginPackage {
             hash.update(data: Data(relative.utf8))
             hash.update(data: Data(SHA256.hash(data: data)))
         }
-        guard files.contains(manifest.entry) else {
+        guard manifest.entry.isEmpty || files.contains(manifest.entry) else {
             throw PluginValidationError.missingEntry(manifest.entry)
         }
         if let icon = manifest.contributes.issueTracker?.icon, !files.contains(icon) {
@@ -55,6 +55,12 @@ public enum PluginPackage {
         }
         if let background = manifest.background, !files.contains(background) {
             throw PluginValidationError.missingEntry(background)
+        }
+        if let agent = manifest.agent, !files.contains(agent) {
+            throw PluginValidationError.missingEntry(agent)
+        }
+        for icon in manifest.contributes.agents.compactMap(\.icon) where !files.contains(icon) {
+            throw PluginValidationError.missingEntry(icon)
         }
         let hex = hash.finalize().map { String(format: "%02x", $0) }.joined()
         return Inspection(manifest: manifest, hash: hex, fileCount: files.count, totalBytes: total)

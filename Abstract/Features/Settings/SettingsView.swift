@@ -434,8 +434,26 @@ struct SettingsInputRow<Control: View>: View {
 // MARK: - General
 
 private struct AppearanceSettingsPane: View {
-    @AppStorage("theme") private var theme: ThemeChoice = .graphite
+    @AppStorage("theme") private var theme: ThemeChoice = .default
+    @AppStorage(ThemeState.lightPickKey) private var lightPick = ThemeCatalog.paperId
+    @AppStorage(ThemeState.darkPickKey) private var darkPick = ThemeCatalog.graphiteId
     @AppStorage("chat.font") private var chatFont: ChatFont = .inter
+
+    /// Every installed theme (ABS-185), then Match System.
+    private var choices: [ThemeChoice] {
+        let catalog = ThemeState.shared.catalog
+        let themes = catalog.listed.isEmpty ? catalog.fallbacks : catalog.listed
+        return themes.map(ThemeChoice.init) + [.system]
+    }
+
+    /// The installed themes of one side, with the current pick kept even
+    /// when its plugin is off, so the menu always shows what's in use.
+    private func pickable(_ appearance: ThemeAppearance, current: String) -> [Theme] {
+        let catalog = ThemeState.shared.catalog
+        let listed = catalog.listed(appearance)
+        let picked = catalog.theme(current, appearance: appearance)
+        return listed.contains(picked) ? listed : [picked] + listed
+    }
     @AppStorage("chat.textSize") private var chatSize: ChatTextSize = .medium
 
     var body: some View {
@@ -443,15 +461,23 @@ private struct AppearanceSettingsPane: View {
             Section {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 136), spacing: Space.md)],
                           spacing: Space.md) {
-                    ForEach([ThemeChoice.graphite, .paper, .ink, .system]) { choice in
+                    ForEach(choices) { choice in
                         ThemeCard(choice: choice, selected: theme == choice) { theme = choice }
                     }
                 }
                 .padding(.vertical, Space.xs)
+                if theme.isSystem {
+                    Picker("Light theme", selection: $lightPick) {
+                        ForEach(pickable(.light, current: lightPick)) { Text($0.name).tag($0.id) }
+                    }
+                    Picker("Dark theme", selection: $darkPick) {
+                        ForEach(pickable(.dark, current: darkPick)) { Text($0.name).tag($0.id) }
+                    }
+                }
             } header: {
                 Text("Theme")
             } footer: {
-                SettingsCaption("Ink is true black with high contrast. Match System uses it when macOS is in Dark mode with Increase contrast turned on (System Settings → Accessibility → Display).")
+                SettingsCaption("Ink is true black with high contrast. Match System uses it when macOS is in Dark mode with Increase contrast turned on (System Settings → Accessibility → Display), while its dark theme is Graphite. Themes come from plugins: one you install appears here.")
             }
             InterfaceFontSection()
             EditorFontSection()
@@ -750,21 +776,17 @@ private struct ThemeCard: View {
 
     @ViewBuilder
     private var preview: some View {
-        switch choice {
-        case .graphite:
-            WindowMock(theme: .graphite)
-        case .paper:
-            WindowMock(theme: .paper)
-        case .ink:
-            WindowMock(theme: .ink)
-        case .system:
+        let state = ThemeState.shared
+        if choice.isSystem {
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
-                    WindowMock(theme: .paper)
-                    WindowMock(theme: .graphite)
+                    WindowMock(theme: choice.theme(dark: false, increasedContrast: false, catalog: state.catalog, picks: state.picks))
+                    WindowMock(theme: choice.theme(dark: true, increasedContrast: false, catalog: state.catalog, picks: state.picks))
                         .mask(alignment: .trailing) { Rectangle().frame(width: geo.size.width / 2) }
                 }
             }
+        } else {
+            WindowMock(theme: state.catalog.theme(choice.rawValue))
         }
     }
 }

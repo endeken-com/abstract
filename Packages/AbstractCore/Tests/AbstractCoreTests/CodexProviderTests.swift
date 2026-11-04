@@ -3,12 +3,12 @@ import Testing
 import AbstractCore
 
 @Suite struct CodexProviderTests {
-    let provider = CodexProvider()
+    let provider = Agents.codex
     let ctx = LaunchContext(cwd: "/tmp/work", prompt: "make hi.txt", permissionPolicy: .autoEdits)
 
     static func fixtureEvents() throws -> [AgentEvent] {
         let url = try #require(Bundle.module.url(forResource: "codex-stream", withExtension: "jsonl", subdirectory: "Fixtures"))
-        let parser = CodexProvider().makeParser()
+        let parser = Agents.codex.makeParser()
         return try String(contentsOf: url, encoding: .utf8)
             .components(separatedBy: "\n")
             .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
@@ -16,7 +16,7 @@ import AbstractCore
     }
 
     static func feed(_ lines: [String]) -> [AgentEvent] {
-        let parser = CodexProvider().makeParser()
+        let parser = Agents.codex.makeParser()
         return lines.flatMap { parser.feed($0, stream: .stdout) }
     }
 
@@ -232,7 +232,7 @@ import AbstractCore
 @Suite("Codex argv edge cases")
 struct CodexArgvTests {
     @Test func promptStartingWithADashIsNotReadAsAFlag() {
-        let spec = CodexProvider().buildLaunch(LaunchContext(cwd: "/tmp/w", prompt: "- fix the parser", permissionPolicy: .autoEdits))
+        let spec = Agents.codex.buildLaunch(LaunchContext(cwd: "/tmp/w", prompt: "- fix the parser", permissionPolicy: .autoEdits))
         #expect(Array(spec.args.suffix(2)) == ["--", "- fix the parser"])
     }
 }

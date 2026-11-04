@@ -3,6 +3,7 @@ import { Platform, StyleSheet, View, type StyleProp, type ViewStyle } from 'reac
 import MaskedView from '@react-native-masked-view/masked-view';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
+import { themedStyles, palette } from './theme';
 
 type Props = {
   edge: 'top' | 'bottom';
@@ -12,7 +13,7 @@ type Props = {
 };
 
 /** One surface color at either edge; only blur visibility tapers into content. */
-export function ProgressiveBlur({ edge, style, blurTarget, surfaceColor = '#1E1E21' }: Props) {
+export function ProgressiveBlur({ edge, style, blurTarget, surfaceColor = palette.canvas }: Props) {
   const top = edge === 'top';
   const mask = top
     ? (['black', 'black', 'rgba(0,0,0,0.85)', 'rgba(0,0,0,0.55)', 'rgba(0,0,0,0.25)', 'transparent'] as const)
@@ -26,4 +27,4 @@ export function ProgressiveBlur({ edge, style, blurTarget, surfaceColor = '#1E1E
   </View>;
 }
 
-const styles = StyleSheet.create({ fill: { ...StyleSheet.absoluteFillObject } });
+const styles = themedStyles(() => StyleSheet.create({ fill: { ...StyleSheet.absoluteFillObject } }));

@@ -1,0 +1,47 @@
+{
+  "api": 2,
+  "id": "sh.abstract.theme.graphite",
+  "name": "Graphite",
+  "version": "1.0.0",
+  "description": "Abstract's dark gray theme.",
+  "capabilities": [],
+  "contributes": {
+    "themes": [
+      {
+        "id": "graphite",
+        "name": "Graphite",
+        "appearance": "dark",
+        "colors": {
+          "background": "#1e1e21",
+          "foreground": "#ececef",
+          "raised": "#252529",
+          "control": "#303036",
+          "border": "#ffffff13",
+          "mutedForeground": "#a4a4ad",
+          "ring": "#75757e"
+        },
+        "tokens": {
+          "attention": "#f2f2f4",
+          "borderStrong": "#ffffff1f",
+          "code": "#18181b",
+          "field": "#232327",
+          "fieldBorder": "#ffffff1c",
+          "fieldBorderFocused": "#ffffff57",
+          "findCurrent": "#e2c0448c",
+          "findMatch": "#ffffff29",
+          "hover": "#ffffff0d",
+          "prose": "#dcdce1",
+          "removed": "#ef6461",
+          "selection": "#ffffff16",
+          "sidebar": "#19191c",
+          "syntaxComment": "#5c6370",
+          "syntaxKeyword": "#c678dd",
+          "syntaxTag": "#e06c75",
+          "textTertiary": "#75757e",
+          "usageClaude": "#d97757",
+          "warning": "#d2d2d8"
+        }
+      }
+    ]
+  }
+}

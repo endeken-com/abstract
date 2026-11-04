@@ -1,0 +1,150 @@
+{
+  "exit:0" : [
+    {
+      "status" : "finished",
+      "type" : "status"
+    }
+  ],
+  "exit:1" : [
+    {
+      "message" : "codex exited with code 1",
+      "type" : "error"
+    },
+    {
+      "status" : "errored",
+      "type" : "status"
+    }
+  ],
+  "exit:null" : [
+    {
+      "message" : "codex exited with code null",
+      "type" : "error"
+    },
+    {
+      "status" : "errored",
+      "type" : "status"
+    }
+  ],
+  "stderr" : [
+    [
+      {
+        "line" : "{\"type\":\"thread.started\",\"thread_id\":\"01a0cad4-f355-7380-b8cd-3b7b34fac1a4\"}",
+        "stream" : "stderr",
+        "type" : "raw"
+      }
+    ],
+    [
+      {
+        "line" : "{\"type\":\"turn.started\"}",
+        "stream" : "stderr",
+        "type" : "raw"
+      }
+    ],
+    [
+      {
+        "line" : "{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"agent_message\",\"text\":\"I’ll create `hi.txt` containing `hi`.\\n\"}}",
+        "stream" : "stderr",
+        "type" : "raw"
+      }
+    ],
+    [
+      {
+        "line" : "{\"type\":\"item.started\",\"item\":{\"id\":\"item_1\",\"type\":\"command_execution\",\"command\":\"/bin/zsh -lc \\\"printf 'hi\\\\\\\\n' > hi.txt\\\"\",\"aggregated_output\":\"\",\"exit_code\":null,\"status\":\"in_progress\"}}",
+        "stream" : "stderr",
+        "type" : "raw"
+      }
+    ],
+    [
+      {
+        "line" : "{\"type\":\"item.completed\",\"item\":{\"id\":\"item_1\",\"type\":\"command_execution\",\"command\":\"/bin/zsh -lc \\\"printf 'hi\\\\\\\\n' > hi.txt\\\"\",\"aggregated_output\":\"\",\"exit_code\":0,\"status\":\"completed\"}}",
+        "stream" : "stderr",
+        "type" : "raw"
+      }
+    ],
+    [
+      {
+        "line" : "{\"type\":\"item.completed\",\"item\":{\"id\":\"item_2\",\"type\":\"agent_message\",\"text\":\"Created `hi.txt` containing `hi`.\"}}",
+        "stream" : "stderr",
+        "type" : "raw"
+      }
+    ],
+    [
+      {
+        "line" : "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":34277,\"cached_input_tokens\":29056,\"cache_write_input_tokens\":0,\"output_tokens\":66,\"reasoning_output_tokens\":0}}",
+        "stream" : "stderr",
+        "type" : "raw"
+      }
+    ],
+    [
+
+    ]
+  ],
+  "stdout" : [
+    [
+      {
+        "id" : "01a0cad4-f355-7380-b8cd-3b7b34fac1a4",
+        "type" : "sessionId"
+      }
+    ],
+    [
+      {
+        "status" : "running",
+        "type" : "status"
+      }
+    ],
+    [
+      {
+        "blockId" : "item_0",
+        "partial" : false,
+        "role" : "assistant",
+        "text" : "I’ll create `hi.txt` containing `hi`.\n",
+        "type" : "text"
+      }
+    ],
+    [
+      {
+        "id" : "item_1",
+        "input" : {
+          "command" : "/bin/zsh -lc \"printf 'hi\\\\n' > hi.txt\""
+        },
+        "name" : "Bash",
+        "type" : "toolUse"
+      }
+    ],
+    [
+      {
+        "isError" : false,
+        "output" : "",
+        "toolUseId" : "item_1",
+        "type" : "toolResult"
+      }
+    ],
+    [
+      {
+        "blockId" : "item_2",
+        "partial" : false,
+        "role" : "assistant",
+        "text" : "Created `hi.txt` containing `hi`.",
+        "type" : "text"
+      }
+    ],
+    [
+      {
+        "type" : "usage",
+        "usage" : {
+          "cacheRead" : 29056,
+          "cacheWrite" : 0,
+          "inputTokens" : 34277,
+          "outputTokens" : 66
+        }
+      },
+      {
+        "status" : "finished",
+        "type" : "status"
+      }
+    ],
+    [
+
+    ]
+  ]
+}

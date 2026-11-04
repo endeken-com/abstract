@@ -38,7 +38,7 @@ import Testing
     }
 
     @Test func codexGetsTheInstructionsAsDeveloperInstructions() {
-        let spec = AgentLaunch.spec(for: chat(from: reviewer), provider: CodexProvider(), prompt: "Review this",
+        let spec = AgentLaunch.spec(for: chat(from: reviewer), provider: Agents.codex, prompt: "Review this",
                                     resumeId: nil, settings: settings(), home: "/tmp")
         #expect(spec.args.contains { $0.hasPrefix("developer_instructions=") && $0.contains("most serious first") })
         // And the rest of the profile, on the same command line.
@@ -50,7 +50,7 @@ import Testing
     @Test func claudeGetsTheInstructionsAppendedToItsSystemPrompt() throws {
         var profile = reviewer
         profile.providerId = "claude"
-        let spec = AgentLaunch.spec(for: chat(from: profile), provider: ClaudeProvider(), prompt: "Review this",
+        let spec = AgentLaunch.spec(for: chat(from: profile), provider: Agents.claude, prompt: "Review this",
                                     resumeId: nil, settings: settings(history: true), home: "/tmp")
         let index = try #require(spec.args.firstIndex(of: "--append-system-prompt"))
         let appended = spec.args[index + 1]
@@ -65,9 +65,9 @@ import Testing
     @Test func openCodeGetsTheInstructionsAsItsAgentsPrompt() {
         var profile = reviewer
         profile.providerId = "opencode"
-        let spec = AgentLaunch.spec(for: chat(from: profile), provider: OpenCodeProvider(), prompt: "Review this",
+        let spec = AgentLaunch.spec(for: chat(from: profile), provider: Agents.opencode, prompt: "Review this",
                                     resumeId: nil, settings: settings(history: true), home: "/tmp")
-        #expect(spec.args.contains("--agent") && spec.args.contains(OpenCodeProvider.profileAgent))
+        #expect(spec.args.contains("--agent") && spec.args.contains("abstract-profile"))
         let config = spec.env["OPENCODE_CONFIG_CONTENT"] ?? ""
         #expect(config.contains("most serious first"))
         // The code-history server rides in the same config.
@@ -80,19 +80,19 @@ import Testing
         var session = chat(from: reviewer)
         session.providerId = "opencode"
         session.permissionPolicy = .plan
-        let spec = AgentLaunch.spec(for: session, provider: OpenCodeProvider(), prompt: "Plan this",
+        let spec = AgentLaunch.spec(for: session, provider: Agents.opencode, prompt: "Plan this",
                                     resumeId: nil, settings: settings(), home: "/tmp")
-        #expect(spec.args.contains("plan") && !spec.args.contains(OpenCodeProvider.profileAgent))
+        #expect(spec.args.contains("plan") && !spec.args.contains("abstract-profile"))
         #expect(spec.args.last?.contains("most serious first") == true)
         #expect(spec.args.last?.hasSuffix("Plan this") == true)
     }
 
     @Test func aChatFromNoProfileLaunchesAsBefore() {
         let session = Session(projectId: nil, name: "Chat", providerId: "claude", worktreePath: "/w")
-        let spec = AgentLaunch.spec(for: session, provider: ClaudeProvider(), prompt: "hi",
+        let spec = AgentLaunch.spec(for: session, provider: Agents.claude, prompt: "hi",
                                     resumeId: nil, settings: settings(), home: "/tmp")
         #expect(!spec.args.contains("--append-system-prompt"))
-        let opencode = AgentLaunch.spec(for: session, provider: OpenCodeProvider(), prompt: "hi",
+        let opencode = AgentLaunch.spec(for: session, provider: Agents.opencode, prompt: "hi",
                                         resumeId: nil, settings: settings(), home: "/tmp")
         #expect(!opencode.args.contains("--agent"))
         #expect(opencode.env.isEmpty)
@@ -206,7 +206,7 @@ import Testing
                               permissionPolicy: run.permissionPolicy, automationId: run.id,
                               model: run.model, effort: run.effort)
         session.apply(reviewer.snapshot)
-        let spec = AgentLaunch.spec(for: session, provider: CodexProvider(), prompt: run.prompt,
+        let spec = AgentLaunch.spec(for: session, provider: Agents.codex, prompt: run.prompt,
                                     resumeId: nil, settings: settings(), home: "/tmp")
         #expect(spec.args.contains { $0.hasPrefix("developer_instructions=") && $0.contains("most serious first") })
 

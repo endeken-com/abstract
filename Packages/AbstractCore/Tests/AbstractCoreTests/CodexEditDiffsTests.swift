@@ -26,7 +26,7 @@ import Testing
     }
 
     private func edit(_ line: OutputLine) -> EditPreview? {
-        for event in CodexProvider().makeParser().feed(line.line, stream: line.stream) {
+        for event in Agents.codex.makeParser().feed(line.line, stream: line.stream) {
             if case let .toolResult(_, _, _, edit) = event { return edit }
         }
         return nil
@@ -34,7 +34,7 @@ import Testing
 
     @Test func firstEditIsDiffedAgainstHead() async throws {
         let dir = try await repo(); defer { try? FileManager.default.removeItem(atPath: dir) }
-        let enricher = try #require(CodexProvider().makeLineEnricher(executor: exec, cwd: dir))
+        let enricher = try #require(Agents.codex.makeLineEnricher(executor: exec, cwd: dir))
         try (1...20).map { $0 == 10 ? "ten\n" : "line \($0)\n" }.joined().write(toFile: dir + "/app.txt", atomically: true, encoding: .utf8)
 
         let preview = try #require(edit(enricher.enrich(completed(dir + "/app.txt"))))
@@ -45,7 +45,7 @@ import Testing
 
     @Test func laterEditsShowOnlyTheirOwnChange() async throws {
         let dir = try await repo(); defer { try? FileManager.default.removeItem(atPath: dir) }
-        let enricher = try #require(CodexProvider().makeLineEnricher(executor: exec, cwd: dir))
+        let enricher = try #require(Agents.codex.makeLineEnricher(executor: exec, cwd: dir))
         let path = dir + "/app.txt"
         try (1...20).map { $0 == 2 ? "two\n" : "line \($0)\n" }.joined().write(toFile: path, atomically: true, encoding: .utf8)
         _ = enricher.enrich(completed(path))
@@ -59,7 +59,7 @@ import Testing
 
     @Test func newFileIsAllAdditions() async throws {
         let dir = try await repo(); defer { try? FileManager.default.removeItem(atPath: dir) }
-        let enricher = try #require(CodexProvider().makeLineEnricher(executor: exec, cwd: dir))
+        let enricher = try #require(Agents.codex.makeLineEnricher(executor: exec, cwd: dir))
         try "a\nb\nc\n".write(toFile: dir + "/new.txt", atomically: true, encoding: .utf8)
 
         let preview = try #require(edit(enricher.enrich(completed(dir + "/new.txt", kind: "add"))))
@@ -67,7 +67,7 @@ import Testing
     }
 
     @Test func otherLinesPassThroughUntouched() throws {
-        let enricher = try #require(CodexProvider().makeLineEnricher(executor: exec, cwd: "/tmp"))
+        let enricher = try #require(Agents.codex.makeLineEnricher(executor: exec, cwd: "/tmp"))
         let line = OutputLine(stream: .stdout, line: #"{"type":"item.completed","item":{"id":"m","type":"agent_message","text":"hi"}}"#)
         #expect(enricher.enrich(line) == line)
     }

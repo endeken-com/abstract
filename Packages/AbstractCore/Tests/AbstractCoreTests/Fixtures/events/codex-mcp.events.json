@@ -1,0 +1,152 @@
+{
+  "exit:0" : [
+    {
+      "status" : "finished",
+      "type" : "status"
+    }
+  ],
+  "exit:1" : [
+    {
+      "message" : "codex exited with code 1",
+      "type" : "error"
+    },
+    {
+      "status" : "errored",
+      "type" : "status"
+    }
+  ],
+  "exit:null" : [
+    {
+      "message" : "codex exited with code null",
+      "type" : "error"
+    },
+    {
+      "status" : "errored",
+      "type" : "status"
+    }
+  ],
+  "stderr" : [
+    [
+      {
+        "line" : "{\"type\":\"thread.started\",\"thread_id\":\"thread-1\"}",
+        "stream" : "stderr",
+        "type" : "raw"
+      }
+    ],
+    [
+      {
+        "line" : "{\"type\":\"turn.started\"}",
+        "stream" : "stderr",
+        "type" : "raw"
+      }
+    ],
+    [
+      {
+        "line" : "{\"type\":\"item.started\",\"item\":{\"id\":\"item-1\",\"type\":\"mcp_tool_call\",\"server\":\"abstract-code-history\",\"tool\":\"code_history\",\"arguments\":{\"path\":\"Sources/Diff.swift\",\"lines\":\"220-245\"},\"status\":\"in_progress\"}}",
+        "stream" : "stderr",
+        "type" : "raw"
+      }
+    ],
+    [
+      {
+        "line" : "{\"type\":\"item.completed\",\"item\":{\"id\":\"item-1\",\"type\":\"mcp_tool_call\",\"server\":\"abstract-code-history\",\"tool\":\"code_history\",\"arguments\":{\"path\":\"Sources/Diff.swift\",\"lines\":\"220-245\"},\"status\":\"completed\",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"## 2026-09-24 · Index lock · ABS-11 (chat s-old, turn 1)\\nDecided: Never write the git index on a refresh path.\"}],\"isError\":false}}}",
+        "stream" : "stderr",
+        "type" : "raw"
+      }
+    ],
+    [
+      {
+        "line" : "{\"type\":\"item.started\",\"item\":{\"id\":\"item-2\",\"type\":\"mcp_tool_call\",\"server\":\"abstract-code-history\",\"tool\":\"chat_excerpt\",\"arguments\":{\"chat\":\"s-old\",\"turn\":1},\"status\":\"in_progress\"}}",
+        "stream" : "stderr",
+        "type" : "raw"
+      }
+    ],
+    [
+      {
+        "line" : "{\"type\":\"item.completed\",\"item\":{\"id\":\"item-2\",\"type\":\"mcp_tool_call\",\"server\":\"abstract-code-history\",\"tool\":\"chat_excerpt\",\"arguments\":{\"chat\":\"s-old\",\"turn\":1},\"status\":\"failed\",\"error\":{\"message\":\"MCP tool call requires approval, but approval policy is never\"}}}",
+        "stream" : "stderr",
+        "type" : "raw"
+      }
+    ],
+    [
+      {
+        "line" : "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":10,\"output_tokens\":5,\"cached_input_tokens\":0}}",
+        "stream" : "stderr",
+        "type" : "raw"
+      }
+    ],
+    [
+
+    ]
+  ],
+  "stdout" : [
+    [
+      {
+        "id" : "thread-1",
+        "type" : "sessionId"
+      }
+    ],
+    [
+      {
+        "status" : "running",
+        "type" : "status"
+      }
+    ],
+    [
+      {
+        "id" : "item-1",
+        "input" : {
+          "lines" : "220-245",
+          "path" : "Sources/Diff.swift"
+        },
+        "name" : "mcp__abstract-code-history__code_history",
+        "type" : "toolUse"
+      }
+    ],
+    [
+      {
+        "isError" : false,
+        "output" : "## 2026-09-24 · Index lock · ABS-11 (chat s-old, turn 1)\nDecided: Never write the git index on a refresh path.",
+        "toolUseId" : "item-1",
+        "type" : "toolResult"
+      }
+    ],
+    [
+      {
+        "id" : "item-2",
+        "input" : {
+          "chat" : "s-old",
+          "turn" : 1
+        },
+        "name" : "mcp__abstract-code-history__chat_excerpt",
+        "type" : "toolUse"
+      }
+    ],
+    [
+      {
+        "isError" : true,
+        "output" : "MCP tool call requires approval, but approval policy is never",
+        "toolUseId" : "item-2",
+        "type" : "toolResult"
+      }
+    ],
+    [
+      {
+        "type" : "usage",
+        "usage" : {
+          "cacheRead" : 0,
+          "cacheWrite" : 0,
+          "inputTokens" : 10,
+          "outputTokens" : 5
+        }
+      },
+      {
+        "status" : "finished",
+        "type" : "status"
+      }
+    ],
+    [
+
+    ]
+  ]
+}

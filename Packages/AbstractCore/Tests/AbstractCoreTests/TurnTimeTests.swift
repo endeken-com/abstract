@@ -87,7 +87,7 @@ struct TurnTimeTests {
     }
 
     @Test func aFailedTurnSaysHowLongItRan() {
-        let parser = CodexProvider().makeParser()
+        let parser = Agents.codex.makeParser()
         var t = Timeline()
         t.append(.text(role: .user, text: "go", blockId: nil, partial: false), at: Self.start)
         t.append(.text(role: .assistant, text: "On it.", blockId: "m", partial: false), at: Self.start.addingTimeInterval(1))

@@ -431,8 +431,14 @@ public final class PluginManager: Sendable {
 
     public static let defaultsKey = "plugins.defaults.v1"
     /// Bundled plugins installed and turned on the first time Abstract
-    /// finds them: GitHub for pull requests and Delegation for sub-tasks.
-    public static let defaultPluginIds: Set<String> = ["sh.abstract.github", "sh.abstract.delegation"]
+    /// finds them: GitHub for pull requests, Delegation for sub-tasks, the
+    /// Graphite, Paper and Ink themes and Abstract's own agents (ABS-185).
+    public static let defaultPluginIds: Set<String> = Set(["sh.abstract.github", "sh.abstract.delegation"])
+        .union(ThemeCatalog.bundledPluginIds).union(AgentPlugins.bundledPluginIds)
+
+    /// The default plugins already offered on this Mac: installed once, and
+    /// left as you set them since.
+    public var offeredDefaults: Set<String> { Set(store.setting(Self.defaultsKey, as: [String].self) ?? []) }
 
     /// Installs and turns on each default plugin found among `bundled` once:
     /// removing or turning it off afterwards sticks. A bundled install

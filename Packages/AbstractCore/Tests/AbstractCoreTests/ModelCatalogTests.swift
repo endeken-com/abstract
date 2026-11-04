@@ -108,7 +108,7 @@ struct ClaudeModelCatalogTests {
     }
 
     @Test func theFallbackOffersAliasesAndPinnedVersions() {
-        let fallback = ClaudeProvider().fallbackModels
+        let fallback = Agents.claude.fallbackModels
         #expect(fallback.models.map(\.id) == ["fable", "opus", "sonnet", "haiku"])
         #expect(fallback.versions.map(\.id) == ClaudeProvider.pinnedVersions)
         #expect(fallback.option("haiku")?.efforts == [])
@@ -136,7 +136,7 @@ struct ClaudeModelCatalogTests {
         // A slow login shell (its first lookup) isn't what's measured.
         _ = await LocalExecutor.shared.searchPath
         let started = Date()
-        let catalog = await ClaudeProvider().discoverModels(executor: HomeExecutor(homeDirectory: home), binary: script, timeout: .seconds(10))
+        let catalog = await Agents.claude.discoverModels(executor: HomeExecutor(homeDirectory: home), binary: script, timeout: .seconds(10))
         #expect(catalog?.models.map(\.id) == ["opus[1m]", "claude-fable-5-1[1m]", "sonnet", "haiku"])
         #expect(Date().timeIntervalSince(started) < 8, "answered from the response line, not the timeout")
     }
@@ -147,7 +147,7 @@ struct ClaudeModelCatalogTests {
         let script = home + "/claude"
         try "#!/bin/sh\nsleep 60\n".write(toFile: script, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script)
-        let catalog = await ClaudeProvider().discoverModels(executor: HomeExecutor(homeDirectory: home), binary: script, timeout: .milliseconds(500))
+        let catalog = await Agents.claude.discoverModels(executor: HomeExecutor(homeDirectory: home), binary: script, timeout: .milliseconds(500))
         #expect(catalog == nil)
     }
 
@@ -155,8 +155,8 @@ struct ClaudeModelCatalogTests {
         let home = try temporaryHome()
         defer { try? FileManager.default.removeItem(atPath: home) }
         let exec = HomeExecutor(homeDirectory: home)
-        #expect(await ClaudeProvider().discoverModels(executor: exec, binary: "/usr/bin/false", timeout: .seconds(10)) == nil)
-        #expect(await ClaudeProvider().discoverModels(executor: exec, binary: home + "/missing", timeout: .seconds(10)) == nil)
+        #expect(await Agents.claude.discoverModels(executor: exec, binary: "/usr/bin/false", timeout: .seconds(10)) == nil)
+        #expect(await Agents.claude.discoverModels(executor: exec, binary: home + "/missing", timeout: .seconds(10)) == nil)
     }
 }
 
@@ -190,7 +190,7 @@ struct CodexModelCatalogTests {
         #expect(CodexProvider.modelCatalog(modelsCache: "garbage") == nil)
         let home = try temporaryHome()
         defer { try? FileManager.default.removeItem(atPath: home) }
-        #expect(await CodexProvider().discoverModels(executor: HomeExecutor(homeDirectory: home), binary: nil) == nil)
+        #expect(await Agents.codex.discoverModels(executor: HomeExecutor(homeDirectory: home), binary: nil) == nil)
     }
 
     @Test func discoveryReadsTheCacheInTheHomeDirectory() async throws {
@@ -198,7 +198,7 @@ struct CodexModelCatalogTests {
         defer { try? FileManager.default.removeItem(atPath: home) }
         try FileManager.default.createDirectory(atPath: home + "/.codex", withIntermediateDirectories: true)
         try codexCache.write(toFile: home + "/.codex/models_cache.json", atomically: true, encoding: .utf8)
-        let catalog = await CodexProvider().discoverModels(executor: HomeExecutor(homeDirectory: home), binary: nil)
+        let catalog = await Agents.codex.discoverModels(executor: HomeExecutor(homeDirectory: home), binary: nil)
         #expect(catalog?.models.first?.id == "gpt-6-astra")
     }
 }
@@ -234,26 +234,26 @@ struct ModelCatalogTests {
 @Suite("Effort selection")
 struct EffortSelectionTests {
     @Test func claudePassesTheChosenEffort() throws {
-        let spec = ClaudeProvider().buildLaunch(LaunchContext(cwd: "/w", prompt: "p", permissionPolicy: .ask, model: "sonnet", effort: "high"))
+        let spec = Agents.claude.buildLaunch(LaunchContext(cwd: "/w", prompt: "p", permissionPolicy: .ask, model: "sonnet", effort: "high"))
         let i = try #require(spec.args.firstIndex(of: "--effort"))
         #expect(spec.args[i + 1] == "high")
-        let resume = ClaudeProvider().buildResume(LaunchContext(cwd: "/w", prompt: "p", permissionPolicy: .ask, effort: "max"), resumeId: "abc")
+        let resume = Agents.claude.buildResume(LaunchContext(cwd: "/w", prompt: "p", permissionPolicy: .ask, effort: "max"), resumeId: "abc")
         #expect(resume.args.contains("--effort") && resume.args.contains("--resume"))
     }
 
     @Test func codexPassesTheChosenEffortAsAConfigOverrideBeforeThePrompt() throws {
-        let spec = CodexProvider().buildLaunch(LaunchContext(cwd: "/w", prompt: "do it", permissionPolicy: .autoEdits, effort: "xhigh"))
+        let spec = Agents.codex.buildLaunch(LaunchContext(cwd: "/w", prompt: "do it", permissionPolicy: .autoEdits, effort: "xhigh"))
         let i = try #require(spec.args.firstIndex(of: "-c"))
         #expect(spec.args[i + 1] == #"model_reasoning_effort="xhigh""#)
         #expect(spec.args.last == "do it")
-        let resume = CodexProvider().buildResume(LaunchContext(cwd: "/w", prompt: "more", permissionPolicy: .autoEdits, effort: "low"), resumeId: "t")
+        let resume = Agents.codex.buildResume(LaunchContext(cwd: "/w", prompt: "more", permissionPolicy: .autoEdits, effort: "low"), resumeId: "t")
         #expect(resume.args.contains(#"model_reasoning_effort="low""#))
     }
 
     @Test func noEffortMeansTheAgentsOwnDefault() {
-        let claude = ClaudeProvider().buildLaunch(LaunchContext(cwd: "/w", prompt: "p", permissionPolicy: .ask, effort: " "))
+        let claude = Agents.claude.buildLaunch(LaunchContext(cwd: "/w", prompt: "p", permissionPolicy: .ask, effort: " "))
         #expect(!claude.args.contains("--effort"))
-        let codex = CodexProvider().buildLaunch(LaunchContext(cwd: "/w", prompt: "p", permissionPolicy: .ask))
+        let codex = Agents.codex.buildLaunch(LaunchContext(cwd: "/w", prompt: "p", permissionPolicy: .ask))
         #expect(!codex.args.contains("-c"))
     }
 
@@ -263,9 +263,9 @@ struct EffortSelectionTests {
         try FileManager.default.createDirectory(atPath: home + "/.codex", withIntermediateDirectories: true)
         try "model = \"gpt-6-astra\"\nmodel_reasoning_effort = \"xhigh\"\n\n[profiles.fast]\nmodel_reasoning_effort = \"low\"\n"
             .write(toFile: home + "/.codex/config.toml", atomically: true, encoding: .utf8)
-        #expect(CodexProvider().configuredDefaultEffort(home: home) == "xhigh")
-        #expect(CodexProvider().configuredDefaultModel(home: home) == "gpt-6-astra")
-        #expect(ClaudeProvider().configuredDefaultEffort(home: home) == nil)
+        #expect(Agents.codex.configuredDefaultEffort(home: home) == "xhigh")
+        #expect(Agents.codex.configuredDefaultModel(home: home) == "gpt-6-astra")
+        #expect(Agents.claude.configuredDefaultEffort(home: home) == nil)
     }
 
     @Test func sessionsAndAutomationsRememberTheirEffort() throws {
@@ -286,13 +286,13 @@ struct EffortSelectionTests {
 @Suite("Real model discovery", .enabled(if: ProcessInfo.processInfo.environment["ABSTRACT_E2E"] != nil))
 struct RealModelDiscoveryTests {
     @Test(.timeLimit(.minutes(1))) func claudeListsTheAccountsModels() async {
-        let catalog = await ClaudeProvider().discoverModels(executor: LocalExecutor.shared, binary: nil)
+        let catalog = await Agents.claude.discoverModels(executor: LocalExecutor.shared, binary: nil)
         #expect(catalog?.models.isEmpty == false)
         #expect(catalog?.accountDefault != nil)
     }
 
     @Test func codexListsTheAccountsModels() async {
-        let catalog = await CodexProvider().discoverModels(executor: LocalExecutor.shared, binary: nil)
+        let catalog = await Agents.codex.discoverModels(executor: LocalExecutor.shared, binary: nil)
         #expect(catalog?.models.isEmpty == false)
     }
 }

@@ -122,12 +122,41 @@ public final class ChatStream {
         case .compaction:
             return CompactionMarker(line).map { [$0.event] } ?? []
         case .stdout, .stderr:
-            let events = parser?.feed(line.line, stream: line.stream) ?? [.raw(line: line.line, stream: line.stream)]
-            let scoped = providerId == "codex" ? scopeCodex(events) : events
-            let classified = classifyCommands(scoped, rawLine: line.line)
-            return isSummarizing ? summarizing(classified) : classified
+            return fold(parser?.feed(line.line, stream: line.stream) ?? [.raw(line: line.line, stream: line.stream)], line)
         }
     }
+
+    /// What the parser made of an output line, as the chat reads it.
+    private func fold(_ events: [AgentEvent], _ line: OutputLine) -> [AgentEvent] {
+        let scoped = providerId == "codex" ? scopeCodex(events) : events
+        let classified = classifyCommands(scoped, rawLine: line.line)
+        return isSummarizing ? summarizing(classified) : classified
+    }
+
+    /// `feed` for many lines at once: each run of output lines goes to the
+    /// parser in one call (ABS-185), which an agent plugin's script reads in
+    /// one pass. The events are the same as line by line.
+    public func feed(batch lines: [OutputLine]) -> [[AgentEvent]] {
+        var out: [[AgentEvent]] = []
+        out.reserveCapacity(lines.count)
+        var i = lines.startIndex
+        func isOutput(_ line: OutputLine) -> Bool { line.stream == .stdout || line.stream == .stderr }
+        while i < lines.endIndex {
+            guard isOutput(lines[i]), let parser else {
+                out.append(feed(lines[i]))
+                i += 1
+                continue
+            }
+            var end = i
+            while end < lines.endIndex, end - i < Self.batchLimit, isOutput(lines[end]) { end += 1 }
+            let run = Array(lines[i..<end])
+            for (line, events) in zip(run, parser.feed(lines: run)) { out.append(fold(events, line)) }
+            i = end
+        }
+        return out
+    }
+
+    static let batchLimit = 512
 
     private func classifyCommands(_ events: [AgentEvent], rawLine: String) -> [AgentEvent] {
         guard providerId != "claude" else { return events }
@@ -215,8 +244,8 @@ public final class ChatStream {
     /// The events of `lines`, as read back into a chat.
     public func replay(_ lines: [OutputLine]) -> Timeline {
         var timeline = Timeline()
-        for line in lines {
-            for event in feed(line) {
+        for (line, events) in zip(lines, feed(batch: lines)) {
+            for event in events {
                 // A question from before is either answered or gone.
                 if case .permissionRequest = event { continue }
                 timeline.append(event, at: line.at)

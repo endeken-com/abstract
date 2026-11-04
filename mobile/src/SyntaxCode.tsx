@@ -19,17 +19,20 @@ import 'prismjs/components/prism-swift';
 import 'prismjs/components/prism-typescript';
 import 'prismjs/components/prism-tsx';
 import 'prismjs/components/prism-yaml';
+import { palette } from './theme';
 
-const colors: Record<string, string> = {
-  keyword: '#C678DD', string: '#98C379', char: '#98C379', attrValue: '#98C379',
-  number: '#D19A66', boolean: '#D19A66', constant: '#D19A66',
-  className: '#E5C07B', builtin: '#E5C07B', function: '#61AFEF',
-  comment: '#5C6370', prolog: '#5C6370', operator: '#56B6C2',
-  punctuation: '#ABB2BF', tag: '#E06C75', deleted: '#E06C75', inserted: '#98C379',
+const roles: Record<string, string> = {
+  keyword: 'syntaxKeyword', string: 'syntaxString', char: 'syntaxString', attrValue: 'syntaxString',
+  number: 'syntaxLiteral', boolean: 'syntaxLiteral', constant: 'syntaxLiteral',
+  className: 'syntaxType', builtin: 'syntaxType', function: 'syntaxFunction',
+  comment: 'syntaxComment', prolog: 'syntaxComment', operator: 'syntaxOperator',
+  punctuation: 'syntaxPlain', tag: 'syntaxTag', deleted: 'syntaxTag', inserted: 'syntaxString',
 };
+// Each token type's colour in the current theme, read when drawn.
+const colors = new Proxy({} as Record<string, string>, { get: (_, type) => roles[type as string] && palette[roles[type as string]] });
 const extensions: Record<string, string> = { ts: 'typescript', tsx: 'tsx', js: 'javascript', jsx: 'jsx', mjs: 'javascript', json: 'json', swift: 'swift', py: 'python', rb: 'ruby', rs: 'rust', go: 'go', java: 'java', sh: 'bash', zsh: 'bash', css: 'css', html: 'markup', xml: 'markup', md: 'markdown', yml: 'yaml', yaml: 'yaml', sql: 'sql', diff: 'diff' };
 export function languageForPath(path: string) { return extensions[path.split('.').at(-1)?.toLowerCase() || ''] || 'plain'; }
-function renderTokens(tokens: Array<string | Prism.Token>, prefix = '', inherited = '#ABB2BF'): React.ReactNode[] {
+function renderTokens(tokens: Array<string | Prism.Token>, prefix = '', inherited = palette.syntaxPlain): React.ReactNode[] {
   return tokens.map((token, index) => {
     const key = `${prefix}-${index}`;
     if (typeof token === 'string') return <Text key={key} style={{ color: inherited }}>{token}</Text>;
@@ -41,7 +44,7 @@ function renderTokens(tokens: Array<string | Prism.Token>, prefix = '', inherite
 }
 type SyntaxProps = { code: string; language?: string; path?: string };
 type ColoredText = { text: string; color: string };
-function flattenTokens(tokens: Array<string | Prism.Token>, inherited = '#ABB2BF'): ColoredText[] {
+function flattenTokens(tokens: Array<string | Prism.Token>, inherited = palette.syntaxPlain): ColoredText[] {
   return tokens.flatMap(token => {
     if (typeof token === 'string') return [{ text: token, color: inherited }];
     const type = Array.isArray(token.alias) ? token.alias[0] : token.alias || token.type;
@@ -94,6 +97,6 @@ export function SyntaxTokens({ code, language, path }: SyntaxProps) {
   return <>{highlighted}</>;
 }
 export function SyntaxCode({ code, language, path, block = false }: SyntaxProps & { block?: boolean }) {
-  const text = <Text selectable style={{ fontFamily: 'JetBrainsMono', fontSize: 11, lineHeight: 18, color: '#ABB2BF' }}><SyntaxTokens code={code} language={language} path={path} /></Text>;
-  return block ? <View style={{ backgroundColor: '#252529', borderRadius: 7, marginBottom: 10, overflow: 'hidden' }}><ScrollView horizontal contentContainerStyle={{ padding: 10 }}>{text}</ScrollView></View> : text;
+  const text = <Text selectable style={{ fontFamily: 'JetBrainsMono', fontSize: 11, lineHeight: 18, color: palette.syntaxPlain }}><SyntaxTokens code={code} language={language} path={path} /></Text>;
+  return block ? <View style={{ backgroundColor: palette.surface, borderRadius: 7, marginBottom: 10, overflow: 'hidden' }}><ScrollView horizontal contentContainerStyle={{ padding: 10 }}>{text}</ScrollView></View> : text;
 }

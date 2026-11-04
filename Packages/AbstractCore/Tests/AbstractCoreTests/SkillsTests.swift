@@ -146,13 +146,13 @@ private struct SkillFixture {
         let f = try SkillFixture.make()
         defer { f.remove() }
         let before = f.homeSnapshot()
-        let spec = launch(ClaudeProvider(), f)
+        let spec = launch(Agents.claude, f)
         let folder = f.data + "/agent-config/chat-1/claude"
         #expect(spec.args.contains(folder))
         #expect(spec.args[spec.args.firstIndex(of: folder)! - 1] == "--add-dir")
         #expect(linked(folder + "/.claude/skills") == ["review": "copy", "plain": "copy"])
         // The resume gets them too.
-        #expect(launch(ClaudeProvider(), f, resumeId: "s1").args.contains(folder))
+        #expect(launch(Agents.claude, f, resumeId: "s1").args.contains(folder))
         #expect(f.homeSnapshot() == before, "nothing in the user's own config changes")
     }
 
@@ -160,7 +160,7 @@ private struct SkillFixture {
         let f = try SkillFixture.make()
         defer { f.remove() }
         let before = f.homeSnapshot()
-        let spec = launch(CodexProvider(), f)
+        let spec = launch(Agents.codex, f)
         let overlay = f.data + "/agent-config/chat-1/codex-home"
         #expect(spec.env["CODEX_HOME"] == overlay)
         #expect(linked(overlay) == ["auth.json": f.home + "/.codex/auth.json", "config.toml": f.home + "/.codex/config.toml",
@@ -168,7 +168,7 @@ private struct SkillFixture {
                 "its sign-in, settings and sessions are the real ones")
         #expect(linked(overlay + "/skills") == ["mine": f.home + "/.codex/skills/mine", "review": "copy", "plain": "copy"],
                 "a skill the project chose wins over the user's own of the same name")
-        #expect(launch(CodexProvider(), f, resumeId: "s1").env["CODEX_HOME"] == overlay, "resuming finds the same sessions")
+        #expect(launch(Agents.codex, f, resumeId: "s1").env["CODEX_HOME"] == overlay, "resuming finds the same sessions")
         #expect(f.homeSnapshot() == before)
     }
 
@@ -176,7 +176,7 @@ private struct SkillFixture {
         let f = try SkillFixture.make()
         defer { f.remove() }
         let before = f.homeSnapshot()
-        let spec = launch(MuseProvider(), f)
+        let spec = launch(Agents.muse, f)
         #expect(spec.env["CODEX_HOME"] == f.data + "/agent-config/chat-1/codex-home")
         #expect(f.homeSnapshot() == before)
     }
@@ -185,7 +185,7 @@ private struct SkillFixture {
         let f = try SkillFixture.make()
         defer { f.remove() }
         let before = f.homeSnapshot()
-        let spec = launch(OpenCodeProvider(), f)
+        let spec = launch(Agents.opencode, f)
         let folder = f.data + "/agent-config/chat-1/skills"
         let config = try JSONDecoder().decode(JSONValue.self, from: Data(try #require(spec.env["OPENCODE_CONFIG_CONTENT"]).utf8))
         #expect(config["skills"]?["paths"] == .array([.string(folder)]))
@@ -197,20 +197,20 @@ private struct SkillFixture {
     @Test func aChatWithNoSkillsStartsAsBefore() throws {
         let f = try SkillFixture.make()
         defer { f.remove() }
-        #expect(!launch(ClaudeProvider(), f, project: []).args.contains { $0.contains("agent-config") })
-        #expect(launch(CodexProvider(), f, project: []).env["CODEX_HOME"] == nil)
-        #expect(launch(MuseProvider(), f, project: []).env["CODEX_HOME"] == nil)
-        #expect(launch(OpenCodeProvider(), f, project: []).env["OPENCODE_CONFIG_CONTENT"] == nil)
+        #expect(!launch(Agents.claude, f, project: []).args.contains { $0.contains("agent-config") })
+        #expect(launch(Agents.codex, f, project: []).env["CODEX_HOME"] == nil)
+        #expect(launch(Agents.muse, f, project: []).env["CODEX_HOME"] == nil)
+        #expect(launch(Agents.opencode, f, project: []).env["OPENCODE_CONFIG_CONTENT"] == nil)
     }
 
     @Test func aSkillTakenOutOfTheProjectIsGoneFromTheNextLaunch() throws {
         let f = try SkillFixture.make()
         defer { f.remove() }
-        _ = launch(ClaudeProvider(), f)
-        _ = launch(ClaudeProvider(), f, project: ["src/plain"])
+        _ = launch(Agents.claude, f)
+        _ = launch(Agents.claude, f, project: ["src/plain"])
         #expect(linked(f.data + "/agent-config/chat-1/claude/.claude/skills") == ["plain": "copy"])
-        _ = launch(CodexProvider(), f)
-        _ = launch(CodexProvider(), f, project: ["src/plain"])
+        _ = launch(Agents.codex, f)
+        _ = launch(Agents.codex, f, project: ["src/plain"])
         #expect(linked(f.data + "/agent-config/chat-1/codex-home/skills") == ["mine": f.home + "/.codex/skills/mine",
                                                                             "review": f.home + "/.codex/skills/review",
                                                                             "plain": "copy"],
@@ -221,21 +221,21 @@ private struct SkillFixture {
         let f = try SkillFixture.make()
         defer { f.remove() }
         let profile = AgentProfile(id: "rev", name: "Reviewer", skills: ["src/nested/skills/release"])
-        _ = launch(ClaudeProvider(), f, project: ["src/review"], profile: profile)
+        _ = launch(Agents.claude, f, project: ["src/review"], profile: profile)
         #expect(Set(linked(f.data + "/agent-config/chat-1/claude/.claude/skills").keys) == ["review", "release-notes"])
     }
 
     @Test func aChatGetsACopySoItsAgentCantChangeTheLibrary() throws {
         let f = try SkillFixture.make()
         defer { f.remove() }
-        _ = launch(ClaudeProvider(), f)
+        _ = launch(Agents.claude, f)
         let copy = f.data + "/agent-config/chat-1/claude/.claude/skills/review/SKILL.md"
         #expect(try String(contentsOfFile: copy, encoding: .utf8) == String(contentsOfFile: f.library + "/review/SKILL.md", encoding: .utf8))
         try "Changed by an agent.".write(toFile: copy, atomically: false, encoding: .utf8)
         #expect(try String(contentsOfFile: f.library + "/review/SKILL.md", encoding: .utf8).contains("Read the diff."))
         // The library changed: the next launch gets the new version.
         try f.write("library/review/SKILL.md", "---\nname: review\n---\nVersion two.\n")
-        _ = launch(ClaudeProvider(), f)
+        _ = launch(Agents.claude, f)
         #expect(try String(contentsOfFile: copy, encoding: .utf8).contains("Version two."))
     }
 
@@ -245,9 +245,9 @@ private struct SkillFixture {
         try f.write("elsewhere/keep.txt", "Not the chat's.")
         let chat = f.data + "/agent-config/chat-1"
         // An agent swaps each folder Abstract clears for a link elsewhere.
-        for (provider, folder) in [(ClaudeProvider() as any ProviderDefinition, "/claude/.claude/skills"),
-                                   (ClaudeProvider(), "/claude"), (CodexProvider(), "/codex-home/skills"),
-                                   (CodexProvider(), "/codex-home"), (OpenCodeProvider(), "/skills")] {
+        for (provider, folder) in [(Agents.claude as any ProviderDefinition, "/claude/.claude/skills"),
+                                   (Agents.claude, "/claude"), (Agents.codex, "/codex-home/skills"),
+                                   (Agents.codex, "/codex-home"), (Agents.opencode, "/skills")] {
             _ = launch(provider, f)
             try FileManager.default.removeItem(atPath: chat + folder)
             try FileManager.default.createSymbolicLink(atPath: chat + folder, withDestinationPath: f.root + "/elsewhere")
@@ -261,13 +261,13 @@ private struct SkillFixture {
     @Test func theStandInHomeKeepsWhatTheAgentWroteThereAndFollowsTheRealOne() throws {
         let f = try SkillFixture.make()
         defer { f.remove() }
-        _ = launch(CodexProvider(), f)
+        _ = launch(Agents.codex, f)
         let overlay = f.data + "/agent-config/chat-1/codex-home"
         try "codex's own".write(toFile: overlay + "/installation_id", atomically: true, encoding: .utf8)
         try FileManager.default.createDirectory(atPath: overlay + "/skills/.system", withIntermediateDirectories: true)
         try f.write("home/.codex/history.jsonl", "{}\n")
         try FileManager.default.removeItem(atPath: f.home + "/.codex/auth.json")
-        _ = launch(CodexProvider(), f)
+        _ = launch(Agents.codex, f)
         #expect(try String(contentsOfFile: overlay + "/installation_id", encoding: .utf8) == "codex's own")
         #expect(FileManager.default.fileExists(atPath: overlay + "/skills/.system"), "Codex's built-in skills stay where it put them")
         #expect(linked(overlay)["history.jsonl"] == f.home + "/.codex/history.jsonl")
@@ -277,7 +277,7 @@ private struct SkillFixture {
     @Test func aDeletedChatsFolderGoes() throws {
         let f = try SkillFixture.make()
         defer { f.remove() }
-        _ = launch(ClaudeProvider(), f)
+        _ = launch(Agents.claude, f)
         ChatConfigFiles.remove(root: f.data + "/agent-config", chatId: "chat-1")
         #expect(!FileManager.default.fileExists(atPath: f.data + "/agent-config/chat-1"))
         #expect(FileManager.default.fileExists(atPath: f.library + "/review/SKILL.md"), "the library's skills stay")
@@ -293,7 +293,7 @@ private struct SkillFixture {
             var followUpMode: FollowUpMode { .respawn }
             func buildLaunch(_ ctx: LaunchContext) -> LaunchSpec { LaunchSpec(command: binary, args: [], cwd: ctx.cwd, keepStdinOpen: false) }
             func buildResume(_ ctx: LaunchContext, resumeId: String) -> LaunchSpec { buildLaunch(ctx) }
-            func makeParser() -> OutputParser { ClaudeParser() }
+            func makeParser() -> OutputParser { Agents.claude.makeParser() }
             func buildUserMessage(_ text: String) -> String? { nil }
             func buildPermissionResponse(requestId: String, allow: Bool, input: JSONValue?) -> String? { nil }
             var fallbackModels: ModelCatalog { ModelCatalog(models: []) }

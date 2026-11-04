@@ -1,0 +1,134 @@
+{
+  "exit:0" : [
+    {
+      "status" : "finished",
+      "type" : "status"
+    }
+  ],
+  "exit:1" : [
+    {
+      "message" : "codex exited with code 1",
+      "type" : "error"
+    },
+    {
+      "status" : "errored",
+      "type" : "status"
+    }
+  ],
+  "exit:null" : [
+    {
+      "message" : "codex exited with code null",
+      "type" : "error"
+    },
+    {
+      "status" : "errored",
+      "type" : "status"
+    }
+  ],
+  "stderr" : [
+    [
+      {
+        "line" : "{\"type\":\"thread.started\",\"thread_id\":\"00000000-0000-4000-8000-000000000201\"}",
+        "stream" : "stderr",
+        "type" : "raw"
+      }
+    ],
+    [
+      {
+        "line" : "{\"type\":\"turn.started\"}",
+        "stream" : "stderr",
+        "type" : "raw"
+      }
+    ],
+    [
+      {
+        "line" : "{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"error\",\"message\":\"`model_reasoning_summary` is deprecated; use `model_reasoning_summary_format` instead.\"}}",
+        "stream" : "stderr",
+        "type" : "raw"
+      }
+    ],
+    [
+      {
+        "line" : "{\"type\":\"error\",\"message\":\"Reconnecting... 1/5 (stream disconnected before completion)\"}",
+        "stream" : "stderr",
+        "type" : "raw"
+      }
+    ],
+    [
+      {
+        "line" : "{\"type\":\"item.completed\",\"item\":{\"id\":\"item_1\",\"type\":\"agent_message\",\"text\":\"Created `hi.txt` containing `hi`.\"}}",
+        "stream" : "stderr",
+        "type" : "raw"
+      }
+    ],
+    [
+      {
+        "line" : "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":34277,\"cached_input_tokens\":29056,\"cache_write_input_tokens\":0,\"output_tokens\":66,\"reasoning_output_tokens\":0}}",
+        "stream" : "stderr",
+        "type" : "raw"
+      }
+    ],
+    [
+
+    ]
+  ],
+  "stdout" : [
+    [
+      {
+        "id" : "00000000-0000-4000-8000-000000000201",
+        "type" : "sessionId"
+      }
+    ],
+    [
+      {
+        "status" : "running",
+        "type" : "status"
+      }
+    ],
+    [
+      {
+        "notice" : {
+          "kind" : "warning",
+          "message" : "`model_reasoning_summary` is deprecated; use `model_reasoning_summary_format` instead."
+        },
+        "type" : "notice"
+      }
+    ],
+    [
+      {
+        "notice" : {
+          "kind" : "warning",
+          "message" : "Reconnecting... 1/5 (stream disconnected before completion)"
+        },
+        "type" : "notice"
+      }
+    ],
+    [
+      {
+        "blockId" : "item_1",
+        "partial" : false,
+        "role" : "assistant",
+        "text" : "Created `hi.txt` containing `hi`.",
+        "type" : "text"
+      }
+    ],
+    [
+      {
+        "type" : "usage",
+        "usage" : {
+          "cacheRead" : 29056,
+          "cacheWrite" : 0,
+          "inputTokens" : 34277,
+          "outputTokens" : 66
+        }
+      },
+      {
+        "status" : "finished",
+        "type" : "status"
+      }
+    ],
+    [
+
+    ]
+  ]
+}

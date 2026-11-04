@@ -8,10 +8,10 @@ import { KeyboardAwareScrollView } from './KeyboardAwareScrollView';
 import { remote } from './remote';
 import { phoneHostName } from './phoneHostName';
 import type { Device } from './types';
+import { onTheme, themedStyles, palette } from './theme';
 
-const ink = '#ECECEF', muted = '#A4A4AD', tertiary = '#75757E';
-const bg = '#1E1E21', panel = '#252529', raised = '#2B2B30';
-const border = 'rgba(255,255,255,0.075)';
+let ink = '', muted = '', tertiary = '', bg = '', panel = '', raised = '', border = '';
+onTheme(t => { ink = t.text; muted = t.textSecondary; tertiary = t.textTertiary; bg = t.canvas; panel = t.surface; raised = t.surfaceRaised; border = t.border; });
 
 function useRemote() {
   const [, rerender] = useState(0);
@@ -70,7 +70,7 @@ export function SettingsScreen({ navigation }: any) {
       </View>
     </Group>
 
-    {state.error ? <View style={styles.error}><Icon name="exclamationmark.circle" size={17} color="#EF8582" /><Text style={styles.errorText}>{state.error}</Text></View> : null}
+    {state.error ? <View style={styles.error}><Icon name="exclamationmark.circle" size={17} color={palette.removed} /><Text style={styles.errorText}>{state.error}</Text></View> : null}
     {state.pairingCode ? <View style={styles.pairing}><Text style={styles.name}>Approve on your Mac</Text><Text style={styles.detail}>Check that this code matches the one in Abstract.</Text><Text style={styles.code}>{state.pairingCode}</Text></View> : null}
 
     <Group title="PAIRED MACS" caption={macs.length > 1 ? 'Your phone stays connected to every paired Mac at once.' : undefined}>
@@ -110,7 +110,7 @@ export function SettingsScreen({ navigation }: any) {
   </KeyboardAwareScrollView>;
 }
 
-const styles = StyleSheet.create({
+const styles = themedStyles(() => StyleSheet.create({
   page: { flex: 1, backgroundColor: bg },
   content: { paddingHorizontal: 18, paddingBottom: 48, gap: 26 },
   intro: { gap: 5, marginBottom: 3 },
@@ -125,7 +125,7 @@ const styles = StyleSheet.create({
   flex: { flex: 1, minWidth: 0 },
   name: { color: ink, fontFamily: 'Inter', fontSize: 15, fontWeight: '600' },
   detail: { color: muted, fontFamily: 'Inter', fontSize: 12.5, lineHeight: 18, marginTop: 3 },
-  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#4CC38A' },
+  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: palette.added },
   dotOffline: { backgroundColor: tertiary },
   action: { minHeight: 46, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: border, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 15 },
   actionLabel: { color: ink, fontFamily: 'Inter', fontSize: 14, fontWeight: '500' },
@@ -138,8 +138,8 @@ const styles = StyleSheet.create({
   empty: { color: muted, fontFamily: 'Inter', fontSize: 13, lineHeight: 19, paddingHorizontal: 16, paddingVertical: 18 },
   input: { color: ink, fontFamily: 'Inter', fontSize: 14.5, minHeight: 50, paddingHorizontal: 15, paddingVertical: 12 },
   disclosure: { minHeight: 36, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 3 },
-  error: { backgroundColor: '#3D292B', borderRadius: 12, padding: 14, flexDirection: 'row', alignItems: 'flex-start', gap: 9 },
-  errorText: { color: '#F1ACAA', fontFamily: 'Inter', fontSize: 13, lineHeight: 19, flex: 1 },
+  error: { backgroundColor: palette.removedWash, borderRadius: 12, padding: 14, flexDirection: 'row', alignItems: 'flex-start', gap: 9 },
+  errorText: { color: palette.removed, fontFamily: 'Inter', fontSize: 13, lineHeight: 19, flex: 1 },
   pairing: { backgroundColor: raised, borderRadius: 14, padding: 17, gap: 3 },
   code: { color: ink, fontFamily: 'JetBrainsMonoMedium', fontSize: 30, letterSpacing: 2, marginTop: 11 }
-});
+}));

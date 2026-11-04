@@ -1,67 +1,154 @@
 import Foundation
 
-/// What Settings → Appearance offers: a theme, or following the system.
-public enum ThemeChoice: String, CaseIterable, Identifiable, Sendable {
-    case system
-    case graphite
-    case paper
-    case ink
+/// Whether a theme is drawn light or dark, so system controls match it.
+public enum ThemeAppearance: String, Sendable, Hashable, Codable, CaseIterable {
+    case light, dark
 
-    public var id: String { rawValue }
+    public var isDark: Bool { self == .dark }
+}
 
-    /// Whether the theme is drawn as a dark appearance, so system controls
-    /// match it. `nil` follows the system.
-    public var isDark: Bool? {
-        switch self {
-        case .system: nil
-        case .graphite, .ink: true
-        case .paper: false
+/// What Settings → Appearance offers: an installed theme by its id, or
+/// following the system with a light and a dark pick (ABS-185).
+public struct ThemeChoice: RawRepresentable, Sendable, Hashable, Identifiable {
+    public let rawValue: String
+
+    /// Names saved before themes were plugins read as the bundled themes,
+    /// so nobody's choice changes.
+    public init(rawValue: String) {
+        switch rawValue {
+        case "graphite": self.rawValue = ThemeCatalog.graphiteId
+        case "paper": self.rawValue = ThemeCatalog.paperId
+        case "ink": self.rawValue = ThemeCatalog.inkId
+        default: self.rawValue = rawValue
         }
     }
 
+    public init(_ theme: Theme) { self.init(rawValue: theme.id) }
+
+    public var id: String { rawValue }
+
+    public static let system = ThemeChoice(rawValue: "system")
+    /// What a new Mac starts in.
+    public static let `default` = ThemeChoice(rawValue: ThemeCatalog.graphiteId)
+
+    public var isSystem: Bool { self == .system }
+}
+
+/// The light and dark theme Match System switches between.
+public struct ThemePicks: Sendable, Hashable {
+    public var light: String
+    public var dark: String
+
+    public init(light: String = ThemeCatalog.paperId, dark: String = ThemeCatalog.graphiteId) {
+        self.light = ThemeChoice(rawValue: light).rawValue
+        self.dark = ThemeChoice(rawValue: dark).rawValue
+    }
+
+    public static let standard = ThemePicks()
+}
+
+public extension ThemeChoice {
+    /// Whether the theme is drawn as a dark appearance, so system controls
+    /// match it. `nil` follows the system.
+    func isDark(in catalog: ThemeCatalog) -> Bool? {
+        isSystem ? nil : catalog.theme(rawValue).isDark
+    }
+
     /// The palette to draw in, for an appearance. A view forced light or dark
-    /// (a settings preview, say) gets that side's palette; Match System uses
-    /// Ink when macOS's "Increase contrast" is on in Dark mode.
-    public func theme(dark: Bool, increasedContrast: Bool) -> Theme {
-        switch self {
-        case .graphite, .paper: dark ? .graphite : .paper
-        case .ink: dark ? .ink : .paper
-        case .system: dark ? (increasedContrast ? .ink : .graphite) : .paper
+    /// (a settings preview, say) gets that side's Match System pick when the
+    /// theme is the other side's; Match System uses Ink when macOS's
+    /// "Increase contrast" is on in Dark mode, while the dark pick is the
+    /// standard one.
+    func theme(dark: Bool, increasedContrast: Bool, catalog: ThemeCatalog, picks: ThemePicks = .standard) -> Theme {
+        if !isSystem {
+            let theme = catalog.theme(rawValue)
+            if theme.isDark == dark { return theme }
         }
+        guard dark else { return catalog.theme(picks.light, appearance: .light) }
+        if isSystem, increasedContrast, picks.dark == ThemeCatalog.graphiteId {
+            return catalog.theme(ThemeCatalog.inkId, appearance: .dark)
+        }
+        return catalog.theme(picks.dark, appearance: .dark)
     }
 
     /// The palette the window draws in: a named theme is itself whatever
     /// the Mac is set to (Graphite stays dark on a Mac set to Light); only
     /// Match System follows the Mac's appearance.
-    public func resolved(systemDark: Bool, increasedContrast: Bool) -> Theme {
-        theme(dark: isDark ?? systemDark, increasedContrast: increasedContrast)
+    func resolved(systemDark: Bool, increasedContrast: Bool, catalog: ThemeCatalog, picks: ThemePicks = .standard) -> Theme {
+        theme(dark: isDark(in: catalog) ?? systemDark, increasedContrast: increasedContrast, catalog: catalog, picks: picks)
     }
 
-    /// Paper's borders strengthen under Match System when "Increase contrast"
-    /// is on; picking a theme by name keeps it as it is.
-    public func strongerBorders(dark: Bool, increasedContrast: Bool) -> Bool {
-        self == .system && !dark && increasedContrast
+    /// A light theme's borders strengthen under Match System when "Increase
+    /// contrast" is on; picking a theme by name keeps it as it is.
+    func strongerBorders(dark: Bool, increasedContrast: Bool) -> Bool {
+        isSystem && !dark && increasedContrast
     }
 }
 
-/// The palettes Abstract draws in.
-public enum Theme: String, CaseIterable, Sendable {
-    /// Dark gray.
-    case graphite
-    /// White.
-    case paper
-    /// True black with high contrast.
-    case ink
+/// A palette Abstract draws in: one installed theme, every role derived
+/// from its plugin's colours (`ThemeDerivation`).
+public struct Theme: Sendable, Hashable, Identifiable {
+    /// `<plugin id>/theme/<theme id>`, as Paseo names a plugin's theme.
+    public let id: String
+    public let name: String
+    public let appearance: ThemeAppearance
+    /// The plugin's own id for it, like `graphite`: what plugin pages see
+    /// as `data-abstract-theme`.
+    public let shortId: String
+    public let pluginId: String
+    let palette: [PaletteRole: Swatch]
+    let strongPalette: [PaletteRole: Swatch]
+
+    public init(pluginId: String, contribution: ThemeContribution) {
+        self.pluginId = pluginId
+        id = Self.id(pluginId: pluginId, themeId: contribution.id)
+        name = contribution.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        appearance = contribution.appearance
+        shortId = contribution.id
+        palette = ThemeDerivation.palette(for: contribution)
+        strongPalette = ThemeDerivation.strongerBorders(appearance: contribution.appearance)
+    }
+
+    public static func id(pluginId: String, themeId: String) -> String { "\(pluginId)/theme/\(themeId)" }
+
+    public var isDark: Bool { appearance.isDark }
+
+    /// The value of a role. `strongerBorders` applies to light themes only.
+    public func swatch(_ role: PaletteRole, strongerBorders: Bool = false) -> Swatch {
+        if strongerBorders, let strong = strongPalette[role] { return strong }
+        return palette[role] ?? Swatch(0x000000)
+    }
+
+    public var canvas: Swatch { swatch(.canvas) }
 }
 
 /// An sRGB colour with its opacity.
-public struct Swatch: Equatable, Sendable {
+public struct Swatch: Equatable, Hashable, Sendable {
     public let hex: UInt32
     public let alpha: Double
 
     public init(_ hex: UInt32, alpha: Double = 1) {
         self.hex = hex
         self.alpha = alpha
+    }
+
+    /// `#rgb`, `#rrggbb` or `#rrggbbaa`, the colours a theme plugin writes.
+    public init?(css: String) {
+        guard ThemeContribution.isHexColor(css) else { return nil }
+        var digits = String(css.dropFirst())
+        if digits.count == 3 { digits = digits.map { "\($0)\($0)" }.joined() }
+        guard let value = UInt64(digits, radix: 16) else { return nil }
+        if digits.count == 8 {
+            self.init(UInt32(value >> 8), alpha: Double(value & 0xFF) / 255)
+        } else {
+            self.init(UInt32(value))
+        }
+    }
+
+    /// `#rrggbb`, or `#rrggbbaa` when it's see-through.
+    public var css: String {
+        let hex = String(format: "%06x", hex)
+        return alpha >= 1 ? "#\(hex)" : "#\(hex)\(String(format: "%02x", Int((alpha * 255).rounded())))"
     }
 
     public var red: Double { Double((hex >> 16) & 0xFF) / 255 }
@@ -73,6 +160,14 @@ public struct Swatch: Equatable, Sendable {
         func mix(_ top: Double, _ bottom: Double) -> UInt32 { UInt32(((top * alpha + bottom * (1 - alpha)) * 255).rounded()) }
         return Swatch(mix(red, background.red) << 16 | mix(green, background.green) << 8 | mix(blue, background.blue))
     }
+
+    /// This colour moved `amount` of the way to `other`, opacity kept.
+    public func mixed(toward other: Swatch, by amount: Double) -> Swatch {
+        func mix(_ a: Double, _ b: Double) -> UInt32 { UInt32(((a + (b - a) * amount) * 255).rounded()) }
+        return Swatch(mix(red, other.red) << 16 | mix(green, other.green) << 8 | mix(blue, other.blue), alpha: alpha)
+    }
+
+    public func withAlpha(_ alpha: Double) -> Swatch { Swatch(hex, alpha: alpha) }
 
     /// WCAG relative luminance.
     public var luminance: Double {
@@ -87,7 +182,8 @@ public struct Swatch: Equatable, Sendable {
     }
 }
 
-/// Every semantic colour in the app, with its value in each theme.
+/// Every semantic colour in the app. Its value in a theme comes from the
+/// theme's plugin, through `ThemeDerivation`.
 public enum PaletteRole: String, CaseIterable, Sendable {
     // Surfaces, back to front.
     case canvas, sidebar, surface, surfaceRaised, code, inset
@@ -111,15 +207,16 @@ public enum PaletteRole: String, CaseIterable, Sendable {
     case accent, onAccent
     // Meaning.
     case added, removed, warning, attention, addedWash, removedWash, findMatch, findCurrent
+    // The terminal's 16 colours: black, red, green, yellow, blue, magenta,
+    // cyan, white, then the bright set.
+    case terminalBlack, terminalRed, terminalGreen, terminalYellow
+    case terminalBlue, terminalMagenta, terminalCyan, terminalWhite
+    case terminalBrightBlack, terminalBrightRed, terminalBrightGreen, terminalBrightYellow
+    case terminalBrightBlue, terminalBrightMagenta, terminalBrightCyan, terminalBrightWhite
 
     /// The value in a theme.
     public func swatch(in theme: Theme, strongerBorders: Bool = false) -> Swatch {
-        let values = self.values
-        switch theme {
-        case .graphite: return values.graphite
-        case .paper: return strongerBorders ? (strongPaper ?? values.paper) : values.paper
-        case .ink: return values.ink
-        }
+        theme.swatch(self, strongerBorders: strongerBorders)
     }
 
     /// Text and status colours, which must read on the surfaces they sit on.
@@ -135,79 +232,11 @@ public enum PaletteRole: String, CaseIterable, Sendable {
     /// The opaque surfaces text is drawn on.
     public static let backgrounds: [PaletteRole] = [.canvas, .sidebar, .surface, .surfaceRaised, .code, .inset]
 
-    // Paper under Match System with "Increase contrast": hairlines and field
-    // edges you can see without looking for them.
-    private var strongPaper: Swatch? {
-        switch self {
-        case .border: Swatch(0x000000, alpha: 0.2)
-        case .borderStrong: Swatch(0x000000, alpha: 0.32)
-        case .fieldBorder: Swatch(0x000000, alpha: 0.32)
-        case .fieldBorderFocused: Swatch(0x000000, alpha: 0.6)
-        default: nil
-        }
-    }
-
-    private var values: (graphite: Swatch, paper: Swatch, ink: Swatch) {
-        switch self {
-        case .canvas: (Swatch(0x1E1E21), Swatch(0xFFFFFF), Swatch(0x000000))
-        case .sidebar: (Swatch(0x19191C), Swatch(0xF5F5F7), Swatch(0x000000))
-        case .surface: (Swatch(0x252529), Swatch(0xF6F6F8), Swatch(0x0B0B0C))
-        case .surfaceRaised: (Swatch(0x2B2B30), Swatch(0xFFFFFF), Swatch(0x141416))
-        case .code: (Swatch(0x18181B), Swatch(0xFAFAFB), Swatch(0x000000))
-        case .inset: (Swatch(0x303036), Swatch(0xEFEFF2), Swatch(0x1C1C1F))
-
-        case .hover: (Swatch(0xFFFFFF, alpha: 0.05), Swatch(0x000000, alpha: 0.04), Swatch(0xFFFFFF, alpha: 0.10))
-        case .selection: (Swatch(0xFFFFFF, alpha: 0.085), Swatch(0x000000, alpha: 0.065), Swatch(0xFFFFFF, alpha: 0.18))
-
-        case .field: (Swatch(0x232327), Swatch(0xFFFFFF), Swatch(0x0B0B0C))
-        case .fieldBorder: (Swatch(0xFFFFFF, alpha: 0.11), Swatch(0x000000, alpha: 0.13), Swatch(0xFFFFFF, alpha: 0.40))
-        case .fieldBorderFocused: (Swatch(0xFFFFFF, alpha: 0.34), Swatch(0x000000, alpha: 0.38), Swatch(0xFFFFFF, alpha: 0.80))
-
-        case .border: (Swatch(0xFFFFFF, alpha: 0.075), Swatch(0x000000, alpha: 0.08), Swatch(0xFFFFFF, alpha: 0.25))
-        case .borderStrong: (Swatch(0xFFFFFF, alpha: 0.12), Swatch(0x000000, alpha: 0.13), Swatch(0xFFFFFF, alpha: 0.40))
-
-        case .text: (Swatch(0xECECEF), Swatch(0x1D1D1F), Swatch(0xFFFFFF))
-        case .prose: (Swatch(0xDCDCE1), Swatch(0x242428), Swatch(0xF2F2F4))
-        case .textSecondary: (Swatch(0xA4A4AD), Swatch(0x5C5C66), Swatch(0xD0D0D6))
-        case .textTertiary: (Swatch(0x75757E), Swatch(0x8C8C96), Swatch(0xA6A6AF))
-
-        case .usageClaude: (Swatch(0xD97757), Swatch(0xC2613F), Swatch(0xE58A6A))
-        case .usageCodex: (Swatch(0x8E9DB5), Swatch(0x5B6B82), Swatch(0xA3B2C9))
-        case .usageOpenCode: (Swatch(0x6FC2AB), Swatch(0x3D8B78), Swatch(0x7FD6BE))
-        case .usageMuse: (Swatch(0xB49BDB), Swatch(0x7556A8), Swatch(0xC6B1EC))
-
-        case .pullRequestOpen: (Swatch(0x238636), Swatch(0x1F883D), Swatch(0x2EA043))
-        case .pullRequestDraft: (Swatch(0x6E7681), Swatch(0x6E7781), Swatch(0x8B949E))
-        case .pullRequestMerged: (Swatch(0x8957E5), Swatch(0x8250DF), Swatch(0xA371F7))
-        case .pullRequestClosed: (Swatch(0xDA3633), Swatch(0xCF222E), Swatch(0xF85149))
-        case .pullRequestOpenInk: (Swatch(0x6BC98A), Swatch(0x1A7F37), Swatch(0x7EE2A0))
-        case .pullRequestDraftInk: (Swatch(0xA0A8B2), Swatch(0x59636E), Swatch(0xB4BCC6))
-        case .pullRequestMergedInk: (Swatch(0xB79CF0), Swatch(0x7A48C9), Swatch(0xC9B2FF))
-        case .pullRequestClosedInk: (Swatch(0xF08A84), Swatch(0xC0262E), Swatch(0xFF9A94))
-
-        // One Dark on Graphite, One Light on Paper, as Paseo colours code;
-        // a brightened One Dark on Ink.
-        case .syntaxKeyword: (Swatch(0xC678DD), Swatch(0xA626A4), Swatch(0xD49BF2))
-        case .syntaxString: (Swatch(0x98C379), Swatch(0x50A14F), Swatch(0xA8D88A))
-        case .syntaxLiteral: (Swatch(0xD19A66), Swatch(0x986801), Swatch(0xE8A872))
-        case .syntaxType: (Swatch(0xE5C07B), Swatch(0xC18401), Swatch(0xF0CC86))
-        case .syntaxFunction: (Swatch(0x61AFEF), Swatch(0x4078F2), Swatch(0x7CC0FF))
-        case .syntaxComment: (Swatch(0x5C6370), Swatch(0xA0A1A7), Swatch(0x9AA3B4))
-        case .syntaxOperator: (Swatch(0x56B6C2), Swatch(0x0184BC), Swatch(0x6ED3DD))
-        case .syntaxTag: (Swatch(0xE06C75), Swatch(0xE45649), Swatch(0xFF8A92))
-        case .syntaxPlain: (Swatch(0xABB2BF), Swatch(0x383A42), Swatch(0xD4D9E2))
-
-        case .accent: (Swatch(0xECECEF), Swatch(0x1D1D1F), Swatch(0xFFFFFF))
-        case .onAccent: (Swatch(0x1E1E21), Swatch(0xFFFFFF), Swatch(0x000000))
-
-        case .added: (Swatch(0x4CC38A), Swatch(0x1A7F37), Swatch(0x5BE49B))
-        case .removed: (Swatch(0xEF6461), Swatch(0xCF222E), Swatch(0xFF7A75))
-        case .warning: (Swatch(0xD2D2D8), Swatch(0x3A3A40), Swatch(0xE8E8EC))
-        case .attention: (Swatch(0xF2F2F4), Swatch(0x1D1D1F), Swatch(0xFFFFFF))
-        case .addedWash: (Swatch(0x4CC38A, alpha: 0.10), Swatch(0x1A7F37, alpha: 0.07), Swatch(0x5BE49B, alpha: 0.18))
-        case .removedWash: (Swatch(0xEF6461, alpha: 0.10), Swatch(0xCF222E, alpha: 0.06), Swatch(0xFF7A75, alpha: 0.18))
-        case .findMatch: (Swatch(0xFFFFFF, alpha: 0.16), Swatch(0x000000, alpha: 0.11), Swatch(0xFFFFFF, alpha: 0.26))
-        case .findCurrent: (Swatch(0xE2C044, alpha: 0.55), Swatch(0xF5D547, alpha: 0.8), Swatch(0xF5D547, alpha: 0.5))
-        }
-    }
+    /// The terminal's colours, in ANSI order.
+    public static let terminal: [PaletteRole] = [
+        .terminalBlack, .terminalRed, .terminalGreen, .terminalYellow,
+        .terminalBlue, .terminalMagenta, .terminalCyan, .terminalWhite,
+        .terminalBrightBlack, .terminalBrightRed, .terminalBrightGreen, .terminalBrightYellow,
+        .terminalBrightBlue, .terminalBrightMagenta, .terminalBrightCyan, .terminalBrightWhite,
+    ]
 }

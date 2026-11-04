@@ -5,7 +5,7 @@ import Testing
 /// Settings → Agents' default model and effort fill what a chat leaves open,
 /// for chats the app starts and ones `abstract` runs alike.
 @Suite struct AgentDefaultsTests {
-    let claude = ClaudeProvider()
+    let claude = Agents.claude
 
     func launch(_ session: Session, defaults: AgentDefaults?) -> [String] {
         let settings = LaunchSettings(providerOverrides: [:], outputStyle: .default, claudeProfile: nil,

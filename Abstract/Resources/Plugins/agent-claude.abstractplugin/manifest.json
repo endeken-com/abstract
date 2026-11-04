@@ -1,0 +1,28 @@
+{
+  "api": 2,
+  "id": "sh.abstract.agent.claude",
+  "name": "Claude Code",
+  "version": "1.0.0",
+  "description": "Claude Code as an agent in your chats, over its stream-json channel: one process stays alive for the chat, takes every follow-up, permission answer and mode change on stdin, and a relaunch resumes its session.",
+  "capabilities": ["agents"],
+  "agent": "agent.js",
+  "contributes": {
+    "agents": [
+      {
+        "id": "claude",
+        "label": "Claude Code",
+        "asset": "ProviderClaude",
+        "command": ["claude"],
+        "detect": ["--version"],
+        "capabilities": ["prompt.message", "prompt.image", "prompt.steer", "permission", "permission.mode", "task.stop",
+                         "interrupt", "task.background", "session.persistence", "naming", "models.discover"],
+        "skills": "addedDirectory",
+        "toolServers": "askFirst",
+        "commands": ["tasks", "compact"],
+        "replaces": { "permissions": "mode" },
+        "compactPrompt": "/compact",
+        "config": [".claude/settings.json"]
+      }
+    ]
+  }
+}
