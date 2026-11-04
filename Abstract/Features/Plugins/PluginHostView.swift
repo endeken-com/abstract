@@ -14,7 +14,7 @@ struct PluginHostView: View {
     var placement: PluginPlacement? = nil
     @State private var failed = false
     @State private var reloadToken = 0
-    @AppStorage("theme") private var themeChoice: ThemeChoice = .graphite
+    @AppStorage("theme") private var themeChoice: ThemeChoice = .default
     /// Under Match System, the Mac switching appearance redraws this too.
     @Environment(\.colorScheme) private var colorScheme
 
@@ -44,11 +44,13 @@ struct PluginHostView: View {
                                message: "Turn it on in Settings → Plugins to see its screen.")
             }
         }
-        // Reading the choice and the scheme here redraws this view when
+        // Reading the choice, the scheme and the themes here redraws this view when
         // either changes; the coordinator then recolours the page and sends
         // the plugin a fresh context (no reload).
         .onChange(of: themeChoice) { }
         .onChange(of: colorScheme) { }
+        // The Match System picks and the installed themes (ABS-185).
+        .onChange(of: ThemeState.shared.generation) { }
     }
 
     private func stoppedWorking(name: String) -> some View {

@@ -235,11 +235,11 @@ import Testing
         for name in ["--ab-canvas", "--ab-text", "--ab-border"] {
             #expect(css.contains(name), "style.css never uses \(name)")
         }
-        for theme in Theme.allCases {
+        for theme in BundledThemes.all {
             let context = PluginContext.jsonValue(theme: theme, locale: "en_US", pluginId: "sh.abstract.kanban",
                                                   pluginVersion: "1.0.0",
                                                   capabilities: [.projectsRead, .chatsRead, .chatsOpen, .storageOwn])
-            #expect(context["theme"] == .string(theme.rawValue))
+            #expect(context["theme"] == .string(theme.shortId))
             #expect(context["tokens"]?["canvas"]?.string?.hasPrefix("#") == true)
         }
     }

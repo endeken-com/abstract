@@ -4,8 +4,8 @@
   const themes = ["graphite", "paper", "ink"];
 
   function themed(name) {
-    const panel = h("div", { class: "panel", "data-abstract-theme": name });
     const theme = window.ABSTRACT_THEMES[name];
+    const panel = h("div", { class: "panel", "data-abstract-theme": name, "data-abstract-appearance": theme.colorScheme });
     for (const key of Object.keys(theme.tokens)) panel.style.setProperty("--abstract-" + key, theme.tokens[key]);
     panel.style.setProperty("color-scheme", theme.colorScheme);
     panel.append(h("div", { class: "theme-name" }, name));

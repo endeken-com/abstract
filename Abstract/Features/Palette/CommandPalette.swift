@@ -180,7 +180,8 @@ struct CommandPalette: View {
         items.append(Item(id: "home", section: "Go to", title: "New", symbol: "plus") { model.startNew() })
         items.append(Item(id: "auto", section: "Go to", title: "Automations", symbol: "bolt") { model.destination = .automations })
         items.append(Item(id: "wt", section: "Go to", title: "Worktrees", symbol: "arrow.triangle.branch") { model.destination = .worktrees })
-        for theme in ThemeChoice.allCases {
+        // Every installed theme (ABS-185), then Match System.
+        for theme in ThemeState.shared.catalog.listed.map(ThemeChoice.init) + [.system] {
             items.append(Item(id: "theme-\(theme.rawValue)", section: "Appearance", title: "Theme: \(theme.title)", symbol: "circle.lefthalf.filled") {
                 UserDefaults.standard.set(theme.rawValue, forKey: "theme")
             })

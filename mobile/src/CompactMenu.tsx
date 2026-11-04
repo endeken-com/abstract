@@ -7,6 +7,7 @@ import { BlurView } from 'expo-blur';
 import { SymbolView } from 'expo-symbols';
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { themedStyles, palette } from './theme';
 
 type Anchor = { x: number; y: number; width: number; height: number };
 type Size = { width: number; height: number };
@@ -126,14 +127,15 @@ export function CompactMenu({ actions, children, style, title, onPressAction, on
   </View>;
 }
 
+// Read when drawn, so the menu follows the theme.
 const colors = {
-  label: '#FFFFFF',
-  secondary: 'rgba(235,235,245,0.6)',
-  disabled: 'rgba(235,235,245,0.3)',
-  destructive: '#FF453A',
+  get label() { return palette.text; },
+  get secondary() { return palette.textSecondary; },
+  get disabled() { return palette.textTertiary; },
+  get destructive() { return palette.removed; },
 };
 
-const styles = StyleSheet.create({
+const styles = themedStyles(() => StyleSheet.create({
   fill: { flex: 1, minWidth: 0 },
   overlay: { flex: 1 },
   measure: { position: 'absolute', top: 0, left: 0, opacity: 0, padding: 6 },
@@ -143,10 +145,10 @@ const styles = StyleSheet.create({
   headingText: { flexShrink: 1, color: colors.secondary, fontSize: 13, fontWeight: '600' },
   back: { width: 20, height: 20, alignItems: 'center', justifyContent: 'center' },
   item: { minHeight: 44, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: radius - 6, borderCurve: 'continuous' },
-  pressed: { backgroundColor: 'rgba(255,255,255,0.14)' },
+  pressed: { backgroundColor: palette.selection },
   check: { width: 16, alignItems: 'center' },
   itemBody: { flexGrow: 1, flexShrink: 1, paddingVertical: 11 },
   itemText: { fontSize: 17 },
   subtitle: { color: colors.secondary, fontSize: 13, marginTop: 2 },
   trailing: { width: 20, height: 20, marginLeft: 6 },
-});
+}));

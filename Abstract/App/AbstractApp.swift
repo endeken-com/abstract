@@ -14,7 +14,9 @@ struct AbstractApp: App {
     }
 
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
-    @AppStorage("theme") private var theme: ThemeChoice = .graphite
+    @AppStorage("theme") private var theme: ThemeChoice = .default
+    @AppStorage(ThemeState.lightPickKey) private var lightPick = ThemeCatalog.paperId
+    @AppStorage(ThemeState.darkPickKey) private var darkPick = ThemeCatalog.graphiteId
 
     var body: some Scene {
         Window("Abstract", id: "main") {
@@ -24,6 +26,9 @@ struct AbstractApp: App {
                 .environment(delegate.updater)
                 .preferredColorScheme(theme.colorScheme)
                 .onChange(of: theme, initial: true) { ThemeState.apply(theme) }
+                .onChange(of: [lightPick, darkPick], initial: true) {
+                    ThemeState.apply(picks: ThemePicks(light: lightPick, dark: darkPick))
+                }
         }
         .windowToolbarStyle(.unified)
         // Abstract draws its own title band, so the toolbar's Icon and Text /

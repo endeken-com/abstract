@@ -324,14 +324,19 @@ public struct PluginManifest: Sendable, Hashable, Codable {
         /// The code host it answers for (ABS-139): core asks it for the
         /// pull requests of projects whose remote is on one of its hosts.
         public var codeHost: CodeHostDeclaration?
+        /// Themes for Settings → Appearance (ABS-185): data only, Paseo's
+        /// schema. Nothing runs and nothing is granted.
+        public var themes: [ThemeContribution]
 
         public init(views: [View] = [], chatPanelTabs: [Contribution] = [], chatMenuItems: [Contribution] = [],
                     paletteCommands: [Contribution] = [], settingsPage: Contribution? = nil,
                     homeWidgets: [Contribution] = [], reviewActions: [Contribution] = [],
                     pullRequestSwitches: [Contribution] = [], linkDecorators: [Contribution] = [],
                     issueTracker: PluginIssueTrackerDeclaration? = nil,
-                    codeHost: CodeHostDeclaration? = nil, projectSettings: Contribution? = nil) {
+                    codeHost: CodeHostDeclaration? = nil, projectSettings: Contribution? = nil,
+                    themes: [ThemeContribution] = []) {
             self.projectSettings = projectSettings
+            self.themes = themes
             self.views = views; self.chatPanelTabs = chatPanelTabs; self.chatMenuItems = chatMenuItems
             self.paletteCommands = paletteCommands; self.settingsPage = settingsPage; self.homeWidgets = homeWidgets
             self.reviewActions = reviewActions; self.pullRequestSwitches = pullRequestSwitches
@@ -354,6 +359,7 @@ public struct PluginManifest: Sendable, Hashable, Codable {
             projectSettings = try box.decodeIfPresent(Contribution.self, forKey: .projectSettings)
             issueTracker = try box.decodeIfPresent(PluginIssueTrackerDeclaration.self, forKey: .issueTracker)
             codeHost = try box.decodeIfPresent(CodeHostDeclaration.self, forKey: .codeHost)
+            themes = try box.decodeIfPresent([ThemeContribution].self, forKey: .themes) ?? []
         }
     }
 
@@ -379,7 +385,7 @@ public struct PluginManifest: Sendable, Hashable, Codable {
                 homeWidgets: [Contribution] = [], reviewActions: [Contribution] = [],
                 pullRequestSwitches: [Contribution] = [], linkDecorators: [Contribution] = [],
                 issueTracker: PluginIssueTrackerDeclaration? = nil,
-                codeHost: CodeHostDeclaration? = nil,
+                codeHost: CodeHostDeclaration? = nil, themes: [ThemeContribution] = [],
                 background: String? = nil, tools: [PluginAgentTool] = [], cli: PluginCLI? = nil) {
         self.api = api; self.id = id; self.name = name; self.version = version
         self.background = background
@@ -392,7 +398,8 @@ public struct PluginManifest: Sendable, Hashable, Codable {
         self.contributes = Contributes(views: views, chatPanelTabs: chatPanelTabs, chatMenuItems: chatMenuItems,
                                        paletteCommands: paletteCommands, settingsPage: settingsPage, homeWidgets: homeWidgets,
                                        reviewActions: reviewActions, pullRequestSwitches: pullRequestSwitches,
-                                       linkDecorators: linkDecorators, issueTracker: issueTracker, codeHost: codeHost)
+                                       linkDecorators: linkDecorators, issueTracker: issueTracker, codeHost: codeHost,
+                                       themes: themes)
     }
 
     // A plugin that only runs in the background (ABS-93) may leave out
@@ -404,7 +411,8 @@ public struct PluginManifest: Sendable, Hashable, Codable {
         name = try box.decode(String.self, forKey: .name)
         version = try box.decode(String.self, forKey: .version)
         description = try box.decodeIfPresent(String.self, forKey: .description)
-        entry = try box.decode(String.self, forKey: .entry)
+        // A plugin of themes alone has no page (ABS-185).
+        entry = try box.decodeIfPresent(String.self, forKey: .entry) ?? ""
         capabilities = try box.decode([String].self, forKey: .capabilities)
         network = try box.decodeIfPresent(Network.self, forKey: .network)
         secrets = try box.decodeIfPresent([Secret].self, forKey: .secrets)
@@ -440,6 +448,10 @@ public struct PluginManifest: Sendable, Hashable, Codable {
         }
         if let tracker = contributes.issueTracker {
             sentences.append("\(tracker.title) issues — found by the composer's issue search, to attach to your messages.")
+        }
+        if !contributes.themes.isEmpty {
+            let names = contributes.themes.map(\.name).joined(separator: ", ")
+            sentences.append("Themes — \(names), in Settings → Appearance.")
         }
         if background != nil {
             sentences.append("In the background — it runs while it's on, even with its screen closed.")
@@ -483,8 +495,8 @@ public struct PluginManifest: Sendable, Hashable, Codable {
         guard Self.isSemver(version) else {
             throw PluginValidationError.invalidManifest("version is not semver: \(version)")
         }
-        guard !entry.isEmpty else { throw PluginValidationError.missingEntry(entry) }
-        guard PluginPackage.isContained(relativePath: entry) else {
+        guard !entry.isEmpty || isThemesOnly else { throw PluginValidationError.missingEntry(entry) }
+        guard entry.isEmpty || PluginPackage.isContained(relativePath: entry) else {
             throw PluginValidationError.escapingPath(entry)
         }
         if let background {
@@ -598,10 +610,35 @@ public struct PluginManifest: Sendable, Hashable, Codable {
             guard background != nil else { throw PluginValidationError.invalidManifest("codeHost needs a background script") }
             try codeHost.validate()
         }
+        try validateThemes()
         let total = contributes.views.count + places.map(\.1.count).reduce(0, +) + (contributes.issueTracker == nil ? 0 : 1)
+            + contributes.themes.count
         guard total > 0 || background != nil else {
             throw PluginValidationError.invalidManifest("the plugin doesn't add anything")
         }
+    }
+
+    /// A plugin that adds themes and nothing else: it has no page, no
+    /// script and asks for nothing.
+    public var isThemesOnly: Bool {
+        let c = contributes
+        return !c.themes.isEmpty && c.views.isEmpty && c.chatPanelTabs.isEmpty && c.chatMenuItems.isEmpty
+            && c.paletteCommands.isEmpty && c.settingsPage == nil && c.homeWidgets.isEmpty && c.reviewActions.isEmpty
+            && c.pullRequestSwitches.isEmpty && c.linkDecorators.isEmpty && c.projectSettings == nil
+            && c.issueTracker == nil && c.codeHost == nil && background == nil && agentTools.isEmpty && cli == nil
+    }
+
+    /// Up to eight themes, each with its own id and only hex colours
+    /// (ABS-185, Paseo's rule).
+    private func validateThemes() throws {
+        let themes = contributes.themes
+        guard themes.count <= ThemeContribution.limit else {
+            throw PluginValidationError.invalidManifest("at most \(ThemeContribution.limit) themes")
+        }
+        guard Set(themes.map(\.id)).count == themes.count else {
+            throw PluginValidationError.invalidManifest("duplicate id in themes")
+        }
+        for theme in themes { try theme.validate() }
     }
 
     /// Tools exist only under their grant, and the grant needs tools; the

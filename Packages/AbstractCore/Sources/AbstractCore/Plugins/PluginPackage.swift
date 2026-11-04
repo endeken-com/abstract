@@ -47,7 +47,7 @@ public enum PluginPackage {
             hash.update(data: Data(relative.utf8))
             hash.update(data: Data(SHA256.hash(data: data)))
         }
-        guard files.contains(manifest.entry) else {
+        guard manifest.entry.isEmpty || files.contains(manifest.entry) else {
             throw PluginValidationError.missingEntry(manifest.entry)
         }
         if let icon = manifest.contributes.issueTracker?.icon, !files.contains(icon) {

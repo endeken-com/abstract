@@ -383,6 +383,52 @@ public enum RemoteEvent: Codable, Sendable {
     case terminalExit(id: Int, code: Int32?)
 }
 
+/// One theme as data: its id, name, side and every palette colour as
+/// `#rrggbb` or `#rrggbbaa`, keyed by role.
+public struct RemoteTheme: Codable, Sendable, Hashable {
+    public var id: String
+    public var name: String
+    public var appearance: ThemeAppearance
+    public var tokens: [String: String]
+
+    public init(id: String, name: String, appearance: ThemeAppearance, tokens: [String: String]) {
+        self.id = id; self.name = name; self.appearance = appearance; self.tokens = tokens
+    }
+
+    public init(_ theme: Theme, strongerBorders: Bool = false) {
+        self.init(id: theme.id, name: theme.name, appearance: theme.appearance,
+                  tokens: Dictionary(uniqueKeysWithValues: PaletteRole.allCases.map {
+                      ($0.rawValue, $0.swatch(in: theme, strongerBorders: strongerBorders).css)
+                  }))
+    }
+}
+
+/// What the Mac draws in: one theme, or Match System's light and dark
+/// picks for the phone to choose between by its own appearance.
+public struct RemoteTheming: Codable, Sendable, Hashable {
+    public var followsSystem: Bool
+    public var light: RemoteTheme
+    public var dark: RemoteTheme
+
+    public init(followsSystem: Bool, light: RemoteTheme, dark: RemoteTheme) {
+        self.followsSystem = followsSystem; self.light = light; self.dark = dark
+    }
+
+    /// A named theme is both sides; Match System sends its picks.
+    public init(choice: ThemeChoice, catalog: ThemeCatalog, picks: ThemePicks = .standard, increasedContrast: Bool = false) {
+        if choice.isSystem {
+            let light = choice.theme(dark: false, increasedContrast: increasedContrast, catalog: catalog, picks: picks)
+            let dark = choice.theme(dark: true, increasedContrast: increasedContrast, catalog: catalog, picks: picks)
+            self.init(followsSystem: true,
+                      light: RemoteTheme(light, strongerBorders: choice.strongerBorders(dark: false, increasedContrast: increasedContrast)),
+                      dark: RemoteTheme(dark))
+        } else {
+            let theme = RemoteTheme(catalog.theme(choice.rawValue))
+            self.init(followsSystem: false, light: theme, dark: theme)
+        }
+    }
+}
+
 /// A host's projects and chats, and the agents it can run.
 public struct RemoteSnapshot: Codable, Sendable, Hashable {
     public var projects: [Project]
@@ -471,6 +517,9 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
     public var pluginProjects: [RemotePluginProject]?
     /// A host that answers the plugin requests, even with none installed.
     public var pluginsSupported: Bool?
+    /// The theme picked on that Mac, as colours (ABS-185): the phone draws
+    /// in it without running any plugin. Optional for older peers.
+    public var theme: RemoteTheming?
 
     /// The largest uploaded icon a snapshot carries; larger ones are left out.
     public static let maxProjectIconBytes = 512 << 10
@@ -493,7 +542,8 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
                 queuedMessages: [String: [QueuedMessage]]? = nil, messageQueue: Bool? = nil, steerAgents: [String]? = nil,
                 workflows: Bool? = nil,
                 plugins: [RemotePlugin]? = nil, pluginProjects: [RemotePluginProject]? = nil,
-                pluginsSupported: Bool? = nil) {
+                pluginsSupported: Bool? = nil, theme: RemoteTheming? = nil) {
+        self.theme = theme
         self.projects = projects; self.sessions = sessions; self.providers = providers; self.alive = alive
         self.home = home; self.modelCatalogs = modelCatalogs; self.defaultModelNames = defaultModelNames
         self.pullRequests = pullRequests

@@ -73,7 +73,9 @@ extension AppModel {
     /// counts under Match System; Graphite stays dark on a Mac set to Light.
     func pluginAppearance() -> PluginAppearance {
         let look = ThemeState.look(of: NSApp.effectiveAppearance)
-        return .resolve(choice: ThemeState.shared.current, systemDark: look.dark, increasedContrast: look.increasedContrast)
+        let state = ThemeState.shared
+        return .resolve(choice: state.current, systemDark: look.dark, increasedContrast: look.increasedContrast,
+                        catalog: state.currentCatalog, picks: state.currentPicks)
     }
 
     func setPluginEnabled(_ id: String, _ enabled: Bool, transcriptProjectKeys: [String]? = nil) {

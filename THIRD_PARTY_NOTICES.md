@@ -16,6 +16,7 @@ comment:
 - `Packages/AbstractCore/Sources/AbstractCore/Layout/MainTabs.swift`, `Abstract/Features/Workspace/MainTabBar.swift`: main-pane tabs.
 - `Packages/AbstractCore/Sources/AbstractCore/Git/GitActions.swift`, `Abstract/Features/Workspace/WorkspaceActions.swift`, `ExternalEditors.swift`: the git actions and open-in-editor buttons.
 - `Abstract/Features/Editor/EditorDocument.swift`, `CodeTextView.swift`, `CodeEditorView.swift`: the file editor (autosave, conflicts on disk, its bar); One Dark / One Light syntax colours.
+- `Packages/AbstractCore/Sources/AbstractCore/Theme/ThemeDerivation.swift`: the theme contribution's schema and hex rule (`packages/app/src/plugins/themes/index.ts`) and the expansion of its eight colours into a full palette (`buildDarkPluginTheme` / `buildLightPluginTheme`, `packages/app/src/styles/theme.ts`), adapted to Abstract's palette roles (ABS-185).
 
 ## Textual
 

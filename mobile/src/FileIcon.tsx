@@ -2,6 +2,7 @@ import React from 'react';
 import { SvgXml } from 'react-native-svg';
 import { SymbolView } from 'expo-symbols';
 import theme from './material-icons.json';
+import { palette } from './theme';
 
 // The same Material Icon Theme manifest used by Abstract/Components/FileIcon.swift.
 // Upstream theme: https://github.com/material-extensions/vscode-material-icon-theme (MIT).
@@ -24,5 +25,5 @@ export function FileIcon({ path, directory = false, open = false, size = 16 }: {
   const xml = iconName && (theme.icons as Record<string, string>)[iconName];
   return xml
     ? <SvgXml xml={xml} width={size} height={size} />
-    : <SymbolView name={{ ios: directory ? 'folder' : 'doc', android: directory ? 'folder' : 'description', web: directory ? 'folder' : 'description' }} size={size} tintColor="#75757E" style={{ width: size, height: size }} />;
+    : <SymbolView name={{ ios: directory ? 'folder' : 'doc', android: directory ? 'folder' : 'description', web: directory ? 'folder' : 'description' }} size={size} tintColor={palette.textTertiary} style={{ width: size, height: size }} />;
 }

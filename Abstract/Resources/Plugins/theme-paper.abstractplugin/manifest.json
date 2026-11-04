@@ -1,0 +1,50 @@
+{
+  "api": 2,
+  "id": "sh.abstract.theme.paper",
+  "name": "Paper",
+  "version": "1.0.0",
+  "description": "Abstract's white theme.",
+  "capabilities": [],
+  "contributes": {
+    "themes": [
+      {
+        "id": "paper",
+        "name": "Paper",
+        "appearance": "light",
+        "colors": {
+          "background": "#ffffff",
+          "foreground": "#1d1d1f",
+          "raised": "#f6f6f8",
+          "control": "#efeff2",
+          "border": "#00000014",
+          "mutedForeground": "#5c5c66",
+          "ring": "#8c8c96"
+        },
+        "tokens": {
+          "added": "#1a7f37",
+          "borderStrong": "#00000021",
+          "code": "#fafafb",
+          "fieldBorder": "#00000021",
+          "fieldBorderFocused": "#00000061",
+          "findMatch": "#0000001c",
+          "hover": "#0000000a",
+          "prose": "#242428",
+          "pullRequestOpenInk": "#1a7f37",
+          "selection": "#00000011",
+          "sidebar": "#f5f5f7",
+          "syntaxComment": "#a0a1a7",
+          "syntaxFunction": "#4078f2",
+          "syntaxLiteral": "#986801",
+          "syntaxOperator": "#0184bc",
+          "syntaxString": "#50a14f",
+          "syntaxTag": "#e45649",
+          "syntaxType": "#c18401",
+          "textTertiary": "#8c8c96",
+          "usageClaude": "#c2613f",
+          "usageOpenCode": "#3d8b78",
+          "warning": "#3a3a40"
+        }
+      }
+    ]
+  }
+}

@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { AccessibilityInfo, ActivityIndicator, Alert, AppState, FlatList, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View, type ScrollViewProps } from 'react-native';
+import { AccessibilityInfo, ActivityIndicator, Alert, AppState, useColorScheme, FlatList, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View, type ScrollViewProps } from 'react-native';
 import { CommonActions, NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -43,11 +43,11 @@ import { globalPauseAction, globalPauseConfirm, isProjectPaused, pauseBannerRows
 import { MODE_CHOICES } from './plan';
 import { nextSidebarReturn, restorable, returnChat, type SidebarReturn, type StackRoute } from './sidebarReturn';
 import { CHANGED_OPTIONS, CONCURRENCY_OPTIONS, MISSED_OPTIONS, catchUpOf, concurrencyForWorkspace, policiesOf, runDetail, runStatusLabel, showsChanged } from './automationPolicies';
+import { isDarkTheme, loadTheme, onTheme, palette, pickTheme, setTheme, themedStyles, themingOf, useThemeVersion } from './theme';
 
-// Graphite values come from Abstract/Theme/Palette.swift.
-const ink = '#ECECEF', muted = '#A4A4AD', tertiary = '#75757E';
-const bg = '#1E1E21', sidebar = '#19191C', panel = '#252529', raised = '#2B2B30', inset = '#303036';
-const accent = ink, border = 'rgba(255,255,255,0.075)';
+// The Mac's theme (ABS-185), Graphite until one says otherwise: src/theme.ts.
+let ink = '', muted = '', tertiary = '', bg = '', sidebar = '', panel = '', raised = '', inset = '', accent = '', border = '';
+onTheme(t => { ink = t.text; muted = t.textSecondary; tertiary = t.textTertiary; bg = t.canvas; sidebar = t.sidebar; panel = t.surface; raised = t.surfaceRaised; inset = t.inset; accent = t.accent; border = t.border; });
 const Stack = createNativeStackNavigator();
 
 type IconName = 'menu' | 'back' | 'plus' | 'compose' | 'more' | 'clock' | 'worktree' | 'pull' | 'board' | 'devices' | 'folder' | 'chat' | 'review' | 'files' | 'terminal' | 'settings' | 'chevron' | 'close' | 'refresh' | 'check' | 'failed' | 'pending' | 'skipped' | 'filter' | 'plugin';
@@ -94,7 +94,7 @@ function Button({ title, onPress, secondary, danger }: { title: string; onPress:
   return <Pressable onPress={() => { Haptics.selectionAsync().catch(() => {}); onPress(); }} style={[styles.button, secondary && styles.secondary, danger && styles.danger]}><Text style={[styles.buttonText, secondary && { color: ink }]}>{title}</Text></Pressable>;
 }
 function ReviewFileButton({ title, destructive, onPress }: { title: string; destructive?: boolean; onPress: () => void }) {
-  const color = destructive ? '#EF8582' : '#8EDBAD';
+  const color = destructive ? palette.removed : palette.added;
   return <Pressable accessibilityRole="button" accessibilityLabel={title} onPress={() => { Haptics.selectionAsync().catch(() => {}); onPress(); }} style={({ pressed }) => [styles.reviewFileButton, destructive ? styles.reviewFileButtonDiscard : styles.reviewFileButtonApply, pressed && styles.reviewFileButtonPressed]}>
     <SymbolView name={{ ios: destructive ? 'trash' : 'checkmark.circle', android: destructive ? 'delete_outline' : 'check_circle' }} size={16} tintColor={color} />
     <Text style={[styles.reviewFileButtonText, { color }]}>{title}</Text>
@@ -143,7 +143,7 @@ function PauseBanners({ macs, projectId }: { macs: MacView[]; projectId?: string
   const rows = pauseBannerRows(macs, projectId);
   if (!rows.length) return null;
   return <>{rows.map(row => <View key={row.key} style={styles.pauseBanner}>
-    <SymbolView name={{ ios: 'pause.circle.fill', android: 'pause_circle', web: 'pause_circle' } as any} size={16} tintColor="#E8B34A" style={{ width: 16, height: 16 }} />
+    <SymbolView name={{ ios: 'pause.circle.fill', android: 'pause_circle', web: 'pause_circle' } as any} size={16} tintColor={palette.warning} style={{ width: 16, height: 16 }} />
     <Text style={styles.pauseBannerText}>{row.text}</Text>
     <Pressable accessibilityRole="button" accessibilityLabel={row.button} accessibilityState={{ disabled: !row.canAct }} disabled={!row.canAct} onPress={() => run(() => state.client(row.hostId).request(row.request.name, row.request.args))} style={[styles.pauseBannerButton, !row.canAct && styles.pauseBannerButtonDisabled]}><Text style={styles.pauseBannerButtonText}>{row.button}</Text></Pressable>
   </View>)}</>;
@@ -519,7 +519,7 @@ function FilesScreen({ route, navigation }: any) {
       <View style={styles.filesFilterRow}><View style={styles.fileFilter}><Icon name="filter" size={16} color={tertiary} /><TextInput style={styles.fileFilterInput} placeholder="Filter files" placeholderTextColor={tertiary} value={query} onChangeText={setQuery} autoCapitalize="none" autoCorrect={false} />{query ? <Pressable style={styles.fileFilterClear} onPress={() => setQuery('')} accessibilityLabel="Clear filter"><Icon name="close" size={13} color={muted} /></Pressable> : null}</View><Pressable style={styles.fileRefreshButton} accessibilityLabel="Refresh files" onPress={() => { Haptics.selectionAsync().catch(() => {}); refresh(); }}><Icon name="refresh" size={17} color={muted} /></Pressable></View>
     </View>
     {folder ? <Pressable style={styles.breadcrumb} onPress={() => setFolder(folder.split('/').slice(0, -1).join('/'))}><Icon name="back" size={13} color={muted} /><Text numberOfLines={1} style={styles.breadcrumbText}>{folder}</Text></Pressable> : null}
-    {error ? <View style={styles.paneEmpty}><Icon name="failed" size={22} color="#EF6461" /><Text style={styles.paneEmptyTitle}>Couldn't load files</Text><Text style={styles.empty}>{error}</Text><Button title="Try again" secondary onPress={refresh} /></View> : loading && !paths.length ? <View style={styles.paneEmpty}><Text style={styles.empty}>Loading files…</Text></View> : <FlatList contentContainerStyle={styles.fileList} data={entries} keyExtractor={item => item.path} ListEmptyComponent={<View style={styles.paneEmpty}><Text style={styles.empty}>{query.trim() ? 'No matching files.' : 'No files found.'}</Text></View>} renderItem={({ item }) => <Pressable style={styles.fileTreeRow} onPress={() => item.directory ? setFolder(item.path) : navigation.navigate('File', { hostId, root, sessionId: route.params.sessionId, path: root.replace(/\/$/, '') + '/' + item.path })}><FileIcon path={item.path} directory={item.directory} size={17} /><View style={{ flex: 1, minWidth: 0 }}><Text numberOfLines={1} style={styles.fileTreeTitle}>{item.name}</Text>{query ? <Text numberOfLines={1} style={styles.fileTreeSubtitle}>{item.path}</Text> : null}</View>{item.directory ? <Icon name="chevron" size={11} color={tertiary} /> : null}</Pressable>} />}
+    {error ? <View style={styles.paneEmpty}><Icon name="failed" size={22} color={palette.removed} /><Text style={styles.paneEmptyTitle}>Couldn't load files</Text><Text style={styles.empty}>{error}</Text><Button title="Try again" secondary onPress={refresh} /></View> : loading && !paths.length ? <View style={styles.paneEmpty}><Text style={styles.empty}>Loading files…</Text></View> : <FlatList contentContainerStyle={styles.fileList} data={entries} keyExtractor={item => item.path} ListEmptyComponent={<View style={styles.paneEmpty}><Text style={styles.empty}>{query.trim() ? 'No matching files.' : 'No files found.'}</Text></View>} renderItem={({ item }) => <Pressable style={styles.fileTreeRow} onPress={() => item.directory ? setFolder(item.path) : navigation.navigate('File', { hostId, root, sessionId: route.params.sessionId, path: root.replace(/\/$/, '') + '/' + item.path })}><FileIcon path={item.path} directory={item.directory} size={17} /><View style={{ flex: 1, minWidth: 0 }}><Text numberOfLines={1} style={styles.fileTreeTitle}>{item.name}</Text>{query ? <Text numberOfLines={1} style={styles.fileTreeSubtitle}>{item.path}</Text> : null}</View>{item.directory ? <Icon name="chevron" size={11} color={tertiary} /> : null}</Pressable>} />}
   </View></SwipeForward>;
 }
 function FileScreen({ route, navigation }: any) {
@@ -601,7 +601,7 @@ function ReviewScreen({ route, navigation }: any) {
     <HeaderSpacer />
     <View style={styles.paneToolbar}><NativeSelect label="Review mode" value={committed ? 'Committed' : 'Uncommitted'} align="left" choices={[{ id: 'uncommitted', title: 'Uncommitted', selected: !committed }, { id: 'committed', title: 'Committed', selected: committed }]} onSelect={id => { setCommitted(id === 'committed'); setExpandedPaths([]); }} /><Text style={styles.diffAdded}>+{additions}</Text><Text style={styles.diffRemoved}>−{deletions}</Text><Pressable style={styles.paneIconButton} accessibilityLabel="Refresh review" onPress={refresh}><Icon name="refresh" size={17} /></Pressable><MenuView actions={[{ id: 'expand', title: 'Expand all files' }, { id: 'collapse', title: 'Collapse all files' }]} onPressAction={({ nativeEvent }) => setExpandedPaths(nativeEvent.event === 'expand' ? files.map(file => file.path) : [])}><View style={styles.paneIconButton}><SymbolView name={{ ios: 'ellipsis', android: 'more_horiz' }} size={19} tintColor={muted} /></View></MenuView></View>
     <KeyboardAwareScrollView style={{ flex: 1 }} contentContainerStyle={styles.paneContent}>
-      {error ? <View style={styles.paneEmpty}><Icon name="failed" size={22} color="#EF6461" /><Text style={styles.paneEmptyTitle}>Couldn't load changes</Text><Text style={styles.empty}>{error}</Text><Button title="Try again" secondary onPress={refresh} /></View> : null}
+      {error ? <View style={styles.paneEmpty}><Icon name="failed" size={22} color={palette.removed} /><Text style={styles.paneEmptyTitle}>Couldn't load changes</Text><Text style={styles.empty}>{error}</Text><Button title="Try again" secondary onPress={refresh} /></View> : null}
       {files.map(file => { const expanded = expandedPaths.includes(file.path); return <View key={file.path} style={styles.reviewFile}>
         <Pressable style={styles.reviewFileHeader} onPress={() => setExpandedPaths(expanded ? expandedPaths.filter(path => path !== file.path) : [...expandedPaths, file.path])}><Icon name="chevron" size={11} color={tertiary} /><FileIcon path={file.path} size={17} /><View style={{ flex: 1, minWidth: 0 }}><Text numberOfLines={1} style={styles.fileTreeTitle}>{file.path.split('/').at(-1)}</Text>{file.path.includes('/') && <Text numberOfLines={1} style={styles.fileTreeSubtitle}>{file.path.slice(0, file.path.lastIndexOf('/'))}</Text>}</View><Text style={styles.diffAdded}>+{file.additions}</Text><Text style={styles.diffRemoved}>−{file.deletions}</Text></Pressable>
         {expanded && <View style={styles.reviewFileBody}>{file.binary ? <Text style={styles.mono}>Binary file</Text> : <ReviewDiff patch={file.patch} path={file.path} onSelect={line => { if (line.old !== null || line.next !== null) { setSelected({ path: file.path, line: line.next ?? line.old!, side: line.next !== null ? 'new' : 'old', code: line.text.slice(1) }); setCommentText(''); } }} />}<View style={styles.reviewFileActions}><ReviewFileButton title="Apply to project" onPress={() => decide(file.path, true)} />{!committed && <ReviewFileButton title="Discard changes" destructive onPress={() => decide(file.path, false)} />}</View></View>}
@@ -673,13 +673,13 @@ function PullRequestScreen({ route, navigation }: any) {
     {actionError && <View style={styles.prActionError}><Text style={styles.error}>{actionError}</Text></View>}
     {pr ? <>
       <View style={styles.prHeader}>
-        <View style={styles.prStatusLine}><PullRequestIcon pr={pr} size={15} /><Text style={[styles.prState, { color: pr.state.toLowerCase() === 'merged' ? '#B79CF0' : pr.state.toLowerCase() === 'closed' ? '#F08A84' : pr.isDraft ? '#A0A8B2' : '#6BC98A' }]}>{pr.isDraft ? 'Draft' : pr.state}</Text><Text style={styles.prNumber}>#{pr.number}</Text></View>
+        <View style={styles.prStatusLine}><PullRequestIcon pr={pr} size={15} /><Text style={[styles.prState, { color: pr.state.toLowerCase() === 'merged' ? palette.pullRequestMergedInk : pr.state.toLowerCase() === 'closed' ? palette.removed : pr.isDraft ? palette.pullRequestDraftInk : palette.pullRequestOpenInk }]}>{pr.isDraft ? 'Draft' : pr.state}</Text><Text style={styles.prNumber}>#{pr.number}</Text></View>
         <Text style={styles.prTitle}>{pr.title}</Text>
         <View style={styles.prMetadata}>{pr.author && <Text style={styles.prAuthor}>{pr.author}</Text>}<BranchIcon size={11} color={tertiary} /><Text style={styles.prBranch} numberOfLines={1}>{pr.head || chat?.branch || 'Branch'} → {pr.base || chat?.baseRef || 'base'}</Text>{pr.additions != null && <Text style={styles.diffAdded}>+{pr.additions}</Text>}{pr.deletions != null && <Text style={styles.diffRemoved}>−{pr.deletions}</Text>}</View>
         {pr.reviewDecision && <Text style={styles.prStanding}>{({ APPROVED: 'Approved', CHANGES_REQUESTED: 'Changes requested', REVIEW_REQUIRED: 'Review required' } as Record<string, string>)[pr.reviewDecision] || pr.reviewDecision}</Text>}
-        {pr.standing && <Text style={[styles.prStanding, pr.checks?.some(check => check.outcome === 'failed') && { color: '#EF6461' }]}>{pr.standing}</Text>}
+        {pr.standing && <Text style={[styles.prStanding, pr.checks?.some(check => check.outcome === 'failed') && { color: palette.removed }]}>{pr.standing}</Text>}
       </View>
-      {!!pr.checks?.length && <PaneSection title="Checks" detail={checkSummary}>{[...pr.checks].sort((a, b) => ({ failed: 0, pending: 1, passed: 2, skipped: 3 }[a.outcome] ?? 4) - ({ failed: 0, pending: 1, passed: 2, skipped: 3 }[b.outcome] ?? 4)).map(check => <Pressable key={`${check.workflow || ''}/${check.name}`} style={styles.prCheckRow} onPress={() => check.url && Linking.openURL(check.url).catch(() => {})}><Icon name={check.outcome === 'passed' ? 'check' : check.outcome === 'failed' ? 'failed' : check.outcome === 'pending' ? 'pending' : 'skipped'} size={14} color={check.outcome === 'failed' ? '#EF6461' : check.outcome === 'passed' ? '#4CC38A' : muted} /><View style={{ flex: 1 }}><Text style={styles.fileTreeTitle}>{check.name}</Text>{check.workflow && <Text style={styles.fileTreeSubtitle}>{check.workflow}</Text>}</View>{check.url && <SymbolView name={{ ios: 'arrow.up.right', android: 'open_in_new' }} size={12} tintColor={tertiary} />}</Pressable>)}</PaneSection>}
+      {!!pr.checks?.length && <PaneSection title="Checks" detail={checkSummary}>{[...pr.checks].sort((a, b) => ({ failed: 0, pending: 1, passed: 2, skipped: 3 }[a.outcome] ?? 4) - ({ failed: 0, pending: 1, passed: 2, skipped: 3 }[b.outcome] ?? 4)).map(check => <Pressable key={`${check.workflow || ''}/${check.name}`} style={styles.prCheckRow} onPress={() => check.url && Linking.openURL(check.url).catch(() => {})}><Icon name={check.outcome === 'passed' ? 'check' : check.outcome === 'failed' ? 'failed' : check.outcome === 'pending' ? 'pending' : 'skipped'} size={14} color={check.outcome === 'failed' ? palette.removed : check.outcome === 'passed' ? palette.added : muted} /><View style={{ flex: 1 }}><Text style={styles.fileTreeTitle}>{check.name}</Text>{check.workflow && <Text style={styles.fileTreeSubtitle}>{check.workflow}</Text>}</View>{check.url && <SymbolView name={{ ios: 'arrow.up.right', android: 'open_in_new' }} size={12} tintColor={tertiary} />}</Pressable>)}</PaneSection>}
       {!!pr.body && <PaneSection title="Description"><Text style={styles.prBody}>{pr.body}</Text></PaneSection>}
       {!!((pr.reviews?.length || 0) + (pr.comments?.length || 0) + (pr.threads?.length || 0)) && <PaneSection title="Reviews" detail={pr.reviewDecision ? ({ APPROVED: 'Approved', CHANGES_REQUESTED: 'Changes requested', REVIEW_REQUIRED: 'Review required' } as Record<string, string>)[pr.reviewDecision] : undefined}>
         {(pr.reviews || []).map((review, index) => <View key={`review-${index}`} style={styles.prConversation}><Text style={styles.prConversationAuthor}>{review.author} <Text style={styles.prConversationMeta}>{review.verdict.toLowerCase().replaceAll('_', ' ')}</Text></Text>{review.body ? <Text style={styles.prBody}>{review.body}</Text> : null}</View>)}
@@ -895,6 +895,17 @@ export default function App() {
     if (next !== sidebarReturnRef.current) { sidebarReturnRef.current = next; setSidebarReturn(next); }
   };
   const [fontsLoaded] = useFonts({ Inter: require('../assets/fonts/InterVariable.ttf'), JetBrainsMono: require('../assets/fonts/JetBrainsMono-Regular.ttf'), JetBrainsMonoMedium: require('../assets/fonts/JetBrainsMono-Medium.ttf') });
+  // Draws in the theme of the first paired Mac that sends one; Match
+  // System follows this phone's own appearance (ABS-185).
+  const scheme = useColorScheme();
+  const themeVersion = useThemeVersion();
+  const navigationState = useRef<any>(undefined);
+  useEffect(() => { loadTheme(); }, []);
+  useEffect(() => {
+    const follow = () => { const theming = themingOf(remote.macs()); if (theming) setTheme(pickTheme(theming, scheme)); };
+    follow();
+    return remote.subscribe(follow);
+  }, [scheme]);
   useEffect(() => {
     remote.load();
     const appState = AppState.addEventListener('change', value => {
@@ -903,7 +914,9 @@ export default function App() {
     return () => appState.remove();
   }, []);
   if (!fontsLoaded) return null;
-  return <SafeAreaProvider><StatusBar style="light" /><SidebarReturnContext.Provider value={sidebarReturn}><NavigationContainer onStateChange={state => followStack((state?.routes || []) as StackRoute[])} theme={{ dark: true, colors: { primary: accent, background: bg, card: panel, text: ink, border, notification: accent }, fonts: { regular: { fontFamily: 'Inter', fontWeight: '400' }, medium: { fontFamily: 'Inter', fontWeight: '500' }, bold: { fontFamily: 'Inter', fontWeight: '700' }, heavy: { fontFamily: 'Inter', fontWeight: '900' } } }}>
+  // A new theme draws every screen again, where it was: the navigator
+  // starts over from the state it had.
+  return <SafeAreaProvider><StatusBar style={isDarkTheme() ? 'light' : 'dark'} /><SidebarReturnContext.Provider value={sidebarReturn}><NavigationContainer key={themeVersion} initialState={navigationState.current} onStateChange={state => { navigationState.current = state; followStack((state?.routes || []) as StackRoute[]); }} theme={{ dark: isDarkTheme(), colors: { primary: accent, background: bg, card: panel, text: ink, border, notification: accent }, fonts: { regular: { fontFamily: 'Inter', fontWeight: '400' }, medium: { fontFamily: 'Inter', fontWeight: '500' }, bold: { fontFamily: 'Inter', fontWeight: '700' }, heavy: { fontFamily: 'Inter', fontWeight: '900' } } }}>
       <Stack.Navigator initialRouteName="Sidebar" screenOptions={({ navigation }: any) => ({ headerTransparent: true, headerStyle: { backgroundColor: 'transparent' }, headerBackground: () => <ProgressiveBlur edge="top" />, headerTitleStyle: { fontFamily: 'Inter', fontSize: 15 }, headerTintColor: ink, contentStyle: { backgroundColor: bg }, headerShadowVisible: false, headerBackVisible: false, headerLeft: () => <ScreenNavigation navigation={navigation} />, scrollEdgeEffects: Platform.OS === 'ios' ? { top: 'soft' } : undefined, animation: reduceMotion ? 'fade' : 'slide_from_right', animationDuration: reduceMotion ? 200 : undefined, gestureEnabled: true, fullScreenGestureEnabled: true, animationMatchesGesture: true })}>
         <Stack.Screen name="Sidebar" component={SidebarScreen} options={{ headerShown: true, title: '', headerLeft: () => null, headerBackground: () => <ProgressiveBlur edge="top" surfaceColor={sidebar} /> }} />
         <Stack.Screen name="Settings" component={SettingsScreen} options={{ title: 'Settings' }} />
@@ -929,12 +942,12 @@ export default function App() {
       </Stack.Navigator>
     </NavigationContainer></SidebarReturnContext.Provider></SafeAreaProvider>;
 }
-const styles = StyleSheet.create({
+const styles = themedStyles(() => StyleSheet.create({
   launcherContent: { paddingHorizontal: 18, paddingTop: 30, paddingBottom: 48, alignItems: 'center' },
   launcherIntro: { width: '100%', maxWidth: 680, alignItems: 'center', gap: 10, marginBottom: 32 },
   launcherTitle: { color: ink, fontFamily: 'Inter', fontSize: 26, fontWeight: '600', textAlign: 'center' },
   launcherDescription: { color: muted, fontFamily: 'Inter', fontSize: 13.5, lineHeight: 20, textAlign: 'center', maxWidth: 460 },
-  launcherBox: { width: '100%', maxWidth: 680, backgroundColor: panel, borderWidth: 1, borderColor: '#424249', borderRadius: 10, overflow: 'hidden' },
+  launcherBox: { width: '100%', maxWidth: 680, backgroundColor: panel, borderWidth: 1, borderColor: palette.borderStrong, borderRadius: 10, overflow: 'hidden' },
   launcherPrompt: { color: ink, fontFamily: 'Inter', fontSize: 15, lineHeight: 22, minHeight: 138, maxHeight: 260, paddingHorizontal: 18, paddingTop: 17, paddingBottom: 12 },
   launcherAttachments: { flexDirection: 'row', flexWrap: 'wrap', gap: 5, paddingHorizontal: 12, paddingBottom: 8 },
   launcherAttachment: { maxWidth: '100%', paddingHorizontal: 9, paddingVertical: 6, borderRadius: 6, backgroundColor: raised },
@@ -958,7 +971,7 @@ const styles = StyleSheet.create({
   launcherRecentName: { flex: 1, color: ink, fontFamily: 'Inter', fontSize: 14 },
   launcherRecentMeta: { color: tertiary, fontFamily: 'Inter', fontSize: 11, maxWidth: 110 },
   headerAction: { width: 42, height: 44, alignItems: 'center', justifyContent: 'center' }, headerActionPressed: { opacity: 0.45 }, headerActions: { flexDirection: 'row', alignItems: 'center' },
-  page: { flex: 1, backgroundColor: bg }, content: { padding: 18, gap: 16, paddingBottom: 32 }, title: { color: ink, fontFamily: 'Inter', fontSize: 25, fontWeight: '600' }, lead: { color: muted, fontFamily: 'Inter', fontSize: 14, lineHeight: 21 }, section: { backgroundColor: panel, borderRadius: 8, padding: 14, gap: 9, borderWidth: StyleSheet.hairlineWidth, borderColor: border }, sectionTitle: { color: muted, fontFamily: 'Inter', fontSize: 13.5, fontWeight: '600' }, label: { color: muted, fontFamily: 'Inter', fontSize: 12, fontWeight: '600', marginTop: 8 }, value: { color: ink, fontFamily: 'Inter', fontSize: 15 }, row: { minHeight: 56, paddingVertical: 11, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border, flexDirection: 'row', alignItems: 'center', gap: 10 }, rowTitle: { color: ink, fontFamily: 'Inter', fontSize: 15.5, fontWeight: '500' }, subtitle: { color: muted, fontFamily: 'Inter', fontSize: 12.5, marginTop: 4 }, subtitleRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4 }, subtitleText: { marginTop: 0, flexShrink: 1 }, trailing: { color: tertiary, fontFamily: 'Inter', fontSize: 11 }, button: { backgroundColor: accent, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 11, alignSelf: 'flex-start', marginRight: 5, marginBottom: 5 }, buttonText: { color: bg, fontFamily: 'Inter', fontSize: 14, fontWeight: '600' }, secondary: { backgroundColor: inset }, danger: { backgroundColor: '#9B3F43' }, input: { backgroundColor: inset, color: ink, borderRadius: 7, borderWidth: StyleSheet.hairlineWidth, borderColor: border, paddingHorizontal: 12, paddingVertical: 10, fontFamily: 'Inter', fontSize: 15, minHeight: 48 }, multiline: { minHeight: 120, textAlignVertical: 'top' }, actions: { flexDirection: 'row', flexWrap: 'wrap', marginVertical: 5 }, choices: { flexDirection: 'row', flexWrap: 'wrap' }, empty: { color: muted, fontFamily: 'Inter', fontSize: 14, lineHeight: 21 }, error: { color: '#EF6461' }, callout: { backgroundColor: raised, borderRadius: 8, borderColor: border, borderWidth: StyleSheet.hairlineWidth, padding: 15 }, code: { color: ink, fontFamily: 'JetBrainsMonoMedium', fontSize: 32, letterSpacing: 3 }, bubble: { backgroundColor: raised, padding: 13, borderRadius: 8, marginBottom: 8 }, bubbleLabel: { color: muted, fontFamily: 'Inter', fontSize: 11, marginBottom: 5 }, body: { color: ink, fontFamily: 'Inter', fontSize: 14.5, lineHeight: 22 }, mono: { color: ink, fontSize: 11, fontFamily: 'JetBrainsMono', lineHeight: 17 }, hint: { color: tertiary, fontFamily: 'Inter', fontSize: 11 }, composer: { backgroundColor: panel, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: border, padding: 10, flexDirection: 'row', alignItems: 'flex-end' }, codeScroll: { padding: 16 }, codeText: { color: ink, fontFamily: 'JetBrainsMono', fontSize: 11, textAlignVertical: 'top', minHeight: 500 },
+  page: { flex: 1, backgroundColor: bg }, content: { padding: 18, gap: 16, paddingBottom: 32 }, title: { color: ink, fontFamily: 'Inter', fontSize: 25, fontWeight: '600' }, lead: { color: muted, fontFamily: 'Inter', fontSize: 14, lineHeight: 21 }, section: { backgroundColor: panel, borderRadius: 8, padding: 14, gap: 9, borderWidth: StyleSheet.hairlineWidth, borderColor: border }, sectionTitle: { color: muted, fontFamily: 'Inter', fontSize: 13.5, fontWeight: '600' }, label: { color: muted, fontFamily: 'Inter', fontSize: 12, fontWeight: '600', marginTop: 8 }, value: { color: ink, fontFamily: 'Inter', fontSize: 15 }, row: { minHeight: 56, paddingVertical: 11, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border, flexDirection: 'row', alignItems: 'center', gap: 10 }, rowTitle: { color: ink, fontFamily: 'Inter', fontSize: 15.5, fontWeight: '500' }, subtitle: { color: muted, fontFamily: 'Inter', fontSize: 12.5, marginTop: 4 }, subtitleRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4 }, subtitleText: { marginTop: 0, flexShrink: 1 }, trailing: { color: tertiary, fontFamily: 'Inter', fontSize: 11 }, button: { backgroundColor: accent, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 11, alignSelf: 'flex-start', marginRight: 5, marginBottom: 5 }, buttonText: { color: bg, fontFamily: 'Inter', fontSize: 14, fontWeight: '600' }, secondary: { backgroundColor: inset }, danger: { backgroundColor: palette.removed }, input: { backgroundColor: inset, color: ink, borderRadius: 7, borderWidth: StyleSheet.hairlineWidth, borderColor: border, paddingHorizontal: 12, paddingVertical: 10, fontFamily: 'Inter', fontSize: 15, minHeight: 48 }, multiline: { minHeight: 120, textAlignVertical: 'top' }, actions: { flexDirection: 'row', flexWrap: 'wrap', marginVertical: 5 }, choices: { flexDirection: 'row', flexWrap: 'wrap' }, empty: { color: muted, fontFamily: 'Inter', fontSize: 14, lineHeight: 21 }, error: { color: palette.removed }, callout: { backgroundColor: raised, borderRadius: 8, borderColor: border, borderWidth: StyleSheet.hairlineWidth, padding: 15 }, code: { color: ink, fontFamily: 'JetBrainsMonoMedium', fontSize: 32, letterSpacing: 3 }, bubble: { backgroundColor: raised, padding: 13, borderRadius: 8, marginBottom: 8 }, bubbleLabel: { color: muted, fontFamily: 'Inter', fontSize: 11, marginBottom: 5 }, body: { color: ink, fontFamily: 'Inter', fontSize: 14.5, lineHeight: 22 }, mono: { color: ink, fontSize: 11, fontFamily: 'JetBrainsMono', lineHeight: 17 }, hint: { color: tertiary, fontFamily: 'Inter', fontSize: 11 }, composer: { backgroundColor: panel, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: border, padding: 10, flexDirection: 'row', alignItems: 'flex-end' }, codeScroll: { padding: 16 }, codeText: { color: ink, fontFamily: 'JetBrainsMono', fontSize: 11, textAlignVertical: 'top', minHeight: 500 },
   mobileListContent: { paddingTop: 8, paddingBottom: 36 },
   mobileGroup: { marginBottom: 18 },
   mobileGroupHeader: { minHeight: 46, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
@@ -977,7 +990,7 @@ const styles = StyleSheet.create({
   mobileGroupEmpty: { color: tertiary, fontFamily: 'Inter', fontSize: 13, paddingHorizontal: 20, paddingVertical: 16 },
   mobileEmpty: { color: muted, fontFamily: 'Inter', fontSize: 14, paddingHorizontal: 20, paddingVertical: 20 },
   mobileFootnote: { color: tertiary, fontFamily: 'Inter', fontSize: 12, lineHeight: 18, paddingHorizontal: 20, marginTop: 3 },
-  rail: { flex: 1, backgroundColor: sidebar }, railContent: { paddingTop: 10, paddingBottom: 24 }, railDetail: { color: tertiary, fontFamily: 'Inter', fontSize: 12 }, railHost: { marginTop: 18, marginHorizontal: 14, height: 48, paddingHorizontal: 5, flexDirection: 'row', alignItems: 'center', gap: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: border }, railHostTitle: { color: muted, fontFamily: 'Inter', fontSize: 12, fontWeight: '600', flex: 1 }, railGroup: { paddingTop: 12 }, railGroupHeader: { paddingHorizontal: 18, height: 38, flexDirection: 'row', alignItems: 'center', gap: 6 }, railGroupTitle: { color: muted, fontFamily: 'Inter', fontSize: 14, fontWeight: '600', flex: 1 }, railMacStatus: { color: tertiary, fontFamily: 'Inter', fontSize: 12, marginHorizontal: 19, marginTop: -6, marginBottom: 4 }, unreachable: { opacity: 0.45 }, pauseBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(232,179,74,0.12)', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border, paddingHorizontal: 14, paddingVertical: 8 }, pauseBannerText: { color: ink, fontFamily: 'Inter', fontSize: 13, lineHeight: 18, flex: 1 }, pauseBannerButton: { paddingHorizontal: 8, paddingVertical: 4 }, pauseBannerButtonDisabled: { opacity: 0.45 }, pauseBannerButtonText: { color: ink, fontFamily: 'Inter', fontSize: 13, fontWeight: '600' }, pausedLabel: { color: '#E8B34A', fontFamily: 'Inter', fontSize: 11, fontWeight: '600' }, railPause: { marginHorizontal: 14 }, railEmpty: { color: muted, fontFamily: 'Inter', fontSize: 12, lineHeight: 18, margin: 18 }, railFooter: { minHeight: 60, paddingHorizontal: 18, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: border, flexDirection: 'row', alignItems: 'center', gap: 10 }, railFooterPressed: { backgroundColor: raised }, railFooterTitle: { color: ink, fontFamily: 'Inter', fontSize: 15, flex: 1 }, connectionDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#4CC38A' },
+  rail: { flex: 1, backgroundColor: sidebar }, railContent: { paddingTop: 10, paddingBottom: 24 }, railDetail: { color: tertiary, fontFamily: 'Inter', fontSize: 12 }, railHost: { marginTop: 18, marginHorizontal: 14, height: 48, paddingHorizontal: 5, flexDirection: 'row', alignItems: 'center', gap: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: border }, railHostTitle: { color: muted, fontFamily: 'Inter', fontSize: 12, fontWeight: '600', flex: 1 }, railGroup: { paddingTop: 12 }, railGroupHeader: { paddingHorizontal: 18, height: 38, flexDirection: 'row', alignItems: 'center', gap: 6 }, railGroupTitle: { color: muted, fontFamily: 'Inter', fontSize: 14, fontWeight: '600', flex: 1 }, railMacStatus: { color: tertiary, fontFamily: 'Inter', fontSize: 12, marginHorizontal: 19, marginTop: -6, marginBottom: 4 }, unreachable: { opacity: 0.45 }, pauseBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: palette.hover, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border, paddingHorizontal: 14, paddingVertical: 8 }, pauseBannerText: { color: ink, fontFamily: 'Inter', fontSize: 13, lineHeight: 18, flex: 1 }, pauseBannerButton: { paddingHorizontal: 8, paddingVertical: 4 }, pauseBannerButtonDisabled: { opacity: 0.45 }, pauseBannerButtonText: { color: ink, fontFamily: 'Inter', fontSize: 13, fontWeight: '600' }, pausedLabel: { color: palette.warning, fontFamily: 'Inter', fontSize: 11, fontWeight: '600' }, railPause: { marginHorizontal: 14 }, railEmpty: { color: muted, fontFamily: 'Inter', fontSize: 12, lineHeight: 18, margin: 18 }, railFooter: { minHeight: 60, paddingHorizontal: 18, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: border, flexDirection: 'row', alignItems: 'center', gap: 10 }, railFooterPressed: { backgroundColor: raised }, railFooterTitle: { color: ink, fontFamily: 'Inter', fontSize: 15, flex: 1 }, connectionDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: palette.added },
   paneToolbar: { height: 45, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border, backgroundColor: bg },
   paneIconButton: { width: 42, height: 42, alignItems: 'center', justifyContent: 'center' },
   paneContent: { paddingBottom: 30 },
@@ -994,30 +1007,30 @@ const styles = StyleSheet.create({
   filesFilterTitle: { color: tertiary, fontFamily: 'Inter', fontSize: 10, fontWeight: '700', letterSpacing: 0.8 },
   filesFilterCount: { color: tertiary, fontFamily: 'Inter', fontSize: 11 },
   filesFilterRow: { flexDirection: 'row', alignItems: 'center', gap: 9 },
-  fileFilter: { flex: 1, height: 44, backgroundColor: panel, borderRadius: 9, borderWidth: StyleSheet.hairlineWidth, borderColor: '#45454D', flexDirection: 'row', alignItems: 'center', gap: 9, paddingHorizontal: 12 },
+  fileFilter: { flex: 1, height: 44, backgroundColor: panel, borderRadius: 9, borderWidth: StyleSheet.hairlineWidth, borderColor: palette.fieldBorder, flexDirection: 'row', alignItems: 'center', gap: 9, paddingHorizontal: 12 },
   fileFilterInput: { flex: 1, minWidth: 0, color: ink, fontFamily: 'Inter', fontSize: 14, paddingVertical: 0 },
   fileFilterClear: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center' },
-  fileRefreshButton: { width: 44, height: 44, backgroundColor: panel, borderRadius: 9, borderWidth: StyleSheet.hairlineWidth, borderColor: '#45454D', alignItems: 'center', justifyContent: 'center' },
+  fileRefreshButton: { width: 44, height: 44, backgroundColor: panel, borderRadius: 9, borderWidth: StyleSheet.hairlineWidth, borderColor: palette.fieldBorder, alignItems: 'center', justifyContent: 'center' },
   breadcrumb: { minHeight: 34, marginHorizontal: 16, marginTop: 10, marginBottom: 4, paddingHorizontal: 10, backgroundColor: panel, borderRadius: 7, flexDirection: 'row', alignItems: 'center', gap: 7 },
   breadcrumbText: { flex: 1, color: muted, fontFamily: 'JetBrainsMono', fontSize: 11 },
   fileList: { paddingTop: 4, paddingBottom: 24 },
   fileTreeRow: { minHeight: 50, paddingHorizontal: 16, paddingVertical: 7, flexDirection: 'row', alignItems: 'center', gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border },
   fileTreeTitle: { color: ink, fontFamily: 'Inter', fontSize: 14.5, fontWeight: '500' },
   fileTreeSubtitle: { color: tertiary, fontFamily: 'Inter', fontSize: 10, marginTop: 2 },
-  diffAdded: { color: '#4CC38A', fontFamily: 'JetBrainsMono', fontSize: 11 },
-  diffRemoved: { color: '#EF6461', fontFamily: 'JetBrainsMono', fontSize: 11 },
+  diffAdded: { color: palette.added, fontFamily: 'JetBrainsMono', fontSize: 11 },
+  diffRemoved: { color: palette.removed, fontFamily: 'JetBrainsMono', fontSize: 11 },
   reviewFile: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border },
   reviewFileHeader: { minHeight: 60, paddingHorizontal: 13, paddingVertical: 7, flexDirection: 'row', alignItems: 'center', gap: 8 },
   reviewFileBody: { backgroundColor: panel, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: border, paddingTop: 4 },
   diffLine: { minHeight: 19, paddingHorizontal: 12, lineHeight: 19 },
   diffGutter: { color: tertiary },
-  hunkLine: { color: '#91B8F6', backgroundColor: 'rgba(145,184,246,0.06)' },
-  addedLine: { color: '#8FCBAB', backgroundColor: 'rgba(76,195,138,0.08)' },
-  removedLine: { color: '#E9A09D', backgroundColor: 'rgba(239,100,97,0.08)' },
+  hunkLine: { color: palette.textSecondary, backgroundColor: palette.hover },
+  addedLine: { color: palette.added, backgroundColor: palette.addedWash },
+  removedLine: { color: palette.removed, backgroundColor: palette.removedWash },
   reviewFileActions: { flexDirection: 'row', gap: 8, paddingHorizontal: 12, paddingVertical: 10, marginTop: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: border },
   reviewFileButton: { flex: 1, minHeight: 42, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, borderRadius: 8, borderWidth: StyleSheet.hairlineWidth },
-  reviewFileButtonApply: { backgroundColor: 'rgba(76,195,138,0.12)', borderColor: 'rgba(76,195,138,0.3)' },
-  reviewFileButtonDiscard: { backgroundColor: 'rgba(239,100,97,0.08)', borderColor: 'rgba(239,100,97,0.28)' },
+  reviewFileButtonApply: { backgroundColor: palette.addedWash, borderColor: palette.added },
+  reviewFileButtonDiscard: { backgroundColor: palette.removedWash, borderColor: palette.removed },
   reviewFileButtonPressed: { opacity: 0.7 },
   reviewFileButtonText: { fontFamily: 'Inter', fontSize: 12.5, fontWeight: '600' },
   reviewActions: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', paddingTop: 7 },
@@ -1033,10 +1046,10 @@ const styles = StyleSheet.create({
   prDraftBox: { width: 18, height: 18, borderRadius: 4, borderWidth: 1, borderColor: muted, alignItems: 'center', justifyContent: 'center' },
   prDraftBoxChecked: { backgroundColor: ink, borderColor: ink },
   prHelp: { color: muted, fontFamily: 'Inter', fontSize: 12, lineHeight: 18 },
-  prActionError: { paddingHorizontal: 16, paddingVertical: 10, backgroundColor: 'rgba(239,100,97,0.10)' },
+  prActionError: { paddingHorizontal: 16, paddingVertical: 10, backgroundColor: palette.removedWash },
   prHeader: { paddingHorizontal: 16, paddingTop: 18, paddingBottom: 17, gap: 7, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border },
   prStatusLine: { flexDirection: 'row', alignItems: 'center', gap: 7 },
-  prState: { color: '#4CC38A', fontFamily: 'Inter', fontSize: 12, fontWeight: '600', textTransform: 'capitalize' },
+  prState: { color: palette.added, fontFamily: 'Inter', fontSize: 12, fontWeight: '600', textTransform: 'capitalize' },
   prNumber: { color: tertiary, fontFamily: 'Inter', fontSize: 12 },
   prTitle: { color: ink, fontFamily: 'Inter', fontSize: 18, fontWeight: '600', lineHeight: 22 },
   prMetadata: { flexDirection: 'row', alignItems: 'center', gap: 8 },
@@ -1052,11 +1065,11 @@ const styles = StyleSheet.create({
   editorAction: { minWidth: 35, height: 32, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5 },
   editorActionText: { color: ink, fontFamily: 'Inter', fontSize: 12, fontWeight: '600' },
   editorCode: { paddingVertical: 14, paddingRight: 20 },
-  editorLineNumbers: { color: '#676770', fontFamily: 'JetBrainsMono', fontSize: 11, lineHeight: 18, textAlign: 'right', paddingHorizontal: 11, minWidth: 48 },
+  editorLineNumbers: { color: palette.textTertiary, fontFamily: 'JetBrainsMono', fontSize: 11, lineHeight: 18, textAlign: 'right', paddingHorizontal: 11, minWidth: 48 },
   editorLineRow: { flexDirection: 'row', alignItems: 'flex-start' },
-  editorLineSelected: { backgroundColor: 'rgba(255,255,255,0.07)' },
-  editorLineNumber: { color: '#676770', fontFamily: 'JetBrainsMono', fontSize: 11, lineHeight: 18, textAlign: 'right', paddingHorizontal: 11, minWidth: 48 },
-  editorLineText: { fontFamily: 'JetBrainsMono', fontSize: 11, lineHeight: 18, color: '#ABB2BF' },
+  editorLineSelected: { backgroundColor: palette.selection },
+  editorLineNumber: { color: palette.textTertiary, fontFamily: 'JetBrainsMono', fontSize: 11, lineHeight: 18, textAlign: 'right', paddingHorizontal: 11, minWidth: 48 },
+  editorLineText: { fontFamily: 'JetBrainsMono', fontSize: 11, lineHeight: 18, color: palette.syntaxPlain },
   editorCodeText: { color: ink, fontFamily: 'JetBrainsMono', fontSize: 11, lineHeight: 18, paddingRight: 12 },
   editorInput: { flex: 1, minHeight: 500, color: ink, fontFamily: 'JetBrainsMono', fontSize: 11, lineHeight: 18, padding: 14 },
-});
+}));
