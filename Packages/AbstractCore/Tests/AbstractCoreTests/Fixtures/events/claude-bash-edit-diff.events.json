@@ -1,0 +1,106 @@
+{
+  "exit:0" : [
+    {
+      "status" : "finished",
+      "type" : "status"
+    }
+  ],
+  "exit:1" : [
+    {
+      "message" : "claude exited with code 1",
+      "type" : "error"
+    },
+    {
+      "status" : "errored",
+      "type" : "status"
+    }
+  ],
+  "exit:null" : [
+    {
+      "message" : "claude exited with code null",
+      "type" : "error"
+    },
+    {
+      "status" : "errored",
+      "type" : "status"
+    }
+  ],
+  "stderr" : [
+    [
+      {
+        "line" : "{\"type\":\"assistant\",\"message\":{\"id\":\"m1\",\"content\":[{\"type\":\"tool_use\",\"id\":\"bash-1\",\"name\":\"Bash\",\"input\":{\"command\":\"sed -i '' 's/beta/gamma/' alpha.txt\"}}]}}",
+        "stream" : "stderr",
+        "type" : "raw"
+      }
+    ],
+    [
+      {
+        "line" : "{\"type\":\"user\",\"message\":{\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"bash-1\",\"content\":\"\"}]},\"tool_use_result\":{\"bashEditDiff\":{\"files\":[{\"filePath\":\"/tmp/abstract-fixture/alpha.txt\",\"hunks\":[{\"oldStart\":1,\"newStart\":1,\"lines\":[\" alpha\",\"-beta\",\"+gamma\"]}]}],\"moreFiles\":0,\"changedFiles\":[\"/tmp/abstract-fixture/alpha.txt\"]}}}",
+        "stream" : "stderr",
+        "type" : "raw"
+      }
+    ],
+    [
+
+    ]
+  ],
+  "stdout" : [
+    [
+      {
+        "id" : "bash-1",
+        "input" : {
+          "command" : "sed -i '' 's/beta/gamma/' alpha.txt"
+        },
+        "name" : "Bash",
+        "type" : "toolUse"
+      }
+    ],
+    [
+      {
+        "isError" : false,
+        "output" : "",
+        "toolUseId" : "bash-1",
+        "type" : "toolResult"
+      },
+      {
+        "changes" : {
+          "incomplete" : false,
+          "moreFiles" : 0,
+          "previews" : [
+            {
+              "additions" : 1,
+              "deletions" : 1,
+              "filePath" : "/tmp/abstract-fixture/alpha.txt",
+              "lines" : [
+                {
+                  "content" : "alpha",
+                  "newLine" : 1,
+                  "oldLine" : 1,
+                  "origin" : " "
+                },
+                {
+                  "content" : "beta",
+                  "oldLine" : 2,
+                  "origin" : "-"
+                },
+                {
+                  "content" : "gamma",
+                  "newLine" : 2,
+                  "origin" : "+"
+                }
+              ]
+            }
+          ],
+          "remainingPaths" : [
+
+          ]
+        },
+        "toolUseId" : "bash-1",
+        "type" : "toolFileChanges"
+      }
+    ],
+    [
+
+    ]
+  ]
+}

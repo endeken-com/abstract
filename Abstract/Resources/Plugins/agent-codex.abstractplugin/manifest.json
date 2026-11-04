@@ -1,0 +1,25 @@
+{
+  "api": 2,
+  "id": "sh.abstract.agent.codex",
+  "name": "Codex",
+  "version": "1.0.0",
+  "description": "Codex as an agent in your chats, through `codex exec --json`. Each turn is one run; the next resumes the same thread, and `/compact` goes through its app server.",
+  "capabilities": ["agents"],
+  "agent": "agent.js",
+  "contributes": {
+    "agents": [
+      {
+        "id": "codex",
+        "label": "Codex",
+        "asset": "ProviderOpenAI",
+        "command": ["codex"],
+        "detect": ["--version"],
+        "capabilities": ["prompt.message", "prompt.image", "session.persistence", "naming", "compaction", "models.discover", "lines.enrich"],
+        "skills": "codexHome",
+        "toolServers": "allowOrOff",
+        "commands": ["compact"],
+        "config": [".codex/config.toml", ".codex/models_cache.json"]
+      }
+    ]
+  }
+}

@@ -79,6 +79,33 @@ public final class AgentScript: @unchecked Sendable {
         host.setObject(compactJSON, forKeyedSubscript: "compactJSON" as NSString)
         let firstObject: @convention(block) (String) -> Any = { ChatNaming.firstObject(in: $0) ?? NSNull() }
         host.setObject(firstObject, forKeyedSubscript: "firstObject" as NSString)
+        // How Abstract reads git and pull request work out of a command's
+        // output, and which tool calls are questions for you.
+        let gitFromClaude: @convention(block) (JSValue) -> Any = { value in
+            GitOperation.claude(JSONValue(any: value.toObject())).map { AgentEventJSON.encodeGit($0).anyObject }
+        }
+        host.setObject(gitFromClaude, forKeyedSubscript: "gitOperationsFromReport" as NSString)
+        let gitFallback: @convention(block) (String, String, Bool) -> Any = { command, output, succeeded in
+            GitOperation.fallback(command: command, output: output, succeeded: succeeded).map { AgentEventJSON.encodeGit($0).anyObject }
+        }
+        host.setObject(gitFallback, forKeyedSubscript: "gitOperationsFromCommand" as NSString)
+        let isQuestion: @convention(block) (String) -> Bool = { AgentQuestion.isQuestion($0) }
+        host.setObject(isQuestion, forKeyedSubscript: "isQuestion" as NSString)
+        let lineDiff: @convention(block) (String, String) -> Any = { old, new in
+            EditPreview.lineDiff(old, new).map { AgentEventJSON.encodeCodable($0).anyObject }
+        }
+        host.setObject(lineDiff, forKeyedSubscript: "lineDiff" as NSString)
+        let splitLines: @convention(block) (String) -> [String] = { EditPreview.splitLines($0) }
+        host.setObject(splitLines, forKeyedSubscript: "splitLines" as NSString)
+        // Abstract's own names and limits an agent's launch refers to.
+        let constants: [String: Any] = [
+            "codeHistory": ["server": CodeHistory.serverName, "historyTool": CodeHistory.historyTool,
+                            "excerptTool": CodeHistory.excerptTool, "instruction": CodeHistory.instruction],
+            "pluginTools": ["server": PluginTools.serverName, "timeout": PluginTools.timeout, "askTimeout": PluginTools.askTimeout],
+            "branch": ["server": BranchMCPServer.serverName],
+            "plan": ["instruction": Plan.instruction, "readOnlyInstruction": Plan.readOnlyInstruction],
+        ]
+        host.setObject(constants, forKeyedSubscript: "constants" as NSString)
         let uuid: @convention(block) () -> String = { UUID().uuidString.lowercased() }
         host.setObject(uuid, forKeyedSubscript: "uuid" as NSString)
         let random: @convention(block) (Int) -> [Int] = { count in (0..<max(0, min(count, 64))).map { _ in Int.random(in: 0...255) } }
@@ -295,7 +322,8 @@ public struct ScriptedProvider: ProviderDefinition {
     public func discoverModels(executor: any Executor, binary: String?) async -> ModelCatalog? {
         guard can("models.discover"),
               let answer = try? await AgentJobs(provider: self, executor: executor, binaryOverride: binary)
-                .run("discoverModels", input: .object(["binary": .string(command(binary))])) else { return nil }
+                .run("discoverModels", input: .object(["binary": .string(command(binary)), "config": config(executor: executor)]))
+        else { return nil }
         return AgentEventJSON.decodeCodable(ModelCatalog.self, answer)
     }
 
@@ -305,6 +333,17 @@ public struct ScriptedProvider: ProviderDefinition {
         for path in declaration.config ?? [] {
             if let data = FileManager.default.contents(atPath: (home as NSString).appendingPathComponent(path)),
                let text = String(data: data, encoding: .utf8) {
+                files[path] = .string(text)
+            }
+        }
+        return .object(files)
+    }
+
+    /// The same files read on the executor's own Mac, for jobs that run there.
+    func config(executor: any Executor) -> JSONValue {
+        var files: [String: JSONValue] = [:]
+        for path in declaration.config ?? [] {
+            if let text = try? executor.readFile((executor.homeDirectory as NSString).appendingPathComponent(path)) {
                 files[path] = .string(text)
             }
         }
@@ -352,8 +391,10 @@ public struct ScriptedProvider: ProviderDefinition {
             "prompt": .string(prompt), "home": .string(home), "model": model.map(JSONValue.string) ?? .null,
             "config": config(home: home),
         ])]) else { return nil }
+        // The prompt may go in on stdin (Claude reads it there).
         return LaunchSpec(command: binary ?? self.binary, args: prefix + Self.strings(answer["args"]),
-                          cwd: answer["cwd"]?.string ?? home, env: Self.env(answer["env"]), keepStdinOpen: false)
+                          cwd: answer["cwd"]?.string ?? home, env: Self.env(answer["env"]),
+                          stdinInitial: answer["stdin"]?.string, keepStdinOpen: false)
     }
 
     public func namingAnswer(_ output: String) -> String? {

@@ -79,7 +79,7 @@ gets the colours from the Mac and runs nothing.
 ## Adding an agent
 
 An agent is a plugin contribution too (ABS-185), after Paseo's provider plugins:
-OpenCode and Muse Code are bundled agent plugins
+Claude Code, Codex, OpenCode and Muse Code are bundled agent plugins
 (`Abstract/Resources/Plugins/agent-*.abstractplugin`), and one you install runs
 chats without a new Abstract. What differs from Paseo: **the plugin never
 starts anything.** Abstract runs the program the manifest names, through the
