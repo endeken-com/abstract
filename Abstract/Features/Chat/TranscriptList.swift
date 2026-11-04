@@ -31,13 +31,22 @@ struct TranscriptList<Footer: View>: NSViewRepresentable {
     @Binding var atBottom: Bool
     @ViewBuilder let footer: () -> Footer
 
-    func makeCoordinator() -> TranscriptController { TranscriptController(model: model) }
+    /// The chat's transcript as it was when it last showed, if it's one of
+    /// the few kept, so coming back to it builds nothing.
+    func makeCoordinator() -> TranscriptController { model.transcript(for: self.context.sessionId) }
 
-    func makeNSView(context: Context) -> NSScrollView {
-        context.coordinator.scrollView
+    func makeNSView(context: Context) -> TranscriptHolder {
+        let holder = TranscriptHolder()
+        context.coordinator.shown(in: holder, jump: jump)
+        return holder
     }
 
-    func updateNSView(_ view: NSScrollView, context: Context) {
+    static func dismantleNSView(_ view: TranscriptHolder, coordinator: TranscriptController) {
+        coordinator.hidden()
+    }
+
+    func updateNSView(_ view: TranscriptHolder, context: Context) {
+        Perf.event("transcript.update")
         let c = context.coordinator
         c.onBottomChange = { near in if atBottom != near { atBottom = near } }
         c.update(feed: feed, context: self.context, footer: AnyView(footer()), jump: jump)
@@ -126,6 +135,21 @@ final class TranscriptController: NSObject {
     /// A match to take the view to at the next layout: its row, and how far down it.
     private var pendingReveal: (id: Int, fraction: CGFloat)?
     var onBottomChange: ((Bool) -> Void)?
+    /// How many places show it: none while it's kept for later. Kept, it
+    /// takes no updates; the next showing catches up on what changed.
+    private var showing = 0
+    /// Guessed heights at `measuredWidth`, by row id, until a row is measured or changes.
+    private var estimates: [Int: CGFloat] = [:]
+    /// The live row and the raw-output setting the rows were last laid out
+    /// from, and whether something changed while it was kept out of sight:
+    /// an update that changes none of these leaves the rows be.
+    private var builtHead: ChatRow?
+    private var builtRaw = false
+    private var needsRebuild = false
+    /// How far past the view rows are built: only what's on screen while a
+    /// chat shows, then a screen above and below, built a little at a time.
+    private var margin: CGFloat = 0
+    private var widening: Task<Void, Never>?
 
     private static let top = Space.xl
     private static let bottom = Space.lg
@@ -167,7 +191,44 @@ final class TranscriptController: NSObject {
         NotificationCenter.default.addObserver(self, selector: #selector(resized), name: NSView.frameDidChangeNotification, object: scrollView)
     }
 
-    isolated deinit { premeasuring?.cancel() }
+    isolated deinit {
+        premeasuring?.cancel()
+        widening?.cancel()
+    }
+
+    // MARK: Showing
+
+    /// Shown again, or for the first time. `jump` is where the new view's
+    /// count starts: no request to go to the end.
+    func shown(in holder: TranscriptHolder, jump: Int) {
+        showing += 1
+        self.jump = jump
+        holder.hold(scrollView)
+        margin = 0
+        if revealed {
+            startWidening()
+            if premeasuring == nil { startPremeasuring() }
+        }
+    }
+
+    /// Put away, kept for when it shows again: nothing runs for it meanwhile.
+    func hidden() {
+        showing = max(0, showing - 1)
+        guard showing == 0 else { return }
+        onBottomChange = nil
+        premeasuring?.cancel()
+        premeasuring = nil
+        widening?.cancel()
+        widening = nil
+        // Only the rows on screen go back with it; the rest follow a few at a
+        // time once it shows. (Out of the window already, letting go costs nothing.)
+        let visible = scrollView.contentView.bounds
+        for (id, host) in mounted where !host.view.frame.intersects(visible) { unmount(id, park: true) }
+        // Kept, it holds only the rows around where you were: about two screens.
+        for id in Array(parked.keys) where !(index[id].map(shownRange.contains) ?? false) { dropParked(id) }
+        // As before it was kept: a selection doesn't outlast leaving the chat.
+        selection.clear()
+    }
 
     // MARK: Updates
 
@@ -175,6 +236,8 @@ final class TranscriptController: NSObject {
         // Only what every row reads redraws them all; the rest is per row.
         let global = context.sessionId != self.context?.sessionId || context.prose != self.context?.prose
             || context.transcript != self.context?.transcript
+        let unchanged = !global && !needsRebuild && context == self.context && feed === self.feed
+            && feed.historyRevision == historyRevision && feed.head.row == builtHead && TranscriptRows.showsRaw == builtRaw
         self.context = context
         footerView = footer
         footerHost.update(TranscriptRowView(content: footer, environment: environment(nil), width: rowWidth, model: model))
@@ -195,18 +258,22 @@ final class TranscriptController: NSObject {
             follow.jump()
             scrollToEnd(animated: true)
         }
-        rebuild(force: global)
+        if !unchanged { rebuild(force: global) }
     }
 
     private func resetForNewChat() {
         premeasuring?.cancel()
         premeasuring = nil
+        widening?.cancel()
+        widening = nil
+        margin = 0
         for id in Array(mounted.keys) { unmount(id, park: false) }
         parked.removeAll()
         parkedOrder.removeAll()
         items.removeAll()
         index.removeAll()
         heights.removeAll()
+        estimates.removeAll()
         versions.removeAll()
         measuredWidth = 0
         historyRevision = -1
@@ -228,6 +295,8 @@ final class TranscriptController: NSObject {
         } onChange: { [weak self, weak feed] in
             Task { @MainActor in
                 guard let self, let feed, feed === self.feed else { return }
+                // Kept out of sight: showing it again rebuilds what changed.
+                guard self.showing > 0 else { self.needsRebuild = true; self.observe(feed); return }
                 if self.historyRevision != feed.historyRevision || !self.rebuildHead() {
                     self.rebuild(force: false)
                 }
@@ -242,10 +311,12 @@ final class TranscriptController: NSObject {
         guard let feed, let context, let row = feed.head.row,
               TranscriptRows.shows(row, context.transcript),
               let last = items.last, last.id == row.id else { return false }
+        builtHead = row
         let updated = Item(row: row, gap: last.gap, live: context.working,
                            approvals: last.approvals, latestTodo: last.latestTodo, version: last.version)
         guard updated != last else { return true }
         items[items.count - 1] = updated
+        estimates[row.id] = nil
         if let host = mounted[row.id] {
             host.update(root(for: updated))
             record(updated, host.measure(width: rowWidth))
@@ -262,6 +333,9 @@ final class TranscriptController: NSObject {
     private func rebuild(force: Bool) {
         guard let feed, let context else { return }
         historyRevision = feed.historyRevision
+        builtHead = feed.head.row
+        builtRaw = TranscriptRows.showsRaw
+        needsRebuild = false
         let rows = feed.rows.filter { TranscriptRows.shows($0, context.transcript) }
         var next: [Item] = []
         next.reserveCapacity(rows.count)
@@ -282,6 +356,7 @@ final class TranscriptController: NSObject {
         findPlace = feed.find.state.currentMatch.flatMap(locate)
         for item in next {
             let changed = old[item.id].map { oldItems[$0] != item } ?? true
+            if changed { estimates[item.id] = nil }
             // A row whose find marks changed draws them; its height stays.
             if !changed, !force, let host = mounted[item.id], host.find != rowFind(item) { host.update(root(for: item)) }
             guard changed || force else { continue }
@@ -368,13 +443,17 @@ final class TranscriptController: NSObject {
     /// Places every row, shows the ones near view, and keeps the scroll where
     /// it belongs: at the end while following, otherwise on what you're reading.
     func layoutRows() {
+        // Kept, or not sized yet: laying out now would only throw measurements away.
+        guard showing > 0, scrollView.contentSize.width > 0 else { return }
         let wasLayingOut = layingOut
         layingOut = true
         defer { layingOut = wasLayingOut }
         let width = rowWidth
         if width != measuredWidth {
+            Perf.event("transcript.remeasure")
             measuredWidth = width
             heights = [:]
+            estimates = [:]
             premeasureCount = -1
             seedFromCache()
             for (id, host) in mounted {
@@ -441,7 +520,7 @@ final class TranscriptController: NSObject {
     /// True when a row turned out a different height than guessed.
     private func mountVisible(tops: [CGFloat], width: CGFloat) -> Bool {
         let visible = scrollView.contentView.bounds
-        let range = (visible.minY - visible.height)...(visible.maxY + visible.height)
+        let range = (visible.minY - margin)...(visible.maxY + margin)
         var wanted = Set<Int>()
         var first = Int.max, last = -1
         for (i, item) in items.enumerated() {
@@ -491,8 +570,18 @@ final class TranscriptController: NSObject {
         return (items[anchor.row].id, CGFloat(anchor.offset))
     }
 
-    /// A height for a row not measured yet, close enough that the scroll barely moves when it is.
+    /// A height for a row not measured yet, close enough that the scroll
+    /// barely moves when it is. Worked out once per row and width: every
+    /// layout pass places every row of the chat.
     private func estimate(_ item: Item, width: CGFloat) -> CGFloat {
+        guard width == measuredWidth else { return guess(item, width: width) }
+        if let known = estimates[item.id] { return known }
+        let guess = guess(item, width: width)
+        estimates[item.id] = guess
+        return guess
+    }
+
+    private func guess(_ item: Item, width: CGFloat) -> CGFloat {
         let perLine = max(20, width / 7.6)
         let body: CGFloat
         switch item.row.block {
@@ -573,7 +662,25 @@ final class TranscriptController: NSObject {
             context.duration = 0.12
             scrollView.animator().alphaValue = 1
         }
+        startWidening()
         startPremeasuring()
+    }
+
+    /// After a chat shows, builds the rows a screen above and below it a
+    /// quarter of a screen at a time, so showing it builds only what's seen.
+    private func startWidening() {
+        widening?.cancel()
+        widening = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(30))
+                guard let self, !Task.isCancelled, self.showing > 0 else { return }
+                let screen = self.scrollView.contentView.bounds.height
+                guard screen > 0 else { continue }
+                self.margin = min(screen, self.margin + screen / 4)
+                self.document.needsLayout = true
+                if self.margin >= screen { return }
+            }
+        }
     }
 
     // MARK: Measuring ahead
@@ -597,7 +704,7 @@ final class TranscriptController: NSObject {
     /// One slice of measuring. False when every row is measured and the
     /// rows just past the view are built.
     private func premeasureStep() -> Bool {
-        guard revealed, measuredWidth > 0, !items.isEmpty else { return false }
+        guard revealed, showing > 0, measuredWidth > 0, !items.isEmpty else { return false }
         // Measuring old rows changes the document's estimated height. While
         // following the end, that would move the scroll position on every slice.
         if follow.following { return false }
@@ -651,6 +758,9 @@ final class TranscriptController: NSObject {
     /// Rows built ahead on each side of the view.
     private static let prebuilt = 32
 
+    /// For the demo's probe: how many rows' views it holds.
+    var rowViews: Int { mounted.count + parked.count }
+
     /// For the demo's scroll probe: the rows around a point, and how much they hold.
     func describe(around y: CGFloat) -> String {
         let tops = positions(width: measuredWidth)
@@ -682,7 +792,7 @@ final class TranscriptController: NSObject {
         } onChange: { [weak self, weak find] in
             Task { @MainActor in
                 guard let self, let find, find === self.feed?.find else { return }
-                self.findChanged()
+                if self.showing > 0 { self.findChanged() } else { self.needsRebuild = true }
                 self.observeFind(find)
             }
         }
@@ -825,6 +935,8 @@ final class TranscriptController: NSObject {
     }
 
     @objc private func scrolled() {
+        // Kept out of sight, its view leaving and joining a window isn't the reader scrolling.
+        guard showing > 0 else { lastOriginY = scrollView.contentView.bounds.minY; return }
         lastScroll = CACurrentMediaTime()
         // Ignore the list's own scrolling and layout clamping. A reader's
         // upward movement stops following even close to the end.
@@ -841,6 +953,22 @@ final class TranscriptController: NSObject {
 
     private func reportBottom() {
         onBottomChange?(distanceFromEnd < 80)
+    }
+}
+
+/// Where a transcript's scroll view sits in the chat screen. The screen
+/// owns this view and lets go of it as it goes; the transcript, kept, moves
+/// on to the next one that shows its chat.
+final class TranscriptHolder: NSView {
+    func hold(_ scrollView: NSScrollView) {
+        // Made before it has a size: the transcript keeps its own until this gets one.
+        if !bounds.isEmpty { scrollView.frame = bounds }
+        addSubview(scrollView)
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        for view in subviews { view.frame = bounds }
     }
 }
 
@@ -933,6 +1061,7 @@ final class RowHost {
     }
 
     func update(_ root: TranscriptRowView) {
+        Perf.event("transcript.rowUpdate")
         host.rootView = root.reporting(to: reporter)
         find = root.environment.find
         dirty = true
@@ -953,7 +1082,7 @@ final class RowHostingView: NSHostingView<TranscriptRowView> {
     var onLayout: (() -> Void)?
 
     override func layout() {
-        super.layout()
+        Perf.measure("transcript.rowLayout") { super.layout() }
         onLayout?()
     }
 }
@@ -1011,5 +1140,19 @@ struct TranscriptRowView: View {
             .environment(\.transcriptRow, environment.row)
             .environment(\.textSelectionGroup, environment.selection)
             .environment(\.transcriptFind, environment.find)
+    }
+}
+
+extension AppModel {
+    /// The chat's transcript: the one kept from when it last showed, or a new
+    /// one. Transcripts of chats gone or archived since, and of the chat that
+    /// falls off the end of the few kept, are let go of.
+    func transcript(for sessionId: String) -> TranscriptController {
+        var released = keptTranscripts.release { id in id == sessionId || session(id).map { $0.archivedAt == nil } ?? false }
+        let shown = keptTranscripts.show(sessionId) { TranscriptController(model: self) }
+        released += shown.released
+        // Their rows are torn down after this screen has drawn, not while it builds.
+        if !released.isEmpty { DispatchQueue.main.async { withExtendedLifetime(released) {} } }
+        return shown.transcript
     }
 }

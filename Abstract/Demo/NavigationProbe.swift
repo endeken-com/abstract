@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import AbstractCore
 
 /// Demo mode's timing of everyday actions (ABS-184), in any build.
@@ -8,8 +9,13 @@ import AbstractCore
 /// tabs, opens Automations and New Chat, and sends a message, several times
 /// each. For each it logs how long until the window had drawn the change
 /// (the main thread going back to waiting), the longest stretch it was busy
-/// in the second after, and the signposted work in that first stretch.
+/// in the second after, and the signposted work in that first stretch. Then
+/// (ABS-186) whether a chat comes back where you were reading, and how much
+/// memory the kept transcripts hold.
 enum NavigationProbe {
+    /// The window the probe opened, when the app's own never did.
+    private static var probeWindow: NSWindow?
+
     static func runIfRequested(_ model: AppModel, repo: Project?) {
         guard let spec = ProcessInfo.processInfo.environment["ABSTRACT_DEMO_NAV"], let delay = Double(spec) else { return }
         HangMonitor.shared.start()
@@ -41,6 +47,24 @@ enum NavigationProbe {
             try? logText.write(to: model.engine.logsURL.appendingPathComponent("\(session.id).jsonl"), atomically: true, encoding: .utf8)
         }
         model.reload()
+        // Only a window in front draws. Launched beside another copy of the
+        // app, the window may never have opened: open one like it.
+        NSApp.activate()
+        if !NSApp.windows.contains(where: { $0.canBecomeMain }) {
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 820),
+                                  styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+            window.toolbarStyle = .unified
+            window.isReleasedWhenClosed = false
+            window.contentViewController = NSHostingController(rootView: RootView().font(.btBody).environment(model).environment(Updater()))
+            window.setContentSize(NSSize(width: 1280, height: 820))
+            window.center()
+            probeWindow = window
+        }
+        let window = probeWindow ?? NSApp.windows.first { $0.canBecomeMain }
+        window?.makeKeyAndOrderFront(nil)
+        try? await Task.sleep(for: .seconds(1))
+        Swift.print("nav probe: window " + (window.map { "\(Int($0.frame.width))×\(Int($0.frame.height)), "
+            + "visible \($0.occlusionState.contains(.visible)), key \($0.isKeyWindow), opened here \(probeWindow != nil)" } ?? "none: nothing will draw"))
         Swift.print("nav probe: \(model.projects.count) projects, \(model.sessions.count) chats, \(long.count) of \(lines) lines, \(streaming.count) streaming")
 
         // Agents print from their own reader threads, a few lines a second each.
@@ -62,6 +86,22 @@ enum NavigationProbe {
         var warm: [Timing] = []
         for i in 0..<6 { warm.append(await time(drawn: "body.BlockView") { model.open(long[i % 2].id) }) }
         results.append(("switch chat", warm))
+        // For profiling one action: `ABSTRACT_DEMO_NAV_LOOP=<n>` switches back and forth n times more, or opens Automations from a chat.
+        if let spec = ProcessInfo.processInfo.environment["ABSTRACT_DEMO_NAV_LOOP"], let n = Int(spec) {
+            let automations = ProcessInfo.processInfo.environment["ABSTRACT_DEMO_NAV_LOOP_ACTION"] == "automations"
+            Swift.print("nav probe: loop start")
+            for i in 0..<n {
+                if automations {
+                    model.open(long[0].id)
+                    try? await Task.sleep(for: .milliseconds(300))
+                    model.destination = .automations
+                } else {
+                    model.open(long[i % 2].id)
+                }
+                try? await Task.sleep(for: .milliseconds(300))
+            }
+            Swift.print("nav probe: loop end")
+        }
         // Tabs: two chats in tabs, back and forth.
         model.open(long[0].id)
         model.open(long[1].id, newTab: true)
@@ -98,6 +138,32 @@ enum NavigationProbe {
         }
         results.append(("send a message", sends))
         streamer.cancel()
+        // A chat read further up keeps its place when you come back to it.
+        model.open(long[0].id)
+        try? await Task.sleep(for: .seconds(1))
+        if let scrollView = model.keptTranscripts.transcript(long[0].id)?.scrollView {
+            scrollView.contentView.scroll(to: NSPoint(x: 0, y: max(0, scrollView.documentView!.frame.height / 2)))
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+            try? await Task.sleep(for: .milliseconds(500))
+            let before = scrollView.contentView.bounds.minY
+            model.open(long[1].id)
+            try? await Task.sleep(for: .milliseconds(500))
+            model.open(long[0].id)
+            try? await Task.sleep(for: .milliseconds(500))
+            let after = model.keptTranscripts.transcript(long[0].id)?.scrollView.contentView.bounds.minY ?? -1
+            Swift.print("nav probe: reading position \(Int(before)) before leaving, \(Int(after)) after coming back")
+        }
+        // With every long chat shown once: what the app holds, and what the kept transcripts take of it.
+        for session in long { model.open(session.id); try? await Task.sleep(for: .milliseconds(600)) }
+        model.destination = .automations
+        try? await Task.sleep(for: .seconds(1))
+        let kept = model.keptTranscripts.count
+        let rows = model.keptTranscripts.order.compactMap { model.keptTranscripts.transcript($0)?.rowViews }
+        let withKept = footprintMB()
+        model.keptTranscripts.release { _ in false }
+        try? await Task.sleep(for: .seconds(2))
+        let without = footprintMB()
+        Swift.print("nav probe: memory after showing \(long.count) long chats: \(withKept) MB with \(kept) transcripts kept (\(rows.map(String.init).joined(separator: ", ")) row views), \(without) MB after letting them go")
 
         for (name, timings) in results {
             let shown = timings.map(\.shown).sorted()
@@ -111,6 +177,16 @@ enum NavigationProbe {
             }
         }
         Swift.print("nav probe: done")
+    }
+
+    /// The process's memory as Activity Monitor counts it, in megabytes.
+    private static func footprintMB() -> Int {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count) }
+        }
+        return result == KERN_SUCCESS ? Int(info.phys_footprint / 1_048_576) : -1
     }
 
     struct Timing {

@@ -112,6 +112,8 @@ final class AppModel {
     /// has been asked again. See `refreshModels`.
     private(set) var modelCatalogs: [String: ModelCatalog] = [:]
     @ObservationIgnored private var feeds: [String: ChatFeed] = [:]
+    /// The transcripts of the chats shown last, kept so showing one again is instant (ABS-186).
+    @ObservationIgnored var keptTranscripts = KeptTranscripts<TranscriptController>()
     /// What each paired Mac's chats have notified here, by device.
     @ObservationIgnored private var remoteNotices: [String: RemoteNotices] = [:]
     private(set) var permissions: [String: [PendingPermission]] = [:]
@@ -1796,6 +1798,7 @@ final class AppModel {
         if archived {
             mainTabs.removeSession(sessionId)
             syncDestinationWithTabs(leaving: sessionId)
+            keptTranscripts.release(sessionId)
         }
         replaceSession(s)
         if archived, !wasArchived { automationEvent(.chatArchived, in: sessionId) }
@@ -1831,6 +1834,7 @@ final class AppModel {
         mainTabs.removeSession(sessionId)
         try? store.deleteSession(sessionId)
         feeds[sessionId] = nil
+        keptTranscripts.release(sessionId)
         permissions[sessionId] = nil
         streams[sessionId] = nil
         composerDrafts.remove(sessionId)

@@ -58,6 +58,8 @@ final class ChatFeed {
     /// The commands the agent last reported, since the chat last changed agent.
     private(set) var commands: AgentCommandList?
     private(set) var toolResults = 0
+    /// How the newest turn that says so was started, for "How this turn started".
+    private(set) var latestLaunch: LaunchRecord?
     /// What the agent runs beside the conversation, oldest first.
     private(set) var tasks: [AgentTask] = []
     /// How many things subagents have done, so their tasks' views know to look again.
@@ -163,6 +165,8 @@ final class ChatFeed {
         if time != self.time { self.time = time }
         let lastTurnId = blocks.last { if case .turn = $0 { true } else { false } }?.id
         if lastTurnId != self.lastTurnId { self.lastTurnId = lastTurnId }
+        let launch = blocks.lazy.reversed().compactMap { if case let .turn(_, info) = $0 { info.launch } else { nil } }.first
+        if launch != latestLaunch { latestLaunch = launch }
         let started = timeline.turnStartedAt
         if started != turnStartedAt { turnStartedAt = started }
         if timeline.lastOutputAt != lastOutputAt { lastOutputAt = timeline.lastOutputAt }
