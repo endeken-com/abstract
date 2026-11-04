@@ -30,7 +30,9 @@ final class PluginService {
     init(store: Store) {
         manager = PluginManager(store: store)
         // The GitHub plugin is on unless you turned it off (ABS-139).
-        manager.installDefaults(from: PluginManager.bundledFolders(in: Bundle.main.resourceURL))
+        let bundled = PluginManager.bundledFolders(in: Bundle.main.resourceURL)
+        manager.installDefaults(from: bundled)
+        manager.updateBundled(from: bundled)
         refresh()
     }
 

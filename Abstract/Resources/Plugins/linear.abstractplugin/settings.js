@@ -1,9 +1,8 @@
 "use strict";
 
 // Linear's settings page (ABS-141): how it connects, and whether that
-// works now. An API key is entered above this page, in Settings →
-// Plugins, and kept in the keychain; the Linear CLI uses its own sign-in,
-// and you pick which of its workspaces to search.
+// works now. The Linear CLI uses its own sign-in and workspace; an
+// optional API key is entered above this page in Settings → Plugins.
 
 const ui = window.AbstractUI;
 const h = ui.h;
@@ -46,12 +45,12 @@ function render() {
   const { key, cli } = state;
   const section = h("section", { class: "ab-section" },
     h("h2", { class: "ab-section-title" }, "How Linear connects"),
+    choice("cli", "Linear CLI",
+      cli.ready ? `Signed in as ${cli.account}. Abstract runs linear to read issues; no API key is needed.` : cli.problem),
     choice("apiKey", "API key",
       key.ready ? `Connected as ${key.account}. The key is entered above and sent only to api.linear.app.`
-                : "A personal API key, entered under Linear above. It stays in your keychain and goes only to api.linear.app."
-                  + (key.problem && key.problem !== LinearTracker.noKey ? ` ${key.problem}` : "")),
-    choice("cli", "Linear CLI",
-      cli.ready ? `Signed in as ${cli.account}. Abstract runs linear to read issues and never sees its token.` : cli.problem));
+                : "Optional: enter a personal API key under Linear above. It stays in your keychain and goes only to api.linear.app."
+                  + (key.problem && key.problem !== LinearTracker.noKey ? ` ${key.problem}` : "")));
   settingsEl.append(section);
 
   if (state.how === "cli" && state.workspaces.length > 1) {

@@ -335,6 +335,45 @@ struct MuseProviderTests {
             == [.toolResult(toolUseId: "c2", output: "hi\n", isError: false, edit: nil)])
     }
 
+    @Test func servePresentsAndAnswersUserInput() throws {
+        let parser = provider.makeParser()
+        let question = #"{"id":"format","header":"Format","question":"Which format?","selection":{"mode":"single"},"options":[{"label":"Short","description":"15 seconds"},{"label":"Long"}]}"#
+        let second = #"{"id":"audio","header":"Audio","question":"How should audio work?","selection":{"mode":"single"},"options":[{"label":"Captions"},{"label":"Voice"}]}"#
+        let request = #"{"jsonrpc":"2.0","id":9,"method":"userInput/request","params":{"sessionId":"session-1","userInputId":"input-1","toolName":"request_user_input","questions":["# + question + "," + second + #"]}}"#
+        let events = parser.feed(request, stream: .stdout)
+        guard case let .permissionRequest(requestId, toolName, input) = try #require(events.first) else {
+            Issue.record("Expected a question request")
+            return
+        }
+        #expect(requestId == "input-1")
+        #expect(toolName == "request_user_input")
+        #expect(AgentQuestion.parse(input).map(\.question) == ["Which format?", "How should audio work?"])
+        let receipt = try #require((parser as? InputDrivingParser)?.takePendingInput().first)
+        #expect(JSONValue.parse(receipt)?["id"]?.int == 9)
+        #expect(JSONValue.parse(receipt)?["result"]?.object?.isEmpty == true)
+        let requested = #"{"jsonrpc":"2.0","method":"userInput/requested","params":{"sessionId":"session-1","userInputId":"input-1","questions":["# + question + "," + second + #"]}}"#
+        #expect(parser.feed(requested, stream: .stdout).isEmpty)
+
+        let answered = AgentQuestion.answeredInput(input, answers: ["Which format?": "Short", "How should audio work?": "Record later"])
+        let response = try #require(provider.buildPermissionResponse(requestId: requestId, allow: true, input: answered))
+        let wire = try #require(JSONValue.parse(response))
+        #expect(wire["method"]?.string == "userInput/answer")
+        #expect(wire["params"]?["answers"]?.array?.first?["questionId"]?.string == "format")
+        #expect(wire["params"]?["answers"]?.array?.first?["selectedLabel"]?.string == "Short")
+        #expect(wire["params"]?["answers"]?.array?.last?["questionId"]?.string == "audio")
+        #expect(wire["params"]?["answers"]?.array?.last?["freeText"]?.string == "Record later")
+        let skipped = try #require(provider.buildPermissionResponse(requestId: requestId, allow: false, input: input))
+        #expect(JSONValue.parse(skipped)?["method"]?.string == "userInput/cancel")
+
+        let multiple = JSONValue.parse(#"{"sessionId":"session-1","userInputId":"input-2","questions":[{"id":"targets","question":"Which targets?","selection":{"mode":"multiple"},"options":[{"label":"Mac"},{"label":"Phone"}]}]}"#)!
+        let selected = AgentQuestion.answeredInput(multiple, answers: ["Which targets?": "Mac, Phone"])
+        let selectedWire = try #require(provider.buildPermissionResponse(requestId: "input-2", allow: true, input: selected))
+        #expect(JSONValue.parse(selectedWire)?["params"]?["answers"]?.array?.first?["selectedLabels"]?.array?.compactMap(\.string) == ["Mac", "Phone"])
+        let custom = AgentQuestion.answeredInput(multiple, answers: ["Which targets?": "Mac, another device"])
+        let customWire = try #require(provider.buildPermissionResponse(requestId: "input-2", allow: true, input: custom))
+        #expect(JSONValue.parse(customWire)?["params"]?["answers"]?.array?.first?["freeText"]?.string == "Mac, another device")
+    }
+
     /// Recorded from `muse serve` (1.4.13, muse-wonder-full-1.0, effort high)
     /// in a clean /tmp workspace; home paths, hook and reminder items
     /// stripped, and one summary part reworded because it named a local

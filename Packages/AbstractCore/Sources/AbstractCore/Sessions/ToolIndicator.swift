@@ -172,7 +172,7 @@ public enum ToolIndicator: Sendable, Hashable {
         case "exitplanmode": "list.bullet.clipboard"
         case "task", "agent": "person.2"
         case "skill": "book.closed"
-        case "askuserquestion": "questionmark.bubble"
+        case "askuserquestion", "request_user_input": "questionmark.bubble"
         default: name.hasPrefix("mcp__") ? "puzzlepiece.extension" : nil
         }
     }

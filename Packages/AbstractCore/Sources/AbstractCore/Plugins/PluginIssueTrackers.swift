@@ -194,31 +194,40 @@ public struct TrackerProjectLink: Sendable, Hashable, Codable {
 
     public var team: Target?
     public var project: Target?
+    public var workspace: String?
 
-    public init(team: Target? = nil, project: Target? = nil) {
-        self.team = team; self.project = project
+    public init(team: Target? = nil, project: Target? = nil, workspace: String? = nil) {
+        self.team = team; self.project = project; self.workspace = workspace
     }
 
-    /// From what a plugin saved: nil unless it names a team or a project.
+    /// From what a plugin saved: nil unless it names a team, project or workspace.
     public init?(_ value: JSONValue?) {
         let team = Target(value?["team"]), project = Target(value?["project"])
-        guard team != nil || project != nil else { return nil }
-        self.init(team: team, project: project)
+        let candidate = value?["workspace"]?.string
+        let workspace = candidate?.range(of: #"^[a-z0-9][a-z0-9-]*$"#, options: [.regularExpression, .caseInsensitive]) != nil
+            ? candidate : nil
+        guard team != nil || project != nil || workspace != nil else { return nil }
+        self.init(team: team, project: project, workspace: workspace)
     }
 
     public func jsonValue() -> JSONValue {
         var object: [String: JSONValue] = [:]
         if let team { object["team"] = team.jsonValue() }
         if let project { object["project"] = project.jsonValue() }
+        if let workspace { object["workspace"] = .string(workspace) }
         return .object(object)
     }
 
-    /// The narrowest scope a search can use: the project, else the team.
-    public var scope: String { (project ?? team)?.id ?? "" }
+    /// The narrowest scope a search can use, including a chosen workspace.
+    public var scope: String {
+        let target = (project ?? team)?.id
+        guard let workspace else { return target ?? "" }
+        return "workspace:\(workspace)" + (target.map { "|\($0)" } ?? "")
+    }
 
-    /// How the project's header and hover card name it: "ENG · Core".
+    /// How the project's header and hover card name its workspace and targets.
     public var title: String {
-        [team?.name, project?.name].compactMap { $0 }.joined(separator: " · ")
+        [workspace, team?.name, project?.name].compactMap { $0 }.joined(separator: " · ")
     }
 
     /// Where a project's link to a tracker is kept in the tracker's storage.
@@ -364,7 +373,9 @@ public enum PluginIssueTrackers {
     /// issue, anything else a search.
     public static func request(for query: String, tracker: PluginIssueTrackerDeclaration, project: String? = nil) -> TrackerRequest {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        if tracker.isKey(q) || (q.hasPrefix("https://") && !q.contains(where: \.isWhitespace)) { return .issue(q) }
+        if project == nil && (tracker.isKey(q) || (q.hasPrefix("https://") && !q.contains(where: \.isWhitespace))) {
+            return .issue(q)
+        }
         return .searchIssues(query: q, project: project)
     }
 
@@ -496,7 +507,7 @@ public struct ProjectIssueTrackers: Sendable, Hashable {
     /// Whether Search all would find more than the linked trackers do.
     public var canSearchAll: Bool { !linked.isEmpty }
 
-    /// `ABSTRACT_LINEAR_TEAM`, `ABSTRACT_LINEAR_PROJECT`,
+    /// `ABSTRACT_LINEAR_WORKSPACE`, `ABSTRACT_LINEAR_TEAM`, `ABSTRACT_LINEAR_PROJECT`,
     /// `ABSTRACT_JIRA_PROJECT`: the tracker's title in capitals, then what
     /// it links, each as its key or else its name.
     public var environment: [String: String] {
@@ -506,6 +517,7 @@ public struct ProjectIssueTrackers: Sendable, Hashable {
             guard !name.isEmpty else { continue }
             if let team = item.link.team { out["ABSTRACT_\(name)_TEAM"] = team.label }
             if let project = item.link.project { out["ABSTRACT_\(name)_PROJECT"] = project.label }
+            if let workspace = item.link.workspace { out["ABSTRACT_\(name)_WORKSPACE"] = workspace }
         }
         return out
     }
@@ -519,7 +531,7 @@ public struct ProjectIssueTrackers: Sendable, Hashable {
     public var snapshot: [PluginSnapshot.ProjectIssueTracker] {
         linked.map { item in
             PluginSnapshot.ProjectIssueTracker(tracker: item.tracker.title,
-                                               project: (item.link.project ?? item.link.team)?.label ?? "",
+                                               project: (item.link.project ?? item.link.team)?.label ?? item.link.workspace ?? "",
                                                team: item.link.team?.label)
         }
     }

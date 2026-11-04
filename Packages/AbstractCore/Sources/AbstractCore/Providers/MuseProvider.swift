@@ -101,7 +101,43 @@ public struct MuseProvider: ProviderDefinition {
         guard let sessionId, !sessionId.isEmpty else { return nil }
         return MuseWire.turnStart(sessionId: sessionId, turn: MuseServeTurn(prompt: text, images: images))
     }
-    public func buildPermissionResponse(requestId: String, allow: Bool, input: JSONValue?) -> String? { nil }
+    public func buildPermissionResponse(requestId: String, allow: Bool, input: JSONValue?) -> String? {
+        guard let input, let sessionId = input["sessionId"]?.string,
+              input["userInputId"]?.string == requestId else { return nil }
+        let base: [String: JSONValue] = [
+            "commandId": .string(MuseWire.newId()), "sessionId": .string(sessionId),
+            "userInputId": .string(requestId),
+        ]
+        guard allow else {
+            return MuseWire.request(id: 5, method: "userInput/cancel", params: .object(base))
+        }
+        let given = input["answers"]?.object ?? [:]
+        let questions = input["questions"]?.array ?? []
+        var answers: [JSONValue] = []
+        for question in questions {
+            guard let id = question["id"]?.string, let text = question["question"]?.string,
+                  let value = given[text]?.string, !value.isEmpty else {
+                return MuseWire.request(id: 5, method: "userInput/cancel", params: .object(base))
+            }
+            let labels = question["options"]?.array?.compactMap { $0["label"]?.string } ?? []
+            let selected: [String: JSONValue]
+            if question["selection"]?["mode"]?.string == "multiple" {
+                let parts = value.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+                let picked = labels.filter(parts.contains)
+                selected = parts.count == picked.count
+                    ? ["selectedLabels": .array(picked.map(JSONValue.string))]
+                    : ["freeText": .string(String(value.prefix(500)))]
+            } else if labels.contains(value) {
+                selected = ["selectedLabel": .string(value)]
+            } else {
+                selected = ["freeText": .string(value)]
+            }
+            answers.append(.object(["questionId": .string(id)].merging(selected) { $1 }))
+        }
+        var params = base
+        params["answers"] = .array(answers)
+        return MuseWire.request(id: 5, method: "userInput/answer", params: .object(params))
+    }
 
     public var fallbackModels: ModelCatalog {
         ModelCatalog(models: [ModelOption(id: "muse-wonder-1.0", label: "Muse Wonder")])
@@ -269,6 +305,7 @@ final class MuseServeParser: InputDrivingParser {
     /// The session whose registered first turn is sitting in `pendingInput`.
     private var pendingSession: String?
     private var queuedFirstTurn = false
+    private var shownQuestions: Set<String> = []
 
     private struct Call {
         var revision = 0
@@ -301,6 +338,12 @@ final class MuseServeParser: InputDrivingParser {
             return [.raw(line: line, stream: stream)]
         }
         if let method = msg["method"]?.string {
+            if method == "userInput/request", let id = msg["id"] {
+                // The JSON-RPC reply confirms this client is showing the dialog.
+                // The user's choice is a separate userInput/answer command.
+                pendingInput.append(JSONValue.object(["jsonrpc": .string("2.0"), "id": id,
+                                                      "result": .object([:])]).compact() + "\n")
+            }
             return notification(method, msg["params"], line: line)
         }
         if let id = msg["id"]?.int {
@@ -393,6 +436,12 @@ final class MuseServeParser: InputDrivingParser {
             // steps of a turn add up without counting any twice.
             guard let usage = params?["usage"] else { return [] }
             return [.usage(MuseUsage.totals(usage), costUsd: nil, durationMs: nil, turns: nil)]
+        case "userInput/request", "userInput/requested":
+            guard let params, let id = params["userInputId"]?.string,
+                  !shownQuestions.contains(id) else { return [] }
+            shownQuestions.insert(id)
+            return [.permissionRequest(requestId: id, toolName: "request_user_input", input: params),
+                    .status(.waitingInput, detail: "Question for you")]
         case "session/statusChanged", "session/contextUsage",
              "session/approvalModeChanged", "session/modelChanged", "session/reasoningEffortChanged",
              "session/listChanged", "session/closed", "turn/foregroundCompleted",

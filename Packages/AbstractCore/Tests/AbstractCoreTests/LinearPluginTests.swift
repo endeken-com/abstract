@@ -336,6 +336,24 @@ import Testing
         }
     }
 
+    @Test func projectScopesOverrideTheGlobalWorkspace() throws {
+        let scoped = try answer("searchIssues", ["query": "login", "project": "workspace:sandbox|team:ENG"],
+                                cli: try signedIn(), settings: Self.cliMode)
+        #expect(scoped.ran.last?.starts(with: ["issue", "query", "--workspace", "sandbox", "--team=ENG"]) == true)
+
+        let byKey = try answer("searchIssues", ["query": "ENG-12", "project": "workspace:sandbox|team:ENG"],
+                               cli: try signedIn(), settings: Self.cliMode)
+        #expect(byKey.ran.last?.starts(with: ["issue", "view", "ENG-12", "--workspace", "sandbox"]) == true)
+
+        let byLink = try answer("issue", ["reference": "https://linear.app/sandbox/issue/ENG-12/fix-login"],
+                                cli: try signedIn(), settings: Self.cliMode)
+        #expect(byLink.ran.last?.starts(with: ["issue", "view", "ENG-12", "--workspace", "sandbox"]) == true)
+
+        let missing = try answer("searchIssues", ["query": "login", "project": "workspace:gone|team:ENG"],
+                                 cli: try signedIn(), settings: Self.cliMode)
+        #expect(missing.error?.contains("isn't signed in to workspace gone") == true)
+    }
+
     @Test func theCLIModeSearchesYourOpenIssuesWordsTeamsAndProjects() throws {
         let mine = try answer("searchIssues", ["query": ""], cli: try signedIn(), settings: Self.cliMode)
         #expect(mine.ran.last == ["issue", "query", "--workspace", "example", "--all-teams", "--assignee", "self",
@@ -383,13 +401,16 @@ import Testing
         #expect(failed.error?.hasPrefix("Failed to get user info: No API key configured.") == true)
     }
 
-    @Test func withNothingPickedItUsesTheKeyOnceEnteredElseASignedInCLI() throws {
-        let keyed = try answer("searchIssues", ["query": "login"], replies: [Self.viewer, Self.search], cli: try signedIn())
-        #expect(keyed.ran.allSatisfy { $0.first == "auth" })
-        #expect(keyed.asked.contains { $0["query"]?.string?.contains("searchIssues") == true })
+    @Test func withNothingPickedItUsesASignedInCLIThenTheKey() throws {
+        let preferred = try answer("searchIssues", ["query": "login"], replies: [Self.viewer, Self.search], cli: try signedIn())
+        #expect(preferred.ran.last?.starts(with: ["issue", "query"]) == true)
+        #expect(preferred.asked.isEmpty)
 
         let cliOnly = try answer("searchIssues", ["query": "login"], key: false, cli: try signedIn())
         #expect(cliOnly.ran.last?.starts(with: ["issue", "query"]) == true)
+
+        let keyOnly = try answer("searchIssues", ["query": "login"], replies: [Self.viewer, Self.search])
+        #expect(keyOnly.asked.contains { $0["query"]?.string?.contains("searchIssues") == true })
 
         let neither = try answer("access", key: false, missing: true)
         #expect(TrackerAccess(neither.result)?.problem

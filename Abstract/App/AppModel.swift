@@ -2040,6 +2040,17 @@ final class AppModel {
             pluginBackground?.deliver(.permissionRequested(chatId: sessionId, requestId: requestId, kind: "permission",
                                                            toolName: toolName, questions: []))
             notify(sessionId, .waitingInput, detail: "\(ProviderRegistry.name(session(sessionId)?.providerId ?? "")) wants to use \(toolName)")
+        case let .toolResult(toolUseId, _, _, _):
+            // Muse can settle a question itself (for example, at its deadline).
+            // Its completed tool call is authoritative even if no one clicked here.
+            if let pending = permissions[sessionId]?.first(where: {
+                $0.toolName == "request_user_input" && $0.input["toolCallId"]?.string == toolUseId
+            }) {
+                permissions[sessionId]?.removeAll { $0.requestId == pending.requestId }
+                if session(sessionId)?.status == .waitingInput, permissions[sessionId]?.isEmpty ?? true {
+                    setStatus(sessionId, .running)
+                }
+            }
         case let .text(.assistant, text, _, false):
             lastReplies[sessionId] = text
             nameFromReply(sessionId, text)

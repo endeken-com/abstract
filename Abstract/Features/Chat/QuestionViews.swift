@@ -1,7 +1,7 @@
 import SwiftUI
 import AbstractCore
 
-/// The agent's questions (AskUserQuestion), one at a time, in the reply box's
+/// The agent's questions, one at a time, in the reply box's
 /// place: pick a numbered option (or several, where it allows), or say
 /// something else. ↑↓ move, Return or a number picks, Esc skips the question,
 /// × skips them all. Choosing the last answer sends them.
@@ -119,7 +119,7 @@ struct QuestionPrompt: View {
                 .frame(width: 22, height: 22)
                 .background(Color.btInset, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
             TextField("Something else", text: Binding(get: { other[q.question] ?? "" }, set: { text in
-                other[q.question] = text
+                other[q.question] = request.toolName == "request_user_input" ? String(text.prefix(500)) : text
                 // One answer only: your own words stand in for an option.
                 if !q.multiSelect, !text.isEmpty { chosen[q.question] = [] }
             }), prompt: Text("Something else").foregroundStyle(Color.btTextTertiary))
@@ -131,7 +131,7 @@ struct QuestionPrompt: View {
             if typed.isEmpty, !picked {
                 Button("Skip") { skip() }
                     .buttonStyle(.bt(.secondary, size: .small))
-                    .help("Skip this question (Esc)")
+                    .help(request.toolName == "request_user_input" ? "Skip all questions (Esc)" : "Skip this question (Esc)")
             } else if !typed.isEmpty || q.multiSelect {
                 Button(last ? "Send" : "Next") { advance() }
                     .buttonStyle(.bt(.primary, size: .small))
@@ -144,7 +144,8 @@ struct QuestionPrompt: View {
     }
 
     private func hints(_ q: AgentQuestion) -> some View {
-        KeyHint("↑↓ to navigate · ", q.multiSelect ? "Enter to choose · " : "Enter to select · ", "Esc to skip")
+        KeyHint("↑↓ to navigate · ", q.multiSelect ? "Enter to choose · " : "Enter to select · ",
+                request.toolName == "request_user_input" ? "Esc to skip all" : "Esc to skip")
     }
 
     // MARK: Actions
@@ -171,6 +172,9 @@ struct QuestionPrompt: View {
     }
 
     private func skip() {
+        // Muse requires one answer for every question. Declining the prompt
+        // lets its tool call settle and the agent continue.
+        if request.toolName == "request_user_input" { dismiss(); return }
         guard let q = questions[safe: index] else { return }
         chosen[q.question] = nil
         other[q.question] = nil
@@ -251,10 +255,13 @@ struct QuestionAnswers: View {
                     Text(q.question).font(.btChatTool).foregroundStyle(Color.btTextSecondary)
                     if let answer = answers[q.question] {
                         Text(answer).font(.btChatToolMedium).foregroundStyle(Color.btText)
-                    } else if result != nil {
+                    } else if result != nil, result?.output.isEmpty == true {
                         Text("Skipped").font(.btChatToolMedium).foregroundStyle(Color.btTextTertiary)
                     }
                 }
+            }
+            if answers.isEmpty, let output = result?.output, !output.isEmpty {
+                Text(output).font(.btChatToolMedium).foregroundStyle(Color.btText)
             }
         }
         .textSelection(.enabled)

@@ -341,7 +341,8 @@ final class AgentHost: @unchecked Sendable {
                let rule = PermissionRule.answer(rules, toolName: toolName, input: input, root: session.worktreePath) {
                 allow = rule.decision == .allow
             }
-            if let line = provider.buildPermissionResponse(requestId: requestId, allow: allow, input: allow ? input : nil) {
+            let responseInput = allow || provider.id == "muse" && AgentQuestion.isQuestion(toolName) ? input : nil
+            if let line = provider.buildPermissionResponse(requestId: requestId, allow: allow, input: responseInput) {
                 try? engine.write(sessionId: sessionId, line)
             }
         case .status(.waitingInput, _) where asked:

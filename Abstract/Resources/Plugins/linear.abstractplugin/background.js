@@ -71,9 +71,15 @@ const LinearTracker = (() => {
 
   /** A search's filter for a team or project id from `projects`. */
   function scope(project) {
-    const match = /^(team|project):(.+)$/.exec(String(project || ""));
+    const match = /^(team|project):(.+)$/.exec(workspaceScope(project).target);
     if (!match) return null;
     return match[1] === "team" ? { team: { key: { eq: match[2] } } } : { project: { id: { eq: match[2] } } };
+  }
+
+  function workspaceScope(project) {
+    const text = String(project || "");
+    const match = /^workspace:([a-z0-9][a-z0-9-]*)(?:\|(.*))?$/i.exec(text);
+    return match ? { workspace: match[1], target: match[2] || "" } : { workspace: null, target: text };
   }
 
   // MARK: The API key
@@ -252,9 +258,12 @@ const LinearTracker = (() => {
     },
 
     /** The workspace this plugin uses now. */
-    async current(env) {
+    async current(env, project) {
       const list = await cli.workspaces(env);
-      const picked = workspace(list, env.settings && env.settings.workspace);
+      const scoped = workspaceScope(project).workspace;
+      const picked = scoped ? list.find((item) => item.slug === scoped)
+                            : workspace(list, env.settings && env.settings.workspace);
+      if (scoped && !picked) throw new Error(`The Linear CLI isn't signed in to workspace ${scoped}. Sign in or change this project's Linear workspace.`);
       if (!picked) throw new Error(signedOut);
       return picked.slug;
     },
@@ -275,13 +284,13 @@ const LinearTracker = (() => {
       const term = String(query || "").trim();
       const key = identifier(term);
       if (key) {
-        const found = await cli.issue(env, key);
+        const found = await cli.issue(env, term, project);
         if (found) delete found.excerpt;
         return found ? [found] : [];
       }
-      const slug = await cli.current(env);
+      const slug = await cli.current(env, project);
       const args = ["issue", "query", "--workspace", slug];
-      const match = /^(team|project):(.+)$/.exec(String(project || ""));
+      const match = /^(team|project):(.+)$/.exec(workspaceScope(project).target);
       // What was typed goes as `--search=…`, so it's never read as an option.
       if (match && match[1] === "team") args.push(`--team=${match[2]}`);
       else args.push("--all-teams");
@@ -296,10 +305,11 @@ const LinearTracker = (() => {
       return issues(parseJSON(out));
     },
 
-    async issue(env, reference) {
+    async issue(env, reference, project) {
       const key = identifier(reference);
       if (!key) return null;
-      const slug = await cli.current(env);
+      const fromURL = /^https:\/\/linear\.app\/([a-z0-9][a-z0-9-]*)\/issue\//i.exec(String(reference));
+      const slug = await cli.current(env, fromURL ? `workspace:${fromURL[1]}` : project);
       let out;
       try {
         out = await cli.run(env, ["issue", "view", key, "--workspace", slug, "--json", "--no-comments", "--no-download", "--no-pager"]);
@@ -323,16 +333,13 @@ const LinearTracker = (() => {
 
   /**
    * Which way it connects: the one picked on the settings page, else the
-   * API key once one is entered, else the CLI once it's signed in.
+   * CLI once it's signed in, else the API key.
    */
   async function mode(env) {
     const picked = env.settings && env.settings.mode;
     if (picked === "apiKey" || picked === "cli") return picked;
-    if (!env.cli) return "apiKey";
-    const key = await apiKey.access(env.fetch);
-    if (key.ready || key.problem !== noKey) return "apiKey";
-    const signedIn = await cli.access(env);
-    return signedIn.ready ? "cli" : "apiKey";
+    if (env.cli && (await cli.access(env)).ready) return "cli";
+    return "apiKey";
   }
 
   /**
