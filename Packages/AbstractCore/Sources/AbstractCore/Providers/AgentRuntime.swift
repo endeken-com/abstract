@@ -36,6 +36,9 @@ import JavaScriptCore
 public final class AgentScript: @unchecked Sendable {
     public let pluginId: String
     let folder: URL
+    /// What it was loaded from, to load a context of its own for work that
+    /// may wait (a line enricher reading the worktree).
+    let source: String
     private let lock = NSRecursiveLock()
     private let context: JSContext
     /// Where the launch being built writes its files, while it's built.
@@ -48,6 +51,7 @@ public final class AgentScript: @unchecked Sendable {
     public init(pluginId: String, folder: URL, source: String) {
         self.pluginId = pluginId
         self.folder = folder
+        self.source = source
         context = JSContext()!
         context.name = pluginId
         context.exceptionHandler = { context, exception in context?.exception = exception }
@@ -269,8 +273,14 @@ public struct ScriptedProvider: ProviderDefinition {
 
     public func makeParser() -> OutputParser { ScriptedParser(script: script, agentId: id) }
 
+    /// The enricher runs in a context of its own: it waits on the worktree
+    /// while it reads a line, and nothing else of the plugin's may wait
+    /// behind it (with the plugin's lock held, a chat's git read could wait
+    /// on a thread its other chats' parsing holds).
     public func makeLineEnricher(executor: any Executor, cwd: String) -> (any LineEnricher)? {
-        can("lines.enrich") ? ScriptedEnricher(script: script, agentId: id, worktree: AgentWorktree(executor: executor, cwd: cwd)) : nil
+        guard can("lines.enrich") else { return nil }
+        let own = AgentScript(pluginId: script.pluginId, folder: script.folder, source: script.source)
+        return ScriptedEnricher(script: own, agentId: id, worktree: AgentWorktree(executor: executor, cwd: cwd))
     }
 
     // MARK: Stdin lines
@@ -526,9 +536,12 @@ extension AgentScript {
 }
 
 /// A file as committed at HEAD, read on the executor's host; empty when it
-/// wasn't. Lines arrive on the process's own reader queue, so waiting here
-/// holds up only this chat's next line.
+/// wasn't, or when git takes more than five seconds. Lines arrive on the
+/// process's own reader queue, so waiting here holds up only this chat's
+/// next line.
 enum AgentWorktreeGit {
+    static let timeout: TimeInterval = 5
+
     static func committed(_ path: String, executor: any Executor) -> String {
         let dir = (path as NSString).deletingLastPathComponent, name = (path as NSString).lastPathComponent
         let box = ResultBox()
@@ -539,7 +552,7 @@ enum AgentWorktreeGit {
             }
             done.signal()
         }
-        done.wait()
+        _ = done.wait(timeout: .now() + timeout)
         return box.value
     }
 
