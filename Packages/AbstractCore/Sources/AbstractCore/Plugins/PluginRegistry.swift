@@ -1,12 +1,12 @@
 import Foundation
 
 /// The reviewed plugin registry (ABS-190): `registry.json` in
-/// `endeken-com/abstract-plugins`. Each listing names a repository folder
+/// `abstract-ade/abstract-plugins`. Each listing names a repository folder
 /// and the exact commit a person reviewed; installing a listing installs
 /// that commit and nothing else. Modelled on Paseo's registry
 /// (`getpaseo/plugins`, Apache-2.0; see THIRD_PARTY_NOTICES.md).
 public struct PluginRegistry: Sendable, Equatable {
-    public static let url = URL(string: "https://raw.githubusercontent.com/endeken-com/abstract-plugins/main/registry.json")!
+    public static let url = URL(string: "https://raw.githubusercontent.com/abstract-ade/abstract-plugins/main/registry.json")!
     public static let supportedFormat = 1
 
     public struct Entry: Sendable, Hashable, Identifiable, Codable {

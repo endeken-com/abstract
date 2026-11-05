@@ -281,9 +281,9 @@ and a line below.
 ## First-party plugins
 
 Abstract ships only its agents, its themes and GitHub. Its other plugins live in their own
-repositories, `endeken-com/abstract-plugin-<name>`, each with its history, tests and CI,
-and are listed in the registry as `endeken-com/<name>` (ABS-190): install one from
-Settings › Plugins or with `abstract plugin add endeken-com/kanban`. An install from
+repositories, `abstract-ade/abstract-plugin-<name>`, each with its history, tests and CI,
+and are listed in the registry as `abstract-ade/<name>` (ABS-190): install one from
+Settings › Plugins or with `abstract plugin add abstract-ade/kanban`. An install from
 before the move keeps its files, settings, secrets, grants and on/off state, and becomes
 a git source pinned to the commit it was extracted at.
 
@@ -342,7 +342,7 @@ arriving and while it's on screen, and again when its status is more than four a
 half minutes old, so a change shows within five minutes. A failed lookup keeps the last
 status. Clicking the status opens the link.
 
-**Link status** (`endeken-com/link-status`) does this for GitHub pull requests (open, draft, merged or
+**Link status** (`abstract-ade/link-status`) does this for GitHub pull requests (open, draft, merged or
 closed, with checks) and issues, and Linear issues (state and assignee). Private
 repositories need a GitHub token and Linear needs a Linear API key, entered under
 Settings › Plugins.
@@ -518,7 +518,7 @@ capitals, each value a key or else a name). A Linear workspace link also sets
 `ABSTRACT_LINEAR_WORKSPACE`: `ABSTRACT_LINEAR_TEAM=ENG`,
 `ABSTRACT_LINEAR_WORKSPACE=example`, `ABSTRACT_JIRA_PROJECT=PROJ`.
 
-**Linear** (`endeken-com/linear`) uses the [Linear CLI](https://github.com/schpet/linear-cli) when
+**Linear** (`abstract-ade/linear`) uses the [Linear CLI](https://github.com/schpet/linear-cli) when
 signed in on the Mac, or an optional personal Linear API key entered under Settings ›
 Plugins and sent only to api.linear.app. Its settings page lets you pick either way.
 The CLI runs through `cli` with read commands only (`auth whoami`, `auth list`,
@@ -531,7 +531,7 @@ Linear key from before it was a plugin, or the CLI signed in. Bitbucket is likew
 installed and turned on the first time a Bitbucket remote appears. A project can link
 to a workspace, a team and, optionally, one of its projects.
 
-**Jira** (`endeken-com/jira`), off until you install it, reads Jira Cloud through Atlassian's
+**Jira** (`abstract-ade/jira`), off until you install it, reads Jira Cloud through Atlassian's
 `acli`. A project links to one Jira project key, searched with `project = KEY`.
 
 Bundled plugins you've installed follow the copy inside Abstract when it changes,
@@ -566,9 +566,9 @@ it asks for; turning it on in Settings is the review.
 
 ### The reviewed registry
 
-`registry.json` in `endeken-com/abstract-plugins` lists plugins a person reviewed, each
-pinned to one commit (`docs/plugin-registry/` holds the proposed README, review policy
-and format). The gallery lists them beside the catalog, marked **Reviewed**;
+`registry.json` in [`abstract-ade/abstract-plugins`](https://github.com/abstract-ade/abstract-plugins)
+lists plugins a person reviewed, each pinned to one commit; its README says how to submit
+one, and its REVIEW.md how they're reviewed. The gallery lists them beside the catalog, marked **Reviewed**;
 `abstract plugin add owner/slug` installs a listing's approved commit, whatever its
 branch holds now, and Check for Updates offers the next commit the registry approves.
 A direct repository install says **Not reviewed** unless it happens to sit on a listing's
