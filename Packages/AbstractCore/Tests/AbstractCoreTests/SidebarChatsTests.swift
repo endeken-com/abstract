@@ -8,11 +8,12 @@ import AbstractCore
     func chat(_ id: String, _ status: SessionStatus = .idle, ago: TimeInterval = 60, pr: SidebarChats.PullRequestFacts? = nil,
               changes: Bool? = false, tasks: Int = 0, project: String? = "abstract", branch: String? = nil,
               provider: String = "claude", mac: String = "Studio", remote: Bool = false,
-              pinnedAt: TimeInterval? = nil, archived: Bool = false) -> SidebarChats.Chat {
+              pinnedAt: TimeInterval? = nil, archived: Bool = false, parent: String? = nil) -> SidebarChats.Chat {
         var s = Session(id: id, projectId: project.map { "p-\($0)" }, name: id, providerId: provider, branch: branch,
                         status: status, createdAt: now.addingTimeInterval(-ago - 10), lastEventAt: now.addingTimeInterval(-ago))
         s.pinnedAt = pinnedAt.map { Date(timeIntervalSince1970: $0) }
         s.archivedAt = archived ? now : nil
+        s.parentSessionId = parent
         return SidebarChats.Chat(session: s, pullRequest: pr, hasChanges: changes, backgroundTasks: tasks,
                                  projectName: project, mac: mac, isRemote: remote)
     }
@@ -76,6 +77,50 @@ import AbstractCore
         let sections = SidebarChats.sections([chat("old", .running, ago: 3600), chat("new", .running, ago: 5)], now: now)
         #expect(sections.map(\.group) == [.working])
         #expect(sections[0].chats.map(\.id) == ["new", "old"])
+    }
+
+    @Test func runningChildKeepsFinishedParentInWorkingWithoutChangingEitherStatus() {
+        let parent = chat("parent", .finished, ago: 3600)
+        let child = chat("child", .running, ago: 5, parent: "parent")
+        let sections = SidebarChats.sections([child, parent], now: now)
+        #expect(sections.map(\.group) == [.working])
+        #expect(sections[0].chats.map(\.id) == ["parent", "child"])
+        #expect(sections[0].chats.map(\.session.status) == [.finished, .running])
+        #expect(SidebarChats.status(of: parent) == .done)
+    }
+
+    @Test func deeperChainsAndSiblingsStayTogetherInTheirMostUrgentGroup() {
+        let chats = [
+            chat("unrelated", .running, ago: 30),
+            chat("grandchild", .running, ago: 2, parent: "child"),
+            chat("sibling", .finished, ago: 12, parent: "parent"),
+            chat("parent", .finished, ago: 3600),
+            chat("child", .finished, ago: 20, parent: "parent"),
+        ]
+        let sections = SidebarChats.sections(chats, now: now)
+        #expect(sections.map(\.group) == [.working])
+        #expect(sections[0].chats.map(\.id) == ["parent", "sibling", "child", "grandchild", "unrelated"])
+        #expect(sections.flatMap { $0.chats + $0.older }.count == chats.count)
+        #expect(Set(sections.flatMap { $0.chats + $0.older }.map(\.id)).count == chats.count)
+    }
+
+    @Test func moreUrgentChildKeepsItsParentOutOfTheParentsOwnGroup() {
+        let parent = chat("parent", .finished, changes: true)
+        let child = chat("child", .waitingInput, parent: "parent")
+        let sections = SidebarChats.sections([parent, child], now: now)
+        #expect(sections.map(\.group) == [.needsYou])
+        #expect(sections[0].chats.map(\.id) == ["parent", "child"])
+    }
+
+    @Test func doneChainFoldsTogetherAndMissingParentDoesNotHideChild() {
+        let old = 30 * 86_400.0
+        let parent = chat("parent", ago: old)
+        let child = chat("child", ago: old - 60, parent: "parent")
+        let orphan = chat("orphan", .running, parent: "hidden")
+        let sections = SidebarChats.sections([child, parent, orphan], now: now)
+        #expect(sections.first { $0.group == .done }?.chats.isEmpty == true)
+        #expect(sections.first { $0.group == .done }?.older.map(\.id) == ["parent", "child"])
+        #expect(sections.first { $0.group == .working }?.chats.map(\.id) == ["orphan"])
     }
 
     @Test func doneFoldsChatsQuietForAWeek() {
@@ -226,6 +271,19 @@ import AbstractCore
         #expect(ids(query: "login", archived: true) == ["Fix login", "Old login", "Loose login"])
     }
 
+    @Test func searchAndFiltersKeepAncestorsOfMatchingDelegatedChats() {
+        let chats = [
+            chat("grandchild", .running, project: "gamma", provider: "codex", parent: "child"),
+            chat("parent", .finished, project: "alpha", archived: true),
+            chat("unrelated", .running, project: "gamma", provider: "codex"),
+            chat("child", .finished, project: "beta", parent: "parent"),
+        ]
+        let visible = SidebarChats.visible(chats, filter: .init(projects: ["gamma"]),
+                                           query: "grandchild", showArchived: false)
+        #expect(visible.map(\.id) == ["grandchild", "parent", "child"])
+        #expect(SidebarChats.sections(visible, now: now).first?.chats.map(\.id) == ["parent", "child", "grandchild"])
+    }
+
     @Test func groupedByProjectKeepsRailOrder() {
         let chats = [
             chat("b-first", project: "beta"), chat("a-plain", project: "alpha"),
@@ -240,6 +298,18 @@ import AbstractCore
         let noProject: String? = nil
         #expect(groups[noProject]?.map(\.id) == ["loose"])
         #expect(SidebarChats.groupedByProject([]).isEmpty)
+    }
+
+    @Test func projectGroupsKeepDelegatedChainsUnderTheirRoot() {
+        let chats = [
+            chat("child", .running, ago: 5, project: "beta", parent: "parent"),
+            chat("unrelated", ago: 20, project: "alpha"),
+            chat("grandchild", .running, ago: 2, project: "beta", parent: "child"),
+            chat("parent", .finished, ago: 3600, project: "alpha"),
+        ]
+        let groups = SidebarChats.groupedByProject(chats)
+        #expect(groups["p-alpha"]?.map(\.id) == ["unrelated", "parent", "child", "grandchild"])
+        #expect(groups["p-beta"] == nil)
     }
 
     @Test func filterChoicesSurviveARoundTrip() throws {
