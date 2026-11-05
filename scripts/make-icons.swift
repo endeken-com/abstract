@@ -31,6 +31,27 @@ func load(_ path: String) -> CGImage {
     return image
 }
 
+/// The visible symbol must remain clear of launchers' rounded and adaptive masks.
+func brightBounds(_ image: CGImage) -> CGRect? {
+    let width = image.width, height = image.height
+    var pixels = [UInt8](repeating: 0, count: width * height * 4)
+    guard let ctx = CGContext(data: &pixels, width: width, height: height, bitsPerComponent: 8,
+                              bytesPerRow: width * 4, space: sRGB,
+                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+    ctx.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+    var minX = width, minY = height, maxX = 0, maxY = 0
+    for y in 0..<height {
+        for x in 0..<width {
+            let i = (y * width + x) * 4
+            guard pixels[i] > 220, pixels[i + 1] > 220, pixels[i + 2] > 220 else { continue }
+            minX = min(minX, x); minY = min(minY, y)
+            maxX = max(maxX, x); maxY = max(maxY, y)
+        }
+    }
+    guard minX <= maxX else { return nil }
+    return CGRect(x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1)
+}
+
 func save(_ image: CGImage, _ path: String) {
     let url = URL(fileURLWithPath: path)
     try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -101,6 +122,16 @@ func check() {
         }
         let width = props[kCGImagePropertyPixelWidth] as? Int ?? 0, height = props[kCGImagePropertyPixelHeight] as? Int ?? 0
         if width != size || height != size { problems.append("\(path) is \(width)×\(height), not \(size)×\(size)") }
+    }
+    for path in ["\(masters)/abstract-dark.png", "\(masters)/abstract-light.png"] {
+        guard FileManager.default.fileExists(atPath: path) else { continue }
+        guard let bounds = brightBounds(load(path)) else {
+            problems.append("\(path) has no visible white symbol"); continue
+        }
+        let inset = CGFloat(1024) * 0.18
+        if bounds.minX < inset || bounds.minY < inset || bounds.maxX > 1024 - inset || bounds.maxY > 1024 - inset {
+            problems.append("\(path) extends outside the 18% icon safe inset")
+        }
     }
     let doc = "Abstract/Resources/AppIcon.icon/icon.json"
     if let data = FileManager.default.contents(atPath: doc), let json = try? JSONSerialization.jsonObject(with: data) {

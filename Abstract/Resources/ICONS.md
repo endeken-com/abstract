@@ -4,6 +4,10 @@ Abstract's icon uses the geometric symbol from the supplied `Brand/abstract-logo
 white on black. The full lockup is used in the Mac and phone welcome views. The same
 icon art serves both appearances, in `Brand/` at full size:
 
+The visible symbol occupies about 60% of the square source canvas. Keep at least
+18% clear around it so the Mac icon shape and phone launcher masks do not crowd it.
+`scripts/make-icons.sh --check` enforces that inset on both icon masters.
+
 | File | Version | Shown |
 |---|---|---|
 | `Brand/abstract-dark.png` | White Abstract symbol on black | Dark appearance; Android |
