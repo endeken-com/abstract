@@ -17,6 +17,7 @@ const stubs = {
     Platform: { OS: 'ios' }, useWindowDimensions: () => ({ fontScale: 1 }) },
   'expo-symbols': { SymbolView: 'SymbolView' },
   'react-native-svg': { __esModule: true, default: 'Svg', Path: 'Path' },
+  './Brand': { BrandLoadingIndicator: 'BrandLoadingIndicator' },
   '@react-native-menu/menu': { MenuView: 'MenuView' },
   './CompactMenu': { CompactMenu: 'MenuView' },
   '@react-native-async-storage/async-storage': { __esModule: true, default: { getItem: async () => null, setItem: async () => {} } },

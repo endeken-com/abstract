@@ -73,10 +73,8 @@ struct StatusDot: View {
     }
 }
 
-/// The one working mark: three small solid hexagons, a fragment of
-/// honeycomb, lit one after another round the cluster. No blur, no glow;
-/// with Reduce Motion, or once the work is done, all three hold still.
-/// Every mark on screen shares the same clock, so they step together.
+/// The supplied Abstract symbol, traced as an outline while work is active.
+/// Reduce Motion and inactive states show the complete, still outline.
 struct WorkingMark: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var color: Color = .btAccent
@@ -104,16 +102,21 @@ private struct WorkingMarkLayers: NSViewRepresentable {
 }
 
 final class WorkingMarkView: NSView {
-    private static let period: CFTimeInterval = 1.2
-    /// Left, upper right, lower right: the order they light in.
-    private let cells = (0..<3).map { _ in CAShapeLayer() }
+    private static let period: CFTimeInterval = 1.7
+    private let track = CAShapeLayer()
+    private let trace = CAShapeLayer()
     var color: NSColor = .clear { didSet { applyColor() } }
     var animated = false { didSet { if animated != oldValue { updateAnimation() } } }
 
     init() {
         super.init(frame: .zero)
         wantsLayer = true
-        cells.forEach { layer?.addSublayer($0) }
+        for shape in [track, trace] {
+            shape.fillColor = NSColor.clear.cgColor
+            shape.lineCap = .round
+            shape.lineJoin = .round
+            layer?.addSublayer(shape)
+        }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -124,9 +127,15 @@ final class WorkingMarkView: NSView {
         super.layout()
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        for (cell, rect) in zip(cells, Self.cells(in: bounds)) {
-            cell.frame = bounds
-            cell.path = RoundedHexagon().path(in: rect).cgPath
+        let lineWidth = max(0.8, min(bounds.width, bounds.height) * 0.11)
+        let drawingRect = bounds.insetBy(dx: lineWidth / 2 + 0.3, dy: lineWidth / 2 + 0.3)
+        // SwiftUI's SVG path uses a downward Y axis; the AppKit layer uses upward Y.
+        var flip = CGAffineTransform(translationX: 0, y: bounds.height).scaledBy(x: 1, y: -1)
+        let path = AbstractMark().path(in: drawingRect).cgPath.copy(using: &flip)
+        for shape in [track, trace] {
+            shape.frame = bounds
+            shape.path = path
+            shape.lineWidth = lineWidth
         }
         CATransaction.commit()
         updateAnimation()
@@ -142,47 +151,32 @@ final class WorkingMarkView: NSView {
         applyColor()
     }
 
-    /// Three flat-topped hexagons round a shared corner, a hairline apart,
-    /// centred in `rect`. Each comes back as the square its hexagon fills.
-    static func cells(in rect: CGRect) -> [CGRect] {
-        // Radius r, gap g: the cluster is 3.5r + 0.87g wide and 3.46r + g tall.
-        let gapRatio: CGFloat = 0.22
-        let radius = min(rect.width / (3.5 + 0.866 * gapRatio), rect.height / (3.464 + gapRatio))
-        let reach = radius * (1 + gapRatio / 3.squareRoot())
-        let corner = CGPoint(x: rect.midX + reach / 4, y: rect.midY)
-        return [CGPoint(x: -reach, y: 0),
-                CGPoint(x: reach / 2, y: reach * 0.866),
-                CGPoint(x: reach / 2, y: -reach * 0.866)].map {
-            CGRect(x: corner.x + $0.x - radius, y: corner.y + $0.y - radius, width: radius * 2, height: radius * 2)
-        }
-    }
-
     private func applyColor() {
         effectiveAppearance.performAsCurrentDrawingAppearance {
             CATransaction.begin()
             CATransaction.setDisableActions(true)
-            cells.forEach { $0.fillColor = color.cgColor }
+            track.strokeColor = color.withAlphaComponent(0.22).cgColor
+            trace.strokeColor = color.cgColor
             CATransaction.commit()
         }
     }
 
     private func updateAnimation() {
         guard animated, window != nil, bounds.width > 0 else {
-            if !animated { cells.forEach { $0.removeAnimation(forKey: "step") } }
+            trace.removeAnimation(forKey: "outline")
+            trace.strokeEnd = 1
             return
         }
-        // Phase from the media clock, so every mark lights the same cell at once.
-        let now = CACurrentMediaTime().truncatingRemainder(dividingBy: Self.period)
-        for (index, cell) in cells.enumerated() where cell.animation(forKey: "step") == nil {
-            let step = CAKeyframeAnimation(keyPath: "opacity")
-            step.values = [0.25, 1, 0.25, 0.25]
-            step.keyTimes = [0, 0.2, 0.55, 1]
-            step.timingFunctions = (0..<3).map { _ in CAMediaTimingFunction(name: .easeInEaseOut) }
-            step.duration = Self.period
-            step.repeatCount = .infinity
-            step.timeOffset = now + Self.period * Double(3 - index) / 3
-            cell.add(step, forKey: "step")
-        }
+        guard trace.animation(forKey: "outline") == nil else { return }
+        // Share the media clock so repeated marks trace in sync without SwiftUI redraws.
+        let draw = CAKeyframeAnimation(keyPath: "strokeEnd")
+        draw.values = [0, 1, 1, 0]
+        draw.keyTimes = [0, 0.52, 0.64, 1]
+        draw.timingFunctions = (0..<3).map { _ in CAMediaTimingFunction(name: .easeInEaseOut) }
+        draw.duration = Self.period
+        draw.repeatCount = .infinity
+        draw.timeOffset = CACurrentMediaTime().truncatingRemainder(dividingBy: Self.period)
+        trace.add(draw, forKey: "outline")
     }
 }
 

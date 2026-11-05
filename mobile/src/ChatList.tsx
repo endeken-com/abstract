@@ -1,5 +1,6 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { AccessibilityInfo, Animated, LayoutAnimation, Platform, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { AccessibilityInfo, LayoutAnimation, Platform, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
+import { BrandLoadingIndicator } from './Brand';
 import { SymbolView } from 'expo-symbols';
 import { CompactMenu as MenuView } from './CompactMenu';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -176,8 +177,8 @@ export function ChatRow({ chat, group, showProject, showMac = false, now, select
 const lastSeen = (at: number, now: number) => { const text = age(at / 1000 - 978_307_200, now); return text === 'now' ? 'just now' : `${text} ago`; };
 
 // What leads a chat's row: its project's icon (its agent's logo when it has no
-// project), with a badge for its state, as the Mac's sidebar draws it: an
-// outline while it works (breathing, unless Reduce Motion is on), filled when
+// project), with a badge for its state, as the Mac's sidebar draws it:
+// the outlined Abstract symbol while it works, filled when
 // it needs you, red when it failed. At rest, just the icon. The row's label says it in words.
 function ChatMark({ chat }: { chat: ChatFacts }) {
   const badge = badgeOf(chat);
@@ -186,25 +187,10 @@ function ChatMark({ chat }: { chat: ChatFacts }) {
     {chat.icon.kind === 'project'
       ? <ProjectIcon mark={chat.icon.mark} size={markSize} />
       : <ProviderLogo provider={chat.session.providerId} size={19} />}
-    {badge && <View style={styles.badgeHole}>
-      {badge === 'working' ? <WorkingBadge /> : <View style={[styles.badge, { backgroundColor: color }]} />}
+    {badge && <View style={[styles.badgeHole, badge !== 'working' && styles.badgeHoleDiamond]}>
+      {badge === 'working' ? <BrandLoadingIndicator size={11} color={running} decorative /> : <View style={[styles.badge, { backgroundColor: color }]} />}
     </View>}
   </View>;
-}
-
-function WorkingBadge() {
-  const reduceMotion = useReduceMotion();
-  const pulse = useRef(new Animated.Value(1)).current;
-  useEffect(() => {
-    if (reduceMotion) { pulse.setValue(1); return; }
-    const loop = Animated.loop(Animated.sequence([
-      Animated.timing(pulse, { toValue: 0.35, duration: 900, useNativeDriver: true }),
-      Animated.timing(pulse, { toValue: 1, duration: 900, useNativeDriver: true }),
-    ]));
-    loop.start();
-    return () => loop.stop();
-  }, [reduceMotion]);
-  return <Animated.View style={[styles.badge, styles.badgeOutline, { opacity: pulse }]} />;
 }
 
 // The metadata under a title. Identity (why it needs you, project, Mac) leads on
@@ -263,9 +249,9 @@ const styles = themedStyles(() => StyleSheet.create({
   titleQuiet: { color: muted },
   age: { color: tertiary, fontFamily: 'Inter', fontSize: 12, fontVariant: ['tabular-nums'], flexShrink: 0 },
   mark: { width: markSize, height: markSize, alignItems: 'center', justifyContent: 'center' },
-  badgeHole: { position: 'absolute', right: -4, bottom: -4, width: 12, height: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: sidebar, borderRadius: 3, transform: [{ rotate: '45deg' }] },
+  badgeHole: { position: 'absolute', right: -4, bottom: -4, width: 12, height: 12, alignItems: 'center', justifyContent: 'center' },
+  badgeHoleDiamond: { backgroundColor: sidebar, borderRadius: 3, transform: [{ rotate: '45deg' }] },
   badge: { width: 7, height: 7, borderRadius: 1.5 },
-  badgeOutline: { borderWidth: 1.5, borderColor: running },
   secondLine: { minWidth: 0, gap: 2 },
   metadataRow: { flexDirection: 'row', alignItems: 'center', gap: 5, minWidth: 0 },
   identity: { flexDirection: 'row', alignItems: 'center', gap: 5, flexShrink: 1, minWidth: 0, overflow: 'hidden' },

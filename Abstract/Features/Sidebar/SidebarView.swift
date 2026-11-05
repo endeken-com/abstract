@@ -926,8 +926,8 @@ private final class HoverCardCoordinator: NSObject {
     }
 }
 
-/// A chat's status as a small hexagon. At rest it is a quiet outline;
-/// working shows the working mark; only "needs you" and errors fill in.
+/// A chat's status as a small mark. Working traces the Abstract symbol;
+/// only "needs you" and errors fill the hexagon.
 private struct RailStatus: View {
     let status: SessionStatus
     /// Working, but no output for so long the chat is marked Stalled.
@@ -961,7 +961,7 @@ private struct RailStatus: View {
 }
 
 /// What leads a chat's row: its project's icon (its agent's logo when it
-/// has no project), with a small badge for its state: stepping while it
+/// has no project), with a small badge for its state: tracing while it
 /// works, filled when it needs you, red when it failed. At rest, just the icon.
 private struct RailChatMark: View {
     let chat: SidebarChats.Chat
@@ -975,10 +975,13 @@ private struct RailChatMark: View {
         content
             .overlay(alignment: .bottomTrailing) {
                 if let badge {
-                    RailStatus(status: badge, stalled: stalled, size: 7)
-                        .padding(1.5)
-                        .background(RoundedHexagon().fill(Color.btSidebar))
-                        .offset(x: 3.5, y: 3.5)
+                    let tracing = !stalled && (badge == .running || badge == .provisioning)
+                    RailStatus(status: badge, stalled: stalled, size: tracing ? 10 : 7)
+                        .padding(tracing ? 0 : 1.5)
+                        .background {
+                            if !tracing { RoundedHexagon().fill(Color.btSidebar) }
+                        }
+                        .offset(x: tracing ? 5 : 3.5, y: tracing ? 5 : 3.5)
                 }
             }
             .accessibilityLabel("\(chat.projectName ?? SidebarChats.standalone), \(ProviderRegistry.name(chat.session.providerId)), \(stalled ? "Stalled" : status.label)")
