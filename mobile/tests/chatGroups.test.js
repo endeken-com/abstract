@@ -16,6 +16,7 @@ const stubs = {
   'react-native': { Pressable: 'Pressable', Text: 'Text', TextInput: 'TextInput', View: 'View', StyleSheet: { create: styles => styles, hairlineWidth: 0.5 }, Platform: { OS: 'ios' } },
   'expo-symbols': { SymbolView: 'SymbolView' },
   'react-native-svg': { __esModule: true, default: 'Svg', Path: 'Path' },
+  './Brand': { BrandLoadingIndicator: 'BrandLoadingIndicator' },
   '@react-native-menu/menu': { MenuView: 'MenuView' },
   './CompactMenu': { CompactMenu: 'MenuView' },
   '@react-native-async-storage/async-storage': { __esModule: true, default: { getItem: async () => null, setItem: async () => {} } },
