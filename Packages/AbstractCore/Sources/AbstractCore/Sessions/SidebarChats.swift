@@ -189,20 +189,69 @@ public enum SidebarChats {
         return status(of: chat)
     }
 
+    /// Parents precede their delegated chats, even when the input is ordered
+    /// by recent activity. Broken or cyclic parent links still appear once.
+    private static func chains(_ chats: [Chat]) -> [[Chat]] {
+        let byID = Dictionary(chats.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var children: [String: [Chat]] = [:]
+        for chat in chats {
+            if let parent = chat.session.parentSessionId, byID[parent] != nil {
+                children[parent, default: []].append(chat)
+            }
+        }
+        for id in children.keys {
+            children[id]?.sort { $0.activeAt == $1.activeAt ? $0.id < $1.id : $0.activeAt > $1.activeAt }
+        }
+
+        var seen = Set<String>()
+        var result: [[Chat]] = []
+        func addChain(startingAt root: Chat) {
+            var members: [Chat] = []
+            func visit(_ chat: Chat) {
+                guard seen.insert(chat.id).inserted else { return }
+                members.append(chat)
+                for child in children[chat.id] ?? [] { visit(child) }
+            }
+            visit(root)
+            if !members.isEmpty { result.append(members) }
+        }
+        for chat in chats where chat.session.parentSessionId.flatMap({ byID[$0] }) == nil {
+            addChain(startingAt: chat)
+        }
+        for chat in chats where !seen.contains(chat.id) { addChain(startingAt: chat) }
+        return result
+    }
+
     /// The chats in their groups, in the order the sidebar shows them; empty groups are left out.
+    /// A delegated chain stays together in its most urgent member's group.
     public static func sections(_ chats: [Chat], now: Date = Date()) -> [Section] {
-        let byGroup = Dictionary(grouping: chats, by: group(of:))
+        struct Chain {
+            var chats: [Chat]
+            var group: Group
+            var activeAt: Date
+            var pinnedAt: Date?
+        }
+
+        let priority = Dictionary(uniqueKeysWithValues: Group.allCases.enumerated().map { ($0.element, $0.offset) })
+        let chains = chains(chats).map { members in
+            Chain(chats: members,
+                  group: members.map(group(of:)).min { priority[$0, default: 0] < priority[$1, default: 0] }!,
+                  activeAt: members.map(\.activeAt).max()!,
+                  pinnedAt: members.compactMap { $0.session.pinnedAt }.min())
+        }
+
+        let byGroup = Dictionary(grouping: chains, by: \.group)
         return Group.allCases.compactMap { group in
             guard var members = byGroup[group], !members.isEmpty else { return nil }
             if group == .pinned {
-                members.sort { ($0.session.pinnedAt ?? .distantPast) < ($1.session.pinnedAt ?? .distantPast) }
+                members.sort { ($0.pinnedAt ?? .distantPast) < ($1.pinnedAt ?? .distantPast) }
             } else {
                 members.sort { $0.activeAt > $1.activeAt }
             }
-            guard group == .done else { return Section(group: group, chats: members) }
+            guard group == .done else { return Section(group: group, chats: members.flatMap(\.chats)) }
             let cutoff = now.addingTimeInterval(-doneWindow)
-            return Section(group: group, chats: members.filter { $0.activeAt >= cutoff },
-                           older: members.filter { $0.activeAt < cutoff })
+            return Section(group: group, chats: members.filter { $0.activeAt >= cutoff }.flatMap(\.chats),
+                           older: members.filter { $0.activeAt < cutoff }.flatMap(\.chats))
         }
     }
 
@@ -285,26 +334,40 @@ public enum SidebarChats {
     public static func visible(_ chats: [Chat], filter: Filter, query: String, showArchived: Bool) -> [Chat] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let number = Int(q.hasPrefix("#") ? String(q.dropFirst()) : q)
-        return chats.filter { chat in
+        let matches = chats.filter { chat in
             guard showArchived || chat.session.archivedAt == nil, filter.matches(chat) else { return false }
             guard !q.isEmpty else { return true }
             if let number, chat.pullRequest?.number == number { return true }
             return chat.session.name.localizedCaseInsensitiveContains(q)
                 || (chat.session.branch?.localizedCaseInsensitiveContains(q) ?? false)
         }
+        let byID = Dictionary(chats.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var included = Set(matches.map(\.id))
+        for chat in matches {
+            var parent = chat.session.parentSessionId
+            while let id = parent, let ancestor = byID[id], included.insert(id).inserted {
+                parent = ancestor.session.parentSessionId
+            }
+        }
+        return chats.filter { included.contains($0.id) }
     }
 
     /// Chats under their projects (nil: standalone), in one pass, each group
     /// in the rail's order: pinned first in pin order, the rest as given —
     /// the order `Ordering.pinnedFirst` gives a project's sessions.
     public static func groupedByProject(_ chats: [Chat]) -> [String?: [Chat]] {
-        var groups: [String?: [Chat]] = [:]
-        for chat in chats { groups[chat.session.projectId, default: []].append(chat) }
-        return groups.mapValues { members in
-            var pinned: [Chat] = [], rest: [Chat] = []
-            for chat in members { if chat.session.pinnedAt != nil { pinned.append(chat) } else { rest.append(chat) } }
-            pinned.sort { $0.session.pinnedAt! < $1.session.pinnedAt! }
-            return pinned + rest
+        var groups: [String?: [[Chat]]] = [:]
+        for chain in chains(chats) {
+            groups[chain[0].session.projectId, default: []].append(chain)
+        }
+        return groups.mapValues { chains in
+            var pinned: [[Chat]] = [], rest: [[Chat]] = []
+            for chain in chains {
+                if chain.contains(where: { $0.session.pinnedAt != nil }) { pinned.append(chain) }
+                else { rest.append(chain) }
+            }
+            pinned.sort { $0.compactMap { $0.session.pinnedAt }.min()! < $1.compactMap { $0.session.pinnedAt }.min()! }
+            return (pinned + rest).flatMap { $0 }
         }
     }
 
