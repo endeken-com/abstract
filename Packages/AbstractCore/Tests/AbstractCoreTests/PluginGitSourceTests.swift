@@ -75,9 +75,9 @@ final class FakeGitHub: PluginGitFetching {
     // MARK: Parsing
 
     @Test func readsEveryGitHubForm() throws {
-        let plain = try PluginGitSource.parse("endeken-com/abstract-plugin-kanban")
-        #expect(plain == PluginGitSource(owner: "endeken-com", repo: "abstract-plugin-kanban"))
-        #expect(plain.isGitHub && plain.remote() == "https://github.com/endeken-com/abstract-plugin-kanban.git")
+        let plain = try PluginGitSource.parse("abstract-ade/abstract-plugin-kanban")
+        #expect(plain == PluginGitSource(owner: "abstract-ade", repo: "abstract-plugin-kanban"))
+        #expect(plain.isGitHub && plain.remote() == "https://github.com/abstract-ade/abstract-plugin-kanban.git")
 
         let folder = try PluginGitSource.parse("owner/monorepo/plugins/x@v1.2")
         #expect(folder == PluginGitSource(owner: "owner", repo: "monorepo", path: "plugins/x", ref: "v1.2"))
@@ -278,11 +278,11 @@ final class FakeGitHub: PluginGitFetching {
         let store = try Store.inMemory()
         let commands = Commands(store: store, storePath: root.appendingPathComponent("abstract.sqlite").path,
                                 locks: root.appendingPathComponent("locks"), executable: "/bin/abstract")
-        let github = FakeGitHub(["endeken-com/abstract-plugin-kanban": .init(head: c1, trees: [
+        let github = FakeGitHub(["abstract-ade/abstract-plugin-kanban": .init(head: c1, trees: [
             c1: ["manifest.json": FakeGitHub.manifest(), "index.html": "x"]])])
-        let added = try await commands.addPlugin("endeken-com/abstract-plugin-kanban", ref: nil, fetcher: github, registry: nil)
+        let added = try await commands.addPlugin("abstract-ade/abstract-plugin-kanban", ref: nil, fetcher: github, registry: nil)
         #expect(added.id == "dev.example.kanban" && added.commit == c1 && !added.enabled)
-        #expect(added.repository == "endeken-com/abstract-plugin-kanban" && added.capabilities == ["chats.read"])
+        #expect(added.repository == "abstract-ade/abstract-plugin-kanban" && added.capabilities == ["chats.read"])
         let record = try #require(commands.plugins.records().first)
         #expect(record.source.git?.commit == c1)
         #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("Plugins/dev.example.kanban/1.0.0/manifest.json").path))
@@ -291,7 +291,7 @@ final class FakeGitHub: PluginGitFetching {
             try await commands.addPlugin("./kanban", ref: nil, fetcher: github, registry: nil)
         }
         do {
-            _ = try await commands.addPlugin("endeken-com/missing", ref: nil, fetcher: github, registry: nil)
+            _ = try await commands.addPlugin("abstract-ade/missing", ref: nil, fetcher: github, registry: nil)
             Issue.record("a missing repository installed")
         } catch let error as CLIError {
             #expect(error.code == .pluginFailed)

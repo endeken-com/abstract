@@ -46,8 +46,8 @@ import Testing
 
         #expect(manager.migrateMovedPlugins([move(hash: installed.packageHash)]))
         let after = try #require(manager.records().first)
-        #expect(after.source == .git(PluginGitSource(owner: "endeken-com", repo: "abstract-plugin-jira", commit: commit,
-                                                     listing: "endeken-com/jira")))
+        #expect(after.source == .git(PluginGitSource(owner: "abstract-ade", repo: "abstract-plugin-jira", commit: commit,
+                                                     listing: "abstract-ade/jira")))
         // Everything but where it comes from is as it was.
         var same = after
         same.source = before.source
@@ -58,6 +58,28 @@ import Testing
         #expect(plugin.problem == nil && plugin.isUsable)
         // A listing's install counts as reviewed, and isn't moved twice.
         #expect(PluginRegistry(plugins: []).isReviewed(try #require(after.source.git)))
+        #expect(!manager.migrateMovedPlugins([move(hash: installed.packageHash)]))
+    }
+
+    /// Builds from the week the repositories sat in endeken-com recorded
+    /// installs there; they follow the repositories to abstract-ade.
+    @Test func installsRecordedUnderTheFirstOrganizationFollowTheMove() throws {
+        let (manager, root) = try host()
+        defer { try? fm.removeItem(at: root) }
+        let installed = try manager.install(from: try bundledJira(in: root), sourceKind: .bundled)
+        manager.setEnabled(installed.id, true)
+        var records = manager.records()
+        records[0].source = .git(PluginGitSource(owner: "endeken-com", repo: "abstract-plugin-jira",
+                                                 commit: String(repeating: "1", count: 40), listing: "endeken-com/jira"))
+        try manager.store.setSetting(PluginManager.settingsKey, records)
+
+        #expect(manager.migrateMovedPlugins([move(hash: installed.packageHash)]))
+        let after = try #require(manager.records().first)
+        #expect(after.source.git?.owner == "abstract-ade" && after.source.git?.listing == "abstract-ade/jira")
+        #expect(after.source.git?.commit == commit && after.enabled)
+        // Someone else's repository of the same name stays theirs.
+        records[0].source = .git(PluginGitSource(owner: "someone", repo: "abstract-plugin-jira", commit: commit))
+        try manager.store.setSetting(PluginManager.settingsKey, records)
         #expect(!manager.migrateMovedPlugins([move(hash: installed.packageHash)]))
     }
 
@@ -83,16 +105,16 @@ import Testing
         manager.setEnabled(old.id, true)
         #expect(manager.migrateMovedPlugins([move(hash: String(repeating: "0", count: 64))]))
         let migrated = try #require(manager.records().first?.source.git)
-        #expect(migrated.commit == nil && migrated.listing == "endeken-com/jira")
+        #expect(migrated.commit == nil && migrated.listing == "abstract-ade/jira")
         #expect(try #require(manager.installed().first).isUsable)
 
-        let github = FakeGitHub(["endeken-com/abstract-plugin-jira": .init(head: commit, trees: [
+        let github = FakeGitHub(["abstract-ade/abstract-plugin-jira": .init(head: commit, trees: [
             commit: ["manifest.json": FakeGitHub.manifest(id: "sh.abstract.jira", version: "1.1.0",
                                                           capabilities: ["chats.read", "storage.own"]),
                      "index.html": "<html></html>"],
         ])])
-        let registry = PluginRegistry(plugins: [.init(owner: "endeken-com", slug: "jira", name: "Jira", description: "Jira.",
-                                                      pluginId: "sh.abstract.jira", repository: "endeken-com/abstract-plugin-jira",
+        let registry = PluginRegistry(plugins: [.init(owner: "abstract-ade", slug: "jira", name: "Jira", description: "Jira.",
+                                                      pluginId: "sh.abstract.jira", repository: "abstract-ade/abstract-plugin-jira",
                                                       commit: commit)])
         let update = try #require(await manager.checkGitUpdates(fetcher: github, registry: registry).updates.first)
         defer { try? fm.removeItem(at: update.candidate.cleanup) }
@@ -105,15 +127,15 @@ import Testing
     @Test func aPluginTurnedOnByItselfComesFromItsListingOnce() async throws {
         let (manager, root) = try host()
         defer { try? fm.removeItem(at: root) }
-        let github = FakeGitHub(["endeken-com/abstract-plugin-bitbucket": .init(head: commit, trees: [
+        let github = FakeGitHub(["abstract-ade/abstract-plugin-bitbucket": .init(head: commit, trees: [
             commit: ["manifest.json": FakeGitHub.manifest(id: "sh.abstract.bitbucket"), "index.html": "x"],
         ])])
-        let entry = PluginRegistry.Entry(owner: "endeken-com", slug: "bitbucket", name: "Bitbucket", description: "Bitbucket.",
+        let entry = PluginRegistry.Entry(owner: "abstract-ade", slug: "bitbucket", name: "Bitbucket", description: "Bitbucket.",
                                          pluginId: "sh.abstract.bitbucket",
-                                         repository: "endeken-com/abstract-plugin-bitbucket", commit: commit)
+                                         repository: "abstract-ade/abstract-plugin-bitbucket", commit: commit)
         #expect(try await manager.installOffered(entry, fetcher: github))
         let record = try #require(manager.records().first)
-        #expect(record.enabled && record.source.git?.listing == "endeken-com/bitbucket")
+        #expect(record.enabled && record.source.git?.listing == "abstract-ade/bitbucket")
         // Removing it sticks.
         manager.remove(record.id)
         #expect(try await !manager.installOffered(entry, fetcher: github))
@@ -122,14 +144,14 @@ import Testing
 
     @Test func theMovedPluginsLeftTheAppAndAreListedAtTheirCommits() throws {
         let bundled = try fm.contentsOfDirectory(atPath: repo.appendingPathComponent("Abstract/Resources/Plugins").path)
-        let registry = try PluginRegistry.decode(Data(contentsOf: repo.appendingPathComponent("docs/plugin-registry/registry.json")))
         #expect(MovedPlugins.all.count == 13)
         for move in MovedPlugins.all {
             #expect(!bundled.contains("\(move.slug).abstractplugin"), "\(move.slug) is still bundled")
             #expect(!PluginManager.defaultPluginIds.contains(move.pluginId))
-            let entry = try #require(registry.entry(move.listing), "\(move.listing) isn't in the registry")
-            #expect(entry.pluginId == move.pluginId && entry.commit == move.commit)
-            #expect(entry.source.repo == "abstract-plugin-\(move.slug)" && entry.path == nil)
+            // Listed in abstract-ade/abstract-plugins, whose CI checks each pin.
+            #expect(move.listing == "abstract-ade/\(move.slug)")
+            #expect(move.source == PluginGitSource(owner: "abstract-ade", repo: "abstract-plugin-\(move.slug)",
+                                                   commit: move.commit, listing: move.listing))
             #expect(PluginGitSource.isCommit(move.commit) && move.packageHash.count == 64)
         }
         // What stays: the agents, the themes and GitHub.
