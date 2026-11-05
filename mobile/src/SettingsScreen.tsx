@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { BrandLoadingIndicator as ActivityIndicator } from './Brand';
 import { useHeaderHeight } from '@react-navigation/elements';
 import { CompactMenu as MenuView } from './CompactMenu';
 import { SymbolView } from 'expo-symbols';

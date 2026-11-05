@@ -12,10 +12,10 @@ check() { zsh "$work/scripts/make-icons.sh" --check > "$work/out" 2>&1; }
 check || { echo "FAIL the checked-in icons don't pass"; cat "$work/out"; exit 1; }
 
 # A size that's missing.
-mv "$work/mobile/assets/icon-arc.png" "$work/arc.png"
+mv "$work/mobile/assets/icon-mark.png" "$work/mark.png"
 if check; then echo "FAIL a missing icon passed"; exit 1; fi
-grep -q "icon-arc.png is missing" "$work/out" || { echo "FAIL the missing icon wasn't named"; cat "$work/out"; exit 1; }
-mv "$work/arc.png" "$work/mobile/assets/icon-arc.png"
+grep -q "icon-mark.png is missing" "$work/out" || { echo "FAIL the missing icon wasn't named"; cat "$work/out"; exit 1; }
+mv "$work/mark.png" "$work/mobile/assets/icon-mark.png"
 
 # A size that's the wrong number of pixels.
 sips -z 512 512 "$work/mobile/assets/icon-light.png" > /dev/null
@@ -24,7 +24,7 @@ grep -q "icon-light.png is 512×512, not 1024×1024" "$work/out" || { echo "FAIL
 cp mobile/assets/icon-light.png "$work/mobile/assets/icon-light.png"
 
 # The Icon Composer document names an image that isn't in it.
-rm "$work/Abstract/Resources/AppIcon.icon/Assets/horizonte-dark.png"
+rm "$work/Abstract/Resources/AppIcon.icon/Assets/abstract-dark.png"
 if check; then echo "FAIL a missing Mac master passed"; exit 1; fi
-grep -q "names horizonte-dark.png" "$work/out" || { echo "FAIL the document's missing image wasn't named"; cat "$work/out"; exit 1; }
+grep -q "names abstract-dark.png" "$work/out" || { echo "FAIL the document's missing image wasn't named"; cat "$work/out"; exit 1; }
 echo "all make-icons tests passed"

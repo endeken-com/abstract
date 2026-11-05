@@ -6,14 +6,14 @@
           "glass" : false,
           "image-name-specializations" : [
             {
-              "value" : "horizonte-light.png"
+              "value" : "abstract-light.png"
             },
             {
               "appearance" : "dark",
-              "value" : "horizonte-dark.png"
+              "value" : "abstract-dark.png"
             }
           ],
-          "name" : "Horizonte"
+          "name" : "Abstract"
         }
       ],
       "shadow" : {

@@ -16,7 +16,7 @@ module.exports = {
       adaptiveIcon: {
         backgroundImage: './assets/icon-dark.png',
         foregroundImage: './assets/icon-clear.png',
-        monochromeImage: './assets/icon-arc.png'
+        monochromeImage: './assets/icon-mark.png'
       },
       versionCode: Number(process.env.MOBILE_ANDROID_VERSION_CODE || 1),
       softwareKeyboardLayoutMode: 'resize',

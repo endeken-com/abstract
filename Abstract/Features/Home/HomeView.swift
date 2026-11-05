@@ -15,7 +15,7 @@ struct HomeView: View {
         ScrollView {
             VStack(spacing: 0) {
                 VStack(spacing: Space.md) {
-                    BrandMark()
+                    AbstractLogo()
                     Text(hasAvailableProject ? "What should we build?" : "Welcome to Abstract")
                         .font(BTFont.ui(26, .semibold))
                         .foregroundStyle(Color.btText)
@@ -137,16 +137,5 @@ private struct ShortcutHint: View {
             HStack(spacing: 3) { ForEach(keys, id: \.self) { KeyHint($0) } }
             Text(label).font(.btCaption).foregroundStyle(Color.btTextTertiary)
         }
-    }
-}
-
-/// Abstract's mark, in the text colour of the current theme.
-struct BrandMark: View {
-    var size: CGFloat = 44
-    var body: some View {
-        AbstractMark()
-            .fill(Color.btText)
-            .frame(width: size, height: size)
-            .accessibilityLabel("Abstract")
     }
 }

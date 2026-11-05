@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { AccessibilityInfo, ActivityIndicator, Alert, AppState, useColorScheme, FlatList, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View, type ScrollViewProps } from 'react-native';
+import { AccessibilityInfo, Alert, AppState, useColorScheme, FlatList, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View, type ScrollViewProps } from 'react-native';
 import { CommonActions, NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -7,8 +7,8 @@ import { StatusBar } from 'expo-status-bar';
 import * as Haptics from 'expo-haptics';
 import { useFonts } from 'expo-font';
 import { SymbolView } from 'expo-symbols';
-import Svg, { Path } from 'react-native-svg';
 import { CompactMenu as MenuView } from './CompactMenu';
+import { BrandLogo, BrandLoadingIndicator as ActivityIndicator } from './Brand';
 import { BlurTargetView } from 'expo-blur';
 import { useHeaderHeight } from '@react-navigation/elements';
 import { remote, type RemoteClient } from './remote';
@@ -342,11 +342,6 @@ function LauncherPicker({ label, value, choices, onSelect, leading }: { label: s
     <View accessibilityRole="button" accessibilityLabel={`${label}: ${value}`} style={styles.launcherPicker}>{leading}<Text numberOfLines={1} style={styles.launcherPickerText}>{value}</Text><SymbolView name={{ ios: 'chevron.down', android: 'keyboard_arrow_down' }} size={10} tintColor={tertiary} /></View>
   </MenuView>;
 }
-function BrandMark() {
-  return <Svg width={44} height={44} viewBox="0 0 100 100" accessibilityLabel="Abstract">
-    <Path fill={ink} d="M93.67,50c-0.4,9-8.84,14.39-15.12,19.54-6.08,5-10.27,11.3-15.62,17-7.09,7.51-15.66,9.2-23.62,1.85-5.69-5.25-9.59-12.08-15.48-17.16S9.3,61.23,7.17,53.25C4.73,44.13,13,37.56,19.28,32.53S30.14,22,35.27,16C41.18,9,49.1,3.23,58,9.13,65.36,14,69.51,22.59,76.1,28.4,82.85,34.34,93.22,39.95,93.67,50c0.09,1.92,3.09,1.93,3,0-0.43-9.53-8.15-15.31-15-20.84C74.09,23,69.22,14.46,61.78,8.27,55.37,2.93,47.38,2,40.4,6.88,32.57,12.37,28,21.39,20.73,27.51,14.33,32.87,5.7,38.28,4,47.13c-1.74,9.11,5.18,15.93,11.6,21.2,3.6,3,7.34,5.74,10.47,9.22s6,7.57,9.28,11.07C41,94.63,48.71,98.71,56.86,95c9.45-4.35,14.2-15.05,21.84-21.65C86.18,66.85,96.18,61,96.67,50,96.76,48.07,93.76,48.07,93.67,50Z" />
-  </Svg>;
-}
 function NewChatScreen({ route, navigation }: any) {
   const store = useRemote();
   const macs = store.macs();
@@ -457,7 +452,7 @@ function NewChatScreen({ route, navigation }: any) {
   }) : [];
   const macName = (id: string | null) => macs.find(mac => mac.id === id)?.name || 'No Mac';
   return <HeaderScrollView keyboardAware style={styles.page} contentContainerStyle={styles.launcherContent}>
-    <View style={styles.launcherIntro}><BrandMark /><Text style={styles.launcherTitle}>{state.snapshot?.projects.length ? 'What should we build?' : 'Welcome to Abstract'}</Text><Text style={styles.launcherDescription}>{state.snapshot?.projects.length ? 'Each chat runs its own agent in an isolated worktree, so several can work at once without stepping on each other.' : 'Connect a Mac and start a standalone chat, or add a project on your Mac to work in isolated worktrees.'}</Text></View>
+    <View style={styles.launcherIntro}><BrandLogo color={ink} /><Text style={styles.launcherTitle}>{state.snapshot?.projects.length ? 'What should we build?' : 'Welcome to Abstract'}</Text><Text style={styles.launcherDescription}>{state.snapshot?.projects.length ? 'Each chat runs its own agent in an isolated worktree, so several can work at once without stepping on each other.' : 'Connect a Mac and start a standalone chat, or add a project on your Mac to work in isolated worktrees.'}</Text></View>
     <View style={styles.launcherBox}>
       <TextInput autoFocus={!!state.snapshot?.projects.length} style={styles.launcherPrompt} value={prompt} onChangeText={setPrompt} multiline textAlignVertical="top" placeholder="Describe the task. Be as specific as you would with a colleague." placeholderTextColor={tertiary} />
       {attachments.length > 0 && <View style={styles.launcherAttachments}>{attachments.map(item => <Pressable key={item.id} accessibilityRole="button" accessibilityLabel={`Remove ${item.title}`} onPress={() => setAttachments(attachments.filter(x => x.id !== item.id))} style={styles.launcherAttachment}><Text numberOfLines={1} style={styles.launcherPickerText}>{item.title} ×</Text></Pressable>)}</View>}
@@ -913,7 +908,7 @@ export default function App() {
     });
     return () => appState.remove();
   }, []);
-  if (!fontsLoaded) return null;
+  if (!fontsLoaded) return <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: bg }}><ActivityIndicator size="large" color={ink} /></View>;
   // A new theme draws every screen again, where it was: the navigator
   // starts over from the state it had.
   return <SafeAreaProvider><StatusBar style={isDarkTheme() ? 'light' : 'dark'} /><SidebarReturnContext.Provider value={sidebarReturn}><NavigationContainer key={themeVersion} initialState={navigationState.current} onStateChange={state => { navigationState.current = state; followStack((state?.routes || []) as StackRoute[]); }} theme={{ dark: isDarkTheme(), colors: { primary: accent, background: bg, card: panel, text: ink, border, notification: accent }, fonts: { regular: { fontFamily: 'Inter', fontWeight: '400' }, medium: { fontFamily: 'Inter', fontWeight: '500' }, bold: { fontFamily: 'Inter', fontWeight: '700' }, heavy: { fontFamily: 'Inter', fontWeight: '900' } } }}>

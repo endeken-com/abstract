@@ -22,6 +22,7 @@ struct AbstractApp: App {
         Window("Abstract", id: "main") {
             RootView()
                 .font(.btBody)
+                .progressViewStyle(BrandProgressViewStyle())
                 .environment(delegate.model)
                 .environment(delegate.updater)
                 .preferredColorScheme(theme.colorScheme)
