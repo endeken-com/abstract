@@ -119,13 +119,26 @@ struct ProjectIconButton: View {
     @Environment(AppModel.self) private var model
     let project: Project
     let owner: String?
+    var size: CGFloat = 30
     @State private var open = false
     @State private var hovering = false
 
     var body: some View {
         Button { open.toggle() } label: {
-            ProjectIconView(project: project, owner: owner, size: 30)
+            ProjectIconView(project: project, owner: owner, size: size)
                 .opacity(hovering ? 0.85 : 1)
+                .overlay(alignment: .bottomTrailing) {
+                    // A large tile says it can be changed while hovered.
+                    if size >= 40 && (hovering || open) {
+                        Image(systemName: "pencil")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(Color.btText)
+                            .frame(width: 18, height: 18)
+                            .background(Color.btSurfaceRaised, in: Circle())
+                            .overlay(Circle().strokeBorder(Color.btBorderStrong, lineWidth: 0.5))
+                            .offset(x: 4, y: 4)
+                    }
+                }
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

@@ -6,35 +6,28 @@ import AbstractCore
 /// The MCP servers this project's chats get (ABS-123): which agents get
 /// each one, how to use it, and each tool's access. Agents get them for
 /// the chat only; their global settings are never written.
-struct ToolsSection: View {
+struct ToolsGroup: View {
     @Environment(AppModel.self) private var model
     let project: Project
     @State private var editing: ProjectToolServer?
     @State private var adding = false
 
     var body: some View {
-        PageSection(title: "Tools (MCP)",
-                    detail: "MCP servers this project's chats get, beside each agent's own. A change reaches a chat the next time its agent starts.") {
-            let servers = model.toolServers(for: project.id)
-            if servers.isEmpty {
-                Text("No servers yet. Add one by pasting its URL, or the command that starts it.")
-                    .font(.btBody).foregroundStyle(Color.btTextTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            ForEach(servers) { server in
-                HStack(alignment: .top, spacing: Space.sm) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(server.name).font(.btBody).foregroundStyle(Color.btText)
-                        PathText(text: server.connection.summary)
-                        Text(Self.summary(server)).font(.btCallout).foregroundStyle(Color.btTextTertiary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer(minLength: Space.md)
-                    Button("Edit") { editing = server }.buttonStyle(.bt(.ghost, size: .small))
-                    Button("Delete") { model.deleteToolServer(server) }.buttonStyle(.bt(.ghost, size: .small))
+        CardGroup(title: "Tools (MCP)",
+                  info: "MCP servers this project's chats get, beside each agent's own. A change reaches a chat the next time its agent starts.") {
+            SettingsCard {
+                let servers = model.toolServers(for: project.id)
+                if servers.isEmpty {
+                    CardEmptyRow("No servers yet. Add one by pasting its URL, or the command that starts it.")
                 }
+                ForEach(servers) { server in
+                    CardItemRow(title: server.name, subtitle: server.connection.summary, meta: Self.summary(server)) {
+                        Button("Edit…") { editing = server }
+                        Button("Delete", role: .destructive) { model.deleteToolServer(server) }
+                    }
+                }
+                CardAddRow(title: "Add a Server…") { adding = true }
             }
-            Button("Add a Server…") { adding = true }.buttonStyle(.bt(.ghost, size: .small))
         }
         .sheet(isPresented: $adding) { ToolServerSheet(projectId: project.id) }
         .sheet(item: $editing) { server in ToolServerSheet(projectId: project.id, existing: server) }
