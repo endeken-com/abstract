@@ -23,6 +23,13 @@ if check; then echo "FAIL a 512 px icon passed as 1024"; exit 1; fi
 grep -q "icon-light.png is 512×512, not 1024×1024" "$work/out" || { echo "FAIL the wrong size wasn't named"; cat "$work/out"; exit 1; }
 cp mobile/assets/icon-light.png "$work/mobile/assets/icon-light.png"
 
+# An oversized mark can have the right dimensions yet be clipped by launcher masks.
+sips -c 700 700 "$work/Abstract/Resources/AppIcon.icon/Assets/abstract-dark.png" --out "$work/cropped.png" > /dev/null
+sips -z 1024 1024 "$work/cropped.png" --out "$work/Abstract/Resources/AppIcon.icon/Assets/abstract-dark.png" > /dev/null
+if check; then echo "FAIL an unsafe icon passed"; exit 1; fi
+grep -q "outside the 18% icon safe inset" "$work/out" || { echo "FAIL the unsafe icon wasn't named"; cat "$work/out"; exit 1; }
+cp Abstract/Resources/AppIcon.icon/Assets/abstract-dark.png "$work/Abstract/Resources/AppIcon.icon/Assets/abstract-dark.png"
+
 # The Icon Composer document names an image that isn't in it.
 rm "$work/Abstract/Resources/AppIcon.icon/Assets/abstract-dark.png"
 if check; then echo "FAIL a missing Mac master passed"; exit 1; fi
