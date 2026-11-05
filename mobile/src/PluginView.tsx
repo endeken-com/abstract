@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { BrandLoadingIndicator as ActivityIndicator } from './Brand';
 import WebView from 'react-native-webview';
 import { useHeaderHeight } from '@react-navigation/elements';
 import { Buffer } from 'buffer';

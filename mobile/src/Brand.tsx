@@ -1,0 +1,51 @@
+import React, { useEffect, useRef } from 'react';
+import { Animated, type StyleProp, type ViewStyle, View } from 'react-native';
+import Svg, { G, Path } from 'react-native-svg';
+import { useReduceMotion } from './useReduceMotion';
+
+// Paths and lockup proportions come from Resources/Brand/abstract-logo.svg.
+const markLeft = "M6.649 44.737 0 33.562 6.649 22.368H19.933L13.289 33.562 19.933 44.737H6.649Z";
+const markRight = "M26.577 11.184 19.933 0 13.289 11.184 19.669 21.925 19.933 22.368 26.577 33.562 33.222 44.737 39.862 33.562 33.222 22.368 26.577 11.184Z";
+const wordmark = "M9.26 15.1 l-1.52 -5.16 l-1.46 5.16 l2.98 0 z M4.84 20 l-4.62 0 l5.16 -14.4 l4.8 0 l5.16 14.4 l-4.7 0 l-0.56 -1.9 l-4.7 0 z M20.68 5.6 l0 4.98 c0.82 -0.96 1.78 -1.36 3.02 -1.36 c2.68 0 4.56 2.32 4.56 5.48 c0 3.1 -1.32 5.6 -4.74 5.6 c-1.74 0 -2.7 -0.78 -3.22 -1.78 l-0.04 0 l0 1.48 l-3.74 0 l0 -14.4 l4.16 0 z M22.34 17.3 c1.36 0 1.76 -1.32 1.76 -2.46 c0 -1.12 -0.42 -2.4 -1.76 -2.4 c-1.26 0 -1.76 1.24 -1.76 2.32 c0 1.12 0.4 2.54 1.76 2.54 z M29.56 16.74 l3.96 0 c0 0.42 0.16 0.74 0.44 0.96 c0.26 0.2 0.62 0.32 1.02 0.32 c0.64 0 1.32 -0.2 1.32 -0.94 c0 -1.68 -6.42 -0.34 -6.42 -4.4 c0 -2.68 2.78 -3.46 4.96 -3.46 c2.28 0 4.96 0.52 5.2 3.3 l-3.78 0 c-0.04 -0.34 -0.18 -0.58 -0.4 -0.76 s-0.52 -0.26 -0.84 -0.26 c-0.72 0 -1.18 0.22 -1.18 0.74 c0 1.46 6.62 0.48 6.62 4.4 c0 2.18 -1.8 3.66 -5.64 3.66 c-2.4 0 -5.04 -0.74 -5.26 -3.56 z M49 17.02 l0 2.98 c-5.46 0.3 -6.12 -0.08 -6.12 -3.7 l0 -4.38 l-1.48 0 l0 -2.4 l1.54 0 l0 -3.26 l4.1 0 l0 3.26 l2 0 l0 2.4 l-2 0 l0 3.8 c0 0.96 0.14 1.3 1.3 1.3 l0.66 0 z M51.04 20 l0 -10.48 l3.78 0 l0 2.12 l0.04 0 c0.58 -1.64 1.6 -2.42 3.22 -2.42 c0.18 0 0.36 0.04 0.54 0.06 l0 4.16 c-0.28 -0.04 -0.58 -0.12 -0.86 -0.12 c-1.7 0 -2.56 0.8 -2.56 3.06 l0 3.62 l-4.16 0 z M71.56 20 l-4.3 0 l-0.2 -1.12 c-1.18 1.1 -2.38 1.42 -3.94 1.42 c-1.98 0 -3.74 -0.98 -3.74 -3.16 c0 -4.76 7.46 -2.6 7.46 -4.56 c0 -0.76 -0.92 -0.86 -1.36 -0.86 c-0.58 0 -1.36 0.12 -1.46 1.02 l-4 0 c0 -2.22 1.58 -3.52 5.72 -3.52 c4.96 0 5.26 1.84 5.26 4.34 l0 4.9 c0 0.6 0.02 0.9 0.56 1.34 l0 0.2 z M65 17.94 c1.46 0 1.94 -1.14 1.84 -2.58 c-1.36 0.66 -3.16 0.34 -3.16 1.7 c0 0.52 0.5 0.88 1.32 0.88 z M84.58 13.52 l-4.22 0 c-0.02 -0.46 -0.18 -0.82 -0.44 -1.08 c-0.26 -0.28 -0.62 -0.42 -1.08 -0.42 c-1.56 0 -1.82 1.62 -1.82 2.86 c0 1.58 0.6 2.62 1.82 2.62 c1.08 0 1.5 -0.74 1.62 -1.56 l4.2 0 c-0.18 1.58 -0.9 2.68 -1.96 3.38 c-1.04 0.68 -2.4 0.98 -3.86 0.98 c-3.38 0 -5.98 -1.9 -5.98 -5.44 c0 -3.58 2.52 -5.64 5.98 -5.64 c2.8 0 5.44 1.2 5.74 4.3 z M93.44 17.02 l0 2.98 c-5.46 0.3 -6.12 -0.08 -6.12 -3.7 l0 -4.38 l-1.48 0 l0 -2.4 l1.54 0 l0 -3.26 l4.1 0 l0 3.26 l2 0 l0 2.4 l-2 0 l0 3.8 c0 0.96 0.14 1.3 1.3 1.3 l0.66 0 z";
+const AnimatedPath = Animated.createAnimatedComponent(Path);
+
+export function BrandLogo({ height = 44, color }: { height?: number; color: string }) {
+  return <Svg width={height * 3.866} height={height} viewBox="0 0 369.6666666666667 95.61528956559422" accessibilityLabel="Abstract">
+    <G transform="matrix(2.090545741661423 0 0 2.090545741661423 0 0)" fill={color}>
+      <Path d={markLeft} /><Path d={markRight} />
+    </G>
+    <G transform="matrix(2.859389688760062 0 0 2.859389688760062 102.37093350493336 9.987418015636305)" fill={color}>
+      <Path d={wordmark} />
+    </G>
+  </Svg>;
+}
+
+// A short trace of both contours. The pale full outline keeps the state legible
+// while the stroke resets; Reduce Motion shows the complete static outline.
+export function BrandLoadingIndicator({ size = 'small', color = '#fff', style }: {
+  size?: 'small' | 'large' | number; color?: string; style?: StyleProp<ViewStyle>;
+}) {
+  const reduceMotion = useReduceMotion();
+  const phase = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (reduceMotion) { phase.setValue(1); return; }
+    phase.setValue(0);
+    const animation = Animated.loop(Animated.sequence([
+      Animated.timing(phase, { toValue: 1, duration: 1150, useNativeDriver: false }),
+      Animated.timing(phase, { toValue: 0, duration: 700, useNativeDriver: false }),
+    ]));
+    animation.start();
+    return () => animation.stop();
+  }, [phase, reduceMotion]);
+  const dimension = typeof size === 'number' ? size : size === 'large' ? 28 : 18;
+  return <View style={style} accessible accessibilityRole="progressbar" accessibilityLabel="Loading">
+    <Svg width={dimension * 0.89} height={dimension} viewBox="0 0 39.862 44.737">
+      <Path d={markLeft} fill="none" stroke={color} strokeOpacity={0.22} strokeWidth={2.5} strokeLinejoin="round" />
+      <Path d={markRight} fill="none" stroke={color} strokeOpacity={0.22} strokeWidth={2.5} strokeLinejoin="round" />
+      <AnimatedPath d={markLeft} fill="none" stroke={color} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"
+        strokeDasharray="79 79" strokeDashoffset={phase.interpolate({ inputRange: [0, 1], outputRange: [79, 0] })} />
+      <AnimatedPath d={markRight} fill="none" stroke={color} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"
+        strokeDasharray="105 105" strokeDashoffset={phase.interpolate({ inputRange: [0, 1], outputRange: [105, 0] })} />
+    </Svg>
+  </View>;
+}
