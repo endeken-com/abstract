@@ -3,152 +3,122 @@ import SwiftUI
 import UniformTypeIdentifiers
 import AbstractCore
 
-/// A project's settings as one quiet document: the header, then General,
-/// Branches & naming, New chats, Skills, Permissions, Tools (MCP), Issue tracker, Location & checkout,
-/// Lifecycle scripts and the danger zone. Every change is stored at once; text is stored after a pause.
+/// A project's settings as one document, grouped into cards: the header
+/// (icon, name, remote), then New chats, Permissions, Git, Agent context,
+/// Scripts and the danger zone, with a rail beside them that follows the
+/// scroll. Every change is stored at once; text is stored after a pause.
 struct ProjectSettingsView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let projectId: String
     /// `origin`'s URL; nil until read, then "" when there is none.
     @State private var origin: String?
+    @State private var spy = SectionSpy()
+    /// Counts stored changes, for the header's "Saved".
+    @State private var savedTick = 0
+    /// What was stored when the page opened; changes before then aren't saves.
+    @State private var openedAt = Date.now
 
     var body: some View {
         if let project = model.project(projectId) {
             let owner = origin.flatMap(GitRemote.githubOwner)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    ProjectHeader(project: project, owner: owner)
-                    GeneralSection(project: project, origin: origin, owner: owner)
-                    BranchSection(project: project)
-                    NewChatSection(project: project)
-                    SkillsSection(project: project)
-                    PermissionsSection(project: project)
-                    ToolsSection(project: project)
-                    IssueTrackerSection(project: project)
-                    LocationSection(project: project)
-                    ScriptsSection(project: project)
-                    DangerSection(project: project)
+            GeometryReader { geo in
+                let showsRail = geo.size.width >= ProjectPage.railBreakpoint
+                ScrollViewReader { proxy in
+                    let jump = { (section: ProjectSettingsSection) in
+                        spy.hold(section)
+                        withAnimation(reduceMotion ? nil : .snappy(duration: 0.35)) { proxy.scrollTo(section, anchor: .top) }
+                    }
+                    ZStack(alignment: .top) {
+                        ScrollView {
+                            columns(rail: showsRail) {
+                                Color.clear.frame(height: 1)
+                            } content: {
+                                VStack(alignment: .leading, spacing: 0) {
+                                    ProjectHeader(project: project, origin: origin, owner: owner, savedTick: savedTick,
+                                                  jump: showsRail ? nil : jump)
+                                    NewChatSection(project: project)
+                                    PermissionsSection(project: project)
+                                    GitSection(project: project)
+                                    ContextSection(project: project)
+                                    ScriptsSection(project: project)
+                                    DangerSection(project: project)
+                                }
+                            }
+                            .padding(.top, Space.xl)
+                            .padding(.bottom, 56)
+                        }
+                        .coordinateSpace(.named(ProjectPage.scrollSpace))
+                        .onScrollGeometryChange(for: Bool.self) { g in
+                            g.visibleRect.maxY >= g.contentSize.height - 4
+                        } action: { _, atEnd in spy.atEnd = atEnd }
+                        .btThinScrollIndicator()
+
+                        // Drawn over the scroll view so it stays put; lined up
+                        // with the column the scroll view leaves for it.
+                        if showsRail {
+                            columns(rail: true) {
+                                ProjectSettingsRail(jump: jump)
+                            } content: {
+                                Color.clear.frame(height: 1).allowsHitTesting(false)
+                            }
+                            .padding(.top, Space.xl)
+                        }
+                    }
                 }
-                .frame(maxWidth: ProjectPage.width, alignment: .leading)
-                .padding(.horizontal, Space.xxl)
-                .frame(maxWidth: .infinity)
-                .padding(.top, Space.xl)
-                .padding(.bottom, 56)
+                .onChange(of: geo.size.height, initial: true) { _, height in spy.viewportHeight = height }
             }
+            .environment(spy)
             .background(Color.btCanvas)
             .task(id: project.rootPath) {
                 origin = await Git.originURL(model.executor, root: project.rootPath) ?? ""
+            }
+            .onChange(of: saved(project)) {
+                // Rules, servers and links still loading as the page opens aren't saves.
+                if Date.now.timeIntervalSince(openedAt) > 1 { savedTick += 1 }
             }
         } else {
             EmptyStateView(symbol: "folder.badge.questionmark", title: "This project no longer exists")
         }
     }
-}
 
-/// Where everything on the page lines up.
-enum ProjectPage {
-    static let width: CGFloat = 760
-    /// The label column; controls start after it.
-    static let labelWidth: CGFloat = 248
-    static let columnGap: CGFloat = Space.xl
-    /// Every simple row's control line.
-    static let controlHeight: CGFloat = Field.height
-    static let rowGap: CGFloat = 20
-}
-
-// MARK: - Layout pieces
-
-/// A section: its small label, an optional sentence, then its rows.
-struct PageSection<Content: View>: View {
-    let title: String
-    var detail: String? = nil
-    @ViewBuilder var content: () -> Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            AutoSectionLabel(title: title)
-            if let detail {
-                Text(detail)
-                    .font(.btCallout)
-                    .foregroundStyle(Color.btTextTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.bottom, Space.xs)
-            }
-            VStack(alignment: .leading, spacing: ProjectPage.rowGap) { content() }
-                .padding(.top, Space.xs)
+    /// The rail's column (or none) and the page's, centred together.
+    private func columns<Leading: View, Content: View>(rail: Bool, @ViewBuilder leading: () -> Leading,
+                                                      @ViewBuilder content: () -> Content) -> some View {
+        HStack(alignment: .top, spacing: ProjectPage.railGap) {
+            if rail { leading().frame(width: ProjectPage.railWidth, alignment: .topLeading) }
+            content().frame(maxWidth: ProjectPage.width, alignment: .leading)
         }
-        .padding(.top, 40)
+        .frame(maxWidth: (rail ? ProjectPage.railWidth + ProjectPage.railGap : 0) + ProjectPage.width)
+        .padding(.horizontal, Space.xxl)
+        .frame(maxWidth: .infinity)
     }
-}
 
-/// Label (and what it does) on the left, the control on the right.
-private struct SettingRow<Control: View>: View {
-    let title: String
-    var detail: String? = nil
-    @ViewBuilder var control: () -> Control
-
-    var body: some View {
-        HStack(alignment: .top, spacing: ProjectPage.columnGap) {
-            RowLabel(title: title, detail: detail)
-                .frame(width: ProjectPage.labelWidth, alignment: .leading)
-            control()
-                .frame(maxWidth: .infinity, minHeight: ProjectPage.controlHeight, alignment: .topLeading)
+    /// Everything this page stores for the project. Reordering the sidebar
+    /// isn't a save here, and nor is a server's tool list being refreshed.
+    private func saved(_ project: Project) -> SavedState {
+        var p = project
+        p.sortOrder = 0
+        let servers = model.toolServers(for: project.id).map { server in
+            var s = server
+            s.tools = []
+            s.listedAt = nil
+            s.listError = nil
+            return s
         }
+        let links = model.projectIssueTrackers(project.id).linked.map { "\($0.tracker.pluginId)=\($0.link.title)" }
+        return SavedState(project: p, rules: model.permissionRules(for: project.id), servers: servers, links: links)
+    }
+
+    private struct SavedState: Equatable {
+        let project: Project
+        let rules: [PermissionRule]
+        let servers: [ProjectToolServer]
+        let links: [String]
     }
 }
 
-/// A row whose editor takes the page's full width, under its label.
-private struct StackedSetting<Editor: View>: View {
-    let title: String
-    var detail: String? = nil
-    @ViewBuilder var editor: () -> Editor
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Space.sm) {
-            RowLabel(title: title, detail: detail, centred: false)
-            editor()
-        }
-    }
-}
-
-private struct RowLabel: View {
-    let title: String
-    let detail: String?
-    /// The title sits level with a 30 pt control beside it.
-    var centred = true
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(title)
-                .font(.btBody)
-                .foregroundStyle(Color.btText)
-                .frame(minHeight: centred ? ProjectPage.controlHeight : 0, alignment: .leading)
-            if let detail {
-                Text(detail)
-                    .font(.btCallout)
-                    .foregroundStyle(Color.btTextTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, centred ? -5 : 0)
-            }
-        }
-    }
-}
-
-/// A path or remote as it reads: mono, muted, cut in the middle when long.
-struct PathText: View {
-    let text: String
-    var quiet = false
-
-    var body: some View {
-        Text(text)
-            .font(BTFont.mono(12))
-            .foregroundStyle(quiet ? Color.btTextTertiary : Color.btTextSecondary)
-            .lineLimit(1)
-            .truncationMode(.middle)
-            .textSelection(.enabled)
-            .help(text)
-    }
-}
+// MARK: - Shared pieces
 
 /// Text that stores itself after a short pause, and follows the stored
 /// value when it changes somewhere else.
@@ -224,6 +194,7 @@ private struct ValueButton: View {
         Button(action: action) { Image(systemName: symbol) }
             .buttonStyle(.icon(size: 24))
             .help(help)
+            .accessibilityLabel(help)
     }
 }
 
@@ -243,127 +214,53 @@ private func chooseFolder(message: String, prompt: String, startingAt path: Stri
 
 // MARK: - Header
 
+/// The project itself: its icon and name (both changed in place), its
+/// remote, and the tracker projects it links to.
 private struct ProjectHeader: View {
-    @Environment(AppModel.self) private var model
-    let project: Project
-    let owner: String?
-
-    var body: some View {
-        HStack(alignment: .center, spacing: Space.md) {
-            ProjectIconView(project: project, owner: owner, size: 36)
-            Text(project.name)
-                .font(BTFont.ui(24, .semibold))
-                .foregroundStyle(Color.btText)
-                .lineLimit(1)
-                .truncationMode(.tail)
-            // The tracker projects it links to (ABS-143).
-            ForEach(model.projectIssueTrackers(project.id).linked) { item in
-                HStack(spacing: 5) {
-                    TrackerGlyph(pluginId: item.tracker.pluginId, size: 13)
-                    Text(item.link.title).font(.btCallout).lineLimit(1)
-                }
-                .foregroundStyle(Color.btTextSecondary)
-                .help("Linked to \(item.link.title) in \(item.tracker.title)")
-            }
-            Spacer(minLength: Space.lg)
-            DeviceMenu(project: project)
-        }
-    }
-}
-
-/// Where the project's new chats run: this Mac, or a paired Mac. The
-/// Launcher pre-selects it; a Mac that isn't connected falls back to
-/// this one there, with a note saying so.
-private struct DeviceMenu: View {
-    @Environment(AppModel.self) private var model
-    let project: Project
-    @State private var hovering = false
-
-    private var name: String {
-        guard let id = project.defaultDeviceId else { return "This Mac" }
-        return model.remote.paired.first { $0.id == id }?.peer.name ?? "A paired Mac"
-    }
-
-    var body: some View {
-        Menu {
-            Picker("Device", selection: Binding(get: { project.defaultDeviceId },
-                                                set: { id in model.updateProject(project.id) { $0.defaultDeviceId = id } })) {
-                Label("This Mac", systemImage: "laptopcomputer").tag(String?.none)
-                ForEach(model.remote.paired) { device in
-                    Label(device.peer.name, systemImage: "desktopcomputer").tag(Optional(device.id))
-                }
-                if let id = project.defaultDeviceId, !model.remote.paired.contains(where: { $0.id == id }) {
-                    Label("A Mac that isn't paired anymore", systemImage: "desktopcomputer").tag(Optional(id))
-                }
-            }
-            .pickerStyle(.inline)
-            .labelsHidden()
-            Divider()
-            Text("New chats for this project start on this Mac.")
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: project.defaultDeviceId == nil ? "laptopcomputer" : "desktopcomputer").font(.system(size: 11, weight: .regular))
-                Text(name).font(.btCallout.weight(.medium))
-                Image(systemName: "chevron.down").font(.system(size: 7.5, weight: .bold)).foregroundStyle(Color.btTextTertiary)
-            }
-            .foregroundStyle(Color.btTextSecondary)
-            .padding(.horizontal, 7)
-            .frame(height: 26)
-            .background(hovering ? Color.btHover : .clear, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-            .contentShape(Rectangle())
-        }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .onHover { hovering = $0 }
-        .padding(.trailing, -7)
-        .help("Where this project's new chats run")
-    }
-}
-
-// MARK: - General
-
-private struct GeneralSection: View {
     @Environment(AppModel.self) private var model
     let project: Project
     let origin: String?
     let owner: String?
-    @State private var name: String
-
-    init(project: Project, origin: String?, owner: String?) {
-        self.project = project
-        self.origin = origin
-        self.owner = owner
-        _name = State(initialValue: project.name)
-    }
+    let savedTick: Int
+    /// Set when the window is too narrow for the rail.
+    let jump: ((ProjectSettingsSection) -> Void)?
 
     var body: some View {
-        PageSection(title: "General") {
-            SettingRow(title: "Name") {
-                BTTextField("Name", text: $name, prompt: "Project name")
-                    .frame(maxWidth: 320)
-                    .autosave($name, stored: project.name, normalize: trimmed) { model.renameProject(project.id, to: $0) }
+        HStack(alignment: .center, spacing: Space.lg) {
+            ProjectIconButton(project: project, owner: owner, size: 52)
+            VStack(alignment: .leading, spacing: 5) {
+                NameField(project: project)
+                HStack(spacing: Space.md) {
+                    remote
+                    // The tracker projects it links to (ABS-143).
+                    ForEach(model.projectIssueTrackers(project.id).linked) { item in
+                        HStack(spacing: 5) {
+                            TrackerGlyph(pluginId: item.tracker.pluginId, size: 12)
+                            Text(item.link.title).font(.btCallout).lineLimit(1)
+                        }
+                        .foregroundStyle(Color.btTextSecondary)
+                        .help("Linked to \(item.link.title) in \(item.tracker.title)")
+                    }
+                }
+                .frame(minHeight: 24)
             }
-            SettingRow(title: "Repository") {
-                repository.frame(minHeight: ProjectPage.controlHeight)
-            }
-            SettingRow(title: "Icon",
-                       detail: "Pick an icon and a color, or upload a custom image. Defaults to the linked GitHub owner's avatar.") {
-                ProjectIconButton(project: project, owner: owner)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .trailing, spacing: Space.xs) {
+                if let jump { ProjectSettingsJumpMenu(jump: jump).padding(.trailing, -Chip.inset) }
+                SavedBadge(tick: savedTick)
             }
         }
     }
 
     @ViewBuilder
-    private var repository: some View {
+    private var remote: some View {
         switch origin {
         case nil:
-            Color.clear.frame(width: 1, height: 1)
+            Text("github.com/owner/repository").font(BTFont.mono(12)).redacted(reason: .placeholder)
         case ""?:
-            Text("No origin remote").font(.btBody).foregroundStyle(Color.btTextTertiary)
+            Text("No remote").font(.btCallout).foregroundStyle(Color.btTextTertiary)
         case let url?:
-            HStack(spacing: Space.xs) {
+            HStack(spacing: Space.xxs) {
                 PathText(text: url)
                 if let web = GitRemote.webURL(url) {
                     ValueButton(symbol: "arrow.up.right", help: "Open \(web.host ?? "it") in your browser") {
@@ -375,101 +272,55 @@ private struct GeneralSection: View {
     }
 }
 
-// MARK: - Branches & naming
-
-private struct BranchSection: View {
+/// The project's name as the page's title, edited where it stands.
+private struct NameField: View {
     @Environment(AppModel.self) private var model
     let project: Project
-    @State private var customPrefix: String
-    /// Custom stays chosen while its field is being edited, even empty.
-    @State private var choosingCustom = false
-    @State private var instructions: String
+    @State private var name: String
+    @State private var hovering = false
+    @FocusState private var focused: Bool
 
     init(project: Project) {
         self.project = project
-        _customPrefix = State(initialValue: project.branchPrefix ?? "")
-        _instructions = State(initialValue: project.namingInstructions ?? "")
-    }
-
-    private enum Mode: Hashable { case global, none, custom }
-
-    private var mode: Mode {
-        if choosingCustom { return .custom }
-        switch project.branchPrefix {
-        case nil: return .global
-        case ""?: return .none
-        default: return .custom
-        }
+        _name = State(initialValue: project.name)
     }
 
     var body: some View {
-        PageSection(title: "Branches & naming") {
-            SettingRow(title: "Branch prefix", detail: "Put in front of each new branch in this project.") {
-                VStack(alignment: .leading, spacing: Space.xs) {
-                    HStack(spacing: Space.sm) {
-                        SentenceMenu(title: title) {
-                            Picker("Branch prefix", selection: Binding(get: { mode }, set: { choose($0) })) {
-                                Text("Use Global Default (\(model.branchPrefix.isEmpty ? "none" : model.branchPrefix))").tag(Mode.global)
-                                Text("No Prefix").tag(Mode.none)
-                                Text("Custom…").tag(Mode.custom)
-                            }
-                            .pickerStyle(.inline)
-                            .labelsHidden()
-                        }
-                        .padding(.leading, -Chip.inset)
-                        if mode == .custom {
-                            BTTextField("Prefix", text: $customPrefix, prompt: "e.g. wes/", mono: true)
-                                .frame(width: 180)
-                                .autosave($customPrefix, stored: project.branchPrefix ?? "",
-                                          normalize: { $0.trimmingCharacters(in: .whitespaces) }) { value in
-                                    model.updateProject(project.id) { $0.branchPrefix = value.trimmingCharacters(in: .whitespaces) }
-                                }
-                        }
-                    }
-                    .frame(minHeight: ProjectPage.controlHeight)
-                    if mode == .custom, let warning = BranchPrefixCheck.warning(customPrefix) {
-                        Label(warning, systemImage: "exclamationmark.triangle")
-                            .font(.btCallout)
-                            .foregroundStyle(Color.btWarning)
-                    }
+        let shape = RoundedRectangle(cornerRadius: 7, style: .continuous)
+        TextField("Name", text: $name, prompt: Text("Project name"))
+            .textFieldStyle(.plain)
+            .font(.btTitle)
+            // At rest the name is drawn by the label over it, which can end
+            // in "…"; the field's own text shows only while it's edited.
+            .foregroundStyle(focused ? Color.btText : .clear)
+            .overlay(alignment: .leading) {
+                if !focused {
+                    Text(name)
+                        .font(.btTitle)
+                        .foregroundStyle(Color.btText)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
                 }
             }
-            StackedSetting(title: "Naming instructions",
-                           detail: "Guides chat titles and branch names for every agent. Commit messages come from your agent's own instructions (AGENTS.md or CLAUDE.md) and from the chat title.") {
-                GrowingEditor(text: $instructions,
-                             placeholder: "e.g. Start branches with fix/ or feat/. Keep titles short, in sentence case.",
-                             minHeight: 76)
-                    .autosave($instructions, stored: project.namingInstructions ?? "", delay: .milliseconds(800),
-                              normalize: trimmed) { value in
-                        model.updateProject(project.id) { $0.namingInstructions = trimmed(value).isEmpty ? nil : trimmed(value) }
-                    }
+            .focused($focused)
+            .onSubmit { focused = false }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(focused ? Color.btField : hovering ? Color.btHover : .clear, in: shape)
+            .overlay(shape.strokeBorder(focused ? Color.btFieldBorderFocused : .clear, lineWidth: 1))
+            .padding(.leading, -6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .onHover { hovering = $0 }
+            .animation(.snappy(duration: 0.12), value: focused)
+            .help(name.isEmpty ? "Rename the project" : "Rename “\(name)”")
+            .accessibilityLabel("Project name")
+            .autosave($name, stored: project.name, normalize: trimmed) { model.renameProject(project.id, to: $0) }
+            // A project keeps a name: leaving it empty puts the old one back.
+            .onChange(of: focused) { _, now in
+                if !now, trimmed(name).isEmpty { name = project.name }
             }
-        }
-    }
-
-    private var title: String {
-        switch mode {
-        case .global: "Global default (\(model.branchPrefix.isEmpty ? "none" : model.branchPrefix))"
-        case .none: "No prefix"
-        case .custom: "Custom"
-        }
-    }
-
-    private func choose(_ new: Mode) {
-        switch new {
-        case .global:
-            choosingCustom = false
-            model.updateProject(project.id) { $0.branchPrefix = nil }
-        case .none:
-            choosingCustom = false
-            model.updateProject(project.id) { $0.branchPrefix = "" }
-        case .custom:
-            choosingCustom = true
-            if (project.branchPrefix ?? "").isEmpty {
-                customPrefix = model.branchPrefix
-                model.updateProject(project.id) { $0.branchPrefix = model.branchPrefix }
-            }
-        }
     }
 }
 
@@ -479,17 +330,11 @@ private struct BranchSection: View {
 private struct NewChatSection: View {
     @Environment(AppModel.self) private var model
     let project: Project
-    @State private var baseRef: String
-
-    init(project: Project) {
-        self.project = project
-        _baseRef = State(initialValue: project.defaultBaseRef)
-    }
 
     var body: some View {
-        PageSection(title: "New chats", detail: "What a chat started in this project begins with. You can still change each one when you start it.") {
-            SettingRow(title: "Agent") {
-                VStack(alignment: .leading, spacing: Space.xs) {
+        PageSection(section: .chats) {
+            SettingsCard {
+                CardRow(title: "Agent", warning: missingAgent) {
                     SentenceMenu(title: ProviderRegistry.name(project.defaultProviderId), logo: project.defaultProviderId) {
                         Picker("Agent", selection: Binding(get: { project.defaultProviderId },
                                                            set: { id in model.updateProject(project.id) { $0.defaultProviderId = id } })) {
@@ -505,79 +350,82 @@ private struct NewChatSection: View {
                         .pickerStyle(.inline)
                         .labelsHidden()
                     }
-                    .padding(.leading, -Chip.inset)
-                    .frame(minHeight: ProjectPage.controlHeight)
-                    if model.providerStatus[project.defaultProviderId]?.available == false {
-                        Label("\(ProviderRegistry.name(project.defaultProviderId)) wasn't found on this Mac. Set its path in Settings › Agents.",
-                              systemImage: "exclamationmark.triangle")
-                            .font(.btCallout)
-                            .foregroundStyle(Color.btWarning)
+                    .padding(.trailing, -Chip.inset)
+                }
+                CardRow(title: "Runs on", detail: "The Mac its new chats start on. One that isn't connected falls back to this Mac.") {
+                    DeviceMenu(project: project).padding(.trailing, -Chip.inset)
+                }
+                if !model.profiles.isEmpty {
+                    CardRow(title: "Profiles", detail: "The saved setups the New Chat window offers here.",
+                            info: "Profiles are saved setups of agent, model, permissions and instructions. Manage them in Settings › Profiles.") {
+                        ProfilesChip(project: project).padding(.trailing, -Chip.inset)
                     }
                 }
-            }
-            SettingRow(title: "Permissions", detail: project.defaultPermissionPolicy.detail) {
-                SentenceMenu(title: project.defaultPermissionPolicy.title) {
-                    ForEach(PermissionPolicy.autonomyCases, id: \.self) { p in
-                        Toggle(isOn: Binding(get: { project.defaultPermissionPolicy == p },
-                                             set: { _ in model.updateProject(project.id) { $0.defaultPermissionPolicy = p } })) {
-                            Text(p.title)
-                            Text(p.detail)
-                        }
-                    }
-                }
-                .padding(.leading, -Chip.inset)
-                .frame(minHeight: ProjectPage.controlHeight)
-            }
-            if !model.profiles.isEmpty {
-                SettingRow(title: "Profiles", detail: "The saved setups the New Chat window offers in this project. Manage them in Settings › Profiles.") {
-                    VStack(alignment: .leading, spacing: Space.xs) {
-                        ForEach(model.profiles) { profile in
-                            Toggle(profile.name, isOn: Binding(
-                                get: { project.profileIds?.contains(profile.id) ?? true },
-                                set: { on in offer(profile.id, on) }))
-                        }
-                    }
-                    .frame(minHeight: ProjectPage.controlHeight)
+                CardRow(title: "Code history",
+                        detail: project.agentHistoryEnabled ? "Agents can look up what earlier chats here decided."
+                                                            : "Agents get no history of earlier chats here.",
+                        info: "Before changing code, an agent can look up what earlier chats in this project were asked, corrected and decided about it, and is told to follow those decisions.") {
+                    Toggle(isOn: Binding(get: { project.agentHistoryEnabled },
+                                         set: { on in model.updateProject(project.id) { $0.agentHistory = on } })) { EmptyView() }
+                        .toggleStyle(QuietSwitchStyle())
+                        .accessibilityLabel("Give agents the history of the code they change")
                 }
             }
-            SettingRow(title: "Code history",
-                       detail: project.agentHistoryEnabled
-                           ? "Before changing code, an agent can look up what earlier chats in this project were asked, corrected and decided about it, and is told to follow those decisions."
-                           : "Agents get no history of earlier chats in this project.") {
-                Toggle("Give agents the history of the code they change", isOn: Binding(
-                    get: { project.agentHistoryEnabled },
-                    set: { on in model.updateProject(project.id) { $0.agentHistory = on } }))
-                    .frame(minHeight: ProjectPage.controlHeight)
-            }
-            let tools = model.pluginTools(in: project)
-            if !tools.isEmpty {
-                SettingRow(title: "Plugin tools",
-                           detail: "Tools your plugins give this project's agents. Ask first shows each call in the chat for you to allow; Off leaves it out from the agent's next turn.") {
-                    VStack(alignment: .leading, spacing: Space.xs) {
-                        ForEach(tools, id: \.key) { tool in
-                            SentenceMenu(title: "\(tool.label): \(tool.mode.title)") {
-                                ForEach(PluginToolMode.allCases, id: \.self) { mode in
-                                    Toggle(isOn: Binding(get: { tool.mode == mode },
-                                                         set: { _ in model.setPluginToolMode(project.id, tool, mode) })) {
-                                        Text(mode.title)
-                                        Text(mode.detail)
-                                    }
-                                }
-                            }
-                            .help(tool.tool.description)
-                            .padding(.leading, -Chip.inset)
-                        }
-                    }
-                    .frame(minHeight: ProjectPage.controlHeight)
+        }
+    }
+
+    private var missingAgent: String? {
+        guard model.providerStatus[project.defaultProviderId]?.available == false else { return nil }
+        return "\(ProviderRegistry.name(project.defaultProviderId)) wasn't found on this Mac. Set its path in Settings › Agents."
+    }
+}
+
+/// Where the project's new chats run: this Mac, or a paired Mac. The
+/// Launcher pre-selects it; a Mac that isn't connected falls back to
+/// this one there, with a note saying so.
+private struct DeviceMenu: View {
+    @Environment(AppModel.self) private var model
+    let project: Project
+
+    private var name: String {
+        guard let id = project.defaultDeviceId else { return "This Mac" }
+        return model.remote.paired.first { $0.id == id }?.peer.name ?? "A paired Mac"
+    }
+
+    var body: some View {
+        SentenceMenu(title: name) {
+            Picker("Device", selection: Binding(get: { project.defaultDeviceId },
+                                                set: { id in model.updateProject(project.id) { $0.defaultDeviceId = id } })) {
+                Label("This Mac", systemImage: "laptopcomputer").tag(String?.none)
+                ForEach(model.remote.paired) { device in
+                    Label(device.peer.name, systemImage: "desktopcomputer").tag(Optional(device.id))
+                }
+                if let id = project.defaultDeviceId, !model.remote.paired.contains(where: { $0.id == id }) {
+                    Label("A Mac that isn't paired anymore", systemImage: "desktopcomputer").tag(Optional(id))
                 }
             }
-            SettingRow(title: "Branch from", detail: "The branch or commit each new chat's worktree starts from.") {
-                BTTextField("Branch from", text: $baseRef, prompt: "HEAD", mono: true)
-                    .frame(maxWidth: 240)
-                    .autosave($baseRef, stored: project.defaultBaseRef, normalize: trimmed) { value in
-                        guard let ref = Project.baseRef(typed: value) else { return }
-                        model.updateProject(project.id) { $0.defaultBaseRef = ref }
-                    }
+            .pickerStyle(.inline)
+            .labelsHidden()
+        }
+        .help("Where this project's new chats run")
+    }
+}
+
+/// "3 of 4 offered", opening the list of profiles to turn on and off.
+private struct ProfilesChip: View {
+    @Environment(AppModel.self) private var model
+    let project: Project
+
+    var body: some View {
+        let offered = model.profiles.filter { project.profileIds?.contains($0.id) ?? true }.count
+        let title = offered == model.profiles.count ? "All offered" : "\(offered) of \(model.profiles.count) offered"
+        SentencePopover(title: title) { _ in
+            PopoverList {
+                ForEach(model.profiles) { profile in
+                    Toggle(profile.name, isOn: Binding(
+                        get: { project.profileIds?.contains(profile.id) ?? true },
+                        set: { on in offer(profile.id, on) }))
+                }
             }
         }
     }
@@ -595,70 +443,11 @@ private struct NewChatSection: View {
     }
 }
 
-/// The library skills this project's chats get (ABS-122), chosen from
-/// Settings › Skills, and the ones its own files hold.
-private struct SkillsSection: View {
-    @Environment(AppModel.self) private var model
-    let project: Project
-
-    var body: some View {
-        PageSection(title: "Skills", detail: detail) {
-            let sources = model.skillSources.map { ($0, model.skills(in: $0.id)) }.filter { !$0.1.isEmpty }
-            if sources.isEmpty {
-                Text("The skill library is empty. Add a folder or a GitHub repository of skills in Settings › Skills.")
-                    .font(.btCallout)
-                    .foregroundStyle(Color.btTextTertiary)
-            }
-            ForEach(sources, id: \.0.id) { source, skills in
-                SettingRow(title: source.title,
-                           detail: source.kind == .github ? "GitHub, pinned to \(source.commit.map { String($0.prefix(7)) } ?? "?")" : "A folder on this Mac") {
-                    VStack(alignment: .leading, spacing: Space.xs) {
-                        ForEach(skills) { skill in
-                            Toggle(skill.name, isOn: Binding(
-                                get: { project.assignedSkills.contains(skill.id) },
-                                set: { on in model.setSkill(skill.id, assigned: on, projectId: project.id) }))
-                                .help(skill.description ?? skill.name)
-                        }
-                    }
-                    .frame(minHeight: ProjectPage.controlHeight)
-                }
-            }
-            let own = model.projectSkills(project.id)
-            if !own.isEmpty {
-                SettingRow(title: "In this project", detail: "Kept in the project's own files. Agents that read their folder already use them.") {
-                    Text(own.map(\.name).joined(separator: ", "))
-                        .font(.btBody)
-                        .foregroundStyle(Color.btTextSecondary)
-                        .frame(minHeight: ProjectPage.controlHeight, alignment: .leading)
-                }
-            }
-        }
-        .onAppear { model.reloadSkills() }
-    }
-
-    /// Who gets them, and who can't.
-    private var detail: String {
-        let unable = ProviderRegistry.all.filter { $0.skillDelivery == nil }.map(\.name)
-        let base = "Every chat in this project gets the skills chosen here when its agent starts; a profile can add more. Removing one leaves it out of chats that start after."
-        return unable.isEmpty ? base : base + " \(unable.joined(separator: ", ")) can't take skills, so its chats run without them."
-    }
-}
-
-/// What git won't take in a branch prefix.
-enum BranchPrefixCheck {
-    static func warning(_ prefix: String) -> String? {
-        if prefix.contains(where: \.isWhitespace) { return "Branch names can't contain spaces." }
-        if prefix.contains("..") || prefix.contains("~") || prefix.contains("^") || prefix.contains(":") || prefix.contains("\\") {
-            return "Git doesn't allow .., ~, ^, : or \\ in branch names."
-        }
-        return nil
-    }
-}
-
 // MARK: - Permissions
 
-/// The permission answers remembered for this project. Each rule answers
-/// matching requests in every chat; deleting one brings the card back.
+/// The policy new chats start with, and the answers remembered for this
+/// project. Each rule answers matching requests in every chat; deleting
+/// one brings the card back.
 private struct PermissionsSection: View {
     @Environment(AppModel.self) private var model
     let project: Project
@@ -667,26 +456,43 @@ private struct PermissionsSection: View {
     @State private var adding = false
 
     var body: some View {
-        PageSection(title: "Permissions",
-                    detail: "Answers you've told Abstract to remember for this project. A request matching a rule is answered for you, and its row in the chat names the rule. A deny rule beats an allow rule.") {
-            let rules = model.permissionRules(for: project.id)
-            if rules.isEmpty {
-                Text("No rules yet. When an agent asks for permission, choose “Always Allow in This Project…” or “Always Deny in This Project…” from its menu.")
-                    .font(.btBody).foregroundStyle(Color.btTextTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            ForEach(rules) { rule in
-                HStack(spacing: Space.sm) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        PathText(text: rule.pattern)
-                        Text(detail(rule)).font(.btCallout).foregroundStyle(Color.btTextTertiary)
+        PageSection(section: .permissions) {
+            SettingsCard {
+                CardRow(title: "New chats start with", detail: project.defaultPermissionPolicy.detail) {
+                    SentenceMenu(title: project.defaultPermissionPolicy.title) {
+                        ForEach(PermissionPolicy.autonomyCases, id: \.self) { p in
+                            Toggle(isOn: Binding(get: { project.defaultPermissionPolicy == p },
+                                                 set: { _ in model.updateProject(project.id) { $0.defaultPermissionPolicy = p } })) {
+                                Text(p.title)
+                                Text(p.detail)
+                            }
+                        }
                     }
-                    Spacer(minLength: Space.md)
-                    Button("Edit") { editing = rule }.buttonStyle(.bt(.ghost, size: .small))
-                    Button("Delete") { model.deletePermissionRule(rule) }.buttonStyle(.bt(.ghost, size: .small))
+                    .padding(.trailing, -Chip.inset)
                 }
             }
-            Button("Add a Rule…") { adding = true }.buttonStyle(.bt(.ghost, size: .small))
+            CardGroup(title: "Remembered rules",
+                      info: "A request matching a rule is answered for you, and its row in the chat names the rule. A deny rule beats an allow rule.") {
+                SettingsCard {
+                    let rules = model.permissionRules(for: project.id)
+                    if rules.isEmpty {
+                        CardEmptyRow("No rules yet. When an agent asks for permission, choose “Always Allow in This Project…” or “Always Deny in This Project…” from its menu.")
+                    }
+                    ForEach(rules) { rule in
+                        CardItemRow(title: rule.pattern, monoTitle: true, meta: detail(rule)) {
+                            Image(systemName: rule.decision == .allow ? "checkmark.circle" : "nosign")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(rule.decision == .allow ? Color.btAdded : Color.btRemoved)
+                                .frame(width: 16)
+                                .accessibilityLabel(rule.decision.title)
+                        } actions: {
+                            Button("Edit…") { editing = rule }
+                            Button("Delete", role: .destructive) { model.deletePermissionRule(rule) }
+                        }
+                    }
+                    CardAddRow(title: "Add a Rule…") { adding = true }
+                }
+            }
         }
         .sheet(isPresented: $adding) {
             PermissionRuleSheet(projectId: project.id, seed: PermissionRuleSeed())
@@ -706,12 +512,17 @@ private struct PermissionsSection: View {
     }
 }
 
-// MARK: - Location & checkout
+// MARK: - Git
 
-private struct LocationSection: View {
+/// The repository on this Mac, and how each chat's worktree and branch are
+/// made: where it starts, its prefix, its folder, what it checks out, and
+/// how chats and branches are named.
+private struct GitSection: View {
     @Environment(AppModel.self) private var model
     let project: Project
+    @State private var baseRef: String
     @State private var sparse: String
+    @State private var instructions: String
     @State private var moving = false
     @State private var locationError: String?
 
@@ -720,54 +531,71 @@ private struct LocationSection: View {
 
     init(project: Project) {
         self.project = project
+        _baseRef = State(initialValue: project.defaultBaseRef)
         _sparse = State(initialValue: project.sparseCheckout.joined(separator: "\n"))
+        _instructions = State(initialValue: project.namingInstructions ?? "")
     }
 
     private var home: String { model.executor.homeDirectory }
 
     var body: some View {
-        PageSection(title: "Location & checkout") {
-            SettingRow(title: "Location", detail: "The repository on this Mac. Choose its new folder if you moved it.") {
-                VStack(alignment: .leading, spacing: Space.xs) {
+        PageSection(section: .git) {
+            SettingsCard {
+                CardRow(title: "Repository", detail: "Its folder on this Mac. Choose the new one if you moved it.", error: locationError) {
                     HStack(spacing: Space.xs) {
                         PathText(text: AppModel.abbreviated(project.rootPath, home: home))
                         if moving { ProgressView().controlSize(.mini) }
                         ValueButton(symbol: "folder", help: "Choose the repository's folder…", action: relocate)
                             .disabled(moving)
                     }
-                    .frame(minHeight: ProjectPage.controlHeight)
-                    if let locationError {
-                        Text(locationError)
-                            .font(.btCallout)
-                            .foregroundStyle(Color.btRemoved)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .textSelection(.enabled)
-                    }
                 }
-            }
-            SettingRow(title: "Worktrees", detail: "Where this project's new worktrees are created.") {
-                HStack(spacing: Space.xs) {
-                    if let template = project.worktreeTemplate {
-                        PathText(text: displayed(template))
-                        ValueButton(symbol: "folder", help: "Choose another folder…", action: chooseWorktreeFolder)
-                        Button("Use Global Default") { model.updateProject(project.id) { $0.worktreeTemplate = nil } }
-                            .buttonStyle(.bt(.ghost, size: .small))
-                    } else {
-                        Text("Global default").font(.btBody).foregroundStyle(Color.btTextTertiary).fixedSize()
-                        PathText(text: displayed(model.worktreeTemplate), quiet: true)
-                            .padding(.leading, Space.xs)
+                CardRow(title: "Branch from", detail: "The branch or commit each new chat's worktree starts from.") {
+                    BTTextField("Branch from", text: $baseRef, prompt: "HEAD", mono: true)
+                        .frame(width: 200)
+                        .autosave($baseRef, stored: project.defaultBaseRef, normalize: trimmed) { value in
+                            guard let ref = Project.baseRef(typed: value) else { return }
+                            model.updateProject(project.id) { $0.defaultBaseRef = ref }
+                        }
+                }
+                BranchPrefixRow(project: project)
+                CardRow(title: "Worktrees",
+                        detail: project.worktreeTemplate == nil ? "Where new worktrees go: the global default."
+                                                                : "Where new worktrees go: this project's own folder.") {
+                    HStack(spacing: Space.xs) {
+                        PathText(text: displayed(project.worktreeTemplate ?? model.worktreeTemplate),
+                                 quiet: project.worktreeTemplate == nil)
                         ValueButton(symbol: "folder", help: "Choose a folder for this project's worktrees…", action: chooseWorktreeFolder)
+                        if project.worktreeTemplate != nil {
+                            ValueButton(symbol: "arrow.uturn.backward", help: "Use the global default") {
+                                model.updateProject(project.id) { $0.worktreeTemplate = nil }
+                            }
+                        }
                     }
                 }
-                .frame(minHeight: ProjectPage.controlHeight)
             }
-            StackedSetting(title: "Sparse checkout",
-                           detail: "Folders new worktrees check out, one per line, relative to the repository root. Files at the root are always included. Empty checks out everything.") {
-                GrowingEditor(text: $sparse, placeholder: "apps/web\npackages/ui", mono: true, minHeight: 76)
-                    .autosave($sparse, stored: project.sparseCheckout.joined(separator: "\n"), delay: .milliseconds(800),
-                              normalize: { SparseCheckout.parse($0).joined(separator: "\n") }) { value in
-                        model.updateProject(project.id) { $0.sparseCheckout = SparseCheckout.parse(value) }
-                    }
+            SettingsCard {
+                CardStackedRow(title: "Sparse checkout",
+                               detail: "Folders new worktrees check out, one per line. Empty checks out everything.",
+                               info: "Paths are relative to the repository root. Files at the root are always included.") {
+                    GrowingEditor(text: $sparse, placeholder: "apps/web\npackages/ui", mono: true, minHeight: 76)
+                        .autosave($sparse, stored: project.sparseCheckout.joined(separator: "\n"), delay: .milliseconds(800),
+                                  normalize: { SparseCheckout.parse($0).joined(separator: "\n") }) { value in
+                            model.updateProject(project.id) { $0.sparseCheckout = SparseCheckout.parse(value) }
+                        }
+                }
+            }
+            SettingsCard {
+                CardStackedRow(title: "Naming instructions",
+                               detail: "Guides chat titles and branch names for every agent.",
+                               info: "Commit messages come from your agent's own instructions (AGENTS.md or CLAUDE.md) and from the chat title.") {
+                    GrowingEditor(text: $instructions,
+                                  placeholder: "e.g. Start branches with fix/ or feat/. Keep titles short, in sentence case.",
+                                  minHeight: 76)
+                        .autosave($instructions, stored: project.namingInstructions ?? "", delay: .milliseconds(800),
+                                  normalize: trimmed) { value in
+                            model.updateProject(project.id) { $0.namingInstructions = trimmed(value).isEmpty ? nil : trimmed(value) }
+                        }
+                }
             }
         }
     }
@@ -805,7 +633,207 @@ private struct LocationSection: View {
     }
 }
 
-// MARK: - Lifecycle scripts
+/// The global prefix, none, or one of this project's own.
+private struct BranchPrefixRow: View {
+    @Environment(AppModel.self) private var model
+    let project: Project
+    @State private var customPrefix: String
+    /// Custom stays chosen while its field is being edited, even empty.
+    @State private var choosingCustom = false
+
+    init(project: Project) {
+        self.project = project
+        _customPrefix = State(initialValue: project.branchPrefix ?? "")
+    }
+
+    private enum Mode: Hashable { case global, none, custom }
+
+    private var mode: Mode {
+        if choosingCustom { return .custom }
+        switch project.branchPrefix {
+        case nil: return .global
+        case ""?: return .none
+        default: return .custom
+        }
+    }
+
+    var body: some View {
+        CardRow(title: "Branch prefix", detail: "Put in front of each new branch in this project.",
+                warning: mode == .custom ? BranchPrefixCheck.warning(customPrefix) : nil) {
+            HStack(spacing: Space.sm) {
+                if mode == .custom {
+                    BTTextField("Prefix", text: $customPrefix, prompt: "e.g. wes/", mono: true)
+                        .frame(width: 140)
+                        // The draft may be stale: the prefix can change while the
+                        // field is hidden (another device, the Launcher). Without
+                        // this, the empty draft would be saved over it.
+                        .onAppear { if !choosingCustom { customPrefix = project.branchPrefix ?? "" } }
+                        .autosave($customPrefix, stored: project.branchPrefix ?? "",
+                                  normalize: { $0.trimmingCharacters(in: .whitespaces) }) { value in
+                            model.updateProject(project.id) { $0.branchPrefix = value.trimmingCharacters(in: .whitespaces) }
+                        }
+                }
+                SentenceMenu(title: title) {
+                    Picker("Branch prefix", selection: Binding(get: { mode }, set: { choose($0) })) {
+                        Text("Use Global Default (\(model.branchPrefix.isEmpty ? "none" : model.branchPrefix))").tag(Mode.global)
+                        Text("No Prefix").tag(Mode.none)
+                        Text("Custom…").tag(Mode.custom)
+                    }
+                    .pickerStyle(.inline)
+                    .labelsHidden()
+                }
+                .padding(.trailing, -Chip.inset)
+            }
+        }
+    }
+
+    private var title: String {
+        switch mode {
+        case .global: "Global default (\(model.branchPrefix.isEmpty ? "none" : model.branchPrefix))"
+        case .none: "No prefix"
+        case .custom: "Custom"
+        }
+    }
+
+    private func choose(_ new: Mode) {
+        switch new {
+        case .global:
+            choosingCustom = false
+            model.updateProject(project.id) { $0.branchPrefix = nil }
+        case .none:
+            choosingCustom = false
+            model.updateProject(project.id) { $0.branchPrefix = "" }
+        case .custom:
+            choosingCustom = true
+            if (project.branchPrefix ?? "").isEmpty {
+                customPrefix = model.branchPrefix
+                model.updateProject(project.id) { $0.branchPrefix = model.branchPrefix }
+            }
+        }
+    }
+}
+
+/// What git won't take in a branch prefix.
+enum BranchPrefixCheck {
+    static func warning(_ prefix: String) -> String? {
+        if prefix.contains(where: \.isWhitespace) { return "Branch names can't contain spaces." }
+        if prefix.contains("..") || prefix.contains("~") || prefix.contains("^") || prefix.contains(":") || prefix.contains("\\") {
+            return "Git doesn't allow .., ~, ^, : or \\ in branch names."
+        }
+        return nil
+    }
+}
+
+// MARK: - Agent context
+
+/// What the project's agents get beside their own setup: skills, MCP
+/// servers, plugin tools and the issue tracker.
+private struct ContextSection: View {
+    let project: Project
+
+    var body: some View {
+        PageSection(section: .context) {
+            SkillsGroup(project: project)
+            ToolsGroup(project: project)
+            PluginToolsGroup(project: project)
+            IssueTrackerGroup(project: project)
+        }
+    }
+}
+
+/// The library skills this project's chats get (ABS-122), chosen from
+/// Settings › Skills, and the ones its own files hold.
+private struct SkillsGroup: View {
+    @Environment(AppModel.self) private var model
+    let project: Project
+
+    var body: some View {
+        CardGroup(title: "Skills", info: info) {
+            SettingsCard {
+                let sources = model.skillSources.map { ($0, model.skills(in: $0.id)) }.filter { !$0.1.isEmpty }
+                if sources.isEmpty {
+                    CardEmptyRow("The skill library is empty. Add a folder or a GitHub repository of skills in Settings › Skills.")
+                }
+                ForEach(sources, id: \.0.id) { source, skills in
+                    CardRow(title: source.title,
+                            detail: source.kind == .github ? "GitHub, pinned to \(source.commit.map { String($0.prefix(7)) } ?? "?")"
+                                                           : "A folder on this Mac") {
+                        SkillsChip(project: project, skills: skills).padding(.trailing, -Chip.inset)
+                    }
+                }
+                let own = model.projectSkills(project.id)
+                if !own.isEmpty {
+                    CardRow(title: "In this project's files", detail: own.map(\.name).joined(separator: ", "),
+                            info: "Kept in the project's own files. Agents that read their folder already use them.")
+                }
+            }
+        }
+        .onAppear { model.reloadSkills() }
+    }
+
+    /// Who gets them, and who can't.
+    private var info: String {
+        let unable = ProviderRegistry.all.filter { $0.skillDelivery == nil }.map(\.name)
+        let base = "Every chat in this project gets the skills chosen here when its agent starts; a profile can add more. Removing one leaves it out of chats that start after."
+        return unable.isEmpty ? base : base + " \(unable.joined(separator: ", ")) can't take skills, so its chats run without them."
+    }
+}
+
+/// "2 of 9 on", opening one source's skills to turn on and off.
+private struct SkillsChip: View {
+    @Environment(AppModel.self) private var model
+    let project: Project
+    let skills: [LibrarySkill]
+
+    var body: some View {
+        let on = skills.filter { project.assignedSkills.contains($0.id) }.count
+        let title = on == 0 ? "None on" : on == skills.count ? "All \(on) on" : "\(on) of \(skills.count) on"
+        SentencePopover(title: title, quiet: on == 0) { _ in
+            PopoverList {
+                ForEach(skills) { skill in
+                    Toggle(skill.name, isOn: Binding(
+                        get: { project.assignedSkills.contains(skill.id) },
+                        set: { assigned in model.setSkill(skill.id, assigned: assigned, projectId: project.id) }))
+                        .help(skill.description ?? skill.name)
+                }
+            }
+        }
+    }
+}
+
+/// Tools plugins give this project's agents, each on, asking first, or off.
+private struct PluginToolsGroup: View {
+    @Environment(AppModel.self) private var model
+    let project: Project
+
+    var body: some View {
+        let tools = model.pluginTools(in: project)
+        if !tools.isEmpty {
+            CardGroup(title: "Plugin tools",
+                      info: "Tools your plugins give this project's agents. Ask first shows each call in the chat for you to allow; Off leaves it out from the agent's next turn.") {
+                SettingsCard {
+                    ForEach(tools, id: \.key) { tool in
+                        CardRow(title: tool.label) {
+                            SentenceMenu(title: tool.mode.title) {
+                                ForEach(PluginToolMode.allCases, id: \.self) { mode in
+                                    Toggle(isOn: Binding(get: { tool.mode == mode },
+                                                         set: { _ in model.setPluginToolMode(project.id, tool, mode) })) {
+                                        Text(mode.title)
+                                        Text(mode.detail)
+                                    }
+                                }
+                            }
+                            .padding(.trailing, -Chip.inset)
+                        }
+                        .help(tool.tool.description)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Scripts
 
 private enum ScriptKind: String, CaseIterable, Hashable {
     case setup, teardown, run
@@ -869,16 +897,17 @@ private struct ScriptsSection: View {
     @AppStorage("projectSettings.scriptTab") private var tab: ScriptKind = .setup
 
     var body: some View {
-        PageSection(title: "Lifecycle scripts", detail: "Commands run for workspace setup, teardown, and the Run button.") {
-            VStack(alignment: .leading, spacing: Space.sm) {
+        PageSection(section: .scripts) {
+            SettingsCard {
                 HStack(spacing: Space.sm) {
                     PageTabs(selection: $tab, items: ScriptKind.allCases.map { .init(value: $0, title: $0.title) })
                     Spacer(minLength: Space.sm)
                     Button("Import…", action: importFile)
                         .buttonStyle(.bt(.ghost, size: .small))
-                        .padding(.trailing, -9)
                         .help("Load a script file into the \(tab.title.lowercased()) script")
                 }
+                .padding(.horizontal, ProjectPage.rowInset)
+                .padding(.vertical, Space.sm)
                 ScriptEditor(project: project, kind: tab).id(tab)
             }
         }
@@ -934,6 +963,8 @@ private struct ScriptEditor: View {
                     model.updateProject(project.id) { kind.set(&$0, stored.isEmpty ? nil : stored) }
                 }
         }
+        .padding(.horizontal, ProjectPage.rowInset)
+        .padding(.vertical, Space.md)
     }
 }
 
@@ -945,12 +976,13 @@ private struct DangerSection: View {
     @State private var confirming = false
 
     var body: some View {
-        PageSection(title: "Danger zone") {
-            SettingRow(title: "Delete project", detail: "Removes \(project.name) and its chats from Abstract.") {
-                Button("Delete Project…") { confirming = true }
-                    .buttonStyle(.bt(.danger, size: .small))
-                    .padding(.leading, -9)
-                    .frame(minHeight: ProjectPage.controlHeight)
+        PageSection(section: .danger) {
+            SettingsCard(tone: .danger) {
+                CardRow(title: "Delete project",
+                        detail: "Removes \(project.name) and its chats from Abstract. The repository and its worktrees stay on disk.") {
+                    Button("Delete Project…") { confirming = true }
+                        .buttonStyle(.bt(.danger, size: .small))
+                }
             }
         }
         .alert("Remove \(project.name) from Abstract?", isPresented: $confirming) {

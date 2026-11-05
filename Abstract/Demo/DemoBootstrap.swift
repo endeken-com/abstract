@@ -75,6 +75,7 @@ final class DemoBootstrap {
         FileSearchProbe.runIfRequested(model)
         ReviewFindProbe.runIfRequested(model)
         IssueTrackerProbe.runIfRequested(model)
+        ProjectSettingsProbe.runIfRequested(model)
         BulkDeleteProbe.runIfRequested(model)
         NavigationProbe.runIfRequested(model, repo: abstract)
 
