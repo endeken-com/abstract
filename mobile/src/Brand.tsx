@@ -22,13 +22,13 @@ export function BrandLogo({ height = 44, color }: { height?: number; color: stri
 
 // A short trace of both contours. The pale full outline keeps the state legible
 // while the stroke resets; Reduce Motion shows the complete static outline.
-export function BrandLoadingIndicator({ size = 'small', color = '#fff', style }: {
-  size?: 'small' | 'large' | number; color?: string; style?: StyleProp<ViewStyle>;
+export function BrandLoadingIndicator({ size = 'small', color = '#fff', style, active = true, decorative = false }: {
+  size?: 'small' | 'large' | number; color?: string; style?: StyleProp<ViewStyle>; active?: boolean; decorative?: boolean;
 }) {
   const reduceMotion = useReduceMotion();
   const phase = useRef(new Animated.Value(0)).current;
   useEffect(() => {
-    if (reduceMotion) { phase.setValue(1); return; }
+    if (reduceMotion || !active) { phase.setValue(1); return; }
     phase.setValue(0);
     const animation = Animated.loop(Animated.sequence([
       Animated.timing(phase, { toValue: 1, duration: 1150, useNativeDriver: false }),
@@ -36,15 +36,16 @@ export function BrandLoadingIndicator({ size = 'small', color = '#fff', style }:
     ]));
     animation.start();
     return () => animation.stop();
-  }, [phase, reduceMotion]);
+  }, [phase, reduceMotion, active]);
   const dimension = typeof size === 'number' ? size : size === 'large' ? 28 : 18;
-  return <View style={style} accessible accessibilityRole="progressbar" accessibilityLabel="Loading">
+  const strokeWidth = dimension < 16 ? 3.5 : 2.5;
+  return <View style={style} accessible={!decorative} accessibilityRole={decorative ? undefined : 'progressbar'} accessibilityLabel={decorative ? undefined : 'Loading'}>
     <Svg width={dimension * 0.89} height={dimension} viewBox="0 0 39.862 44.737">
-      <Path d={markLeft} fill="none" stroke={color} strokeOpacity={0.22} strokeWidth={2.5} strokeLinejoin="round" />
-      <Path d={markRight} fill="none" stroke={color} strokeOpacity={0.22} strokeWidth={2.5} strokeLinejoin="round" />
-      <AnimatedPath d={markLeft} fill="none" stroke={color} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"
+      <Path d={markLeft} fill="none" stroke={color} strokeOpacity={0.22} strokeWidth={strokeWidth} strokeLinejoin="round" />
+      <Path d={markRight} fill="none" stroke={color} strokeOpacity={0.22} strokeWidth={strokeWidth} strokeLinejoin="round" />
+      <AnimatedPath d={markLeft} fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round"
         strokeDasharray="79 79" strokeDashoffset={phase.interpolate({ inputRange: [0, 1], outputRange: [79, 0] })} />
-      <AnimatedPath d={markRight} fill="none" stroke={color} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"
+      <AnimatedPath d={markRight} fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round"
         strokeDasharray="105 105" strokeDashoffset={phase.interpolate({ inputRange: [0, 1], outputRange: [105, 0] })} />
     </Svg>
   </View>;
