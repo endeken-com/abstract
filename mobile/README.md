@@ -20,26 +20,14 @@ Run a Mac build with this remote protocol, then turn on Settings → Remote → 
 
 Mobile releases are independent of Mac releases. GitHub Actions builds and signs iOS, then uploads the archive to **App Store Connect** for TestFlight. The checked-in `ios/Abstract.xcworkspace` and `Abstract` scheme are used directly. The workflow runs only when manually dispatched from `main`; its version input sets the iOS marketing version, and the unique GitHub run ID sets the build number. It does not submit the app for App Review or alter the Mac release process.
 
-For the first iPhone upload:
+For the first iPhone upload, use Safari on your phone if you are away from your Mac:
 
-1. In Apple Developer, register the explicit App ID `sh.abstract.mobile` for team `4732X99X72` and create an **Apple Distribution** certificate plus an **App Store Connect** provisioning profile for that ID. Export the certificate **with its private key** as a password-protected `.p12` file. Do not use the Mac app's Developer ID certificate.
-2. In App Store Connect, create the iOS app record for `sh.abstract.mobile` and create a team API key with at least the **App Manager** role. Download its `.p8` file and record its key ID and issuer ID. Apple only lets you download the private key once.
-3. The GitHub `mobile-ios` environment is restricted to `main`, and its `APPLE_TEAM_ID=4732X99X72` variable is configured. Add these environment secrets:
-
-   | Secret | Value |
-   | --- | --- |
-   | `IOS_DISTRIBUTION_P12_BASE64` | Base64 encoding of the `.p12` file |
-   | `IOS_DISTRIBUTION_P12_PASSWORD` | Password used to export the `.p12` |
-   | `IOS_PROVISIONING_PROFILE_BASE64` | Base64 encoding of the `.mobileprovision` file |
-   | `APP_STORE_CONNECT_KEY_ID` | API key ID |
-   | `APP_STORE_CONNECT_ISSUER_ID` | API issuer ID |
-   | `APP_STORE_CONNECT_API_KEY_P8` | Full contents of the downloaded `.p8` file |
-
-   On macOS, create the two base64 values with `base64 < certificate.p12 | tr -d '\n'` and `base64 < profile.mobileprovision | tr -d '\n'`. Paste the output directly into the corresponding GitHub environment secret.
-
+1. In [Apple Developer Identifiers](https://developer.apple.com/account/resources/identifiers/list), make sure the explicit iOS App ID `sh.abstract.mobile` is registered for team `4732X99X72`. Register it if it is absent.
+2. In [App Store Connect Apps](https://appstoreconnect.apple.com/apps), create a new **iOS** app record for that bundle ID. Use the intended App Store name, a primary language, and an internal SKU such as `sh.abstract.mobile`. The Account Holder must accept any pending Apple agreements before an app can be added. Apple requires this first record to be created on the website; its API cannot create new apps.
+3. The GitHub `release` environment already has the team ID and App Store Connect API key used for Mac notarization. The iPhone workflow tries that key for Xcode automatic signing and upload, so no local `.p12` or provisioning profile export is needed. If Apple rejects its permissions, an Account Holder or Admin can create a team API key with signing and upload access and add `IOS_APP_STORE_KEY_ID`, `IOS_APP_STORE_ISSUER_ID`, and `IOS_APP_STORE_KEY_P8` as `release` environment secrets. Those three secrets override the notarization key for iPhone builds without changing Mac releases.
 4. After this workflow is merged into `main`, run **Actions → iPhone App Store → Run workflow** on `main` with the App Store version, such as `1.0.0`. Wait for App Store Connect to process the upload, then assign the build to TestFlight testers there. Complete the store listing, privacy and export-compliance questions, screenshots, and review information in App Store Connect before manually submitting the tested build for App Review.
 
-Keep the `.p12`, `.mobileprovision`, and `.p8` out of the repository. Renew the certificate and profile secrets when they expire. The older Xcode Cloud post-clone script remains available for local/Xcode Cloud use but is not part of GitHub deployment.
+Xcode Cloud's post-clone script remains available but is not part of GitHub deployment.
 
 Android builds in GitHub Actions. Configure the `mobile-android` environment with `ANDROID_KEYSTORE_BASE64` (base64 encoded upload keystore), `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`, and `PLAY_SERVICE_ACCOUNT_JSON` (Google Play Developer API service account JSON). Create the app and an initial release in Play Console. Run Actions → Mobile with `publish_android=true` and choose a track; the workflow prebuilds Android, signs an AAB, uploads the artifact, and publishes it to Google Play. Its version code comes from the GitHub run number. Android and iOS store workflows do not change the Mac app's version or release process.
 
