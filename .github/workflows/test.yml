@@ -47,15 +47,19 @@ jobs:
 
       # Tests that wait on processes against a deadline run on their own first:
       # alongside the git-heavy suites, the 3-core runner starves them past it.
-      # The plugin command's socket deadline needs its own test process.
+      # The plugin command, side processes, and OpenCode compaction each need
+      # their own test process.
       - name: AbstractCore tests
         working-directory: Packages/AbstractCore
         env:
           TIMED: LocalExecutorTests|ClaudeModelCatalogTests|ProjectSettingsTests|ChatNamingTests|SetupScriptTests
+          ISOLATED: SideProcessTests|OpenCodeCompactionTests
         run: |
           swift test --filter PluginToolsCommandTests
+          swift test --filter SideProcessTests
+          swift test --filter OpenCodeCompactionTests
           swift test --filter "$TIMED"
-          swift test --skip "$TIMED|PluginToolsCommandTests"
+          swift test --skip "$TIMED|$ISOLATED|PluginToolsCommandTests"
 
   apple-transport:
     runs-on: macos-26
