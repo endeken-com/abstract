@@ -24,7 +24,7 @@ For the first iPhone upload:
 
 1. In Apple Developer, register the explicit App ID `sh.abstract.mobile` for team `4732X99X72` and create an **Apple Distribution** certificate plus an **App Store Connect** provisioning profile for that ID. Export the certificate **with its private key** as a password-protected `.p12` file. Do not use the Mac app's Developer ID certificate.
 2. In App Store Connect, create the iOS app record for `sh.abstract.mobile` and create a team API key with at least the **App Manager** role. Download its `.p8` file and record its key ID and issuer ID. Apple only lets you download the private key once.
-3. The GitHub `mobile-ios` environment and its `APPLE_TEAM_ID=4732X99X72` variable are already configured. Add these environment secrets:
+3. The GitHub `mobile-ios` environment is restricted to `main`, and its `APPLE_TEAM_ID=4732X99X72` variable is configured. Add these environment secrets:
 
    | Secret | Value |
    | --- | --- |
