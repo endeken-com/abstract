@@ -287,9 +287,13 @@ struct SettingsView: View {
                 .tracking(0.8)
                 .foregroundStyle(Color.btTextTertiary)
                 .padding(.bottom, Space.xs)
-            Text(tab.title)
-                .font(.btTitle)
-                .foregroundStyle(Color.btText)
+            HStack(alignment: .center) {
+                Text(tab.title)
+                    .font(.btTitle)
+                    .foregroundStyle(Color.btText)
+                Spacer()
+                if tab == .skills { SkillsAddButton() }
+            }
             Text(tab.subtitle)
                 .font(.btBody)
                 .foregroundStyle(Color.btTextSecondary)
