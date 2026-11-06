@@ -6,61 +6,105 @@ import AbstractCore
 /// step starts by itself.
 struct WorkflowsSettingsPane: View {
     @Environment(AppModel.self) private var model
+    let split: Bool
     @State private var selectedId: String?
 
     private var selected: Workflow? { model.workflow(selectedId) ?? model.workflows.first }
 
     var body: some View {
-        Form {
-            Section {
-                if model.workflows.isEmpty {
-                    VStack(alignment: .leading, spacing: Space.xs) {
-                        Text("No workflows yet.").foregroundStyle(Color.btText)
-                        Text("Start from one below, or add a blank one and pick its steps.")
-                            .font(.btCaption)
-                            .foregroundStyle(Color.btTextSecondary)
-                    }
-                    .padding(.vertical, Space.xs)
-                }
-                ForEach(model.workflows) { workflow in
-                    SettingsListRow(value: workflow.iconValue, context: .workflow,
-                                    title: workflow.name.isEmpty ? "Workflow" : workflow.name,
-                                    detail: summary(workflow),
-                                    selected: selected?.id == workflow.id) { selectedId = workflow.id }
-                }
-            } header: {
-                HStack {
-                    Text("Workflows")
-                    Spacer()
-                    Menu {
-                        Button("Blank Workflow") { selectedId = model.addWorkflow().id }
-                        Section("Start From") {
-                            ForEach(WorkflowTemplate.all) { template in
-                                Button {
-                                    selectedId = model.addWorkflow(from: template).id
-                                } label: {
-                                    Text(template.name)
-                                    Text(template.detail)
-                                }
-                            }
+        Group {
+            if split {
+                HStack(spacing: 0) {
+                    VStack(spacing: 0) {
+                        HStack {
+                            Text("\(model.workflows.count) \(model.workflows.count == 1 ? "workflow" : "workflows")")
+                                .font(.btBodyMedium)
+                                .foregroundStyle(Color.btText)
+                            Spacer()
+                            addButton
                         }
-                    } label: {
-                        Label("Add Workflow", systemImage: "plus")
+                        .padding(Space.md)
+                        Rectangle().fill(Color.btBorder).frame(height: 1)
+                        ScrollView {
+                            LazyVStack(alignment: .leading, spacing: Space.xs) {
+                                listRows
+                            }
+                            .padding(Space.md)
+                        }
+                        .btThinScrollIndicator()
                     }
-                    .menuStyle(.button)
-                    .buttonStyle(.bt(.ghost, size: .small))
-                    .fixedSize()
+                    .frame(width: 252)
+                    .background(Color.btSidebar)
+                    Rectangle().fill(Color.btBorder).frame(width: 1)
+                    Form { editorSection }
+                        .settingsScrollablePane()
+                        .frame(maxWidth: .infinity)
                 }
-            } footer: {
-                SettingsCaption("Choose a workflow in the New Chat window, or have an automation follow one. Each step hands the chat to its profile, which picks up where the last step left off; another agent gets a handover first. A step can wait for you before the next one starts.")
-            }
-
-            if let selected {
-                WorkflowEditor(workflow: selected, onDelete: { delete(selected) })
-                    .id(selected.id)
+            } else {
+                Form {
+                    Section {
+                        listRows
+                    } header: {
+                        HStack {
+                            Text("Workflows")
+                            Spacer()
+                            addButton
+                        }
+                    } footer: {
+                        SettingsCaption("Use a workflow in a new chat or automation. Each step hands the chat to a profile; steps can wait for you before continuing.")
+                    }
+                    .id("workflows.list")
+                    editorSection
+                }
+                .settingsScrollablePane()
             }
         }
-        .settingsPane()
+    }
+
+    @ViewBuilder
+    private var listRows: some View {
+        if model.workflows.isEmpty {
+            VStack(alignment: .leading, spacing: Space.xs) {
+                Text("No workflows yet").foregroundStyle(Color.btText)
+                SettingsCaption("Start from a template or add a blank workflow.")
+            }
+            .padding(.vertical, Space.sm)
+        }
+        ForEach(model.workflows) { workflow in
+            SettingsListRow(value: workflow.iconValue, context: .workflow,
+                            title: workflow.name.isEmpty ? "Workflow" : workflow.name,
+                            detail: summary(workflow),
+                            selected: selected?.id == workflow.id) { selectedId = workflow.id }
+        }
+    }
+
+    private var addButton: some View {
+        Menu {
+            Button("Blank Workflow") { selectedId = model.addWorkflow().id }
+            Section("Start From") {
+                ForEach(WorkflowTemplate.all) { template in
+                    Button {
+                        selectedId = model.addWorkflow(from: template).id
+                    } label: {
+                        Text(template.name)
+                        Text(template.detail)
+                    }
+                }
+            }
+        } label: {
+            Label("Add Workflow", systemImage: "plus")
+        }
+        .menuStyle(.button)
+        .buttonStyle(.bt(.ghost, size: .small))
+        .fixedSize()
+    }
+
+    @ViewBuilder
+    private var editorSection: some View {
+        if let selected {
+            WorkflowEditor(workflow: selected, onDelete: { delete(selected) })
+                .id(selected.id)
+        }
     }
 
     /// "UI Researcher → Implementer → Reviewer"
@@ -175,7 +219,6 @@ private struct WorkflowStepRow: View {
     let step: WorkflowStep
     let update: ((inout Workflow) -> Void) -> Void
     @FocusState private var promptFocused: Bool
-    @State private var hovering = false
 
     private var isLast: Bool { index == workflow.steps.count - 1 }
 
@@ -213,11 +256,11 @@ private struct WorkflowStepRow: View {
                     .font(.btBody)
                     .focused($promptFocused)
                     .btField()
+                    .accessibilityLabel("Prompt for step \(index + 1)")
             }
         }
         .padding(.vertical, Space.xs)
         .contentShape(Rectangle())
-        .onHover { hovering = $0 }
     }
 
     private var profilePicker: some View {
@@ -235,6 +278,7 @@ private struct WorkflowStepRow: View {
         }
         .labelsHidden()
         .fixedSize()
+        .accessibilityLabel("Profile for step \(index + 1)")
     }
 
     @ViewBuilder
@@ -250,29 +294,32 @@ private struct WorkflowStepRow: View {
             .labelsHidden()
             .fixedSize()
             .help(step.advance.detail)
+            .accessibilityLabel("After step \(index + 1)")
         }
     }
 
     private var controls: some View {
         HStack(spacing: 2) {
             Button { move(by: -1) } label: { Image(systemName: "arrow.up").font(.system(size: 10.5, weight: .semibold)) }
-                .buttonStyle(.icon(size: 22))
+                .buttonStyle(.icon(size: 26))
                 .disabled(index == 0)
                 .help("Move up")
+                .accessibilityLabel("Move step \(index + 1) up")
             Button { move(by: 1) } label: { Image(systemName: "arrow.down").font(.system(size: 10.5, weight: .semibold)) }
-                .buttonStyle(.icon(size: 22))
+                .buttonStyle(.icon(size: 26))
                 .disabled(isLast)
                 .help("Move down")
+                .accessibilityLabel("Move step \(index + 1) down")
             Button {
                 let id = step.id
                 update { $0.steps.removeAll { $0.id == id } }
             } label: {
                 Image(systemName: "xmark").font(.system(size: 10, weight: .semibold))
             }
-            .buttonStyle(.icon(size: 22))
+            .buttonStyle(.icon(size: 26))
             .help("Remove step")
+            .accessibilityLabel("Remove step \(index + 1)")
         }
-        .opacity(hovering || promptFocused ? 1 : 0.35)
     }
 
     private func move(by offset: Int) {

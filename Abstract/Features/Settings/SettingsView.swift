@@ -81,15 +81,15 @@ enum SettingsTab: String, CaseIterable, Identifiable {
     }
 
     func matches(_ query: String) -> Bool {
-        let words = query.lowercased().split(separator: " ")
+        let words = query.lowercased().split(whereSeparator: \.isWhitespace)
         let haystack = "\(title) \(keywords)".lowercased()
         return words.allSatisfy { haystack.contains($0) }
     }
 
     /// The sidebar's groups, in order.
     static let groups: [(title: String, tabs: [SettingsTab])] = [
-        ("Personal", [.appearance, .notifications, .usage]),
-        ("Projects", [.general, .worktrees, .integrations, .plugins]),
+        ("App", [.general, .appearance, .notifications, .usage]),
+        ("Projects", [.worktrees, .integrations, .plugins]),
         ("Agents", [.agents, .profiles, .workflows, .skills]),
         ("System", [.devices, .advanced]),
     ]
@@ -106,10 +106,15 @@ struct SettingsView: View {
     @Environment(AppModel.self) private var model
     @AppStorage("settingsTab") private var tab: SettingsTab = .general
     @State private var query = ""
+    @State private var requestedAnchor: String?
+    @State private var pluginFilter: PluginGalleryItem.ViewFilter = .all
+    private var hasSearchQuery: Bool { !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
     var body: some View {
         GeometryReader { geo in
             let compact = SettingsLayout.usesCompactNavigation(at: geo.size.width)
+            let panelWidth = min(max(geo.size.width - (compact ? 24 : 64), 0), SettingsLayout.panelWidth)
+            let sidebarWidth: CGFloat = geo.size.width < 1000 ? 184 : 204
             ZStack {
                 Color.black.opacity(0.18)
                     .ignoresSafeArea()
@@ -120,21 +125,21 @@ struct SettingsView: View {
                         VStack(spacing: 0) {
                             compactNavigation
                             Rectangle().fill(Color.btBorder).frame(height: 1)
-                            detail
+                            detail(availableWidth: panelWidth)
                         }
                     } else {
                         HStack(spacing: 0) {
                             sidebar
-                                .frame(width: geo.size.width < 1000 ? 184 : 204)
+                                .frame(width: sidebarWidth)
                                 .frame(maxHeight: .infinity, alignment: .top)
                                 .background(Color.btSidebar)
                             Rectangle().fill(Color.btBorder).frame(width: 1)
-                            detail
+                            detail(availableWidth: panelWidth - sidebarWidth - 1)
                                 .overlay(alignment: .topTrailing) { closeButton.padding(Space.md) }
                         }
                     }
                 }
-                .frame(width: min(max(geo.size.width - (compact ? 24 : 64), 0), SettingsLayout.panelWidth),
+                .frame(width: panelWidth,
                        height: max(geo.size.height - (compact ? 24 : 64), 0))
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .btRaised(radius: 14)
@@ -148,23 +153,66 @@ struct SettingsView: View {
         }
         .focusable()
         .focusEffectDisabled()
+        #if DEBUG
+        .task {
+            if DemoBootstrap.current != nil,
+               let search = ProcessInfo.processInfo.environment["ABSTRACT_DEMO_SETTINGS_SEARCH_QUERY"] {
+                query = search
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("DemoOpenSettingsSearchResult"))) { _ in
+            if DemoBootstrap.current != nil { openFirstSearchResult() }
+        }
+        #endif
     }
 
-    private var detail: some View {
+    private func detail(availableWidth: CGFloat) -> some View {
         VStack(spacing: 0) {
             // Above the scroll view, not in it: a grouped form
             // stacked with anything else in a scroll view sends
             // layout round and round.
-            header
-            Rectangle().fill(Color.btBorder).frame(height: 1)
-            ScrollView {
-                pane
-                    .frame(maxWidth: SettingsLayout.rowWidth + 2 * SettingsLayout.margin)
-                    .frame(maxWidth: .infinity, alignment: .top)
-                    .padding(.bottom, Space.xl)
+            if !hasSearchQuery {
+                header
+            } else {
+                searchHeader
             }
-            .id(tab)
-            .btThinScrollIndicator()
+            Rectangle().fill(Color.btBorder).frame(height: 1)
+            if !hasSearchQuery && availableWidth >= SettingsLayout.splitEditorWidth && (tab == .profiles || tab == .workflows) {
+                pane(split: true)
+            } else if !hasSearchQuery && tab != .plugins && tab != .usage {
+                ScrollViewReader { proxy in
+                    pane(split: false)
+                        .frame(maxWidth: SettingsLayout.rowWidth + 2 * SettingsLayout.margin)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                        .task(id: requestedAnchor) {
+                            guard let requestedAnchor else { return }
+                            try? await Task.sleep(for: .milliseconds(120))
+                            proxy.scrollTo(requestedAnchor, anchor: .top)
+                            self.requestedAnchor = nil
+                        }
+                }
+            } else {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        if !hasSearchQuery {
+                            pane(split: false)
+                                .frame(maxWidth: SettingsLayout.rowWidth + 2 * SettingsLayout.margin)
+                                .frame(maxWidth: .infinity, alignment: .top)
+                                .padding(.bottom, Space.xl)
+                        } else {
+                            searchResults
+                        }
+                    }
+                    .id(hasSearchQuery ? "search" : tab.rawValue)
+                    .btThinScrollIndicator()
+                    .task(id: "\(tab.rawValue)|\(hasSearchQuery)|\(requestedAnchor ?? "")") {
+                        guard let requestedAnchor, !hasSearchQuery else { return }
+                        try? await Task.sleep(for: .milliseconds(120))
+                        proxy.scrollTo(requestedAnchor, anchor: .top)
+                        self.requestedAnchor = nil
+                    }
+                }
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.btCanvas)
@@ -177,7 +225,7 @@ struct SettingsView: View {
                     ForEach(visibleGroups, id: \.title) { group in
                         Section(group.title) {
                             ForEach(group.tabs) { item in
-                                Button { tab = item } label: {
+                                Button { select(item) } label: {
                                     Label(item.title, systemImage: item.symbol)
                                 }
                             }
@@ -199,9 +247,7 @@ struct SettingsView: View {
                 Spacer()
                 closeButton
             }
-            SettingsSearchField(query: $query) {
-                if let first = visibleGroups.first?.tabs.first { tab = first }
-            }
+            SettingsSearchField(query: $query, submit: openFirstSearchResult)
         }
         .padding(.horizontal, Space.lg)
         .padding(.vertical, Space.sm)
@@ -224,9 +270,7 @@ struct SettingsView: View {
                 .foregroundStyle(Color.btText)
                 .padding(.horizontal, Rail.rowPadding)
                 .padding(.bottom, Space.md)
-            SettingsSearchField(query: $query) {
-                if let first = visibleGroups.first?.tabs.first { tab = first }
-            }
+            SettingsSearchField(query: $query, submit: openFirstSearchResult)
             .padding(.bottom, Space.xs)
             ScrollView {
                 VStack(alignment: .leading, spacing: 1) {
@@ -239,7 +283,7 @@ struct SettingsView: View {
                             .padding(.top, Space.lg)
                             .padding(.bottom, Space.xs)
                         ForEach(group.tabs) { item in
-                            Button { tab = item } label: {
+                            Button { select(item) } label: {
                                 HStack(spacing: 8) {
                                     Image(systemName: item.symbol)
                                         .font(.system(size: 12, weight: .medium))
@@ -271,22 +315,42 @@ struct SettingsView: View {
     }
 
     private var visibleGroups: [(title: String, tabs: [SettingsTab])] {
-        let query = query.trimmingCharacters(in: .whitespaces)
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return SettingsTab.groups }
+        let matchingTabs = Set(SettingsSearchIndex.results(for: query).map(\.tab))
         return SettingsTab.groups.compactMap { group in
-            let tabs = group.tabs.filter { $0.matches(query) }
+            let tabs = group.tabs.filter { matchingTabs.contains($0) }
             return tabs.isEmpty ? nil : (group.title, tabs)
+        }
+    }
+
+    private func select(_ item: SettingsTab) {
+        tab = item
+        query = ""
+        requestedAnchor = nil
+    }
+
+    private func openFirstSearchResult() {
+        guard let first = SettingsSearchIndex.results(for: query).first else { return }
+        open(first)
+    }
+
+    private func open(_ item: SettingsSearchItem) {
+        if item.tab == .plugins { pluginFilter = item.opensInstalledPlugins ? .installed : .all }
+        tab = item.tab
+        query = ""
+        requestedAnchor = nil
+        guard item.tab != .profiles && item.tab != .workflows, let anchor = item.anchor else { return }
+        Task { @MainActor in
+            await Task.yield()
+            guard tab == item.tab, query.isEmpty else { return }
+            requestedAnchor = anchor
         }
     }
 
     /// The pane's title and what it's for, lined up with the form below.
     private var header: some View {
         VStack(alignment: .leading, spacing: Space.xs) {
-            Text((tab.groupTitle == tab.title ? "Settings" : tab.groupTitle).uppercased())
-                .font(.btSectionLabel)
-                .tracking(0.8)
-                .foregroundStyle(Color.btTextTertiary)
-                .padding(.bottom, Space.xs)
             HStack(alignment: .center) {
                 Text(tab.title)
                     .font(.btTitle)
@@ -302,12 +366,77 @@ struct SettingsView: View {
         .frame(maxWidth: SettingsLayout.rowWidth - 2 * SettingsLayout.textInset, alignment: .leading)
         .padding(.horizontal, SettingsLayout.margin + SettingsLayout.textInset)
         .frame(maxWidth: .infinity)
-        .padding(.top, Space.xxl)
+        .padding(.top, Space.xl)
         .padding(.bottom, Space.lg)
     }
 
+    private var searchHeader: some View {
+        VStack(alignment: .leading, spacing: Space.xs) {
+            Text("Search settings")
+                .font(.btTitle)
+                .foregroundStyle(Color.btText)
+            Text("Choose a result to open its setting.")
+                .font(.btBody)
+                .foregroundStyle(Color.btTextSecondary)
+        }
+        .frame(maxWidth: SettingsLayout.rowWidth - 2 * SettingsLayout.textInset, alignment: .leading)
+        .padding(.horizontal, SettingsLayout.margin + SettingsLayout.textInset)
+        .frame(maxWidth: .infinity)
+        .padding(.top, Space.xl)
+        .padding(.bottom, Space.lg)
+    }
+
+    private var searchResults: some View {
+        let results = SettingsSearchIndex.results(for: query)
+        return VStack(alignment: .leading, spacing: Space.sm) {
+            if results.isEmpty {
+                EmptyStateView(symbol: "magnifyingglass", title: "No settings found",
+                               message: "Try another setting name or a related word.")
+                    .frame(minHeight: 220)
+            } else {
+                Text("\(results.count) \(results.count == 1 ? "result" : "results")")
+                    .font(.btCaption)
+                    .foregroundStyle(Color.btTextSecondary)
+                    .padding(.bottom, Space.xs)
+                ForEach(results) { item in
+                    Button {
+                        open(item)
+                    } label: {
+                        HStack(spacing: Space.md) {
+                            Image(systemName: item.tab.symbol)
+                                .font(.system(size: 14))
+                                .foregroundStyle(Color.btTextSecondary)
+                                .frame(width: 20)
+                            VStack(alignment: .leading, spacing: Space.xs) {
+                                Text(item.title).font(.btBodyMedium).foregroundStyle(Color.btText)
+                                Text(item.detail).font(.btCaption).foregroundStyle(Color.btTextSecondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Text(item.tab.title).font(.btCaption).foregroundStyle(Color.btTextTertiary)
+                            }
+                            Spacer(minLength: Space.sm)
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(Color.btTextTertiary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(Space.md)
+                        .background(Color.btSurface, in: RoundedRectangle(cornerRadius: Radius.md, style: .continuous))
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(item.title), \(item.tab.title)")
+                    .accessibilityHint(item.detail)
+                }
+            }
+        }
+        .frame(maxWidth: SettingsLayout.rowWidth, alignment: .leading)
+        .padding(.horizontal, SettingsLayout.margin)
+        .padding(.vertical, Space.lg)
+        .frame(maxWidth: .infinity)
+    }
+
     @ViewBuilder
-    private var pane: some View {
+    private func pane(split: Bool) -> some View {
         switch tab {
         case .appearance: AppearanceSettingsPane()
         case .notifications: NotificationSettingsPane()
@@ -315,11 +444,11 @@ struct SettingsView: View {
         case .general: GeneralSettingsPane()
         case .worktrees: WorktreeSettingsPane()
         case .agents: AgentSettingsPane()
-        case .profiles: ProfilesSettingsPane()
-        case .workflows: WorkflowsSettingsPane()
+        case .profiles: ProfilesSettingsPane(split: split)
+        case .workflows: WorkflowsSettingsPane(split: split)
         case .skills: SkillsSettingsPane()
         case .integrations: IntegrationsSettingsPane()
-        case .plugins: PluginsSettingsPane()
+        case .plugins: PluginsSettingsPane(selectedView: $pluginFilter)
         case .devices: DevicesSettingsPane()
         case .usage: UsageSettingsPane()
         }
@@ -336,6 +465,7 @@ enum SettingsLayout {
     static let rowWidth: CGFloat = 704
     static let margin: CGFloat = 20
     static let textInset: CGFloat = 10
+    static let splitEditorWidth: CGFloat = 800
     // Keep a readable form beside the sidebar; a narrow form uses the menu.
     static func usesCompactNavigation(at windowWidth: CGFloat) -> Bool {
         windowWidth - 64 - 184 < rowWidth + 2 * margin
@@ -353,16 +483,18 @@ private struct SettingsSearchField: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 11))
                 .foregroundStyle(Color.btTextTertiary)
-            TextField("Search", text: $query)
+            TextField("Search settings", text: $query)
                 .textFieldStyle(.plain)
                 .font(BTFont.ui(13))
                 .focused($focused)
                 .onSubmit(submit)
+                .accessibilityLabel("Search settings")
             if !query.isEmpty {
                 Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }
                     .buttonStyle(.plain)
                     .foregroundStyle(Color.btTextTertiary)
                     .help("Clear")
+                    .accessibilityLabel("Clear search")
             }
         }
         .padding(.horizontal, 8)
@@ -372,13 +504,10 @@ private struct SettingsSearchField: View {
 }
 
 extension View {
-    /// A grouped settings form that sizes to its content; the Settings panel
-    /// scrolls around it.
-    func settingsPane() -> some View {
+    /// A grouped form that owns its scroll area in a list/detail settings pane.
+    func settingsScrollablePane() -> some View {
         formStyle(.grouped)
             .scrollContentBackground(.hidden)
-            .scrollDisabled(true)
-            .fixedSize(horizontal: false, vertical: true)
             .font(.btBody)
             .tint(Color.btAccent)
             .pickerStyle(.menu)
@@ -407,14 +536,22 @@ struct SettingsInputRow<Control: View>: View {
     @ViewBuilder let control: Control
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .top, spacing: Space.lg) {
-                label.frame(width: 188, alignment: .leading)
-                control.frame(width: 480)
+        VStack(alignment: .leading, spacing: Space.xs) {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: Space.lg) {
+                    label.frame(width: 188, alignment: .leading)
+                    control.frame(width: 480)
+                }
+                VStack(alignment: .leading, spacing: Space.sm) {
+                    label
+                    control
+                }
             }
-            VStack(alignment: .leading, spacing: Space.sm) {
-                label
-                control
+            if let warning {
+                Label(warning, systemImage: "exclamationmark.triangle.fill")
+                    .font(.btCaption)
+                    .foregroundStyle(Color.btWarning)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -425,12 +562,6 @@ struct SettingsInputRow<Control: View>: View {
         VStack(alignment: .leading, spacing: Space.xs) {
             Text(title).font(.btBodyMedium).foregroundStyle(Color.btText)
             SettingsCaption(detail)
-            if let warning {
-                Label(warning, systemImage: "exclamationmark.triangle.fill")
-                    .font(.btCaption)
-                    .foregroundStyle(Color.btWarning)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
         }
     }
 }
@@ -481,10 +612,11 @@ private struct AppearanceSettingsPane: View {
             } header: {
                 Text("Theme")
             } footer: {
-                SettingsCaption("Ink is true black with high contrast. Match System uses it when macOS is in Dark mode with Increase contrast turned on (System Settings → Accessibility → Display), while its dark theme is Graphite. Themes come from plugins: one you install appears here.")
+                SettingsCaption("Match System follows macOS appearance. With Increase Contrast on, its dark appearance uses Ink. Installed theme plugins appear here too.")
             }
-            InterfaceFontSection()
-            EditorFontSection()
+            .id("appearance.theme")
+            InterfaceFontSection().id("appearance.interface-font")
+            EditorFontSection().id("appearance.editor-font")
             Section {
                 Picker(selection: $chatFont) {
                     ForEach(ChatFont.allCases) { Text($0.title).tag($0) }
@@ -499,8 +631,9 @@ private struct AppearanceSettingsPane: View {
             } header: {
                 Text("Chat text")
             }
+            .id("appearance.chat-text")
         }
-        .settingsPane()
+        .settingsScrollablePane()
     }
 }
 
@@ -534,28 +667,48 @@ private struct NotificationSettingsPane: View {
                     Text("A scheduled run couldn't create its workspace or start its agent.")
                 }
                 Toggle(isOn: $model.notifyStalled) {
-                    Text("When a chat goes quiet")
-                    Text("Its agent is still working but hasn't produced any output for a long time.")
+                    Text("When a chat stalls")
+                    Text("An agent stays quiet past the stalled threshold below.")
                 }
             } header: {
                 Text("Notify me")
             }
+            .id("notifications.events")
             Section {
                 Stepper(value: quietMinutes, in: 1...120) {
-                    Text("Show “No output” after")
-                    Text("\(model.stallThresholds.quietMinutes) minutes without output. The chat's working line says so; nothing else happens.")
+                    HStack(spacing: Space.md) {
+                        VStack(alignment: .leading, spacing: Space.xs) {
+                            Text("Show “No output” after")
+                            SettingsCaption("The chat's working line says so; nothing else happens.")
+                        }
+                        Spacer(minLength: Space.sm)
+                        Text("\(model.stallThresholds.quietMinutes) min")
+                            .font(.btBodyMedium)
+                            .monospacedDigit()
+                    }
                 }
+                .accessibilityLabel("Show No output after \(model.stallThresholds.quietMinutes) minutes")
                 Stepper(value: stalledMinutes, in: 2...240) {
-                    Text("Mark the chat Stalled after")
-                    Text("\(model.stallThresholds.stalledMinutes) minutes without output. You're told once, with Keep waiting, Stop and Stop and retry.")
+                    HStack(spacing: Space.md) {
+                        VStack(alignment: .leading, spacing: Space.xs) {
+                            Text("Mark the chat Stalled after")
+                            SettingsCaption("You're told once, with Keep waiting, Stop and Stop and retry.")
+                        }
+                        Spacer(minLength: Space.sm)
+                        Text("\(model.stallThresholds.stalledMinutes) min")
+                            .font(.btBodyMedium)
+                            .monospacedDigit()
+                    }
                 }
+                .accessibilityLabel("Mark the chat Stalled after \(model.stallThresholds.stalledMinutes) minutes")
             } header: {
                 Text("Chats that go quiet")
             } footer: {
-                SettingsCaption("Time spent waiting for your answer to a permission or a question, or for a task running in the background, doesn't count. Abstract never restarts a quiet chat on its own.")
+                SettingsCaption("Stalled always comes after No output; changing one time may move the other. Waiting for your answer or a background task does not count. Abstract never restarts a chat on its own.")
             }
+            .id("notifications.quiet")
         }
-        .settingsPane()
+        .settingsScrollablePane()
     }
 }
 
@@ -584,6 +737,7 @@ private struct GeneralSettingsPane: View {
             } footer: {
                 SettingsCaption("A new output style applies to running chats from their next message.")
             }
+            .id("general.chat")
 
             Section {
                 LabeledContent {
@@ -597,11 +751,12 @@ private struct GeneralSettingsPane: View {
             } footer: {
                 SettingsCaption("Closing the window keeps Abstract running in the background so automations fire on time. Quitting Abstract (⌘Q) stops them until you open it again.")
             }
+            .id("general.automations")
 
-            CommandLineSection()
-            UpdatesSection()
+            CommandLineSection().id("general.command-line")
+            UpdatesSection().id("general.updates")
         }
-        .settingsPane()
+        .settingsScrollablePane()
     }
 }
 
@@ -615,17 +770,19 @@ private struct UpdatesSection: View {
                 Text("Check for updates automatically")
                 Text("Abstract looks for a new version once a day.")
             }
+            .disabled(!updater.isEnabled)
             Toggle(isOn: $updater.automaticallyDownloadsUpdates) {
                 Text("Download and install automatically")
                 Text("Updates install when you quit Abstract.")
             }
-            .disabled(!updater.automaticallyChecksForUpdates)
+            .disabled(!updater.isEnabled || !updater.automaticallyChecksForUpdates)
             Picker(selection: $updater.channel) {
                 ForEach(UpdateChannel.allCases) { Text($0.title).tag($0) }
             } label: {
                 Text("Channel")
                 Text(updater.channel.detail)
             }
+            .disabled(!updater.isEnabled)
             LabeledContent {
                 Button("Check Now") { updater.checkForUpdates() }
                     .disabled(!updater.canCheckForUpdates)
@@ -640,7 +797,6 @@ private struct UpdatesSection: View {
                 ? "Nightly builds come from main every day and may be unstable. Switching back to Stable takes effect once a stable release newer than your nightly comes out."
                 : "Updates are off in development and demo builds.")
         }
-        .disabled(!updater.isEnabled)
         .onAppear { updater.refreshSettings() }
     }
 
@@ -727,8 +883,9 @@ private struct AdvancedSettingsPane: View {
             } header: {
                 Text("Developer")
             }
+            .id("advanced.developer")
         }
-        .settingsPane()
+        .settingsScrollablePane()
     }
 }
 
@@ -736,7 +893,7 @@ private struct AdvancedSettingsPane: View {
 private struct ChatTextSample: View {
     let style: ProseStyle
     var body: some View {
-        Text("Rows now derive their status from the process, so a chat whose agent stopped shows Error rather than a stale Working.")
+        Text("I found the issue in the request handler. I’ll update the validation, then run the relevant tests.")
             .font(style.body)
             .lineSpacing(style.lineSpacing)
             .foregroundStyle(Color.btProse)

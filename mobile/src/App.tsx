@@ -914,7 +914,10 @@ export default function App() {
   return <SafeAreaProvider><StatusBar style={isDarkTheme() ? 'light' : 'dark'} /><SidebarReturnContext.Provider value={sidebarReturn}><NavigationContainer key={themeVersion} initialState={navigationState.current} onStateChange={state => { navigationState.current = state; followStack((state?.routes || []) as StackRoute[]); }} theme={{ dark: isDarkTheme(), colors: { primary: accent, background: bg, card: panel, text: ink, border, notification: accent }, fonts: { regular: { fontFamily: 'Inter', fontWeight: '400' }, medium: { fontFamily: 'Inter', fontWeight: '500' }, bold: { fontFamily: 'Inter', fontWeight: '700' }, heavy: { fontFamily: 'Inter', fontWeight: '900' } } }}>
       <Stack.Navigator initialRouteName="Sidebar" screenOptions={({ navigation }: any) => ({ headerTransparent: true, headerStyle: { backgroundColor: 'transparent' }, headerBackground: () => <ProgressiveBlur edge="top" />, headerTitleStyle: { fontFamily: 'Inter', fontSize: 15 }, headerTintColor: ink, contentStyle: { backgroundColor: bg }, headerShadowVisible: false, headerBackVisible: false, headerLeft: () => <ScreenNavigation navigation={navigation} />, scrollEdgeEffects: Platform.OS === 'ios' ? { top: 'soft' } : undefined, animation: reduceMotion ? 'fade' : 'slide_from_right', animationDuration: reduceMotion ? 200 : undefined, gestureEnabled: true, fullScreenGestureEnabled: true, animationMatchesGesture: true })}>
         <Stack.Screen name="Sidebar" component={SidebarScreen} options={{ headerShown: true, title: '', headerLeft: () => null, headerBackground: () => <ProgressiveBlur edge="top" surfaceColor={sidebar} /> }} />
-        <Stack.Screen name="Settings" component={SettingsScreen} options={{ title: 'Settings' }} />
+        <Stack.Screen name="Settings" component={SettingsScreen} options={{
+          title: 'Settings',
+          ...(Platform.OS === 'android' ? { headerTransparent: false, headerStyle: { backgroundColor: bg }, headerBackground: undefined } : {})
+        }} />
         <Stack.Screen name="Projects" component={ProjectsScreen} />
         <Stack.Screen name="Chats" component={ChatsScreen} />
         <Stack.Screen name="Project" component={ProjectScreen} />

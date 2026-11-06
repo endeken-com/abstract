@@ -11,9 +11,9 @@ struct UsageSettingsPane: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.xxl) {
-            AccountsSection(hideEmails: $hideEmails)
+            AccountsSection(hideEmails: $hideEmails).id("usage.accounts")
             Hairline()
-            TokenUsageSection()
+            TokenUsageSection().id("usage.tokens")
         }
         .padding(.horizontal, SettingsLayout.margin + SettingsLayout.textInset)
         .padding(.vertical, Space.lg)
@@ -88,7 +88,11 @@ private struct AccountsSection: View {
     }
 
     private func refreshLabel(_ date: Date?) -> some View {
-        Text(date.map { "Limits as each agent last reported them, checked \(RelativeTime.short($0)) ago" } ?? "Checking accounts…")
+        let checked = date.map { date -> String in
+            let age = RelativeTime.short(date)
+            return age == "now" || age.hasPrefix("in ") ? "just now" : "\(age) ago"
+        }
+        return Text(checked.map { "Limits as each agent last reported them, checked \($0)" } ?? "Checking accounts…")
             .font(.btCaption)
             .foregroundStyle(Color.btTextTertiary)
             .lineLimit(2)
@@ -105,6 +109,7 @@ private struct AccountsSection: View {
             }
             .buttonStyle(.icon(size: 26))
             .help("Check again")
+            .accessibilityLabel("Refresh account limits")
         }
         .fixedSize()
     }
@@ -154,7 +159,7 @@ private struct CardGrid<Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 360), spacing: Space.lg, alignment: .top)], alignment: .leading, spacing: Space.lg) {
+        LazyVGrid(columns: [GridItem(.flexible(minimum: 0), spacing: Space.lg, alignment: .top)], alignment: .leading, spacing: Space.lg) {
             content
         }
     }

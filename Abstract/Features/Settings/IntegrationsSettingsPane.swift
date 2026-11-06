@@ -7,8 +7,8 @@ import AbstractCore
 struct IntegrationsSettingsPane: View {
     var body: some View {
         Form {
-            RevundSettingsSection()
+            RevundSettingsSection().id("integrations.revund")
         }
-        .settingsPane()
+        .settingsScrollablePane()
     }
 }

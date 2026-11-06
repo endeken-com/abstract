@@ -60,9 +60,14 @@ public final class AbstractInternetModule: Module {
     public func definition() -> ModuleDefinition {
         Name("AbstractInternet")
         Function("hostName") {
+            #if targetEnvironment(simulator)
+            // A simulator inherits the Mac's hostname; advertise the simulated phone instead.
+            return UIDevice.current.name
+            #else
             var name = [CChar](repeating: 0, count: 256)
             guard gethostname(&name, name.count) == 0 else { return UIDevice.current.name }
             return String(cString: name)
+            #endif
         }
         // Screens closed from JavaScript slide away as a snapshot that lands slightly off;
         // popping natively, as a back swipe does, slides the live screen.

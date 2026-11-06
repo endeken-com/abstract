@@ -9,5 +9,10 @@ export function phoneHostName(): string {
     } catch { /* A stale local build can still connect with a generic name. */ }
     return 'iPhone';
   }
-  return Platform.OS === 'android' ? Platform.constants.Model || 'Android device' : 'Mobile device';
+  if (Platform.OS === 'android') {
+    const model = Platform.constants.Model?.trim();
+    if (!model) return 'Android device';
+    return /^(?:sdk_|generic(?:_|$)|Android SDK built for)/i.test(model) ? 'Android emulator' : model;
+  }
+  return 'Mobile device';
 }

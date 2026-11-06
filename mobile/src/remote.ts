@@ -27,6 +27,11 @@ function endpoint(address: string) {
   return { host: match[1] || match[3], port };
 }
 
+export function isValidLocalAddress(address: string): boolean {
+  try { endpoint(address); return true; }
+  catch { return false; }
+}
+
 class FramedSocket {
   private decoder = new FrameDecoder();
   private frames: Buffer[] = [];
@@ -166,6 +171,7 @@ export class RemoteClient {
     try {
       const invite = address.trim().startsWith('abstract://') ? parseInvitation(address) : undefined;
       const internetAddress = invite?.address || (address.startsWith('iroh:') ? { endpointId: address.slice(5) } : undefined);
+      const localEndpoint = internetAddress ? undefined : endpoint(address);
       const who = await identity();
       if (epoch !== this.connectionEpoch) return;
       const handshake = beginHandshake(who, !paired);
@@ -178,7 +184,7 @@ export class RemoteClient {
         try { await remote.connect(who, internetAddress, invite?.token); }
         finally { if (this.abortDial === abort) this.abortDial = null; }
       } else {
-      const { host, port } = endpoint(address);
+      const { host, port } = localEndpoint!;
       const raw = await new Promise<ReturnType<typeof TcpSocket.createConnection>>((resolve, reject) => {
         let settled = false;
         const rawSocket = TcpSocket.createConnection({ host, port }, () => finish());
@@ -451,6 +457,7 @@ export class RemoteStore {
 
   subscribe(listener: Listener<RemoteStore>) { this.listeners.add(listener); listener(this); return () => { this.listeners.delete(listener); }; }
   private changed() { this.listeners.forEach(listener => listener(this)); }
+  dismissError() { if (this.error) { this.error = null; this.changed(); } }
   get pairingCode() { return this.pairing?.pairingCode || null; }
   private makeClient(): RemoteClient {
     const client: RemoteClient = new RemoteClient({
