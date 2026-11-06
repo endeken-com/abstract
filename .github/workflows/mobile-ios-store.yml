@@ -41,7 +41,7 @@ jobs:
           }
           [[ "$IOS_BUILD_NUMBER" =~ ^[0-9]+$ ]]
           [[ "$APPLE_TEAM_ID" =~ ^[A-Z0-9]{10}$ ]] || {
-            echo '::error::Set APPLE_TEAM_ID in the mobile-ios environment'; exit 1;
+            echo '::error::Set APPLE_TEAM_ID in the release environment'; exit 1;
           }
           test "$(xcodebuild -version | head -n 1 | cut -d ' ' -f 2 | cut -d . -f 1)" -ge 26
       - uses: actions/cache/restore@v4
