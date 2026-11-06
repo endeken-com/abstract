@@ -1,0 +1,196 @@
+name: iPhone App Store
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: App Store version (for example, 1.0.0)
+        type: string
+        required: true
+        default: 1.0.0
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-ios-store
+  cancel-in-progress: false
+
+jobs:
+  upload:
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-26
+    timeout-minutes: 120
+    environment: mobile-ios
+    env:
+      IOS_VERSION: ${{ inputs.version }}
+      IOS_BUILD_NUMBER: ${{ github.run_id }}
+      APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+      IOS_BUNDLE_ID: sh.abstract.mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - name: Check release settings
+        run: |
+          [[ "$IOS_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo '::error::Version must have three numeric parts, for example 1.0.0'; exit 1;
+          }
+          [[ "$IOS_BUILD_NUMBER" =~ ^[0-9]+$ ]]
+          [[ "$APPLE_TEAM_ID" =~ ^[A-Z0-9]{10}$ ]] || {
+            echo '::error::Set APPLE_TEAM_ID in the mobile-ios environment'; exit 1;
+          }
+          test "$(xcodebuild -version | head -n 1 | cut -d ' ' -f 2 | cut -d . -f 1)" -ge 26
+      - uses: actions/cache/restore@v4
+        id: iroh-cache
+        with:
+          path: Packages/Iroh/Iroh.xcframework
+          key: iroh-apple-${{ hashFiles('scripts/prepare-iroh.sh') }}
+      - name: Prepare internet transport
+        run: scripts/prepare-iroh.sh apple
+      - uses: actions/cache/save@v4
+        if: steps.iroh-cache.outputs.cache-hit != 'true'
+        with:
+          path: Packages/Iroh/Iroh.xcframework
+          key: ${{ steps.iroh-cache.outputs.cache-primary-key }}
+      - run: npm ci
+        working-directory: mobile
+      - run: npm run typecheck
+        working-directory: mobile
+      - run: node --test tests/*.test.js
+        working-directory: mobile
+      - run: pod install
+        working-directory: mobile/ios
+      - name: Install iPhone distribution credentials
+        env:
+          IOS_DISTRIBUTION_P12_BASE64: ${{ secrets.IOS_DISTRIBUTION_P12_BASE64 }}
+          IOS_DISTRIBUTION_P12_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_P12_PASSWORD }}
+          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_API_KEY_P8: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8 }}
+        run: |
+          for name in IOS_DISTRIBUTION_P12_BASE64 IOS_DISTRIBUTION_P12_PASSWORD \
+            IOS_PROVISIONING_PROFILE_BASE64 APP_STORE_CONNECT_KEY_ID \
+            APP_STORE_CONNECT_ISSUER_ID APP_STORE_CONNECT_API_KEY_P8; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Set $name in the mobile-ios environment"
+              exit 1
+            fi
+          done
+
+          keychain="$RUNNER_TEMP/mobile-ios.keychain-db"
+          keychain_password="$(openssl rand -hex 24)"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          printf '%s' "$IOS_DISTRIBUTION_P12_BASE64" | base64 -D > "$RUNNER_TEMP/mobile-ios.p12"
+          security import "$RUNNER_TEMP/mobile-ios.p12" -k "$keychain" \
+            -P "$IOS_DISTRIBUTION_P12_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/mobile-ios.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain"
+          security default-keychain -d user -s "$keychain"
+          security find-identity -v -p codesigning "$keychain" | grep -E "Apple Distribution: .*\($APPLE_TEAM_ID\)" >/dev/null || {
+            echo "::error::The P12 must contain an Apple Distribution identity for team $APPLE_TEAM_ID"
+            exit 1
+          }
+
+          printf '%s' "$IOS_PROVISIONING_PROFILE_BASE64" | base64 -D > "$RUNNER_TEMP/mobile-ios.mobileprovision"
+          security cms -D -i "$RUNNER_TEMP/mobile-ios.mobileprovision" > "$RUNNER_TEMP/mobile-ios-profile.plist"
+          profile_uuid="$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$RUNNER_TEMP/mobile-ios-profile.plist")"
+          profile_team="$(/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' "$RUNNER_TEMP/mobile-ios-profile.plist")"
+          profile_app="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$RUNNER_TEMP/mobile-ios-profile.plist")"
+          if [ "$profile_team" != "$APPLE_TEAM_ID" ] || [ "$profile_app" != "$APPLE_TEAM_ID.$IOS_BUNDLE_ID" ]; then
+            echo '::error::The provisioning profile must match the Apple team and iPhone bundle ID'
+            exit 1
+          fi
+          profile_dir="$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$profile_dir"
+          cp "$RUNNER_TEMP/mobile-ios.mobileprovision" "$profile_dir/$profile_uuid.mobileprovision"
+          api_key_path="$RUNNER_TEMP/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8"
+          printf '%s' "$APP_STORE_CONNECT_API_KEY_P8" > "$api_key_path"
+          chmod 600 "$api_key_path"
+          {
+            echo "IOS_PROFILE_UUID=$profile_uuid"
+            echo "IOS_PROFILE_PATH=$profile_dir/$profile_uuid.mobileprovision"
+            echo "IOS_API_KEY_PATH=$api_key_path"
+          } >> "$GITHUB_ENV"
+      - name: Archive signed iPhone app
+        env:
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        working-directory: mobile/ios
+        run: |
+          set -o pipefail
+          xcodebuild archive \
+            -workspace Abstract.xcworkspace -scheme Abstract -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/Abstract.xcarchive" \
+            -authenticationKeyPath "$IOS_API_KEY_PATH" \
+            -authenticationKeyID "$APP_STORE_CONNECT_KEY_ID" \
+            -authenticationKeyIssuerID "$APP_STORE_CONNECT_ISSUER_ID" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY='Apple Distribution' \
+            PROVISIONING_PROFILE_SPECIFIER="$IOS_PROFILE_UUID" \
+            MARKETING_VERSION="$IOS_VERSION" CURRENT_PROJECT_VERSION="$IOS_BUILD_NUMBER" \
+            | tee "$RUNNER_TEMP/ios-archive.log"
+          app="$RUNNER_TEMP/Abstract.xcarchive/Products/Applications/Abstract.app"
+          plist="$app/Info.plist"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist")" = "$IOS_BUNDLE_ID"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")" = "$IOS_VERSION"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$plist")" = "$IOS_BUILD_NUMBER"
+          codesign --verify --deep --strict "$app"
+      - name: Upload to App Store Connect
+        env:
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        run: |
+          set -o pipefail
+          cat > "$RUNNER_TEMP/ios-export-options.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>signingStyle</key><string>manual</string>
+            <key>signingCertificate</key><string>Apple Distribution</string>
+            <key>teamID</key><string>$APPLE_TEAM_ID</string>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+            <key>uploadSymbols</key><true/>
+            <key>provisioningProfiles</key><dict>
+              <key>$IOS_BUNDLE_ID</key><string>$IOS_PROFILE_UUID</string>
+            </dict>
+          </dict></plist>
+          EOF
+          plutil -lint "$RUNNER_TEMP/ios-export-options.plist"
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/Abstract.xcarchive" \
+            -exportPath "$RUNNER_TEMP/ios-export" \
+            -exportOptionsPlist "$RUNNER_TEMP/ios-export-options.plist" \
+            -authenticationKeyPath "$IOS_API_KEY_PATH" \
+            -authenticationKeyID "$APP_STORE_CONNECT_KEY_ID" \
+            -authenticationKeyIssuerID "$APP_STORE_CONNECT_ISSUER_ID" \
+            | tee "$RUNNER_TEMP/ios-upload.log"
+      - name: Save failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: iphone-store-logs
+          path: |
+            ${{ runner.temp }}/ios-archive.log
+            ${{ runner.temp }}/ios-upload.log
+          if-no-files-found: ignore
+      - name: Remove signing credentials
+        if: always()
+        run: |
+          if [ -n "${IOS_PROFILE_PATH:-}" ]; then rm -f "$IOS_PROFILE_PATH"; fi
+          if [ -n "${IOS_API_KEY_PATH:-}" ]; then rm -f "$IOS_API_KEY_PATH"; fi
+          rm -f "$RUNNER_TEMP/mobile-ios.p12" "$RUNNER_TEMP/mobile-ios.mobileprovision" \
+            "$RUNNER_TEMP/mobile-ios-profile.plist" "$RUNNER_TEMP/ios-export-options.plist"
+          if security list-keychains -d user | grep -F 'mobile-ios.keychain-db' >/dev/null; then
+            security delete-keychain "$RUNNER_TEMP/mobile-ios.keychain-db"
+          fi
