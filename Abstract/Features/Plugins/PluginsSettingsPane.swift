@@ -10,7 +10,7 @@ struct PluginsSettingsPane: View {
     @State private var removing: InstalledPlugin?
     @State private var pickedProblem: String?
     @State private var query = ""
-    @State private var selectedView: PluginGalleryItem.ViewFilter = .all
+    @Binding var selectedView: PluginGalleryItem.ViewFilter
     @State private var selectedCategory: PluginGalleryItem.Category?
     @State private var selectedPluginID: String?
     @State private var afterDetail: (() -> Void)?
@@ -48,7 +48,7 @@ struct PluginsSettingsPane: View {
     }
 
     var body: some View {
-        galleryContent
+        galleryContent.id("plugins.gallery")
         .sheet(isPresented: Binding(get: { selectedPluginID != nil }, set: { if !$0 { selectedPluginID = nil } }),
                onDismiss: {
                    let action = afterDetail
@@ -98,7 +98,7 @@ struct PluginsSettingsPane: View {
             searchField
             filterBar
             if !all.isEmpty { categoryBar(all) }
-            catalogStatus(all)
+            if selectedView == .all { catalogStatus(all) }
             if model.plugins.installed.contains(where: { $0.record.source.git != nil }) { updatesStatus }
             if let pickedProblem {
                 notice("This plugin could not be opened", detail: pickedProblem, symbol: "exclamationmark.triangle")
@@ -230,7 +230,7 @@ struct PluginsSettingsPane: View {
     private func galleryResults(_ all: [PluginGalleryItem]) -> some View {
         let visible = PluginGalleryItem.filter(all, query: query, view: selectedView, category: selectedCategory)
         if visible.isEmpty {
-            if catalogLoading && all.isEmpty {
+            if catalogLoading && all.isEmpty && selectedView == .all {
                 VStack(spacing: Space.md) {
                     ProgressView().controlSize(.regular)
                     Text("Checking the catalog…").font(.btBody).foregroundStyle(Color.btTextSecondary)

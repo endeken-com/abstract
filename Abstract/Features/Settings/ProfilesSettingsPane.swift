@@ -6,43 +6,95 @@ import AbstractCore
 /// it started with.
 struct ProfilesSettingsPane: View {
     @Environment(AppModel.self) private var model
+    let split: Bool
     @State private var selectedId: String?
 
     private var selected: AgentProfile? { model.profile(selectedId) ?? model.profiles.first }
 
     var body: some View {
-        Form {
-            Section {
-                if model.profiles.isEmpty {
-                    Text("No profiles yet.").foregroundStyle(Color.btTextSecondary)
-                }
-                ForEach(model.profiles) { profile in
-                    SettingsListRow(value: profile.iconValue, context: .profile,
-                                    title: profile.name.isEmpty ? "Profile" : profile.name,
-                                    detail: summary(profile),
-                                    selected: selected?.id == profile.id) { selectedId = profile.id }
-                }
-            } header: {
-                HStack {
-                    Text("Profiles")
-                    Spacer()
-                    Button {
-                        selectedId = model.addProfile().id
-                    } label: {
-                        Label("Add Profile", systemImage: "plus")
+        Group {
+            if split {
+                HStack(spacing: 0) {
+                    VStack(spacing: 0) {
+                        HStack {
+                            Text("\(model.profiles.count) \(model.profiles.count == 1 ? "profile" : "profiles")")
+                                .font(.btBodyMedium)
+                                .foregroundStyle(Color.btText)
+                            Spacer()
+                            addButton
+                        }
+                        .padding(Space.md)
+                        Rectangle().fill(Color.btBorder).frame(height: 1)
+                        ScrollView {
+                            LazyVStack(alignment: .leading, spacing: Space.xs) {
+                                listRows
+                            }
+                            .padding(Space.md)
+                        }
+                        .btThinScrollIndicator()
                     }
-                    .buttonStyle(.bt(.ghost, size: .small))
+                    .frame(width: 252)
+                    .background(Color.btSidebar)
+                    Rectangle().fill(Color.btBorder).frame(width: 1)
+                    Form { editorSection }
+                        .settingsScrollablePane()
+                        .frame(maxWidth: .infinity)
                 }
-            } footer: {
-                SettingsCaption("The New Chat window and the automation editor fill a profile in for you, and workflows hand a chat from one profile to the next. Editing one changes later chats, never a chat already running. A project can choose which profiles it offers in its Project Settings.")
-            }
-            if let selected {
-                ProfileSettingsSection(profile: selected, onDuplicate: { selectedId = duplicate(selected).id },
-                                       onDelete: { delete(selected) })
-                    .id(selected.id)
+            } else {
+                Form {
+                    Section {
+                        listRows
+                    } header: {
+                        HStack {
+                            Text("Profiles")
+                            Spacer()
+                            addButton
+                        }
+                    } footer: {
+                        SettingsCaption("New chats and automations can start from a profile. Edits affect future chats, not ones already running.")
+                    }
+                    .id("profiles.list")
+                    editorSection
+                }
+                .settingsScrollablePane()
             }
         }
-        .settingsPane()
+    }
+
+    @ViewBuilder
+    private var listRows: some View {
+        if model.profiles.isEmpty {
+            VStack(alignment: .leading, spacing: Space.xs) {
+                Text("No profiles yet").foregroundStyle(Color.btText)
+                SettingsCaption("Add one to save an agent, model, and instructions for future chats.")
+            }
+            .padding(.vertical, Space.sm)
+        }
+        ForEach(model.profiles) { profile in
+            SettingsListRow(value: profile.iconValue, context: .profile,
+                            title: profile.name.isEmpty ? "Profile" : profile.name,
+                            detail: summary(profile),
+                            selected: selected?.id == profile.id) { selectedId = profile.id }
+        }
+    }
+
+    private var addButton: some View {
+        Button {
+            selectedId = model.addProfile().id
+        } label: {
+            Label("Add Profile", systemImage: "plus")
+        }
+        .buttonStyle(.bt(.ghost, size: .small))
+        .accessibilityLabel("Add profile")
+    }
+
+    @ViewBuilder
+    private var editorSection: some View {
+        if let selected {
+            ProfileSettingsSection(profile: selected, onDuplicate: { selectedId = duplicate(selected).id },
+                                   onDelete: { delete(selected) })
+                .id(selected.id)
+        }
     }
 
     /// "Claude · Opus · Edits accepted"
@@ -93,7 +145,7 @@ struct SettingsListRow: View {
                     Text(title)
                         .font(.btBodyMedium)
                         .foregroundStyle(Color.btText)
-                        .lineLimit(1)
+                        .lineLimit(2)
                     Text(detail)
                         .font(.btCaption)
                         .foregroundStyle(Color.btTextSecondary)

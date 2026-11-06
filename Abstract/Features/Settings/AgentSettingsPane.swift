@@ -9,9 +9,6 @@ struct AgentSettingsPane: View {
 
     var body: some View {
         Form {
-            ForEach(ProviderRegistry.all, id: \.id) { provider in
-                ProviderSettingsSection(provider: provider, detecting: detecting, detect: detect)
-            }
             Section {
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: Space.md) {
@@ -25,8 +22,13 @@ struct AgentSettingsPane: View {
                     }
                 }
             }
+            .id("agents.detect")
+            ForEach(ProviderRegistry.all, id: \.id) { provider in
+                ProviderSettingsSection(provider: provider, detecting: detecting, detect: detect)
+            }
+            .id("agents.providers")
         }
-        .settingsPane()
+        .settingsScrollablePane()
     }
 
     private var detectionCaption: some View {

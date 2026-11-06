@@ -39,8 +39,15 @@ struct WorktreeSettingsPane: View {
                         .btField()
                 }
             } header: {
-                Text("Naming")
+                HStack {
+                    Text("Naming")
+                    Spacer()
+                    resetButton
+                }
+            } footer: {
+                SettingsCaption("Changes apply to new chats. Existing worktrees keep their current folder and branch names.")
             }
+            .id("worktrees.naming")
 
             Section {
                 VStack(alignment: .leading, spacing: 4) {
@@ -64,6 +71,7 @@ struct WorktreeSettingsPane: View {
             } footer: {
                 SettingsCaption("By default, worktree folders use city names and branches describe the task. This shows “Oslo” and “fix-login” in “\(Self.sampleRepo)”.")
             }
+            .id("worktrees.preview")
 
             Section {
                 Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: Space.md, verticalSpacing: 6) {
@@ -83,22 +91,10 @@ struct WorktreeSettingsPane: View {
             } header: {
                 Text("Tokens")
             }
+            .id("worktrees.tokens")
 
-            Section {
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: Space.md) {
-                        SettingsCaption("Existing worktrees stay where they are; new chats use the new names.")
-                        Spacer(minLength: Space.sm)
-                        resetButton
-                    }
-                    VStack(alignment: .leading, spacing: Space.sm) {
-                        SettingsCaption("Existing worktrees stay where they are; new chats use the new names.")
-                        resetButton
-                    }
-                }
-            }
         }
-        .settingsPane()
+        .settingsScrollablePane()
     }
 
     private var resetButton: some View {

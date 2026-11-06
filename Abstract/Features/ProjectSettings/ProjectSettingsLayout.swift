@@ -191,10 +191,17 @@ struct CardRow<Control: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .center, spacing: Space.lg) {
-                RowTitle(title: title, detail: detail, info: info)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                control()
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .center, spacing: Space.lg) {
+                    RowTitle(title: title, detail: detail, info: info)
+                        .frame(minWidth: 180, maxWidth: .infinity, alignment: .leading)
+                    control()
+                }
+                VStack(alignment: .leading, spacing: Space.sm) {
+                    RowTitle(title: title, detail: detail, info: info)
+                    control()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
             if let warning { RowNote(text: warning, color: .btWarning, symbol: "exclamationmark.triangle") }
             if let error { RowNote(text: error, color: .btRemoved, symbol: "xmark.octagon") }

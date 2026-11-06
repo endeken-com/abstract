@@ -304,6 +304,15 @@ struct Snapshotter {
 
         // The bundled themes by their old names, which read as the theme plugins (ABS-185).
         let themes = ProcessInfo.processInfo.arguments.contains("--quick") ? ["graphite"] : ["graphite", "paper", "ink"]
+        if ProcessInfo.processInfo.environment["ABSTRACT_DEMO_SETTINGS_SEARCH_QUERY"] != nil {
+            UserDefaults.standard.set(ThemeChoice(rawValue: "graphite").rawValue, forKey: "theme")
+            UserDefaults.standard.set(SettingsTab.general.rawValue, forKey: "settingsTab")
+            model.isSettingsOpen = true
+            await shot("graphite-14-settings-search-results", settle: 0.8)
+            NotificationCenter.default.post(name: Notification.Name("DemoOpenSettingsSearchResult"), object: nil)
+            await shot("graphite-14-settings-search-jump", settle: 0.8)
+            return
+        }
         // `--plugins-only`: just the bundled plugins, in each theme.
         let pluginsOnly = ProcessInfo.processInfo.arguments.contains("--plugins-only")
         for theme in themes {

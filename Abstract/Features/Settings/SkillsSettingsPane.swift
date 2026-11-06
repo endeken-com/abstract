@@ -33,26 +33,28 @@ struct SkillsSettingsPane: View {
                     || skills.contains { skillSearchMatches(search, in: $0.name + " " + ($0.description ?? "")) }
             }
         Form {
-            Section {
-                HStack(spacing: Space.sm) {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundStyle(Color.btTextTertiary)
-                    TextField("Search skills and sources", text: $query)
-                        .textFieldStyle(.plain)
-                        .accessibilityLabel("Search skills and sources")
-                    if !query.isEmpty {
-                        Button {
-                            query = ""
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
+            if !model.skillSources.isEmpty || projectSkillsById.values.contains(where: { !$0.isEmpty }) {
+                Section {
+                    HStack(spacing: Space.sm) {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundStyle(Color.btTextTertiary)
+                        TextField("Search skills and sources", text: $query)
+                            .textFieldStyle(.plain)
+                            .accessibilityLabel("Search skills and sources")
+                        if !query.isEmpty {
+                            Button {
+                                query = ""
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(Color.btTextTertiary)
+                            .accessibilityLabel("Clear search")
                         }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(Color.btTextTertiary)
-                        .accessibilityLabel("Clear search")
                     }
+                } footer: {
+                    SettingsCaption("\(model.librarySkills.count) \(model.librarySkills.count == 1 ? "skill" : "skills") in \(model.skillSources.count) \(model.skillSources.count == 1 ? "source" : "sources"). Select a source to browse its skills.")
                 }
-            } footer: {
-                SettingsCaption("\(model.librarySkills.count) \(model.librarySkills.count == 1 ? "skill" : "skills") in \(model.skillSources.count) \(model.skillSources.count == 1 ? "source" : "sources"). Select a source to browse its skills.")
             }
             Section {
                 if !sources.isEmpty {
@@ -66,33 +68,45 @@ struct SkillsSettingsPane: View {
                 } else if !search.isEmpty {
                     SettingsCaption("No library skills or sources match “\(search)”.")
                 } else {
-                    SettingsCaption("No skill sources yet. Add a folder or GitHub repository above.")
+                    VStack(alignment: .leading, spacing: Space.sm) {
+                        Image(systemName: "books.vertical")
+                            .font(.system(size: 22))
+                            .foregroundStyle(Color.btTextSecondary)
+                        Text("Your skill library is empty")
+                            .font(.btBodyMedium)
+                            .foregroundStyle(Color.btText)
+                        SettingsCaption("Use Add Skills above to choose a folder or GitHub repository. Its skills will appear here for your projects.")
+                    }
+                    .padding(.vertical, Space.lg)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             } header: {
                 Text("Library")
             } footer: {
                 SettingsCaption("A skill is a folder with a SKILL.md. Choose which library skills each project's chats get in Project Settings. Abstract hands them to the agent when a chat starts.")
             }
-            if !projects.isEmpty || !search.isEmpty {
-                Section {
-                    if !projects.isEmpty {
-                        ForEach(projects, id: \.0.id) { project, skills in
-                            ProjectSkillRows(projectName: project.name, skills: skills, query: search,
-                                             expanded: expandedProjectId == project.id) {
-                                expandedProjectId = expandedProjectId == project.id ? nil : project.id
-                            }
+            .id("skills.library")
+            Section {
+                if !projects.isEmpty {
+                    ForEach(projects, id: \.0.id) { project, skills in
+                        ProjectSkillRows(projectName: project.name, skills: skills, query: search,
+                                         expanded: expandedProjectId == project.id) {
+                            expandedProjectId = expandedProjectId == project.id ? nil : project.id
                         }
-                    } else if !search.isEmpty {
-                        SettingsCaption("No project skills match “\(search)”.")
                     }
-                } header: {
-                    Text("In your projects")
-                } footer: {
-                    SettingsCaption("These skills live in each project's own files. Agents that read those folders already use them, so Abstract does not hand them out again.")
+                } else if !search.isEmpty {
+                    SettingsCaption("No project skills match “\(search)”.")
+                } else {
+                    SettingsCaption("Skills stored in a project's own files will appear here.")
                 }
+            } header: {
+                Text("In your projects")
+            } footer: {
+                SettingsCaption("These skills live in each project's own files. Agents that read those folders already use them, so Abstract does not hand them out again.")
             }
+            .id("skills.projects")
         }
-        .settingsPane()
+        .settingsScrollablePane()
         .onAppear {
             model.reloadSkills()
             projectSkillsById = Dictionary(uniqueKeysWithValues: model.projects

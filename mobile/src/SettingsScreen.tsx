@@ -1,12 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Platform, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import { BrandLoadingIndicator as ActivityIndicator } from './Brand';
 import { useHeaderHeight } from '@react-navigation/elements';
 import { CompactMenu as MenuView } from './CompactMenu';
 import { SymbolView } from 'expo-symbols';
 import * as Haptics from 'expo-haptics';
 import { KeyboardAwareScrollView } from './KeyboardAwareScrollView';
-import { remote } from './remote';
+import { isValidLocalAddress, remote } from './remote';
+import { parseInvitation } from './internet';
 import { phoneHostName } from './phoneHostName';
 import type { Device } from './types';
 import { onTheme, themedStyles, palette } from './theme';
@@ -21,7 +22,7 @@ function useRemote() {
 }
 
 function Icon({ name, size = 18, color = muted }: { name: string; size?: number; color?: string }) {
-  const androidNames: Record<string, string> = { iphone: 'smartphone', laptopcomputer: 'laptop_mac', 'chevron.right': 'chevron_right', 'chevron.down': 'keyboard_arrow_down', checkmark: 'check', ellipsis: 'more_horiz', 'exclamationmark.circle': 'error_outline' };
+  const androidNames: Record<string, string> = { iphone: 'smartphone', laptopcomputer: 'laptop_mac', 'chevron.right': 'chevron_right', 'chevron.down': 'keyboard_arrow_down', checkmark: 'check', ellipsis: 'more_horiz', 'exclamationmark.circle': 'error_outline', xmark: 'close' };
   return <SymbolView name={{ ios: name, android: androidNames[name] || name } as any} size={size} tintColor={color} />;
 }
 
@@ -42,15 +43,44 @@ function Action({ title, onPress, disabled = false }: { title: string; onPress: 
 export function SettingsScreen({ navigation }: any) {
   const state = useRemote();
   const headerHeight = useHeaderHeight();
+  const { width } = useWindowDimensions();
+  const isTablet = Platform.OS === 'ios' ? Platform.isPad : width >= 600;
+  const deviceKind = isTablet ? (Platform.OS === 'ios' ? 'iPad' : 'tablet') : 'phone';
+  const deviceSymbol = Platform.OS === 'ios' ? (isTablet ? 'ipad' : 'iphone') : (isTablet ? 'tablet_mac' : 'smartphone');
   const name = useMemo(phoneHostName, []);
   const [invitation, setInvitation] = useState('');
+  const [invitationError, setInvitationError] = useState<string | null>(null);
   const [address, setAddress] = useState('');
+  const [addressError, setAddressError] = useState<string | null>(null);
   const [advanced, setAdvanced] = useState(false);
   const nearby = state.nearby.filter(mac => !state.devices.some(device => device.peer.id === mac.id));
   const macs = state.macs();
   const connect = (endpoint: string, device?: Device) => {
+    setInvitationError(null);
+    setAddressError(null);
     Haptics.selectionAsync().catch(() => {});
     state.connect(endpoint.trim(), device).catch(() => {});
+  };
+  const pairInvitation = () => {
+    const value = invitation.trim();
+    if (!value) return;
+    try { parseInvitation(value); }
+    catch {
+      setInvitationError('This invitation is invalid or expired. Copy a new one from your Mac.');
+      return;
+    }
+    setInvitationError(null);
+    connect(value);
+  };
+  const pairByAddress = () => {
+    const value = address.trim();
+    if (!value) return;
+    if (!isValidLocalAddress(value)) {
+      setAddressError('Enter a Mac address like mac.local:52000 or 192.168.1.20:52000.');
+      return;
+    }
+    setAddressError(null);
+    connect(value, state.devices.find(device => device.address === value));
   };
   const forget = (device: Device) => Alert.alert('Forget this Mac?', device.peer.name, [
     { text: 'Cancel', style: 'cancel' },
@@ -61,20 +91,26 @@ export function SettingsScreen({ navigation }: any) {
     state.reconnect(hostId).catch(() => {});
   };
 
-  return <KeyboardAwareScrollView style={styles.page} contentContainerStyle={[styles.content, { paddingTop: headerHeight + 24 }]} keyboardShouldPersistTaps="handled">
-    <View style={styles.intro}><Text style={styles.title}>Settings</Text><Text style={styles.lead}>Manage your phone and Mac connections.</Text></View>
+  return <KeyboardAwareScrollView style={styles.page} contentContainerStyle={[styles.content, { paddingTop: Platform.OS === 'android' ? 12 : headerHeight + 12 }]} keyboardShouldPersistTaps="handled">
+    <Text style={styles.lead}>Manage your {deviceKind} and Mac connections.</Text>
 
-    <Group title="THIS PHONE">
+    <Group title={`THIS ${deviceKind.toUpperCase()}`}>
       <View style={styles.identityRow}>
-        <View style={styles.largeIcon}><Icon name={Platform.OS === 'ios' ? 'iphone' : 'smartphone'} size={25} color={ink} /></View>
+        <View style={styles.largeIcon}><Icon name={deviceSymbol} size={25} color={ink} /></View>
         <View style={styles.flex}><Text style={styles.name} numberOfLines={1}>{name}</Text><Text style={styles.detail}>Shown to Macs when pairing</Text></View>
       </View>
     </Group>
 
-    {state.error ? <View style={styles.error}><Icon name="exclamationmark.circle" size={17} color={palette.removed} /><Text style={styles.errorText}>{state.error}</Text></View> : null}
+    {state.error ? <View style={styles.error} accessibilityRole="alert" accessibilityLiveRegion="polite">
+      <Icon name="exclamationmark.circle" size={17} color={palette.removed} />
+      <Text style={styles.errorText}>{state.error.replace(/^Error:\s*/, '')}</Text>
+      <Pressable accessibilityRole="button" accessibilityLabel="Dismiss connection error" onPress={() => state.dismissError()} style={styles.dismissError}>
+        <Icon name="xmark" size={13} color={palette.removed} />
+      </Pressable>
+    </View> : null}
     {state.pairingCode ? <View style={styles.pairing}><Text style={styles.name}>Approve on your Mac</Text><Text style={styles.detail}>Check that this code matches the one in Abstract.</Text><Text style={styles.code}>{state.pairingCode}</Text></View> : null}
 
-    <Group title="PAIRED MACS" caption={macs.length > 1 ? 'Your phone stays connected to every paired Mac at once.' : undefined}>
+    <Group title="PAIRED MACS" caption={macs.length > 1 ? `Your ${deviceKind} stays connected to every paired Mac at once.` : undefined}>
       {macs.length ? macs.map((mac, index) => {
         const device = state.devices.find(x => x.peer.id === mac.id)!;
         const isNearby = state.nearby.some(x => x.id === mac.id);
@@ -96,26 +132,32 @@ export function SettingsScreen({ navigation }: any) {
     <Group title="NEARBY MACS">
       {nearby.length ? nearby.map((mac, index) => <Pressable key={mac.id} accessibilityRole="button" accessibilityLabel={`Pair with ${mac.name}`} onPress={() => connect(mac.address)} style={({ pressed }) => [styles.deviceMain, index > 0 && styles.divider, pressed && styles.pressed]}>
         <Icon name="laptopcomputer" size={18} /><View style={styles.flex}><Text style={styles.name}>{mac.name}</Text><Text style={styles.detail}>Tap to pair</Text></View><Icon name="chevron.right" size={13} color={tertiary} />
-      </Pressable>) : <Text style={styles.empty}>Searching your local network. Open Abstract on a Mac and enable mobile sharing in its Settings.</Text>}
+      </Pressable>) : <Text style={styles.empty}>No nearby Macs are listed. On a Mac, turn on “Let paired devices use this Mac” in Settings → Devices.</Text>}
     </Group>
 
     <Group title="CONNECT OVER THE INTERNET" caption="Copy an invitation from Abstract on your Mac in Settings → Devices.">
-      <TextInput style={styles.input} value={invitation} onChangeText={setInvitation} placeholder="Paste an invitation" placeholderTextColor={tertiary} autoCapitalize="none" autoCorrect={false} keyboardType="url" />
-      <Action title="Pair with Mac" disabled={!invitation.trim()} onPress={() => connect(invitation)} />
+      <TextInput style={styles.input} value={invitation} onChangeText={value => { setInvitation(value); setInvitationError(null); }} placeholder="Paste an invitation" accessibilityLabel="Mac invitation" placeholderTextColor={tertiary} autoCapitalize="none" autoCorrect={false} keyboardType="url" returnKeyType="go" onSubmitEditing={pairInvitation} />
+      {invitationError ? <Text style={styles.inputError} accessibilityRole="alert">{invitationError}</Text> : null}
+      <Action title="Pair with Mac" disabled={!invitation.trim()} onPress={pairInvitation} />
     </Group>
 
     <View style={styles.group}>
       <Pressable accessibilityRole="button" accessibilityState={{ expanded: advanced }} onPress={() => { Haptics.selectionAsync().catch(() => {}); setAdvanced(!advanced); }} style={styles.disclosure}><Text style={styles.groupTitle}>CONNECT BY ADDRESS</Text><Icon name={advanced ? 'chevron.down' : 'chevron.right'} size={13} /></Pressable>
-      {advanced ? <><Text style={styles.caption}>For a Mac on your local network or VPN.</Text><View style={styles.card}><TextInput style={styles.input} value={address} onChangeText={setAddress} placeholder="mac.example.com:52000" placeholderTextColor={tertiary} autoCapitalize="none" autoCorrect={false} keyboardType="url" /><Action title="Connect or pair" disabled={!address.trim()} onPress={() => connect(address, state.devices.find(device => device.address === address.trim()))} /></View></> : null}
+      {advanced ? <>
+        <Text style={styles.caption}>For a Mac on your local network or VPN.</Text>
+        <View style={styles.card}>
+          <TextInput style={styles.input} value={address} onChangeText={value => { setAddress(value); setAddressError(null); }} placeholder="mac.example.com:52000" accessibilityLabel="Mac address" placeholderTextColor={tertiary} autoCapitalize="none" autoCorrect={false} keyboardType="url" returnKeyType="go" onSubmitEditing={pairByAddress} />
+          {addressError ? <Text style={styles.inputError} accessibilityRole="alert">{addressError}</Text> : null}
+          <Action title="Connect or pair" disabled={!address.trim()} onPress={pairByAddress} />
+        </View>
+      </> : null}
     </View>
   </KeyboardAwareScrollView>;
 }
 
 const styles = themedStyles(() => StyleSheet.create({
   page: { flex: 1, backgroundColor: bg },
-  content: { paddingHorizontal: 18, paddingBottom: 48, gap: 26 },
-  intro: { gap: 5, marginBottom: 3 },
-  title: { color: ink, fontFamily: 'Inter', fontSize: 27, fontWeight: '600' },
+  content: { width: '100%', maxWidth: 720, alignSelf: 'center', paddingHorizontal: 18, paddingBottom: 48, gap: 26 },
   lead: { color: muted, fontFamily: 'Inter', fontSize: 14, lineHeight: 21 },
   group: { gap: 9 },
   groupTitle: { color: tertiary, fontFamily: 'Inter', fontSize: 11, fontWeight: '700', letterSpacing: 0.8, marginLeft: 3 },
@@ -141,6 +183,8 @@ const styles = themedStyles(() => StyleSheet.create({
   disclosure: { minHeight: 36, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 3 },
   error: { backgroundColor: palette.removedWash, borderRadius: 12, padding: 14, flexDirection: 'row', alignItems: 'flex-start', gap: 9 },
   errorText: { color: palette.removed, fontFamily: 'Inter', fontSize: 13, lineHeight: 19, flex: 1 },
+  dismissError: { width: 44, height: 44, margin: -12, alignItems: 'center', justifyContent: 'center' },
+  inputError: { color: palette.removed, fontFamily: 'Inter', fontSize: 12.5, lineHeight: 18, paddingHorizontal: 15, paddingVertical: 10 },
   pairing: { backgroundColor: raised, borderRadius: 14, padding: 17, gap: 3 },
   code: { color: ink, fontFamily: 'JetBrainsMonoMedium', fontSize: 30, letterSpacing: 2, marginTop: 11 }
 }));

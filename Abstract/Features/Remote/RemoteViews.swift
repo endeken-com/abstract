@@ -31,6 +31,18 @@ struct DevicesSettingsPane: View {
             } footer: {
                 SettingsCaption("A paired Mac can run commands here through the agents, the same as you can. Pair only your own Macs.")
             }
+            .id("devices.hosting")
+
+            if let error = remote.lastError {
+                Section {
+                    HStack(alignment: .top, spacing: Space.md) {
+                        Label(error, systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(Color.btRemoved)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Button("Dismiss") { remote.lastError = nil }
+                    }
+                }
+            }
 
             Section {
                 Toggle(isOn: $remote.internetHosting) {
@@ -53,11 +65,15 @@ struct DevicesSettingsPane: View {
                 HStack {
                     TextField("Paste an Abstract invitation", text: $invitation)
                         .textFieldStyle(.roundedBorder)
-                    Button("Pair") { remote.pair(invitation: invitation); invitation = "" }
+                    Button("Pair") {
+                        remote.lastError = nil
+                        remote.pair(invitation: invitation)
+                    }
                         .disabled(invitation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             } header: { Text("Internet") }
             footer: { SettingsCaption("Connections are encrypted between your devices. Existing pairings learn this Mac's internet address when they next connect locally.") }
+            .id("devices.internet")
 
             Section {
                 if remote.paired.isEmpty {
@@ -70,6 +86,7 @@ struct DevicesSettingsPane: View {
             } header: {
                 Text("Paired")
             }
+            .id("devices.pairing")
 
             Section {
                 let unpaired = remote.nearby.filter { device in !remote.paired.contains { $0.id == device.id } }
@@ -90,12 +107,9 @@ struct DevicesSettingsPane: View {
             } footer: {
                 SettingsCaption("Macs on this network only. Pairing shows a code on both Macs; they must match.")
             }
-            AdvancedDeviceSettings()
-            if let error = remote.lastError {
-                Section { Text(error).font(.btCallout).foregroundStyle(Color.btRemoved) }
-            }
+            AdvancedDeviceSettings().id("devices.advanced")
         }
-        .settingsPane()
+        .settingsScrollablePane()
         .task { remote.startBrowsing() }
     }
 }
@@ -109,6 +123,9 @@ private struct AdvancedDeviceSettings: View {
     @State private var name = ""
     @State private var port = ""
     @State private var address = ""
+    @FocusState private var focusedField: Field?
+
+    private enum Field: Hashable { case name, port }
 
     var body: some View {
         @Bindable var remote = model.remote
@@ -117,21 +134,29 @@ private struct AdvancedDeviceSettings: View {
                 LabeledContent {
                     TextField("Name", text: $name, prompt: Text(Host.current().localizedName ?? "Mac"))
                         .textFieldStyle(.roundedBorder)
-                        .frame(width: 220)
-                        .onSubmit { remote.customName = name.isEmpty ? nil : name }
+                        .labelsHidden()
+                        .frame(maxWidth: 220)
+                        .focused($focusedField, equals: .name)
+                        .onSubmit(commitName)
                 } label: {
                     Text("Name on the network")
-                    Text("What other Macs see. Press Return to use it.")
+                    Text("What other Macs see.")
                 }
                 LabeledContent {
                     TextField("Port", text: $port, prompt: Text("Automatic"))
                         .textFieldStyle(.roundedBorder)
-                        .frame(width: 100)
-                        .onSubmit { remote.fixedPort = UInt16(port) }
+                        .labelsHidden()
+                        .frame(maxWidth: 100)
+                        .focused($focusedField, equals: .port)
+                        .onSubmit(commitPort)
                 } label: {
                     Text("Port")
-                    Text(remote.listeningPort.map { "Listening on \($0). Fix one for firewall rules or pairing by address." }
-                         ?? "Fix one for firewall rules or pairing by address.")
+                    if port.isEmpty || UInt16(port).map({ $0 > 0 }) == true {
+                        Text(remote.listeningPort.map { "Listening on \($0). Leave empty for Automatic." }
+                             ?? "Leave empty for Automatic.")
+                    } else {
+                        Text("Enter a port from 1 to 65535.").foregroundStyle(Color.btWarning)
+                    }
                 }
                 Toggle(isOn: $remote.peerToPeer) {
                     Text("Direct Wi-Fi")
@@ -148,6 +173,7 @@ private struct AdvancedDeviceSettings: View {
                     HStack(spacing: Space.sm) {
                         TextField("Address", text: $address, prompt: Text("192.168.1.20:52000"))
                             .textFieldStyle(.roundedBorder)
+                            .labelsHidden()
                             .frame(width: 200)
                             .onSubmit(pairByAddress)
                         Button("Pair", action: pairByAddress)
@@ -168,6 +194,14 @@ private struct AdvancedDeviceSettings: View {
             name = remote.customName ?? ""
             port = remote.fixedPort.map(String.init) ?? ""
         }
+        .onChange(of: focusedField) { old, _ in
+            if old == .name { commitName() }
+            if old == .port { commitPort() }
+        }
+        .onDisappear {
+            commitName()
+            commitPort()
+        }
     }
 
     private var addresses: String {
@@ -179,7 +213,19 @@ private struct AdvancedDeviceSettings: View {
 
     private func pairByAddress() {
         model.remote.pair(address: address)
-        address = ""
+    }
+
+    private func commitName() {
+        let value = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let saved = value.isEmpty ? nil : value
+        if model.remote.customName != saved { model.remote.customName = saved }
+    }
+
+    private func commitPort() {
+        let value = port.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard value.isEmpty || UInt16(value).map({ $0 > 0 }) == true else { return }
+        let saved = value.isEmpty ? nil : UInt16(value)
+        if model.remote.fixedPort != saved { model.remote.fixedPort = saved }
     }
 }
 
