@@ -28,7 +28,7 @@ For the first iPhone upload, use Safari on your phone if you are away from your 
    | Field | Value |
    | --- | --- |
    | Platform | iOS |
-   | Name | Abstract (if available) |
+   | Name | Abstract Remote (if available; try Use Abstract if Apple rejects it) |
    | Primary language | English (U.S.) |
    | Bundle ID | `app.useabstract.mobile` |
    | SKU | `useabstract-ios` |
