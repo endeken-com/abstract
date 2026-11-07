@@ -8,6 +8,7 @@ on:
       - Packages/Iroh/**
       - scripts/prepare-iroh.sh
       - .github/workflows/mobile.yml
+      - .github/workflows/mobile-ios-store.yml
       - Packages/AbstractCore/Sources/AbstractCore/Remote/**
       - Abstract/Features/Remote/**
   workflow_dispatch:

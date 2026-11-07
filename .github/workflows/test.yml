@@ -47,15 +47,19 @@ jobs:
 
       # Tests that wait on processes against a deadline run on their own first:
       # alongside the git-heavy suites, the 3-core runner starves them past it.
-      # The plugin command's socket deadline needs its own test process.
+      # The plugin command, side processes, and OpenCode compaction each need
+      # their own test process.
       - name: AbstractCore tests
         working-directory: Packages/AbstractCore
         env:
           TIMED: LocalExecutorTests|ClaudeModelCatalogTests|ProjectSettingsTests|ChatNamingTests|SetupScriptTests
+          ISOLATED: SideProcessTests|OpenCodeCompactionTests
         run: |
           swift test --filter PluginToolsCommandTests
+          swift test --filter SideProcessTests
+          swift test --filter OpenCodeCompactionTests
           swift test --filter "$TIMED"
-          swift test --skip "$TIMED|PluginToolsCommandTests"
+          swift test --skip "$TIMED|$ISOLATED|PluginToolsCommandTests"
 
   apple-transport:
     runs-on: macos-26
@@ -131,7 +135,8 @@ jobs:
           git fetch --no-tags --depth=1 origin "$BASE_SHA"
           if git diff --quiet "$BASE_SHA" HEAD -- \
             mobile/ Packages/AbstractInternet/ Packages/Iroh/ scripts/prepare-iroh.sh \
-            .github/workflows/mobile.yml .github/workflows/test.yml \
+            .github/workflows/mobile.yml .github/workflows/mobile-ios-store.yml \
+            .github/workflows/test.yml \
             .github/actions/apple-build-cache/ \
             Packages/AbstractCore/Sources/AbstractCore/Remote/ Abstract/Features/Remote/; then
             echo 'changed=false' >> "$GITHUB_OUTPUT"

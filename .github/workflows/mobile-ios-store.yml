@@ -1,0 +1,156 @@
+name: iPhone App Store
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: App Store version (for example, 1.0.0)
+        type: string
+        required: true
+        default: 1.0.0
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-ios-store
+  cancel-in-progress: false
+
+jobs:
+  upload:
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-26
+    timeout-minutes: 120
+    environment: release
+    env:
+      IOS_VERSION: ${{ inputs.version }}
+      IOS_BUILD_NUMBER: ${{ github.run_id }}
+      APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+      IOS_BUNDLE_ID: sh.abstract.mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - name: Check release settings
+        run: |
+          [[ "$IOS_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo '::error::Version must have three numeric parts, for example 1.0.0'; exit 1;
+          }
+          [[ "$IOS_BUILD_NUMBER" =~ ^[0-9]+$ ]]
+          [[ "$APPLE_TEAM_ID" =~ ^[A-Z0-9]{10}$ ]] || {
+            echo '::error::Set APPLE_TEAM_ID in the release environment'; exit 1;
+          }
+          test "$(xcodebuild -version | head -n 1 | cut -d ' ' -f 2 | cut -d . -f 1)" -ge 26
+      - uses: actions/cache/restore@v4
+        id: iroh-cache
+        with:
+          path: Packages/Iroh/Iroh.xcframework
+          key: iroh-apple-${{ hashFiles('scripts/prepare-iroh.sh') }}
+      - name: Prepare internet transport
+        run: scripts/prepare-iroh.sh apple
+      - uses: actions/cache/save@v4
+        if: steps.iroh-cache.outputs.cache-hit != 'true'
+        with:
+          path: Packages/Iroh/Iroh.xcframework
+          key: ${{ steps.iroh-cache.outputs.cache-primary-key }}
+      - run: npm ci
+        working-directory: mobile
+      - run: npm run typecheck
+        working-directory: mobile
+      - run: node --test tests/*.test.js
+        working-directory: mobile
+      - run: pod install
+        working-directory: mobile/ios
+      - name: Prepare App Store Connect authentication
+        env:
+          IOS_APP_STORE_KEY_ID: ${{ secrets.IOS_APP_STORE_KEY_ID }}
+          IOS_APP_STORE_ISSUER_ID: ${{ secrets.IOS_APP_STORE_ISSUER_ID }}
+          IOS_APP_STORE_KEY_P8: ${{ secrets.IOS_APP_STORE_KEY_P8 }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+        run: |
+          if [ -n "$IOS_APP_STORE_KEY_ID$IOS_APP_STORE_ISSUER_ID$IOS_APP_STORE_KEY_P8" ]; then
+            key_id="$IOS_APP_STORE_KEY_ID"
+            issuer_id="$IOS_APP_STORE_ISSUER_ID"
+            key_p8="$IOS_APP_STORE_KEY_P8"
+          else
+            key_id="$NOTARY_KEY_ID"
+            issuer_id="$NOTARY_ISSUER_ID"
+            key_p8="$NOTARY_KEY_P8"
+          fi
+          if [ -z "$key_id" ] || [ -z "$issuer_id" ] || [ -z "$key_p8" ]; then
+            echo '::error::Configure all three iOS App Store key secrets, or the existing NOTARY key secrets, in the release environment'
+            exit 1
+          fi
+          api_key_path="$RUNNER_TEMP/AuthKey_${key_id}.p8"
+          printf '%s' "$key_p8" > "$api_key_path"
+          chmod 600 "$api_key_path"
+          {
+            echo "IOS_API_KEY_PATH=$api_key_path"
+            echo "IOS_KEY_ID=$key_id"
+            echo "IOS_KEY_ISSUER_ID=$issuer_id"
+          } >> "$GITHUB_ENV"
+      - name: Archive signed iPhone app
+        working-directory: mobile/ios
+        run: |
+          set -o pipefail
+          xcodebuild archive \
+            -workspace Abstract.xcworkspace -scheme Abstract -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/Abstract.xcarchive" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$IOS_API_KEY_PATH" \
+            -authenticationKeyID "$IOS_KEY_ID" \
+            -authenticationKeyIssuerID "$IOS_KEY_ISSUER_ID" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" CODE_SIGN_STYLE=Automatic \
+            MARKETING_VERSION="$IOS_VERSION" CURRENT_PROJECT_VERSION="$IOS_BUILD_NUMBER" \
+            | tee "$RUNNER_TEMP/ios-archive.log"
+          app="$RUNNER_TEMP/Abstract.xcarchive/Products/Applications/Abstract.app"
+          plist="$app/Info.plist"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist")" = "$IOS_BUNDLE_ID"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")" = "$IOS_VERSION"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$plist")" = "$IOS_BUILD_NUMBER"
+          codesign --verify --deep --strict "$app"
+      - name: Upload to App Store Connect
+        run: |
+          set -o pipefail
+          cat > "$RUNNER_TEMP/ios-export-options.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>teamID</key><string>$APPLE_TEAM_ID</string>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+            <key>uploadSymbols</key><true/>
+          </dict></plist>
+          EOF
+          plutil -lint "$RUNNER_TEMP/ios-export-options.plist"
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/Abstract.xcarchive" \
+            -exportPath "$RUNNER_TEMP/ios-export" \
+            -exportOptionsPlist "$RUNNER_TEMP/ios-export-options.plist" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$IOS_API_KEY_PATH" \
+            -authenticationKeyID "$IOS_KEY_ID" \
+            -authenticationKeyIssuerID "$IOS_KEY_ISSUER_ID" \
+            | tee "$RUNNER_TEMP/ios-upload.log"
+      - name: Save failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: iphone-store-logs
+          path: |
+            ${{ runner.temp }}/ios-archive.log
+            ${{ runner.temp }}/ios-upload.log
+          if-no-files-found: ignore
+      - name: Remove signing credentials
+        if: always()
+        run: |
+          if [ -n "${IOS_API_KEY_PATH:-}" ]; then rm -f "$IOS_API_KEY_PATH"; fi
+          rm -f "$RUNNER_TEMP/ios-export-options.plist"
