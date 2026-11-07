@@ -3,7 +3,7 @@ module.exports = {
     name: 'Abstract', slug: 'abstract-mobile', scheme: 'abstract', version: '0.1.0',
     orientation: 'portrait', icon: './assets/icon-dark.png', userInterfaceStyle: 'dark',
     ios: {
-      bundleIdentifier: 'sh.abstract.mobile', supportsTablet: true,
+      bundleIdentifier: 'app.useabstract.mobile', supportsTablet: true,
       // Light and dark home screens; scripts/make-icons.sh makes both.
       icon: { light: './assets/icon-light.png', dark: './assets/icon-dark.png' },
       infoPlist: {

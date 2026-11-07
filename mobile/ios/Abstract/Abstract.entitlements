@@ -3,10 +3,10 @@
 <plist version="1.0">
   <dict>
     <key>application-identifier</key>
-    <string>$(AppIdentifierPrefix)sh.abstract.mobile</string>
+    <string>$(AppIdentifierPrefix)app.useabstract.mobile</string>
     <key>keychain-access-groups</key>
     <array>
-      <string>$(AppIdentifierPrefix)sh.abstract.mobile</string>
+      <string>$(AppIdentifierPrefix)app.useabstract.mobile</string>
     </array>
   </dict>
 </plist>
