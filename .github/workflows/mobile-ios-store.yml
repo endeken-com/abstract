@@ -69,30 +69,18 @@ jobs:
           IOS_APP_STORE_KEY_ID: ${{ secrets.IOS_APP_STORE_KEY_ID }}
           IOS_APP_STORE_ISSUER_ID: ${{ secrets.IOS_APP_STORE_ISSUER_ID }}
           IOS_APP_STORE_KEY_P8: ${{ secrets.IOS_APP_STORE_KEY_P8 }}
-          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
-          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
-          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
         run: |
-          if [ -n "$IOS_APP_STORE_KEY_ID$IOS_APP_STORE_ISSUER_ID$IOS_APP_STORE_KEY_P8" ]; then
-            key_id="$IOS_APP_STORE_KEY_ID"
-            issuer_id="$IOS_APP_STORE_ISSUER_ID"
-            key_p8="$IOS_APP_STORE_KEY_P8"
-          else
-            key_id="$NOTARY_KEY_ID"
-            issuer_id="$NOTARY_ISSUER_ID"
-            key_p8="$NOTARY_KEY_P8"
-          fi
-          if [ -z "$key_id" ] || [ -z "$issuer_id" ] || [ -z "$key_p8" ]; then
-            echo '::error::Configure all three iOS App Store key secrets, or the existing NOTARY key secrets, in the release environment'
+          if [ -z "$IOS_APP_STORE_KEY_ID" ] || [ -z "$IOS_APP_STORE_ISSUER_ID" ] || [ -z "$IOS_APP_STORE_KEY_P8" ]; then
+            echo '::error::Set IOS_APP_STORE_KEY_ID, IOS_APP_STORE_ISSUER_ID, and IOS_APP_STORE_KEY_P8 in the release environment. Use an Admin team API key for cloud distribution signing.'
             exit 1
           fi
-          api_key_path="$RUNNER_TEMP/AuthKey_${key_id}.p8"
-          printf '%s' "$key_p8" > "$api_key_path"
+          api_key_path="$RUNNER_TEMP/AuthKey_${IOS_APP_STORE_KEY_ID}.p8"
+          printf '%s' "$IOS_APP_STORE_KEY_P8" > "$api_key_path"
           chmod 600 "$api_key_path"
           {
             echo "IOS_API_KEY_PATH=$api_key_path"
-            echo "IOS_KEY_ID=$key_id"
-            echo "IOS_KEY_ISSUER_ID=$issuer_id"
+            echo "IOS_KEY_ID=$IOS_APP_STORE_KEY_ID"
+            echo "IOS_KEY_ISSUER_ID=$IOS_APP_STORE_ISSUER_ID"
           } >> "$GITHUB_ENV"
       - name: Archive signed iPhone app
         working-directory: mobile/ios
