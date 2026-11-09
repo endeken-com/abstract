@@ -602,8 +602,15 @@ function option(id, label, detail, efforts, defaultEffort) {
   return model;
 }
 
-/** `model/list`'s reply as the catalog. Wonder Full appears only if the
- * signed-in account's list actually includes it. */
+const MODEL_LABELS = new Map([
+  ["muse-wonder-1.0", "Muse Wonder"],
+  ["muse-wonder-full-1.0", "Muse Wonder Full"],
+  ["muse-spark-1.3", "Muse Spark 1.3"],
+  ["muse-spark-1.2", "Muse Spark 1.2"],
+  ["muse-ember-1.0", "Muse Ember"],
+]);
+
+/** `model/list` is the account's available models, including gated models. */
 function modelCatalog(line) {
   const reply = parse(line);
   if (reply === undefined || int(get(reply, "id")) !== 2) return null;
@@ -613,14 +620,12 @@ function modelCatalog(line) {
   for (const row of rows) {
     const id = str(get(row, "modelId"));
     if (id === undefined || id === "") continue;
-    const efforts = (arr(get(row, "variants")) ?? []).map(str).filter(defined);
-    const label = id === "muse-wonder-1.0" ? "Muse Wonder"
-      : id === "muse-wonder-full-1.0" ? "Muse Wonder Full" : str(get(row, "displayLabel")) ?? id;
+    const efforts = (arr(get(row, "variants")) ?? []).map(str).filter(effort => effort !== undefined && EFFORTS.includes(effort));
+    const label = MODEL_LABELS.get(id) ?? str(get(row, "displayLabel")) ?? id;
     models.push(option(id, label, str(get(row, "description")), efforts, str(get(row, "defaultReasoningEffort"))));
   }
   if (!models.length) return null;
-  const offered = models.some(m => m.id === "muse-wonder-1.0") ? models : [option("muse-wonder-1.0", "Muse Wonder")].concat(models);
-  const catalog = { models: offered, versions: [] };
+  const catalog = { models, versions: [] };
   const accountDefault = models.find(model => rows.some(row => str(get(row, "modelId")) === model.id && get(row, "isDefault") === true));
   if (accountDefault !== undefined) catalog.accountDefault = accountDefault;
   return catalog;
@@ -690,7 +695,8 @@ AbstractAgent.register({
       default: return null;
     }
   },
-  catalog() { return { models: [option("muse-wonder-1.0", "Muse Wonder")], versions: [] }; },
+  // Without a successful account-specific model/list, let Muse choose its own default.
+  catalog() { return { models: [], versions: [] }; },
   defaultModel(config) {
     const text = (config || {})[SETTINGS_FILE];
     return typeof text === "string" ? str(get(parse(text), "model")) ?? null : null;
