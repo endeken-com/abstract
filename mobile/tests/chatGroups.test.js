@@ -13,7 +13,7 @@ require.extensions['.ts'] = transpile;
 require.extensions['.tsx'] = transpile;
 // The native modules are stood in by their element names, so a row renders to a plain element tree.
 const stubs = {
-  'react-native': { Pressable: 'Pressable', Text: 'Text', TextInput: 'TextInput', View: 'View', StyleSheet: { create: styles => styles, hairlineWidth: 0.5 }, Platform: { OS: 'ios' } },
+  'react-native': { Pressable: 'Pressable', Text: 'Text', TextInput: 'TextInput', View: 'View', StyleSheet: { create: styles => styles, hairlineWidth: 0.5 }, Platform: { OS: 'ios' }, useWindowDimensions: () => ({ fontScale: 1 }) },
   'expo-symbols': { SymbolView: 'SymbolView' },
   'react-native-svg': { __esModule: true, default: 'Svg', Path: 'Path' },
   './Brand': { BrandLoadingIndicator: 'BrandLoadingIndicator' },
@@ -25,13 +25,13 @@ const stubs = {
 const load = Module._load;
 Module._load = function (request, ...rest) { return stubs[request] || load.call(this, request, ...rest); };
 const g = require('../src/chatGroups.ts');
-const { SecondLine } = require('../src/ChatList.tsx');
+const { ChatRow, SecondLine } = require('../src/ChatList.tsx');
 
 const now = 1_000_000_000;
 const pr = (number, state = 'OPEN', fields = {}) => ({ number, title: 't', state, isDraft: false, ...fields });
-const chat = (id, status = 'idle', { ago = 60, pullRequest = null, hasChanges = false, backgroundTasks = false, projectName = 'abstract', branch = null, providerId = 'claude', pinnedAt = null, archived = false, mac = 'Studio', hostId = 'h1', macState = 'online' } = {}) => ({
+const chat = (id, status = 'idle', { ago = 60, pullRequest = null, hasChanges = false, backgroundTasks = false, projectName = 'abstract', branch = null, providerId = 'claude', pinnedAt = null, archived = false, parentSessionId = null, mac = 'Studio', hostId = 'h1', macState = 'online' } = {}) => ({
   hostId, mac, macState,
-  session: { id, name: id, status, providerId, branch, projectId: projectName ? `p-${projectName}` : null, worktreePath: '/w/' + id, createdAt: now - ago - 10, lastEventAt: now - ago, pinnedAt, archivedAt: archived ? now : null },
+  session: { id, name: id, status, providerId, branch, projectId: projectName ? `p-${projectName}` : null, worktreePath: '/w/' + id, createdAt: now - ago - 10, lastEventAt: now - ago, pinnedAt, archivedAt: archived ? now : null, parentSessionId },
   pullRequest, hasChanges, backgroundTasks, projectName,
 });
 const groups = chats => Object.fromEntries(g.sections(chats, now).map(s => [s.group, s.chats.map(c => c.session.id)]));
@@ -76,6 +76,66 @@ test('done folds chats quiet for a week', () => {
   const [done] = g.sections([chat('yesterday', 'idle', { ago: 86_400 }), chat('last-month', 'idle', { ago: 30 * 86_400 }), chat('six-days', 'idle', { ago: 6 * 86_400 })], now);
   assert.deepEqual(done.chats.map(c => c.session.id), ['yesterday', 'six-days']);
   assert.deepEqual(done.older.map(c => c.session.id), ['last-month']);
+});
+
+test('delegated chats stay with their parent in the most urgent group, in family order', () => {
+  const chats = [
+    chat('unrelated', 'running', { ago: 30 }),
+    chat('grandchild', 'running', { ago: 2, parentSessionId: 'child' }),
+    chat('sibling', 'finished', { ago: 12, parentSessionId: 'parent' }),
+    chat('parent', 'finished', { ago: 3600 }),
+    chat('child', 'finished', { ago: 20, parentSessionId: 'parent' }),
+  ];
+  const sections = g.sections(chats, now);
+  assert.deepEqual(sections.map(s => s.group), ['working']);
+  assert.deepEqual(sections[0].chats.map(c => c.session.id), ['parent', 'sibling', 'child', 'grandchild', 'unrelated']);
+  assert.equal(new Set(sections[0].chats.map(g.chatKey)).size, chats.length);
+  assert.equal(g.statusOf(chats[3]), 'done', 'the parent keeps its own status');
+});
+
+test('pinned, older, missing, cyclic and same-id cross-Mac relationships keep every chat visible once', () => {
+  const pinned = g.sections([chat('parent'), chat('child', 'running', { parentSessionId: 'parent', pinnedAt: 10 })], now);
+  assert.deepEqual(pinned[0].chats.map(c => c.session.id), ['parent', 'child']);
+  const old = 30 * 86_400;
+  const done = g.sections([chat('parent', 'idle', { ago: old }), chat('child', 'idle', { ago: old - 60, parentSessionId: 'parent' })], now).find(s => s.group === 'done');
+  assert.deepEqual(done.older.map(c => c.session.id), ['parent', 'child']);
+  const mixed = g.sections([chat('orphan', 'running', { parentSessionId: 'missing' }), chat('a', 'running', { parentSessionId: 'b' }),
+    chat('b', 'running', { parentSessionId: 'a' }), chat('same', 'running', { hostId: 'h1' }), chat('same', 'running', { hostId: 'h2', parentSessionId: 'orphan' })], now);
+  assert.equal(new Set(mixed.flatMap(s => [...s.chats, ...s.older]).map(g.chatKey)).size, 5);
+  assert.equal(g.chains([chat('same', 'running', { hostId: 'h1' }), chat('same', 'running', { hostId: 'h2', parentSessionId: 'same' })]).length, 2,
+    'a child cannot attach to a parent on another Mac');
+});
+
+test('project rows keep delegated families together and move pinned families first', () => {
+  const rows = g.groupedByProject([
+    chat('other', 'idle', { projectName: 'other' }),
+    chat('child', 'running', { parentSessionId: 'parent', projectName: 'other' }),
+    chat('unpinned', 'idle'),
+    chat('parent', 'idle', { pinnedAt: 20 }),
+  ]);
+  assert.deepEqual(rows.get('p-abstract').map(c => c.session.id), ['parent', 'child', 'unpinned']);
+  assert.deepEqual(rows.get('p-other').map(c => c.session.id), ['other']);
+});
+
+test('search and filters include a matching child’s ancestors on the same Mac', () => {
+  const parent = chat('parent', 'idle', { providerId: 'claude' });
+  const child = chat('matching child', 'running', { parentSessionId: 'parent', providerId: 'codex' });
+  const otherMac = chat('parent', 'idle', { hostId: 'h2' });
+  const prefs = { ...g.defaultPrefs, filter: { projects: [], agents: ['codex'], macs: [] } };
+  assert.deepEqual(g.narrow([parent, child, otherMac], prefs, 'matching').map(g.chatKey), ['h1/parent', 'h1/matching child']);
+  assert.deepEqual(g.narrow([parent, child], prefs, 'missing'), []);
+});
+
+test('snapshot counts completed direct sub-tasks for a parent', () => {
+  const snapshot = { projects: [], sessions: [
+    { id: 'parent' }, { id: 'done', parentSessionId: 'parent', status: 'finished' },
+    { id: 'working', parentSessionId: 'parent', status: 'running' },
+    { id: 'grandchild', parentSessionId: 'working', status: 'idle' },
+  ] };
+  const [parent, done, working] = g.chatsFromSnapshot(snapshot, { id: 'h1', name: 'Studio', state: 'online' });
+  assert.deepEqual(parent.subtaskProgress, { done: 1, total: 2 });
+  assert.equal(done.subtaskProgress, undefined);
+  assert.deepEqual(working.subtaskProgress, { done: 1, total: 1 });
 });
 
 test('every paired Mac\'s snapshot gives each chat its Mac, pull request, branch state, tasks and project', () => {
@@ -126,6 +186,18 @@ test('checks read failing, then running, then passed', () => {
 const texts = node => [node].flat().filter(Boolean).flatMap(n => typeof n === 'string' ? [n]
   : n.type === 'Text' ? [String(n.props.children)] : texts(n.props?.children));
 const styleOf = el => Object.assign({}, ...[el.props.style].flat().filter(Boolean));
+
+test('delegated rows indent and parent rows show sub-task progress in text and accessibility', () => {
+  const child = chat('child', 'running', { parentSessionId: 'parent' });
+  const parent = { ...chat('parent'), subtaskProgress: { done: 1, total: 2 } };
+  const render = c => ChatRow({ chat: c, showProject: true, now, onPress: () => {} });
+  const childRow = render(child);
+  const parentRow = render(parent);
+  assert.equal(styleOf(childRow.props.children).paddingLeft - styleOf(parentRow.props.children).paddingLeft, 14);
+  assert.match(childRow.props.accessibilityLabel, /child, sub-task/);
+  assert.ok(texts(parentRow).includes('1 of 2 sub-tasks done'));
+  assert.match(parentRow.props.accessibilityLabel, /1 of 2 sub-tasks done/);
+});
 
 test('the second line puts identity on the left and the pull request on the right, a failing check in red with its symbol', () => {
   const line = g.lineOf(chat('x', 'idle', { pullRequest: pr(3981, 'OPEN', { checks: [{ name: 'a', outcome: 'failed' }] }) }), true);

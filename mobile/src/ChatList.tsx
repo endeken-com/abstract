@@ -158,7 +158,7 @@ export function ChatRow({ chat, group, showProject, showMac = false, now, select
   return <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={rowLabel(chat, line, now)} accessibilityHint="Opens the chat"
     accessibilityState={{ selected: !!selected }} android_ripple={{ color: pressedRipple }}
     style={({ pressed }) => [styles.row, selected && styles.rowSelected, pressed && Platform.OS === 'ios' && styles.rowPressed]}>
-    <View style={[styles.rowContent, dimmed && { opacity: 0.5 }]}>
+    <View style={[styles.rowContent, chat.session.parentSessionId && styles.childRowContent, dimmed && { opacity: 0.5 }]}>
       <ChatMark chat={chat} />
       <View style={styles.rowText}>
         <View style={styles.firstLine}>
@@ -168,6 +168,9 @@ export function ChatRow({ chat, group, showProject, showMac = false, now, select
         {unreachable
           ? <Text numberOfLines={1} style={styles.part}>{chat.mac} isn't reachable{chat.lastSeenAt ? ` · last seen ${lastSeen(chat.lastSeenAt, now)}` : ''}</Text>
           : !lineIsEmpty(line) && <SecondLine line={line} stacked={stacked} symbolScale={Math.min(Math.max(fontScale, 1), 2)} />}
+        {chat.subtaskProgress && <Text numberOfLines={1} style={styles.progress}>
+          {`${chat.subtaskProgress.done} of ${chat.subtaskProgress.total} sub-tasks done`}
+        </Text>}
       </View>
     </View>
   </Pressable>;
@@ -241,6 +244,7 @@ const styles = themedStyles(() => StyleSheet.create({
   groupCount: { color: tertiary, fontFamily: 'Inter', fontSize: 12, fontVariant: ['tabular-nums'] },
   row: { marginHorizontal: 8, borderRadius: 10, overflow: 'hidden' },
   rowContent: { minHeight: 48, paddingVertical: 8, paddingLeft: 14, paddingRight: 10, flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
+  childRowContent: { paddingLeft: 28 },
   rowSelected: { backgroundColor: raised },
   rowPressed: { backgroundColor: inset },
   rowText: { flex: 1, minWidth: 0, gap: 3 },
@@ -248,6 +252,7 @@ const styles = themedStyles(() => StyleSheet.create({
   title: { color: ink, fontFamily: 'Inter', fontSize: 15, flex: 1 },
   titleQuiet: { color: muted },
   age: { color: tertiary, fontFamily: 'Inter', fontSize: 12, fontVariant: ['tabular-nums'], flexShrink: 0 },
+  progress: { color: tertiary, fontFamily: 'Inter', fontSize: 12 },
   mark: { width: markSize, height: markSize, alignItems: 'center', justifyContent: 'center' },
   badgeHole: { position: 'absolute', right: -4, bottom: -4, width: 12, height: 12, alignItems: 'center', justifyContent: 'center' },
   badgeHoleDiamond: { backgroundColor: sidebar, borderRadius: 3, transform: [{ rotate: '45deg' }] },

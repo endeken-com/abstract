@@ -30,6 +30,7 @@ export type ChatFacts = {
   projectName?: string | null;
   // Working but silent past its Mac's quiet/stalled threshold; null otherwise.
   stall?: Stall | null;
+  subtaskProgress?: { done: number; total: number };
   // What leads its row: its project's icon, or its agent's logo.
   icon: ChatIcon;
 };
@@ -51,8 +52,13 @@ export function chatsFromSnapshot(snapshot: Snapshot | null | undefined, mac: Pi
   if (!snapshot) return [];
   const projects = new Map(snapshot.projects.map(p => [p.id, p]));
   const busy = new Set(snapshot.backgroundTasks || []);
+  const children = new Map<string, Session[]>();
+  for (const session of snapshot.sessions) {
+    if (session.parentSessionId) children.set(session.parentSessionId, [...(children.get(session.parentSessionId) || []), session]);
+  }
   return snapshot.sessions.map(session => {
     const project = session.projectId ? projects.get(session.projectId) : undefined;
+    const subtasks = children.get(session.id);
     return {
       session, hostId: mac.id, mac: mac.name, macState: mac.state, lastSeenAt: mac.lastSeenAt,
       pullRequest: snapshot.pullRequests?.[session.id] ?? null,
@@ -61,6 +67,7 @@ export function chatsFromSnapshot(snapshot: Snapshot | null | undefined, mac: Pi
       backgroundTasks: busy.has(session.id),
       projectName: project?.name ?? null,
       stall: snapshot.stalls?.[session.id] ?? null,
+      subtaskProgress: subtasks?.length ? { done: subtasks.filter(child => child.status === 'idle' || child.status === 'finished').length, total: subtasks.length } : undefined,
       icon: iconFor(project, session.projectId ? snapshot.projectIcons?.[session.projectId] : undefined),
     };
   });
@@ -96,16 +103,71 @@ export function groupOf(chat: ChatFacts): ChatGroup {
   return statusOf(chat);
 }
 
-// The chats in their groups, in the order the list shows them; empty groups are left out.
+// Parents precede their delegated chats. Broken and cyclic links still appear once;
+// a matching id on another Mac cannot become the parent.
+export function chains(chats: ChatFacts[]): ChatFacts[][] {
+  const byKey = new Map(chats.map(chat => [chatKey(chat), chat]));
+  const children = new Map<string, ChatFacts[]>();
+  for (const chat of chats) {
+    const parent = chat.session.parentSessionId && itemKey(chat.hostId, chat.session.parentSessionId);
+    if (parent && byKey.has(parent)) children.set(parent, [...(children.get(parent) || []), chat]);
+  }
+  for (const siblings of children.values()) siblings.sort((a, b) => activeAt(b) - activeAt(a) || chatKey(a).localeCompare(chatKey(b)));
+
+  const seen = new Set<string>();
+  const result: ChatFacts[][] = [];
+  const addChain = (root: ChatFacts) => {
+    const members: ChatFacts[] = [];
+    const visit = (chat: ChatFacts) => {
+      const key = chatKey(chat);
+      if (seen.has(key)) return;
+      seen.add(key);
+      members.push(chat);
+      for (const child of children.get(key) || []) visit(child);
+    };
+    visit(root);
+    if (members.length) result.push(members);
+  };
+  for (const chat of chats) {
+    const parent = chat.session.parentSessionId && itemKey(chat.hostId, chat.session.parentSessionId);
+    if (!parent || !byKey.has(parent)) addChain(chat);
+  }
+  for (const chat of chats) if (!seen.has(chatKey(chat))) addChain(chat);
+  return result;
+}
+
+// A delegated family stays in its most urgent member's group and folds as one.
 export function sections(chats: ChatFacts[], now: number): ChatSection[] {
+  const families = chains(chats).map(members => ({
+    members,
+    group: members.map(groupOf).reduce((best, next) => groupOrder.indexOf(next) < groupOrder.indexOf(best) ? next : best),
+    activeAt: Math.max(...members.map(activeAt)),
+    pinnedAt: Math.min(...members.map(c => c.session.pinnedAt ?? Infinity)),
+  }));
   return groupOrder.flatMap((group): ChatSection[] => {
-    const members = chats.filter(c => groupOf(c) === group);
+    const members = families.filter(family => family.group === group);
     if (!members.length) return [];
-    members.sort(group === 'pinned' ? (a, b) => (a.session.pinnedAt ?? 0) - (b.session.pinnedAt ?? 0) : (a, b) => activeAt(b) - activeAt(a));
-    if (group !== 'done') return [{ group, chats: members, older: [] }];
+    members.sort(group === 'pinned' ? (a, b) => a.pinnedAt - b.pinnedAt : (a, b) => b.activeAt - a.activeAt);
+    if (group !== 'done') return [{ group, chats: members.flatMap(family => family.members), older: [] }];
     const cutoff = now - doneWindow;
-    return [{ group, chats: members.filter(c => activeAt(c) >= cutoff), older: members.filter(c => activeAt(c) < cutoff) }];
+    return [{ group, chats: members.filter(family => family.activeAt >= cutoff).flatMap(family => family.members),
+      older: members.filter(family => family.activeAt < cutoff).flatMap(family => family.members) }];
   });
+}
+
+// Keep families under their root's project, with pinned families first.
+export function groupedByProject(chats: ChatFacts[]): Map<string | null, ChatFacts[]> {
+  const groups = new Map<string | null, ChatFacts[][]>();
+  for (const family of chains(chats)) {
+    const project = family[0].session.projectId;
+    groups.set(project, [...(groups.get(project) || []), family]);
+  }
+  return new Map([...groups].map(([project, families]) => {
+    const pinned = families.filter(family => family.some(chat => chat.session.pinnedAt != null))
+      .sort((a, b) => Math.min(...a.map(chat => chat.session.pinnedAt ?? Infinity)) - Math.min(...b.map(chat => chat.session.pinnedAt ?? Infinity)));
+    const rest = families.filter(family => family.every(chat => chat.session.pinnedAt == null));
+    return [project, [...pinned, ...rest].flat()];
+  }));
 }
 
 // The quiet second line under a chat's title. Empty parts are left out.
@@ -165,6 +227,7 @@ export function rowLabel(chat: ChatFacts, line: ChatLine, now: number): string {
   const prWords = pr && `pull request ${pr.number}${pr.isDraft ? ', draft' : prState(pr) === 'OPEN' ? '' : `, ${pr.state.toLowerCase()}`}`;
   return [
     chat.session.name,
+    chat.session.parentSessionId && 'sub-task',
     badge && badge !== 'unreachable' && (line.attention || line.stall || badgeWords[badge]),
     chat.projectName || standalone,
     agentNames[chat.session.providerId] || chat.session.providerId,
@@ -173,6 +236,7 @@ export function rowLabel(chat: ChatFacts, line: ChatLine, now: number): string {
     line.checks && `checks ${line.checks}`,
     line.changesRequested && 'changes requested',
     chat.session.archivedAt != null && 'archived',
+    chat.subtaskProgress && `${chat.subtaskProgress.done} of ${chat.subtaskProgress.total} sub-tasks done`,
     spokenAge(activeAt(chat), now),
   ].filter(Boolean).join(', ');
 }
@@ -236,5 +300,18 @@ export function parsePrefs(raw: string | null | undefined): ChatListPrefs {
 
 // The chats the search, the filters and the archive choice let through.
 export function narrow(chats: ChatFacts[], prefs: ChatListPrefs, query: string): ChatFacts[] {
-  return chats.filter(c => (prefs.showArchived || c.session.archivedAt == null) && filterMatches(prefs.filter, c) && queryMatches(c, query));
+  const matches = chats.filter(c => (prefs.showArchived || c.session.archivedAt == null) && filterMatches(prefs.filter, c) && queryMatches(c, query));
+  const byKey = new Map(chats.map(chat => [chatKey(chat), chat]));
+  const included = new Set(matches.map(chatKey));
+  for (const chat of matches) {
+    let parent = chat.session.parentSessionId;
+    while (parent) {
+      const key = itemKey(chat.hostId, parent);
+      const ancestor = byKey.get(key);
+      if (!ancestor || included.has(key)) break;
+      included.add(key);
+      parent = ancestor.session.parentSessionId;
+    }
+  }
+  return chats.filter(chat => included.has(chatKey(chat)));
 }
