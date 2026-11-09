@@ -23,6 +23,11 @@ function catalog(output) {
   return models.length ? { accountDefault: models.find(model => model.id === DEFAULT_MODEL) || models[0], models, versions: [] } : null;
 }
 
+function namingResult(output) {
+  const result = parse(output);
+  return object(result) ? result : null;
+}
+
 function launch(ctx, resumeId) {
   const parts = [ctx.branchTool ? null : ctx.instructions, ctx.outputStyle && ctx.outputStyle.instructions,
     ctx.permissionPolicy === "plan" ? ctx.text.plan : ctx.permissionPolicy === "read-only" ? ctx.text.readOnly : null]
@@ -146,6 +151,22 @@ AbstractAgent.register({
     if (policy === "plan" || policy === "read-only") return "Antigravity uses plan mode; tools cannot change files.";
     if (policy === "auto-edits") return "Antigravity accepts file edits; other approvals are declined in headless mode.";
     return "Antigravity declines tool actions that need approval in headless mode.";
+  },
+  naming: {
+    launch({ prompt, home, model }) {
+      // Strict requests approval even for reads; headless mode denies it. Slash
+      // expansion is disabled so task text cannot invoke a skill or command.
+      return { args: ["--print", prompt, "--output-format", "json", "--model", model || DEFAULT_MODEL,
+        "--disable-slash-commands", "--settings", '{"toolPermission":"strict"}'], cwd: home };
+    },
+    answer(output) {
+      const result = namingResult(output);
+      return result && result.status === "SUCCESS" ? string(result.response) : null;
+    },
+    error(output) {
+      const result = namingResult(output);
+      return result && result.status !== "SUCCESS" ? string(result.error) : null;
+    },
   },
 });
 

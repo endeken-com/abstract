@@ -25,7 +25,7 @@ struct GeminiProviderTests {
         #expect(gemini.iconURL?.lastPathComponent == "icon.svg")
         #expect(gemini.logoAsset == "ProviderGemini")
         #expect(gemini.followUpMode == .respawn)
-        #expect(gemini.can("session.persistence") && gemini.can("models.discover"))
+        #expect(gemini.can("session.persistence") && gemini.can("models.discover") && gemini.can("naming"))
         #expect(!gemini.can("permission") && !gemini.can("permission.mode") && !gemini.can("prompt.image"))
         #expect(gemini.skillDelivery == nil && gemini.toolServerSupport == .none)
     }
@@ -61,6 +61,25 @@ struct GeminiProviderTests {
         #expect(models.models.map(\.id) == ["gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low"])
         #expect(models.accountDefault?.id == "gemini-3.8-flash-medium")
         #expect(gemini.fallbackModels.models.map(\.id) == models.models.map(\.id))
+    }
+
+    @Test func namingUsesStrictHeadlessPermissionsAndReadsTheResult() throws {
+        let gemini = try provider
+        #expect(ChatNaming.namer(for: "gemini", installed: { _ in false })?.id == "gemini")
+        let spec = try #require(gemini.namingLaunch(prompt: "Name this chat", home: "/tmp/home", binary: nil,
+                                                     model: "gemini-3.8-flash-low"))
+        #expect(spec.command == "agy" && spec.cwd == "/tmp/home")
+        #expect(spec.args == ["--print", "Name this chat", "--output-format", "json", "--model", "gemini-3.8-flash-low",
+                               "--disable-slash-commands", "--settings", #"{"toolPermission":"strict"}"#])
+        #expect(spec.stdinInitial == nil && !spec.keepStdinOpen)
+
+        let success = #"{"status":"SUCCESS","response":"{\"title\":\"Add Gemini chats\",\"branch\":\"feature/gemini-chats\"}"}"#
+        #expect(gemini.namingAnswer(success).flatMap(ChatNaming.parse) ==
+                .init(title: "Add Gemini chats", branch: "feature/gemini-chats"))
+        #expect(gemini.namingError(success) == nil)
+        let failure = #"{"status":"ERROR","error":"Authentication required","response":""}"#
+        #expect(gemini.namingAnswer(failure) == nil)
+        #expect(gemini.namingError(failure) == "Authentication required")
     }
 
     @Test(.enabled(if: ProcessInfo.processInfo.environment["ABSTRACT_GEMINI_E2E"] != nil))

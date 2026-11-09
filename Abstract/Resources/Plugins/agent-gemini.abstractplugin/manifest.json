@@ -16,7 +16,7 @@
         "command": ["agy"],
         "install": "curl -fsSL https://antigravity.google/cli/install.sh | bash; run agy to sign in",
         "detect": ["--version"],
-        "capabilities": ["prompt.message", "session.persistence", "models.discover"],
+        "capabilities": ["prompt.message", "session.persistence", "models.discover", "naming"],
         "toolServers": "none"
       }
     ]
