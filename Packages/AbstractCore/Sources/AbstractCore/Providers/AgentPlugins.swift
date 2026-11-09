@@ -8,7 +8,8 @@ public final class AgentPlugins: @unchecked Sendable {
 
     /// Abstract's own agent plugins, in the order the app lists agents.
     public static let bundledPluginIds = ["sh.abstract.agent.claude", "sh.abstract.agent.codex",
-                                          "sh.abstract.agent.opencode", "sh.abstract.agent.muse"]
+                                          "sh.abstract.agent.opencode", "sh.abstract.agent.muse",
+                                          "sh.abstract.agent.gemini"]
 
     private let lock = NSLock()
     private var bundledAgents: [ScriptedProvider]?

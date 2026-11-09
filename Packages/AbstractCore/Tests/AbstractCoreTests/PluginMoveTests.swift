@@ -157,7 +157,7 @@ import Testing
         // What stays: the agents, the themes and GitHub.
         #expect(Set(bundled.filter { $0.hasSuffix(".abstractplugin") }) == [
             "agent-claude.abstractplugin", "agent-codex.abstractplugin", "agent-muse.abstractplugin",
-            "agent-opencode.abstractplugin", "theme-graphite.abstractplugin", "theme-ink.abstractplugin",
+            "agent-opencode.abstractplugin", "agent-gemini.abstractplugin", "theme-graphite.abstractplugin", "theme-ink.abstractplugin",
             "theme-paper.abstractplugin", "github.abstractplugin",
         ])
     }

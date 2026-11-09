@@ -7,7 +7,7 @@ import Testing
 /// to OpenCode and only their old transcripts still need reading.
 @Suite struct RetiredAgentsTests {
     @Test func onlyAgentsAreOffered() {
-        #expect(ProviderRegistry.all.map(\.id) == ["claude", "codex", "opencode", "muse"])
+        #expect(ProviderRegistry.all.map(\.id) == ["claude", "codex", "opencode", "muse", "gemini"])
         #expect(ProviderRegistry.provider("ollama") == nil)
         #expect(ProviderRegistry.provider("lmstudio") == nil)
     }

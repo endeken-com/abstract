@@ -90,8 +90,8 @@ enum ToolKind: Equatable {
     init(_ name: String) {
         switch name.lowercased() {
         case "read", "read_file", "grep", "glob", "search", "ls", "notebookread", "toolsearch", "websearch", "web_search", "webfetch", "web_fetch": self = .explore
-        case "edit", "edit_file", "multiedit", "write", "write_file", "notebookedit", "applypatch", "apply_patch", "file_change": self = .edit
-        case "bash", "shell", "command_execution", "bashoutput": self = .command
+        case "edit", "edit_file", "multiedit", "write", "write_file", "write_to_file", "notebookedit", "applypatch", "apply_patch", "file_change": self = .edit
+        case "bash", "shell", "command_execution", "run_command", "bashoutput": self = .command
         case "todowrite", "todolist", "todo_list": self = .todo
         case "exitplanmode": self = .plan
         case "task", "agent": self = .delegate
@@ -817,9 +817,9 @@ enum ToolPresentation {
         if PluginTools.toolName(inStreamName: name) != nil { return "puzzlepiece.extension" }
         return switch name.lowercased() {
         case "read", "read_file", "notebookread": "doc.text"
-        case "write", "write_file": "doc.badge.plus"
+        case "write", "write_file", "write_to_file": "doc.badge.plus"
         case "edit", "edit_file", "multiedit", "notebookedit", "applypatch", "apply_patch", "file_change": "pencil"
-        case "bash", "shell", "command_execution", "bashoutput": "terminal"
+        case "bash", "shell", "command_execution", "run_command", "bashoutput": "terminal"
         case "grep", "glob", "search", "ls", "toolsearch": "magnifyingglass"
         case "webfetch", "web_fetch", "websearch", "web_search": "globe"
         case "todowrite", "todolist", "todo_list": "checklist"
@@ -847,9 +847,9 @@ enum ToolPresentation {
         if pending {
             switch name.lowercased() {
             case "read", "read_file", "notebookread": return "Reading"
-            case "write", "write_file": return "Creating"
+            case "write", "write_file", "write_to_file": return "Creating"
             case "edit", "edit_file", "multiedit", "notebookedit", "applypatch", "apply_patch", "file_change": return "Editing"
-            case "bash", "shell", "command_execution": return "Running"
+            case "bash", "shell", "command_execution", "run_command": return "Running"
             case "grep", "search", "websearch", "web_search", "toolsearch": return "Searching"
             case "glob", "ls": return "Listing"
             case "webfetch", "web_fetch": return "Fetching"
@@ -863,9 +863,9 @@ enum ToolPresentation {
         }
         return switch name.lowercased() {
         case "read", "read_file", "notebookread": "Read"
-        case "write", "write_file": "Created"
+        case "write", "write_file", "write_to_file": "Created"
         case "edit", "edit_file", "multiedit", "notebookedit", "applypatch", "apply_patch", "file_change": "Edited"
-        case "bash", "shell", "command_execution": "Ran"
+        case "bash", "shell", "command_execution", "run_command": "Ran"
         case "bashoutput": "Checked output"
         case "grep", "search": "Searched"
         case "glob", "ls": "Listed"

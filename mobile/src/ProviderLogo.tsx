@@ -12,5 +12,5 @@ export function ProviderLogo({ provider, size = 15 }: { provider: string; size?:
 }
 
 export function providerMenuImage(provider: string) {
-  return ({ claude: 'ProviderClaude', codex: 'ProviderCodex', opencode: 'ProviderOpenCode', muse: 'ProviderMuse' } as Record<string, string>)[provider.toLowerCase()];
+  return ({ claude: 'ProviderClaude', codex: 'ProviderCodex', opencode: 'ProviderOpenCode', muse: 'ProviderMuse', gemini: 'ProviderGemini' } as Record<string, string>)[provider.toLowerCase()];
 }

@@ -418,7 +418,7 @@ function NewChatScreen({ route, navigation }: any) {
   const catalog = state.snapshot?.modelCatalogs?.[provider];
   const modelOption = [...(catalog?.models || []), ...(catalog?.versions || [])].find(x => x.id === modelName);
   const effortLevels = modelOption?.efforts || catalog?.accountDefault?.efforts || [];
-  const providerLabel = (id: string) => ({ claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode' } as Record<string, string>)[id] || id;
+  const providerLabel = (id: string) => ({ claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode', gemini: 'Gemini' } as Record<string, string>)[id] || id;
   const policyLabels: Record<Policy, string> = { ask: 'Ask before acting', 'auto-edits': 'Accept edits', bypass: 'Full autonomy', plan: 'Plan', 'read-only': 'Ask (read-only)' };
   const selectedWorktree = worktrees.find(x => x.path === worktree);
   const worktreeLabel = selectedWorktree?.branch || (worktree ? worktree.split('/').pop() || worktree : 'New worktree');
