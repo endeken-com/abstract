@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 import AbstractCore
 
@@ -16,6 +17,7 @@ struct SidebarView: View {
     @State private var searching = false
     @State private var query = ""
     @State private var showOlderDone = false
+    @State private var filterNow = Date()
 
     var body: some View {
         let _ = Perf.event("body.Sidebar")
@@ -35,6 +37,9 @@ struct SidebarView: View {
         }
         // Apart from the list, so opening a chat doesn't rebuild every row (ABS-184).
         .background(ShownChatWatcher())
+        .onReceive(Timer.publish(every: 60, on: .main, in: .common).autoconnect()) { date in
+            if filter.activity != nil { filterNow = date }
+        }
     }
 
     private var filter: SidebarChats.Filter {
@@ -45,7 +50,7 @@ struct SidebarView: View {
 
     /// The chats the search and filters let through, archived ones only when asked for.
     private func visibleChats(_ all: [SidebarChats.Chat]) -> [SidebarChats.Chat] {
-        SidebarChats.visible(all, filter: filter, query: query, showArchived: model.showArchived)
+        SidebarChats.visible(all, filter: filter, query: query, showArchived: model.showArchived, now: filterNow)
     }
 
     private var list: some View {
@@ -161,6 +166,7 @@ struct SidebarView: View {
 
     /// Pinned, Needs you, Working, Ready to review, Done: across projects and Macs.
     @ViewBuilder private func statusGroups(_ chats: [SidebarChats.Chat]) -> some View {
+        let showFilteredOlder = filter.activity != nil
         ForEach(SidebarChats.sections(chats)) { section in
             let archived = section.group == .archived
             let order = archived ? section.chats.map(\.id) : nil
@@ -169,20 +175,22 @@ struct SidebarView: View {
                       showsTrailing: archived && model.archivedSelection.count > 1) {
                 ForEach(section.chats) { chat in RailChatRow(chat: chat, showProject: true, pickOrder: order).equatable() }
                 if !section.older.isEmpty {
-                    if showOlderDone {
+                    if showOlderDone || showFilteredOlder {
                         ForEach(section.older) { chat in RailChatRow(chat: chat, showProject: true).equatable() }
                     }
-                    Button {
-                        withAnimation(.snappy(duration: 0.2)) { showOlderDone.toggle() }
-                    } label: {
-                        Text(showOlderDone ? "Hide older" : "Show \(section.older.count) older")
-                            .font(BTFont.ui(12.5))
-                            .foregroundStyle(Color.btTextTertiary)
-                            .padding(.leading, Rail.rowPadding + Rail.chatIndent + Rail.iconColumn + 8)
-                            .frame(maxWidth: .infinity, minHeight: Rail.rowHeight - 4, alignment: .leading)
-                            .contentShape(Rectangle())
+                    if !showFilteredOlder {
+                        Button {
+                            withAnimation(.snappy(duration: 0.2)) { showOlderDone.toggle() }
+                        } label: {
+                            Text(showOlderDone ? "Hide older" : "Show \(section.older.count) older")
+                                .font(BTFont.ui(12.5))
+                                .foregroundStyle(Color.btTextTertiary)
+                                .padding(.leading, Rail.rowPadding + Rail.chatIndent + Rail.iconColumn + 8)
+                                .frame(maxWidth: .infinity, minHeight: Rail.rowHeight - 4, alignment: .leading)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
             }
         }
@@ -219,7 +227,7 @@ struct SidebarView: View {
         if projectsCollapsed {
             order = []
         } else if arrangement == .status {
-            order = SidebarChats.sections(chats).flatMap { $0.chats + (showOlderDone ? $0.older : []) }.map(\.id)
+            order = SidebarChats.sections(chats).flatMap { $0.chats + (showOlderDone || filter.activity != nil ? $0.older : []) }.map(\.id)
         } else {
             let groups = SidebarChats.groupedByProject(chats.filter { !$0.isRemote })
             order = (model.projects.flatMap { p in
@@ -311,6 +319,12 @@ private struct SidebarFilterMenu: View {
                     ForEach(macs, id: \.self) { name in Toggle(name, isOn: choice(\.macs, name)) }
                 }
             }
+            Picker("Last Active", selection: activityChoice) {
+                Text("Any Time").tag(nil as SidebarChats.Filter.Activity?)
+                ForEach(SidebarChats.Filter.Activity.allCases, id: \.self) { activity in
+                    Text(activity.title).tag(Optional(activity))
+                }
+            }
             if !filter.isEmpty {
                 Button("Show All Chats") { save(SidebarChats.Filter()) }
             }
@@ -338,6 +352,16 @@ private struct SidebarFilterMenu: View {
         } set: { on in
             var next = filter
             if on { next[keyPath: key].insert(value) } else { next[keyPath: key].remove(value) }
+            save(next)
+        }
+    }
+
+    private var activityChoice: Binding<SidebarChats.Filter.Activity?> {
+        Binding {
+            filter.activity
+        } set: { activity in
+            var next = filter
+            next.activity = activity
             save(next)
         }
     }

@@ -197,7 +197,7 @@ function WorkspaceRail({ navigate, selectedChat }: { navigate: (name: string, pa
   const [query, setQuery] = useState('');
   const now = useTicking();
   const all = chatsFromMacs(macs);
-  const visible = narrow(all, prefs, query);
+  const visible = narrow(all, prefs, query, now);
   const narrowing = !filterIsEmpty(prefs.filter) || !!query.trim();
   const isSelected = (chat: ChatFacts) => selectedChat?.hostId === chat.hostId && selectedChat.sessionId === chat.session.id;
   const openChat = (chat: ChatFacts) => navigate('Chat', { hostId: chat.hostId, sessionId: chat.session.id });
@@ -212,7 +212,7 @@ function WorkspaceRail({ navigate, selectedChat }: { navigate: (name: string, pa
       <PauseBanners macs={macs} />
       {macs.length > 0 && <ChatListHeader all={all} prefs={prefs} setPrefs={setPrefs} searching={searching} setSearching={setSearching} query={query} setQuery={setQuery} />}
       {prefs.arrangement === 'status'
-        ? <StatusGroups chats={visible} now={now} showMac={macs.length > 1} isSelected={isSelected} openChat={openChat} />
+        ? <StatusGroups chats={visible} now={now} showMac={macs.length > 1} showFilteredOlder={!!prefs.filter.activity} isSelected={isSelected} openChat={openChat} />
         : macs.map(mac => {
           const chats = visible.filter(c => c.hostId === mac.id).sort((a, b) => b.session.createdAt - a.session.createdAt);
           const projects = groupedByProject(chats);

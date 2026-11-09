@@ -307,22 +307,51 @@ public enum SidebarChats {
     /// What the search field and the filter menu narrow the chats to. An
     /// empty set lets everything through.
     public struct Filter: Sendable, Hashable, Codable {
+        public enum Activity: String, Sendable, Hashable, Codable, CaseIterable {
+            case today, last3Days, last7Days, last30Days, olderThan30Days
+
+            public var title: String {
+                switch self {
+                case .today: "Today"
+                case .last3Days: "Last 3 Days"
+                case .last7Days: "Last 7 Days"
+                case .last30Days: "Last 30 Days"
+                case .olderThan30Days: "Older Than 30 Days"
+                }
+            }
+        }
+
         public var projects: Set<String> = []
         public var agents: Set<String> = []
         public var macs: Set<String> = []
+        public var activity: Activity?
 
-        public init(projects: Set<String> = [], agents: Set<String> = [], macs: Set<String> = []) {
-            self.projects = projects; self.agents = agents; self.macs = macs
+        public init(projects: Set<String> = [], agents: Set<String> = [], macs: Set<String> = [], activity: Activity? = nil) {
+            self.projects = projects; self.agents = agents; self.macs = macs; self.activity = activity
         }
 
-        public var isEmpty: Bool { projects.isEmpty && agents.isEmpty && macs.isEmpty }
+        public var isEmpty: Bool { projects.isEmpty && agents.isEmpty && macs.isEmpty && activity == nil }
 
         /// Projects by name, so the same repository on two Macs is one choice;
         /// a chat with no project is "Standalone".
-        public func matches(_ chat: Chat) -> Bool {
+        public func matches(_ chat: Chat) -> Bool { matches(chat, now: Date()) }
+
+        public func matches(_ chat: Chat, now: Date) -> Bool {
             (projects.isEmpty || projects.contains(chat.projectName ?? standalone))
                 && (agents.isEmpty || agents.contains(chat.session.providerId))
                 && (macs.isEmpty || macs.contains(chat.mac))
+                && matchesActivity(chat.activeAt, now: now)
+        }
+
+        private func matchesActivity(_ date: Date, now: Date) -> Bool {
+            switch activity {
+            case nil: true
+            case .today: Calendar.current.isDate(date, inSameDayAs: now)
+            case .last3Days: date >= now.addingTimeInterval(-3 * 86_400) && date <= now
+            case .last7Days: date >= now.addingTimeInterval(-7 * 86_400) && date <= now
+            case .last30Days: date >= now.addingTimeInterval(-30 * 86_400) && date <= now
+            case .olderThan30Days: date < now.addingTimeInterval(-30 * 86_400)
+            }
         }
     }
 
@@ -331,11 +360,11 @@ public enum SidebarChats {
     /// The chats the rail shows: archived ones only when asked for, then the
     /// filter menu's choices, then the search box. The query is trimmed,
     /// read as a pull-request number once, not once per chat.
-    public static func visible(_ chats: [Chat], filter: Filter, query: String, showArchived: Bool) -> [Chat] {
+    public static func visible(_ chats: [Chat], filter: Filter, query: String, showArchived: Bool, now: Date = Date()) -> [Chat] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let number = Int(q.hasPrefix("#") ? String(q.dropFirst()) : q)
         let matches = chats.filter { chat in
-            guard showArchived || chat.session.archivedAt == nil, filter.matches(chat) else { return false }
+            guard showArchived || chat.session.archivedAt == nil, filter.matches(chat, now: now) else { return false }
             guard !q.isEmpty else { return true }
             if let number, chat.pullRequest?.number == number { return true }
             return chat.session.name.localizedCaseInsensitiveContains(q)

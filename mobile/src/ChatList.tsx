@@ -11,7 +11,7 @@ import { swiftDate } from './types';
 import { onTheme, themedStyles } from './theme';
 import {
   activeAt, age, agentNames, badgeOf, chatKey, defaultPrefs, filterIsEmpty, groupTitles, lineIsEmpty, lineOf, lineText,
-  parsePrefs, rowLabel, sections, standalone, statusOf, type ChatFacts, type ChatGroup, type ChatListPrefs, type ChatLine,
+  noFilter, parsePrefs, rowLabel, sections, standalone, statusOf, type ActivityFilter, type ChatFacts, type ChatGroup, type ChatListPrefs, type ChatLine,
 } from './chatGroups';
 
 // Graphite values come from Abstract/Theme/Palette.swift.
@@ -77,8 +77,8 @@ export function ChatListHeader({ all, prefs, setPrefs, searching, setSearching, 
 }
 
 // Pinned, Needs you, Working, Ready to review, Done: across projects and Macs.
-export function StatusGroups({ chats, now, showMac, isSelected, openChat }: {
-  chats: ChatFacts[]; now: number; showMac: boolean;
+export function StatusGroups({ chats, now, showMac, showFilteredOlder, isSelected, openChat }: {
+  chats: ChatFacts[]; now: number; showMac: boolean; showFilteredOlder: boolean;
   isSelected: (chat: ChatFacts) => boolean; openChat: (chat: ChatFacts) => void;
 }) {
   const [showOlder, setShowOlder] = useState(false);
@@ -96,8 +96,8 @@ export function StatusGroups({ chats, now, showMac, isSelected, openChat }: {
         <Text style={styles.groupCount}>{count}</Text>
       </View>
       {section.chats.map(row)}
-      {showOlder && section.older.map(row)}
-      {section.older.length > 0 && <Pressable accessibilityRole="button" accessibilityState={{ expanded: showOlder }} onPress={toggleOlder}
+      {(showOlder || showFilteredOlder) && section.older.map(row)}
+      {!showFilteredOlder && section.older.length > 0 && <Pressable accessibilityRole="button" accessibilityState={{ expanded: showOlder }} onPress={toggleOlder}
         android_ripple={{ color: pressedRipple }} style={({ pressed }) => [styles.older, pressed && Platform.OS === 'ios' && { opacity: 0.6 }]}>
         <Text style={styles.olderText}>{showOlder ? 'Hide older' : `Show ${section.older.length} older`}</Text>
         <SymbolView name={{ ios: showOlder ? 'chevron.up' : 'chevron.down', android: showOlder ? 'expand_less' : 'expand_more', web: 'expand_more' } as any} size={11} tintColor={tertiary} style={{ width: 12, height: 11 }} />
@@ -124,6 +124,12 @@ function FilterMenu({ all, prefs, setPrefs }: { all: ChatFacts[]; prefs: ChatLis
     { id: 'projects', title: 'Project', subactions: projects.map(name => ({ id: `project:${name}`, title: name, state: on(prefs.filter.projects.includes(name)) })) },
     { id: 'agents', title: 'Agent', subactions: agents.map(id => ({ id: `agent:${id}`, title: agentNames[id] || id, state: on(prefs.filter.agents.includes(id)) })) },
     ...(macs.length > 1 ? [{ id: 'macs', title: 'Mac', subactions: macs.map(name => ({ id: `mac:${name}`, title: name, state: on(prefs.filter.macs.includes(name)) })) }] : []),
+    { id: 'activity', title: 'Last Active', subactions: [
+      { id: 'activity:any', title: 'Any Time', state: on(!prefs.filter.activity) },
+      ...([['today', 'Today'], ['last3Days', 'Last 3 Days'], ['last7Days', 'Last 7 Days'],
+        ['last30Days', 'Last 30 Days'], ['olderThan30Days', 'Older Than 30 Days']] as [ActivityFilter, string][])
+        .map(([value, title]) => ({ id: `activity:${value}`, title, state: on(prefs.filter.activity === value) })),
+    ] },
     ...(filtered ? [{ id: 'clear', title: 'Show All Chats' }] : []),
     { id: 'archived', title: 'Show Archived Chats', state: on(prefs.showArchived) },
   ]} onPressAction={({ nativeEvent }) => {
@@ -133,7 +139,8 @@ function FilterMenu({ all, prefs, setPrefs }: { all: ChatFacts[]; prefs: ChatLis
     else if (kind === 'project') setPrefs({ ...prefs, filter: { ...prefs.filter, projects: toggle(prefs.filter.projects, value) } });
     else if (kind === 'agent') setPrefs({ ...prefs, filter: { ...prefs.filter, agents: toggle(prefs.filter.agents, value) } });
     else if (kind === 'mac') setPrefs({ ...prefs, filter: { ...prefs.filter, macs: toggle(prefs.filter.macs, value) } });
-    else if (kind === 'clear') setPrefs({ ...prefs, filter: { projects: [], agents: [], macs: [] } });
+    else if (kind === 'activity') setPrefs({ ...prefs, filter: { ...prefs.filter, activity: value === 'any' ? null : value as ActivityFilter } });
+    else if (kind === 'clear') setPrefs({ ...prefs, filter: noFilter });
     else if (kind === 'archived') setPrefs({ ...prefs, showArchived: !prefs.showArchived });
   }}>
     <View accessibilityRole="button" accessibilityLabel={filtered ? 'Group and filter chats, some are filtered out' : 'Group and filter chats'} style={styles.headerButton}>

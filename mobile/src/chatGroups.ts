@@ -259,16 +259,30 @@ export function spokenAge(date: number, now: number): string {
 }
 
 // What the search field and the filter menu narrow the list to. Empty lists let everything through.
-export type ChatFilter = { projects: string[]; agents: string[]; macs: string[] };
-export const noFilter: ChatFilter = { projects: [], agents: [], macs: [] };
-export const filterIsEmpty = (f: ChatFilter) => !f.projects.length && !f.agents.length && !f.macs.length;
+export type ActivityFilter = 'today' | 'last3Days' | 'last7Days' | 'last30Days' | 'olderThan30Days';
+export type ChatFilter = { projects: string[]; agents: string[]; macs: string[]; activity: ActivityFilter | null };
+export const noFilter: ChatFilter = { projects: [], agents: [], macs: [], activity: null };
+export const filterIsEmpty = (f: ChatFilter) => !f.projects.length && !f.agents.length && !f.macs.length && !f.activity;
 
 // Projects by name, so the same repository on two Macs is one choice; a chat
 // with no project is "Standalone". Macs by name.
-export function filterMatches(f: ChatFilter, chat: ChatFacts): boolean {
+export function filterMatches(f: ChatFilter, chat: ChatFacts, now = swiftDate()): boolean {
   return (!f.projects.length || f.projects.includes(chat.projectName || standalone))
     && (!f.agents.length || f.agents.includes(chat.session.providerId))
-    && (!f.macs.length || f.macs.includes(chat.mac));
+    && (!f.macs.length || f.macs.includes(chat.mac))
+    && activityMatches(f.activity, activeAt(chat), now);
+}
+
+function activityMatches(activity: ActivityFilter | null, date: number, now: number): boolean {
+  if (!activity) return true;
+  if (activity === 'today') {
+    const day = new Date((date + 978_307_200) * 1000);
+    return day.toDateString() === new Date((now + 978_307_200) * 1000).toDateString();
+  }
+  const age = now - date;
+  if (activity === 'olderThan30Days') return age > 30 * 86_400;
+  const days = activity === 'last3Days' ? 3 : activity === 'last7Days' ? 7 : 30;
+  return age >= 0 && age <= days * 86_400;
 }
 
 // The search box: the chat's title or branch, or its pull request's number.
@@ -286,21 +300,23 @@ export type ChatListPrefs = { arrangement: Arrangement; filter: ChatFilter; show
 export const defaultPrefs: ChatListPrefs = { arrangement: 'status', filter: noFilter, showArchived: false };
 
 const list = (value: unknown): string[] => Array.isArray(value) ? value.filter(x => typeof x === 'string') : [];
+const activities: ActivityFilter[] = ['today', 'last3Days', 'last7Days', 'last30Days', 'olderThan30Days'];
 
 export function parsePrefs(raw: string | null | undefined): ChatListPrefs {
   try {
     const p = JSON.parse(raw || '{}');
     return {
       arrangement: p.arrangement === 'project' ? 'project' : 'status',
-      filter: { projects: list(p.filter?.projects), agents: list(p.filter?.agents), macs: list(p.filter?.macs) },
+      filter: { projects: list(p.filter?.projects), agents: list(p.filter?.agents), macs: list(p.filter?.macs),
+        activity: activities.includes(p.filter?.activity) ? p.filter.activity : null },
       showArchived: p.showArchived === true,
     };
   } catch { return defaultPrefs; }
 }
 
 // The chats the search, the filters and the archive choice let through.
-export function narrow(chats: ChatFacts[], prefs: ChatListPrefs, query: string): ChatFacts[] {
-  const matches = chats.filter(c => (prefs.showArchived || c.session.archivedAt == null) && filterMatches(prefs.filter, c) && queryMatches(c, query));
+export function narrow(chats: ChatFacts[], prefs: ChatListPrefs, query: string, now = swiftDate()): ChatFacts[] {
+  const matches = chats.filter(c => (prefs.showArchived || c.session.archivedAt == null) && filterMatches(prefs.filter, c, now) && queryMatches(c, query));
   const byKey = new Map(chats.map(chat => [chatKey(chat), chat]));
   const included = new Set(matches.map(chatKey));
   for (const chat of matches) {
