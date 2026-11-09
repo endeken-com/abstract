@@ -403,6 +403,27 @@ final class RemoteService {
         guard let model else { return nil }
         let sharedProjects = model.projects.filter { $0.archivedAt == nil }
         let sharedProfiles = model.profiles
+        let activePresentations = ProviderRegistry.all.compactMap { provider -> RemoteProvider? in
+            guard let agent = provider as? ScriptedProvider else { return nil }
+            return RemoteProvider(agent)
+        }
+        let activeIds = Set(activePresentations.map(\.id))
+        let retainedPresentations = Set(model.sessions.map(\.providerId)).subtracting(activeIds)
+            .sorted().compactMap { id -> RemoteProvider? in
+                guard let agent = AgentPlugins.shared.anyAgent(id) else { return nil }
+                return RemoteProvider(agent)
+            }
+        let retainedIds = activeIds.union(retainedPresentations.map(\.id))
+        let historicalPresentations = model.plugins.installed.filter { $0.problem == nil }
+            .sorted { $0.record.source == .bundled && $1.record.source != .bundled }
+            .flatMap { plugin -> [RemoteProvider] in
+                (plugin.manifest?.contributes.agents ?? []).filter { !retainedIds.contains($0.id) }.map {
+                    RemoteProvider($0, folder: plugin.packageURL, bundled: plugin.record.source == .bundled)
+                }
+            }
+        var seenPresentations = Set<String>()
+        let presentations = (activePresentations + retainedPresentations + historicalPresentations)
+            .filter { seenPresentations.insert($0.id).inserted }
         return RemoteSnapshot(projects: sharedProjects.map { item in
                                   var safe = item; safe.iconImagePath = nil; return safe
                               },
@@ -419,6 +440,7 @@ final class RemoteService {
                               },
                               providers: ProviderRegistry.all.map(\.id).filter { model.providerStatus[$0]?.available ?? false },
                               alive: Array(model.alive),
+                              providerPresentations: presentations,
                               home: model.executor.homeDirectory, modelCatalogs: model.modelCatalogs,
                               defaultModelNames: Dictionary(uniqueKeysWithValues: ProviderRegistry.all.compactMap { provider in
                                   model.defaultModelName(for: provider.id).map { (provider.id, $0) }

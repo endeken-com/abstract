@@ -66,16 +66,17 @@ export type PluginContribution = { place: PluginPlace; id: string; title: string
 export type PluginProjectChoice = { key: string; name: string };
 export type InstalledPlugin = {
   id: string; name: string; version: string; description?: string | null;
-  source: string; enabled: boolean; usable: boolean;
+  source: string; trustedBrand?: boolean; enabled: boolean; usable: boolean;
   problem?: string | null; lastError?: string | null;
   requestedCapabilities: string[]; grantedCapabilities: string[];
   transcriptProjectKeys: string[]; viewId?: string | null; viewTitle?: string | null;
   contributions: PluginContribution[]; appearances: string[];
 };
+export type ProviderPresentation = { id: string; label: string; asset?: string | null; icon?: string | null };
 export type Stall = { state: 'quiet' | 'stalled'; since: number };
 // A message sent while the agent worked, waiting for its turn to end (ABS-103).
 export type QueuedMessage = { id: string; text: string; attachments: { id: string; kind: string; title: string; reference?: string | null }[]; queuedAt: number; sending?: boolean | null };
-export type Snapshot = { projects: Project[]; sessions: Session[]; providers: string[]; alive: string[]; home?: string; modelCatalogs?: Record<string, ModelCatalog>; defaultModelNames?: Record<string, string>; automations?: Automation[]; pendingPermissions?: Record<string, PendingPermission[]>; permissionRules?: Record<string, PermissionRule[]>; pullRequests?: Record<string, PullRequest>; turnStartedAt?: Record<string, number>; pagedHistory?: boolean; internetAddress?: InternetAddress; backgroundTasks?: string[]; unmergedWork?: Record<string, boolean>; automationDevice?: boolean; projectDefaultDevice?: boolean; profiles?: AgentProfile[]; profileIcons?: Record<string, string>; everythingPaused?: boolean; pausedProjectIds?: string[]; pauseControl?: boolean; stalls?: Record<string, Stall>; codeHistory?: boolean; plans?: Record<string, PlanState>; planApproval?: boolean; projectIcons?: Record<string, string>; queuedMessages?: Record<string, QueuedMessage[]>; messageQueue?: boolean; steerAgents?: string[]; plugins?: InstalledPlugin[]; pluginProjects?: PluginProjectChoice[]; pluginsSupported?: boolean; theme?: RemoteTheming };
+export type Snapshot = { projects: Project[]; sessions: Session[]; providers: string[]; providerPresentations?: ProviderPresentation[]; alive: string[]; home?: string; modelCatalogs?: Record<string, ModelCatalog>; defaultModelNames?: Record<string, string>; automations?: Automation[]; pendingPermissions?: Record<string, PendingPermission[]>; permissionRules?: Record<string, PermissionRule[]>; pullRequests?: Record<string, PullRequest>; turnStartedAt?: Record<string, number>; pagedHistory?: boolean; internetAddress?: InternetAddress; backgroundTasks?: string[]; unmergedWork?: Record<string, boolean>; automationDevice?: boolean; projectDefaultDevice?: boolean; profiles?: AgentProfile[]; profileIcons?: Record<string, string>; everythingPaused?: boolean; pausedProjectIds?: string[]; pauseControl?: boolean; stalls?: Record<string, Stall>; codeHistory?: boolean; plans?: Record<string, PlanState>; planApproval?: boolean; projectIcons?: Record<string, string>; queuedMessages?: Record<string, QueuedMessage[]>; messageQueue?: boolean; steerAgents?: string[]; plugins?: InstalledPlugin[]; pluginProjects?: PluginProjectChoice[]; pluginsSupported?: boolean; theme?: RemoteTheming };
 export type Peer = { id: string; name: string; publicKey: string };
 export type InternetAddress = { endpointId: string };
 export type Device = { peer: Peer; address: string; pairedAt: number; internetAddress?: InternetAddress };

@@ -4,6 +4,7 @@ import type { InstalledPlugin } from './types';
 
 export type ToolIndicator = { kind: 'brand'; id: string; label: string }
   | { kind: 'mcpServer'; name: string; label: string }
+  | { kind: 'plugin'; name: string; label: string }
   | { kind: 'symbol'; symbol: string; label: string };
 const catalog: { id: string; label: string; executables: string[]; mcpAliases: string[]; symbol?: string }[] = brandData.catalog;
 const brand = (id: string): ToolIndicator => ({ kind: 'brand', id, label: catalog.find(item => item.id === id)?.label || id });
@@ -21,15 +22,11 @@ export function toolMonogram(name: string): { letter: string; colorIndex: number
   }
   return { letter: name.toUpperCase().match(/[\p{L}\p{N}]/u)?.[0] || '?', colorIndex: hash % 7 };
 }
-const officialPlugins: Record<string, string> = {
-  'sh.abstract.github': 'GitHub', 'sh.abstract.bitbucket': 'Bitbucket',
-  'sh.abstract.linear': 'Linear', 'sh.abstract.jira': 'Jira',
-};
 function pluginTool(name: string): string | null {
   for (const prefix of ['mcp__abstract-plugins__', 'abstract-plugins_']) if (name.startsWith(prefix) && name.length > prefix.length) return name.slice(prefix.length);
   return null;
 }
-function pluginBrand(name: string, plugins: InstalledPlugin[]): string | null {
+function pluginIdentity(name: string, plugins: InstalledPlugin[]): InstalledPlugin | null {
   const tool = pluginTool(name);
   if (!tool) return null;
   // The host publishes `<slug>_<tool>`. Only accept a unique installed
@@ -38,7 +35,7 @@ function pluginBrand(name: string, plugins: InstalledPlugin[]): string | null {
     const slug = plugin.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 12).replace(/^-|-$/g, '') || 'plugin';
     return tool.startsWith(`${slug}_`);
   });
-  return matches.length === 1 ? officialPlugins[matches[0].id] || '' : null;
+  return matches.length === 1 ? matches[0] : null;
 }
 function aliasEntry(server: string) {
   let key = server.toLowerCase();
@@ -151,8 +148,11 @@ export function resolveToolIndicator(name: string, input: any = {}, plugins: Ins
   if ((historyTool(name) && (['code_history', 'chat_excerpt'].includes(name) || name.startsWith('mcp__abstract-code-history__') || name.startsWith('abstract-code-history_')))
     || ['name_branch', 'mcp__abstract-branch__name_branch', 'abstract-branch_name_branch'].includes(name)) return brand('Abstract');
   if (pluginTool(name)) {
-    const id = pluginBrand(name, plugins);
-    return id === null ? brand('Abstract') : id ? brand(id) : symbol('puzzlepiece.extension', 'Plugin tool');
+    const plugin = pluginIdentity(name, plugins);
+    if (!plugin) return brand('Abstract');
+    const catalogBrand = (plugin.trustedBrand === true || plugin.source === 'bundled')
+      && catalog.find(item => item.label === plugin.name && !item.symbol);
+    return catalogBrand ? brand(catalogBrand.id) : { kind: 'plugin', name: plugin.name, label: `${plugin.name} plugin` };
   }
   const mcp = mcpIndicator(name);
   if (mcp) return mcp;

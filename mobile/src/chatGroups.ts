@@ -1,4 +1,5 @@
-import { swiftDate, type PullRequest, type Session, type Snapshot, type Stall } from './types';
+import { swiftDate, type PullRequest, type Session, type Snapshot, type Stall, type ProviderPresentation } from './types';
+import { providerLabel } from './providerPresentation';
 import { stallRowText } from './stalls';
 import { itemKey, type MacState, type MacView } from './macs';
 import { iconFor, type ChatIcon } from './projectIcons';
@@ -13,12 +14,12 @@ export const groupTitles: Record<ChatGroup, string> = {
   pinned: 'Pinned', needsYou: 'Needs you', working: 'Working', readyToReview: 'Ready to review', done: 'Done', archived: 'Archived',
 };
 export type Arrangement = 'status' | 'project';
-export const agentNames: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode', muse: 'Muse Code' };
 export type Checks = 'passed' | 'failing' | 'running';
 
 // What the list knows of one chat, on whichever paired Mac it runs.
 export type ChatFacts = {
   session: Session;
+  providerPresentation?: ProviderPresentation;
   hostId: string;
   mac: string;
   macState: MacState;
@@ -61,6 +62,7 @@ export function chatsFromSnapshot(snapshot: Snapshot | null | undefined, mac: Pi
     const subtasks = children.get(session.id);
     return {
       session, hostId: mac.id, mac: mac.name, macState: mac.state, lastSeenAt: mac.lastSeenAt,
+      providerPresentation: snapshot.providerPresentations?.find(provider => provider.id === session.providerId),
       pullRequest: snapshot.pullRequests?.[session.id] ?? null,
       // A chat with no folder has nothing to review.
       hasChanges: session.worktreePath ? snapshot.unmergedWork?.[session.id] : false,
@@ -230,7 +232,7 @@ export function rowLabel(chat: ChatFacts, line: ChatLine, now: number): string {
     chat.session.parentSessionId && 'sub-task',
     badge && badge !== 'unreachable' && (line.attention || line.stall || badgeWords[badge]),
     chat.projectName || standalone,
-    agentNames[chat.session.providerId] || chat.session.providerId,
+    chat.providerPresentation?.label || providerLabel(undefined, chat.session.providerId),
     badge === 'unreachable' ? `${chat.mac} isn't reachable` : line.mac && `on ${line.mac}`,
     prWords,
     line.checks && `checks ${line.checks}`,

@@ -3,6 +3,18 @@ import Testing
 @testable import AbstractCore
 
 struct RemoteSnapshotTests {
+    @Test func syntheticProviderPresentationRoundTripsAndOlderHostsDecode() throws {
+        let agent = RemoteProvider(id: "orbit", label: "Orbit Agent", icon: "<svg viewBox=\"0 0 24 24\"></svg>")
+        let snapshot = RemoteSnapshot(projects: [], sessions: [], providers: ["orbit"], alive: [],
+                                      providerPresentations: [agent])
+        let decoded = try JSONDecoder().decode(RemoteSnapshot.self, from: JSONEncoder().encode(snapshot))
+        #expect(decoded.providers == ["orbit"])
+        #expect(decoded.providerPresentations == [agent])
+        let old = try JSONDecoder().decode(RemoteSnapshot.self,
+                                           from: Data(#"{"projects":[],"sessions":[],"providers":["orbit"],"alive":[]}"#.utf8))
+        #expect(old.providerPresentations == nil)
+    }
+
     @Test func pullRequestsRoundTripAndOlderSnapshotsDecode() throws {
         let request = RemotePullRequest(number: 42, title: "Improve sidebar", state: "OPEN",
                                         isDraft: false, url: URL(string: "https://example.com/pr/42"),

@@ -41,8 +41,13 @@ test('MCP aliases, private servers, and plugin IDs', () => {
   assert.equal(kind(resolveToolIndicator('mcp__abstract-code-history__code_history')), 'Abstract');
   assert.equal(kind(resolveToolIndicator('mcp__weather__forecast')), 'weather');
   assert.equal(kind(resolveToolIndicator('weather_forecast')), 'wrench.and.screwdriver');
-  assert.equal(kind(resolveToolIndicator('mcp__abstract-plugins__github_list_prs', {}, [{ id: 'sh.abstract.github', name: 'GitHub' }])), 'GitHub');
-  assert.equal(kind(resolveToolIndicator('mcp__abstract-plugins__github_list_prs', {}, [{ id: 'dev.example.github', name: 'GitHub' }])), 'puzzlepiece.extension');
+  assert.equal(kind(resolveToolIndicator('mcp__abstract-plugins__github_list_prs', {}, [{ id: 'sh.abstract.github', name: 'GitHub', source: 'bundled' }])), 'GitHub');
+  assert.equal(kind(resolveToolIndicator('mcp__abstract-plugins__github_list_prs', {}, [{ id: 'sh.example.service', name: 'GitHub', source: 'bundled' }])), 'GitHub');
+  assert.equal(kind(resolveToolIndicator('mcp__abstract-plugins__github_list_prs', {}, [{ id: 'sh.abstract.github', name: 'GitHub', source: 'git', trustedBrand: true }])), 'GitHub');
+  assert.equal(resolveToolIndicator('mcp__abstract-plugins__github_list_prs', {}, [{ id: 'sh.abstract.github', name: 'GitHub', source: 'git', trustedBrand: false }]).kind, 'plugin');
+  assert.equal(resolveToolIndicator('mcp__abstract-plugins__github_list_prs', {}, [{ id: 'dev.example.github', name: 'GitHub', source: 'user' }]).kind, 'plugin');
+  const synthetic = resolveToolIndicator('mcp__abstract-plugins__orbit_lookup', {}, [{ id: 'dev.example.orbit', name: 'Orbit', source: 'user' }]);
+  assert.deepEqual(synthetic, { kind: 'plugin', name: 'Orbit', label: 'Orbit plugin' });
   assert.equal(kind(resolveToolIndicator('mcp__abstract-plugins__github_list_prs')), 'Abstract');
   assert.deepEqual(toolMonogram('weather'), toolMonogram('weather'));
 });

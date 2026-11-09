@@ -11,7 +11,7 @@ struct ProviderLogo: View {
     var monochrome = false
 
     var body: some View {
-        let provider = ProviderRegistry.provider(providerId)
+        let provider = ProviderRegistry.provider(providerId) ?? AgentPlugins.shared.anyAgent(providerId)
         if let asset = provider?.logoAsset, !asset.isEmpty {
             Image(asset)
                 .resizable()

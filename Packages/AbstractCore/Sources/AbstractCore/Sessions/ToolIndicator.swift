@@ -10,6 +10,8 @@ public enum ToolIndicator: Sendable, Hashable {
     case brand(String)
     /// An MCP server with no catalog brand: a monogram tile.
     case mcpServer(name: String)
+    /// The plugin's own name when it has no bundled brand asset.
+    case plugin(name: String)
     /// An SF Symbol, as rows showed before brands.
     case kind(symbol: String)
     case generic
@@ -19,6 +21,7 @@ public enum ToolIndicator: Sendable, Hashable {
         switch self {
         case .brand(let id): ToolIndicator.catalog.first { $0.id == id }?.label ?? id
         case .mcpServer(let name): "\(name) MCP server"
+        case .plugin(let name): "\(name) plugin"
         case .kind(let symbol):
             switch symbol {
             case "hammer": "Build tool"
@@ -78,13 +81,6 @@ public enum ToolIndicator: Sendable, Hashable {
 
     // MARK: - Resolution
 
-    private static let officialPlugins: [String: String] = [
-        "sh.abstract.github": "GitHub",
-        "sh.abstract.bitbucket": "Bitbucket",
-        "sh.abstract.linear": "Linear",
-        "sh.abstract.jira": "Jira",
-    ]
-
     private static let commandTools: Set<String> = ["bash", "shell", "command_execution", "bashoutput"]
 
     /// First match wins, in the ABS-167 order: skill, Abstract's own
@@ -96,7 +92,9 @@ public enum ToolIndicator: Sendable, Hashable {
     /// (plugin tools then take the Abstract mark). `skillUse` is false
     /// on a pending approval, which always shows what runs, never a
     /// skill reading.
-    public static func resolve(name: String, input: JSONValue, pluginId: String? = nil, skillUse allowsSkill: Bool = true) -> ToolIndicator {
+    public static func resolve(name: String, input: JSONValue, pluginId: String? = nil,
+                               pluginName: String? = nil, trustedBrand: Bool = false,
+                               skillUse allowsSkill: Bool = true) -> ToolIndicator {
         if allowsSkill, SkillUse.name(tool: name, input: input) != nil { return .kind(symbol: "book.closed") }
         if CodeHistory.tool(inStreamName: name) != nil,
            ["code_history", "chat_excerpt"].contains(name)
@@ -104,8 +102,12 @@ public enum ToolIndicator: Sendable, Hashable {
             || name.hasPrefix("abstract-code-history_") { return .brand("Abstract") }
         if name == "name_branch" { return .brand("Abstract") }
         if PluginTools.toolName(inStreamName: name) != nil {
-            if let pluginId, let brand = officialPlugins[pluginId] { return .brand(brand) }
-            return pluginId != nil ? .kind(symbol: "puzzlepiece.extension") : .brand("Abstract")
+            guard pluginId != nil else { return .brand("Abstract") }
+            guard let pluginName, !pluginName.isEmpty else { return .kind(symbol: "puzzlepiece.extension") }
+            if trustedBrand, let entry = catalog.first(where: { $0.label == pluginName && $0.symbol == nil }) {
+                return .brand(entry.id)
+            }
+            return .plugin(name: pluginName)
         }
         if let mcp = mcpIndicator(name) { return mcp }
         if commandTools.contains(name.lowercased()) {

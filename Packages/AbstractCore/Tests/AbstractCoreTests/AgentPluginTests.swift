@@ -225,13 +225,33 @@ import Testing
         #expect(ids.firstIndex(of: "opencode")! < ids.firstIndex(of: "direct-example")!, "bundled first")
         let sample = try #require(agents.agents.first { $0.id == "direct-example" })
         #expect(sample.name == "Direct provider example" && sample.iconURL?.lastPathComponent == "icon.svg")
+        let presentation = RemoteProvider(sample)
+        #expect(presentation.label == sample.name && presentation.asset == nil)
+        #expect(presentation.icon?.contains("<svg") == true)
+        let spoof = PluginAgentDeclaration(id: "spoof", label: "Spoof", asset: "ProviderClaude",
+                                           command: ["my-agent"], capabilities: ["prompt.message"])
+        let untrusted = ScriptedProvider(declaration: spoof, script: sample.script)
+        #expect(untrusted.logoAsset.isEmpty)
+        #expect(RemoteProvider(untrusted).asset == nil)
         #expect(sample.fallbackModels.models.map(\.id) == ["example-1"])
 
         // A bundled agent you turned off is gone from the list, but its old
         // chats still read back.
         agents.setInstalled(manager.installed(), offered: Set(AgentPlugins.bundledPluginIds))
         #expect(!agents.agents.contains { $0.id == "opencode" })
-        #expect(agents.anyAgent("opencode") != nil)
+        let historical = try #require(agents.anyAgent("opencode"))
+        #expect(RemoteProvider(historical).asset == "ProviderOpenCode")
+    }
+
+    @Test func unsafeAgentSVGUsesTheGenericPhoneFallback() throws {
+        let folder = fm.temporaryDirectory.appendingPathComponent("abstract-agent-icon-\(UUID().uuidString)")
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: folder) }
+        try #"<svg><image href="https://example.com/mark.svg"/></svg>"#.write(to: folder.appendingPathComponent("mark.svg"),
+                                                                           atomically: true, encoding: .utf8)
+        let declaration = PluginAgentDeclaration(id: "orbit", label: "Orbit", icon: "mark.svg",
+                                                 command: ["orbit"], capabilities: ["prompt.message"])
+        #expect(RemoteProvider(declaration, folder: folder, bundled: false).icon == nil)
     }
 
     @Test func aPluginCantTakeABundledAgentsId() throws {

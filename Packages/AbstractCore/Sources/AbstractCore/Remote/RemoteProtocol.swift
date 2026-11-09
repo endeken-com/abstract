@@ -249,6 +249,9 @@ public struct RemotePlugin: Codable, Sendable, Hashable {
     public var description: String?
     /// `bundled` or `user`.
     public var source: String
+    /// Whether this is an app-bundled plugin or its approved moved repository.
+    /// Optional so older peers' plugin snapshots still decode.
+    public var trustedBrand: Bool?
     public var enabled: Bool
     /// Enabled and able to run.
     public var usable: Bool
@@ -274,6 +277,7 @@ public struct RemotePlugin: Codable, Sendable, Hashable {
         id = record.id; name = record.name; version = record.version
         description = manifest?.description
         source = record.source.rawValue
+        trustedBrand = MovedPlugins.trustsBrand(pluginId: record.id, source: record.source)
         enabled = record.enabled; usable = installed.isUsable
         problem = installed.problem; lastError = record.lastError
         requestedCapabilities = manifest?.capabilities ?? record.grantedCapabilities.map(\.rawValue).sorted()
@@ -429,11 +433,45 @@ public struct RemoteTheming: Codable, Sendable, Hashable {
     }
 }
 
+/// Presentation supplied by an agent plugin. Optional in snapshots from older Macs.
+public struct RemoteProvider: Codable, Sendable, Hashable {
+    public var id: String
+    public var label: String
+    /// Bundled app asset; user plugins cannot select one of Abstract's marks.
+    public var asset: String?
+    /// A small, self-contained SVG from the plugin package.
+    public var icon: String?
+
+    public init(id: String, label: String, asset: String? = nil, icon: String? = nil) {
+        self.id = id; self.label = label; self.asset = asset; self.icon = icon
+    }
+
+    public init(_ provider: ScriptedProvider) {
+        self.init(provider.declaration, folder: provider.script.folder, bundled: provider.bundled)
+    }
+
+    public init(_ declaration: PluginAgentDeclaration, folder: URL, bundled: Bool) {
+        self.init(id: declaration.id, label: declaration.label,
+                  asset: bundled ? declaration.asset : nil,
+                  icon: declaration.icon.flatMap { Self.safeSVG(folder.appendingPathComponent($0)) })
+    }
+
+    /// Limit and reject SVG features that could load external content on a phone.
+    private static func safeSVG(_ url: URL) -> String? {
+        guard let data = try? Data(contentsOf: url), data.count <= 32_768,
+              let svg = String(data: data, encoding: .utf8) else { return nil }
+        let lower = svg.lowercased()
+        guard lower.contains("<svg"), !["<script", "<foreignobject", "<image", "<!", "href=", "url("].contains(where: lower.contains) else { return nil }
+        return svg
+    }
+}
+
 /// A host's projects and chats, and the agents it can run.
 public struct RemoteSnapshot: Codable, Sendable, Hashable {
     public var projects: [Project]
     public var sessions: [Session]
     public var providers: [String]
+    public var providerPresentations: [RemoteProvider]?
     /// Chats whose agent process is running.
     public var alive: [String]
     /// That Mac's home folder.
@@ -525,6 +563,7 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
     public static let maxProjectIconBytes = 512 << 10
 
     public init(projects: [Project], sessions: [Session], providers: [String], alive: [String],
+                providerPresentations: [RemoteProvider]? = nil,
                 home: String? = nil, modelCatalogs: [String: ModelCatalog]? = nil,
                 defaultModelNames: [String: String]? = nil,
                 pullRequests: [String: RemotePullRequest]? = nil, automations: [Automation]? = nil,
@@ -544,7 +583,8 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
                 plugins: [RemotePlugin]? = nil, pluginProjects: [RemotePluginProject]? = nil,
                 pluginsSupported: Bool? = nil, theme: RemoteTheming? = nil) {
         self.theme = theme
-        self.projects = projects; self.sessions = sessions; self.providers = providers; self.alive = alive
+        self.projects = projects; self.sessions = sessions; self.providers = providers
+        self.providerPresentations = providerPresentations; self.alive = alive
         self.home = home; self.modelCatalogs = modelCatalogs; self.defaultModelNames = defaultModelNames
         self.pullRequests = pullRequests
         self.automations = automations

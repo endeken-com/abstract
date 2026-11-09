@@ -228,18 +228,20 @@ extension JSONValue {
 public struct ScriptedProvider: ProviderDefinition {
     public let declaration: PluginAgentDeclaration
     public let script: AgentScript
+    public let bundled: Bool
     let capabilities: Set<String>
 
-    public init(declaration: PluginAgentDeclaration, script: AgentScript) {
+    public init(declaration: PluginAgentDeclaration, script: AgentScript, bundled: Bool = false) {
         self.declaration = declaration
         self.script = script
+        self.bundled = bundled
         capabilities = declaration.negotiatedCapabilities
     }
 
     public var pluginId: String { script.pluginId }
     public var id: String { declaration.id }
     public var name: String { declaration.label }
-    public var logoAsset: String { declaration.asset ?? "" }
+    public var logoAsset: String { bundled ? declaration.asset ?? "" : "" }
     /// The package's SVG logo, for agents without an app asset.
     public var iconURL: URL? { declaration.icon.map { script.folder.appendingPathComponent($0) } }
     public var binary: String { declaration.binary }

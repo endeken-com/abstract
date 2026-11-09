@@ -21,6 +21,7 @@ struct RemotePluginTests {
     @Test func remotePluginCarriesGrantsAndContributions() {
         let remote = RemotePlugin(installed())
         #expect(remote.usable)
+        #expect(remote.trustedBrand == false)
         #expect(remote.requestedCapabilities == ["usage.read", "transcripts.read"])
         #expect(remote.grantedCapabilities == ["transcripts.read", "usage.read"])
         #expect(remote.transcriptProjectKeys == ["mac1:p1"])
@@ -50,6 +51,11 @@ struct RemotePluginTests {
                                            from: Data(#"{"projects":[],"sessions":[],"providers":[],"alive":[]}"#.utf8))
         #expect(old.plugins == nil)
         #expect(old.pluginsSupported == nil)
+
+        var oldPluginJSON = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(RemotePlugin(installed()))) as? [String: Any])
+        oldPluginJSON.removeValue(forKey: "trustedBrand")
+        let oldPlugin = try JSONDecoder().decode(RemotePlugin.self, from: JSONSerialization.data(withJSONObject: oldPluginJSON))
+        #expect(oldPlugin.trustedBrand == nil)
     }
 
     @Test func pluginRequestsAndResponsesRoundTrip() throws {
