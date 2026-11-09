@@ -156,13 +156,13 @@ export function resolveToolIndicator(name: string, input: any = {}, plugins: Ins
   }
   const mcp = mcpIndicator(name);
   if (mcp) return mcp;
-  if (['bash', 'shell', 'command_execution', 'bashoutput'].includes(name.toLowerCase())) return commandIndicator(unwrapShell(String(input?.command || input?.cmd || ''))) || symbol('terminal', 'Terminal');
+  if (['bash', 'shell', 'command_execution', 'run_command', 'bashoutput'].includes(name.toLowerCase())) return commandIndicator(unwrapShell(String(input?.command || input?.cmd || ''))) || symbol('terminal', 'Terminal');
   return symbol(toolSymbol(name), name);
 }
 const symbols: Record<string, string> = {
-  read: 'doc.text', read_file: 'doc.text', notebookread: 'doc.text', write: 'doc.badge.plus', write_file: 'doc.badge.plus',
+  read: 'doc.text', read_file: 'doc.text', notebookread: 'doc.text', write: 'doc.badge.plus', write_file: 'doc.badge.plus', write_to_file: 'doc.badge.plus',
   edit: 'pencil', edit_file: 'pencil', multiedit: 'pencil', notebookedit: 'pencil', applypatch: 'pencil', apply_patch: 'pencil', file_change: 'pencil', patch_apply: 'pencil',
-  bash: 'terminal', shell: 'terminal', command_execution: 'terminal', bashoutput: 'terminal', js: 'terminal', js_reset: 'terminal',
+  bash: 'terminal', shell: 'terminal', command_execution: 'terminal', run_command: 'terminal', bashoutput: 'terminal', js: 'terminal', js_reset: 'terminal',
   grep: 'magnifyingglass', glob: 'magnifyingglass', search: 'magnifyingglass', ls: 'magnifyingglass', toolsearch: 'magnifyingglass',
   webfetch: 'globe', web_fetch: 'globe', websearch: 'globe', web_search: 'globe',
   todowrite: 'checklist', todolist: 'checklist', todo_list: 'checklist',
@@ -170,15 +170,15 @@ const symbols: Record<string, string> = {
   skill: 'book.closed', askuserquestion: 'questionmark.bubble'
 };
 const done: Record<string, string> = {
-  read: 'Read', read_file: 'Read', notebookread: 'Read', write: 'Created', write_file: 'Created', edit: 'Edited', edit_file: 'Edited', multiedit: 'Edited', notebookedit: 'Edited', applypatch: 'Edited', apply_patch: 'Edited', file_change: 'Edited', patch_apply: 'Edited',
-  bash: 'Ran', shell: 'Ran', command_execution: 'Ran', bashoutput: 'Checked output', js: 'Ran', js_reset: 'Reset',
+  read: 'Read', read_file: 'Read', notebookread: 'Read', write: 'Created', write_file: 'Created', write_to_file: 'Created', edit: 'Edited', edit_file: 'Edited', multiedit: 'Edited', notebookedit: 'Edited', applypatch: 'Edited', apply_patch: 'Edited', file_change: 'Edited', patch_apply: 'Edited',
+  bash: 'Ran', shell: 'Ran', command_execution: 'Ran', run_command: 'Ran', bashoutput: 'Checked output', js: 'Ran', js_reset: 'Reset',
   grep: 'Searched', search: 'Searched', glob: 'Listed', ls: 'Listed', toolsearch: 'Looked up tools',
   webfetch: 'Fetched', web_fetch: 'Fetched', websearch: 'Searched the web', web_search: 'Searched the web',
   task: 'Delegated', agent: 'Delegated', todowrite: 'Updated plan', todolist: 'Updated plan', todo_list: 'Updated plan', exitplanmode: 'Proposed a plan', skill: 'Used skill', askuserquestion: 'Asked'
 };
 const active: Record<string, string> = {
-  read: 'Reading', read_file: 'Reading', notebookread: 'Reading', write: 'Creating', write_file: 'Creating', edit: 'Editing', edit_file: 'Editing', multiedit: 'Editing', notebookedit: 'Editing', applypatch: 'Editing', apply_patch: 'Editing', file_change: 'Editing', patch_apply: 'Editing',
-  bash: 'Running', shell: 'Running', command_execution: 'Running', js: 'Running', js_reset: 'Resetting',
+  read: 'Reading', read_file: 'Reading', notebookread: 'Reading', write: 'Creating', write_file: 'Creating', write_to_file: 'Creating', edit: 'Editing', edit_file: 'Editing', multiedit: 'Editing', notebookedit: 'Editing', applypatch: 'Editing', apply_patch: 'Editing', patch_apply: 'Editing', file_change: 'Editing',
+  bash: 'Running', shell: 'Running', command_execution: 'Running', run_command: 'Running', js: 'Running', js_reset: 'Resetting',
   grep: 'Searching', search: 'Searching', glob: 'Listing', ls: 'Listing', toolsearch: 'Searching', webfetch: 'Fetching', web_fetch: 'Fetching', websearch: 'Searching', web_search: 'Searching',
   task: 'Delegating', agent: 'Delegating', todowrite: 'Updating plan', todolist: 'Updating plan', todo_list: 'Updating plan', skill: 'Using skill', askuserquestion: 'Asking'
 };
@@ -218,8 +218,8 @@ function isJavaScriptTool(name: string): boolean {
 export function toolKind(name: string): 'command' | 'edit' | 'explore' | 'other' {
   if (historyTool(name)) return 'explore';
   const key = name.toLowerCase();
-  if (isJavaScriptTool(name) || ['bash', 'shell', 'command_execution', 'bashoutput', 'js_reset'].includes(key)) return 'command';
-  if (['write', 'write_file', 'edit', 'edit_file', 'multiedit', 'notebookedit', 'applypatch', 'apply_patch', 'file_change', 'patch_apply'].includes(key)) return 'edit';
+  if (isJavaScriptTool(name) || ['bash', 'shell', 'command_execution', 'run_command', 'bashoutput', 'js_reset'].includes(key)) return 'command';
+  if (['write', 'write_file', 'write_to_file', 'edit', 'edit_file', 'multiedit', 'notebookedit', 'applypatch', 'apply_patch', 'file_change', 'patch_apply'].includes(key)) return 'edit';
   if (['read', 'read_file', 'notebookread', 'grep', 'glob', 'search', 'ls', 'toolsearch', 'webfetch', 'web_fetch', 'websearch', 'web_search'].includes(key)) return 'explore';
   return 'other';
 }

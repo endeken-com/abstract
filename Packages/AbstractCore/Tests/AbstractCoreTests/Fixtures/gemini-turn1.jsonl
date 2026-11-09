@@ -1,0 +1,8 @@
+{"event":"init","conversation_id":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee","init":{"cwd":"/workspace","model":"gemini-3.8-flash-medium","permission_mode":"request-review"}}
+{"event":"step_update","step_update":{"step_index":0,"state":"DONE","step_type":"user_input"}}
+{"event":"step_update","step_update":{"step_index":1,"state":"DONE","step_type":"agent_response","usage":{"input_tokens":9605,"output_tokens":106,"thinking_tokens":76,"cache_read_tokens":0,"total_tokens":9711}}}
+{"event":"step_update","step_update":{"step_index":2,"state":"ACTIVE","step_type":"tool","tool_name":"read_file","tool_info":{"name":"read_file","parameters":{"Path":"/workspace/README.txt"}}}}
+{"event":"step_update","step_update":{"step_index":2,"state":"DONE","step_type":"tool","tool_name":"read_file","tool_info":{"name":"read_file","output":"1 lines, 12 bytes","parameters":{"Path":"/workspace/README.txt"}}}}
+{"event":"step_update","step_update":{"step_index":3,"state":"ACTIVE","step_type":"agent_response","text_delta":"amber maple sky"}}
+{"event":"step_update","step_update":{"step_index":3,"state":"DONE","step_type":"agent_response","text_delta":"\n","usage":{"input_tokens":9798,"output_tokens":64,"thinking_tokens":61,"cache_read_tokens":0,"total_tokens":9862}}}
+{"event":"result","result":{"status":"SUCCESS","response":"amber maple sky\n","duration_seconds":5.83497,"num_turns":1,"usage":{"input_tokens":19403,"output_tokens":170,"thinking_tokens":137,"cache_read_tokens":0,"total_tokens":19573},"conversation_id":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"}}

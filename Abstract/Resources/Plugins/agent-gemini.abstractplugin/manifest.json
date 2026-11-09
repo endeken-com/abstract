@@ -1,0 +1,24 @@
+{
+  "api": 2,
+  "id": "sh.abstract.agent.gemini",
+  "name": "Gemini",
+  "version": "1.0.0",
+  "description": "Gemini chats through Google's Antigravity CLI. Each headless turn resumes its conversation by ID.",
+  "capabilities": ["agents"],
+  "agent": "agent.js",
+  "contributes": {
+    "agents": [
+      {
+        "id": "gemini",
+        "label": "Gemini",
+        "asset": "ProviderGemini",
+        "icon": "icon.svg",
+        "command": ["agy"],
+        "install": "curl -fsSL https://antigravity.google/cli/install.sh | bash; run agy to sign in",
+        "detect": ["--version"],
+        "capabilities": ["prompt.message", "session.persistence", "models.discover", "naming"],
+        "toolServers": "none"
+      }
+    ]
+  }
+}

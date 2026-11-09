@@ -407,7 +407,7 @@ import AbstractCore
 @Suite struct ProviderRegistryTests {
     @Test func listsEveryProviderOnce() {
         let ids = ProviderRegistry.all.map(\.id)
-        #expect(ids == ["claude", "codex", "opencode", "muse"])
+        #expect(ids == ["claude", "codex", "opencode", "muse", "gemini"])
         #expect(Set(ids).count == ids.count)
     }
 

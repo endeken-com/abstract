@@ -4,7 +4,8 @@ import Testing
 
 @Suite("Stopping a turn")
 struct TurnStopTests {
-    private static let agents: [any ProviderDefinition] = [Agents.claude, Agents.codex, Agents.opencode]
+    private static let agents: [any ProviderDefinition] = [Agents.claude, Agents.codex, Agents.opencode,
+                                                           AgentPlugins.shared.anyAgent("gemini")!]
 
     private static func feed(_ lines: [String]) -> [AgentEvent] {
         let parser = Agents.claude.makeParser()
@@ -41,7 +42,7 @@ struct TurnStopTests {
         }
         // Between turns there is nothing to interrupt.
         #expect(TurnStop.action(claude, status: .idle, requestId: "r") == .terminate)
-        for agent in [Agents.codex, Agents.opencode] as [any ProviderDefinition] {
+        for agent in [Agents.codex, Agents.opencode, AgentPlugins.shared.anyAgent("gemini")!] as [any ProviderDefinition] {
             #expect(agent.buildInterrupt(requestId: "r") == nil)
             #expect(TurnStop.action(agent, status: .running, requestId: "r") == .terminate)
         }
