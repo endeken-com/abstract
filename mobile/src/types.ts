@@ -30,6 +30,7 @@ export type Session = {
   status: string; statusDetail: string | null; permissionPolicy: Policy;
   prompt: string | null; archivedAt: number | null; createdAt: number;
   lastEventAt?: number | null; pinnedAt?: number | null;
+  parentSessionId?: string | null;
   model: string | null; effort: string | null;
   profileId?: string | null; profileName?: string | null; profileInstructions?: string | null;
 };

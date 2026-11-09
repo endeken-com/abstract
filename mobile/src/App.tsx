@@ -24,7 +24,7 @@ import { ProviderLogo, providerMenuImage } from './ProviderLogo';
 import { ProfileIcon } from './ProfileIcon';
 import { ChatListHeader, ChatRow, NoMatches, StatusGroups, useChatListPrefs, useTicking } from './ChatList';
 import { KanbanBoardScreen } from './KanbanBoard';
-import { chatsFromMacs, filterIsEmpty, narrow, type ChatFacts } from './chatGroups';
+import { chains, chatsFromMacs, chatsFromSnapshot, filterIsEmpty, groupedByProject, narrow, type ChatFacts } from './chatGroups';
 import { KeyboardAwareScrollView } from './KeyboardAwareScrollView';
 import { ProgressiveBlur } from './ProgressiveBlur';
 import { SyntaxCode, highlightDiffLines, highlightLines } from './SyntaxCode';
@@ -110,8 +110,8 @@ function PRButtonFace({ title, kind = 'secondary', disabled, loading }: { title:
 function PRButton({ title, onPress, kind = 'secondary', disabled, loading, accessibilityLabel }: { title: string; onPress: () => void; kind?: PRButtonKind; disabled?: boolean; loading?: boolean; accessibilityLabel?: string }) {
   return <Pressable accessibilityRole="button" accessibilityLabel={accessibilityLabel || title} accessibilityState={{ disabled: !!disabled, busy: !!loading }} disabled={disabled} onPress={() => { Haptics.selectionAsync().catch(() => {}); onPress(); }}><PRButtonFace title={title} kind={kind} disabled={disabled} loading={loading} /></Pressable>;
 }
-function Row({ title, subtitle, subtitleIcon, onPress, trailing, icon, iconNode }: { title: string; subtitle?: string; subtitleIcon?: React.ReactNode; onPress: () => void; trailing?: string; icon?: IconName; iconNode?: React.ReactNode }) {
-  return <Pressable onPress={onPress} style={styles.row}>{iconNode || (icon && <Icon name={icon} size={15} color={tertiary} />)}<View style={{ flex: 1 }}><Text style={styles.rowTitle}>{title}</Text>{subtitle ? subtitleIcon ? <View style={styles.subtitleRow}>{subtitleIcon}<Text style={[styles.subtitle, styles.subtitleText]}>{subtitle}</Text></View> : <Text style={styles.subtitle}>{subtitle}</Text> : null}</View>{trailing ? <Text style={styles.trailing}>{trailing}</Text> : <Icon name="chevron" size={12} color={tertiary} />}</Pressable>;
+function Row({ title, subtitle, subtitleIcon, onPress, trailing, icon, iconNode, nested = false }: { title: string; subtitle?: string; subtitleIcon?: React.ReactNode; onPress: () => void; trailing?: string; icon?: IconName; iconNode?: React.ReactNode; nested?: boolean }) {
+  return <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={nested ? `${title}, sub-task${subtitle ? `, ${subtitle}` : ''}${trailing ? `, ${trailing}` : ''}` : undefined} style={[styles.row, nested && { paddingLeft: 14 }]}>{iconNode || (icon && <Icon name={icon} size={15} color={tertiary} />)}<View style={{ flex: 1 }}><Text style={styles.rowTitle}>{title}</Text>{subtitle ? subtitleIcon ? <View style={styles.subtitleRow}>{subtitleIcon}<Text style={[styles.subtitle, styles.subtitleText]}>{subtitle}</Text></View> : <Text style={styles.subtitle}>{subtitle}</Text> : null}</View>{trailing ? <Text style={styles.trailing}>{trailing}</Text> : <Icon name="chevron" size={12} color={tertiary} />}</Pressable>;
 }
 function Section({ title, children, iconNode }: { title: string; children: React.ReactNode; iconNode?: React.ReactNode }) {
   return <View style={styles.section}><View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>{iconNode}<Text style={styles.sectionTitle}>{title}</Text></View>{children}</View>;
@@ -215,12 +215,13 @@ function WorkspaceRail({ navigate, selectedChat }: { navigate: (name: string, pa
         ? <StatusGroups chats={visible} now={now} showMac={macs.length > 1} isSelected={isSelected} openChat={openChat} />
         : macs.map(mac => {
           const chats = visible.filter(c => c.hostId === mac.id).sort((a, b) => b.session.createdAt - a.session.createdAt);
-          const standalone = chats.filter(c => !c.session.projectId);
+          const projects = groupedByProject(chats);
+          const standalone = projects.get(null) || [];
           return <View key={mac.id}>
             {macRow(mac)}
             <View style={mac.state === 'unreachable' && styles.unreachable}>
               {(mac.snapshot?.projects || []).map(project => {
-                const rows = chats.filter(c => c.session.projectId === project.id);
+                const rows = projects.get(project.id) || [];
                 if (narrowing && !rows.length) return null;
                 return <View key={project.id} style={styles.railGroup}>
                   <Pressable onPress={() => navigate('Project', { hostId: mac.id, projectId: project.id })} style={styles.railGroupHeader}>
@@ -303,9 +304,10 @@ function ProjectScreen({ route, navigation }: any) {
   const state = useMac(hostId);
   const project = state.snapshot?.projects.find(x => x.id === route.params.projectId) as Project | undefined;
   if (!project) return <View style={styles.content}><Empty text="Project unavailable." /></View>;
-  const chats = state.snapshot?.sessions.filter(x => x.projectId === project.id && !x.archivedAt) || [];
   const macs = store.macs();
   const mac = remote.mac(hostId);
+  const chats = groupedByProject(chatsFromSnapshot(state.snapshot, { id: hostId, name: mac?.name || '', state: mac?.state || 'online' })
+    .filter(chat => !chat.session.archivedAt)).get(project.id) || [];
   // The default Mac is kept on this record on the Mac that owns the project;
   // changing it here asks that Mac to record it. Older Macs only show it.
   const canSetDefault = state.snapshot?.projectDefaultDevice === true && state.status === 'online';
@@ -319,7 +321,7 @@ function ProjectScreen({ route, navigation }: any) {
         : <Text style={styles.hint}>{state.status === 'online' ? `Update Abstract on ${mac?.name || 'this Mac'} to change this from your phone.` : 'Reconnect to change this.'}</Text>}
     </Section>
     {state.snapshot?.codeHistory && <Section title="Code history"><View style={styles.row}><View style={{ flex: 1 }}><Text style={styles.rowTitle}>Give agents the history of the code they change</Text><Text style={styles.subtitle}>{project.agentHistory === false ? 'Agents get no history of earlier chats in this project.' : 'Before changing code, an agent can look up what earlier chats in this project were asked, corrected and decided about it, and is told to follow those decisions.'}</Text></View><Switch accessibilityLabel="Give agents the history of the code they change" value={project.agentHistory !== false} onValueChange={enabled => run(() => state.request('setAgentHistory', { projectId: project.id, enabled }))} /></View></Section>}
-    <Section title="Chats">{chats.map(chat => <Row key={chat.id} title={chat.name} subtitle={`${chat.providerId} · ${chat.branch || chat.status}${sessionProfileName(chat) ? ` · ${sessionProfileName(chat)}` : ''}`} subtitleIcon={chat.branch ? <BranchIcon size={11} color={tertiary} /> : undefined} iconNode={<ProviderLogo provider={chat.providerId} size={16} />} onPress={() => navigation.navigate('Chat', { hostId, sessionId: chat.id })} trailing={chat.status} />)}{!chats.length && <Empty text="No chats in this project." />}</Section>
+    <Section title="Chats">{chats.map(({ session, subtaskProgress }) => <Row key={session.id} title={session.name} nested={!!session.parentSessionId} subtitle={`${session.providerId} · ${session.branch || session.status}${sessionProfileName(session) ? ` · ${sessionProfileName(session)}` : ''}${subtaskProgress ? ` · ${subtaskProgress.done} of ${subtaskProgress.total} sub-tasks done` : ''}`} subtitleIcon={session.branch ? <BranchIcon size={11} color={tertiary} /> : undefined} iconNode={<ProviderLogo provider={session.providerId} size={16} />} onPress={() => navigation.navigate('Chat', { hostId, sessionId: session.id })} trailing={session.status} />)}{!chats.length && <Empty text="No chats in this project." />}</Section>
     {state.snapshot?.permissionRules !== undefined && <Section title="Permission rules">
       <Text style={styles.empty}>Answers you've told Abstract to remember for this project. A request matching a rule is answered for you in every chat. A deny rule beats an allow rule.</Text>
       {rulesForProject(state.snapshot, project.id).map(rule => <View key={rule.id} style={styles.row}><View style={{ flex: 1 }}><Text selectable style={[styles.rowTitle, { fontFamily: 'JetBrainsMono', fontSize: 13 }]}>{rule.pattern}</Text><Text style={styles.subtitle}>{ruleDetail(rule, swiftDate())}</Text></View><Button title="Delete" danger onPress={() => Alert.alert('Delete rule?', `${rule.pattern}\n${ruleDetail(rule, swiftDate())}`, [{ text: 'Cancel' }, { text: 'Delete', style: 'destructive', onPress: () => run(() => state.request('deletePermissionRule', deleteRuleArgs(rule))) }])} /></View>)}
@@ -330,9 +332,9 @@ function ProjectScreen({ route, navigation }: any) {
 function ChatsScreen({ navigation }: any) {
   const state = useRemote();
   const macs = state.macs();
-  const chats = macChats(macs);
+  const chats = chains(chatsFromMacs(macs).filter(chat => !chat.session.archivedAt).sort((a, b) => b.session.createdAt - a.session.createdAt)).flat();
   return <HeaderScrollView style={styles.page} contentContainerStyle={styles.content}><Text style={styles.title}>Chats</Text>{!macs.length && <Text style={styles.lead}>Pair a Mac to see its chats</Text>}{macs.some(mac => mac.state === 'online') && <Button title="New standalone chat" onPress={() => navigation.navigate('NewChat', { standalone: true })} />}
-    {chats.map(({ mac, chat }) => <View key={itemKey(mac.id, chat.id)} style={mac.state === 'unreachable' && styles.unreachable}><Row title={chat.name} subtitle={`${mac.snapshot?.projects.find(p => p.id === chat.projectId)?.name || 'No project'} · ${chat.providerId}${sessionProfileName(chat) ? ` · ${sessionProfileName(chat)}` : ''} · ${mac.name}`} iconNode={<ProviderLogo provider={chat.providerId} size={16} />} trailing={chat.status} onPress={() => navigation.navigate('Chat', { hostId: mac.id, sessionId: chat.id })} /></View>)}
+    {chats.map(chat => <View key={itemKey(chat.hostId, chat.session.id)} style={chat.macState === 'unreachable' && styles.unreachable}><Row title={chat.session.name} nested={!!chat.session.parentSessionId} subtitle={`${chat.projectName || 'No project'} · ${chat.session.providerId}${sessionProfileName(chat.session) ? ` · ${sessionProfileName(chat.session)}` : ''} · ${chat.mac}${chat.subtaskProgress ? ` · ${chat.subtaskProgress.done} of ${chat.subtaskProgress.total} sub-tasks done` : ''}`} iconNode={<ProviderLogo provider={chat.session.providerId} size={16} />} trailing={chat.session.status} onPress={() => navigation.navigate('Chat', { hostId: chat.hostId, sessionId: chat.session.id })} /></View>)}
     {!chats.length && <Empty text="No chats available." />}
   </HeaderScrollView>;
 }
