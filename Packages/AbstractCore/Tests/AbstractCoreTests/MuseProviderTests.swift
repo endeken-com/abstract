@@ -74,7 +74,7 @@ struct MuseProviderTests {
         #expect(spec.command == "/opt/muse")
         #expect(try #require(spec.stdinInitial).contains(#""modelId":"muse-wonder-1.0""#))
         #expect(try !#require(provider.buildLaunch(context()).stdinInitial).contains("modelId"))
-        #expect(provider.fallbackModels.models.map(\.id) == ["muse-wonder-1.0"])
+        #expect(provider.fallbackModels.models.isEmpty)
     }
 
     @Test func readsTheCLIsConfiguredModelWithoutStoringCredentials() throws {
@@ -147,18 +147,39 @@ struct MuseProviderTests {
         #expect(again.takePendingInput().isEmpty)
     }
 
-    @Test func resumedChatWithANewModelSwitchesBeforeItsTurn() throws {
+    @Test(arguments: ["muse-wonder-full-1.0", "muse-ember-1.0"])
+    func resumedChatWithANewModelSwitchesBeforeItsTurn(model: String) throws {
         var ctx = context(.bypass)
-        ctx.model = "muse-wonder-full-1.0"
-        _ = provider.buildResume(ctx, resumeId: "session-9")
+        ctx.model = model
+        let sessionId = "session-9-\(model)"
+        _ = provider.buildResume(ctx, resumeId: sessionId)
         let parser = try #require(provider.makeParser() as? ScriptedParser)
-        let reply = #"{"jsonrpc":"2.0","id":2,"result":{"session":{"sessionId":"session-9","modelId":"muse-wonder-1.0"}}}"#
+        let reply = #"{"jsonrpc":"2.0","id":2,"result":{"session":{"sessionId":""# + sessionId
+            + #"","modelId":"muse-wonder-1.0"}}}"#
         _ = parser.feed(reply, stream: .stdout)
         let sent = parser.takePendingInput()
         #expect(sent.count == 2)
         #expect(sent[0].contains(#""method":"session/setModel""#))
-        #expect(sent[0].contains(#""modelId":"muse-wonder-full-1.0""#))
+        #expect(sent[0].contains(#""modelId":""# + model + #"""#))
         #expect(sent[1].contains(#""method":"turn/start""#))
+    }
+
+    @Test func newModelStartsWithTheExactCatalogIdAndEffort() throws {
+        var ctx = context(.bypass)
+        ctx.model = "muse-ember-1.0"
+        ctx.effort = "max"
+        let spec = provider.buildLaunch(ctx)
+        let initial = try #require(spec.stdinInitial)
+        #expect(initial.contains(#""modelId":"muse-ember-1.0""#))
+        let id = try sessionId(in: spec)
+        let parser = try #require(provider.makeParser() as? ScriptedParser)
+        let reply = #"{"jsonrpc":"2.0","id":2,"result":{"session":{"sessionId":""# + id
+            + #"","modelId":"muse-ember-1.0"}}}"#
+        _ = parser.feed(reply, stream: .stdout)
+        let sent = parser.takePendingInput()
+        #expect(sent.count == 1)
+        #expect(sent[0].contains(#""method":"turn/start""#))
+        #expect(sent[0].contains(#""reasoningEffort":"max""#))
     }
 
     @Test func followUpsNameTheirSession() throws {
@@ -472,14 +493,23 @@ struct MuseProviderTests {
     }
 
     @Test func modelCatalogOnlyOffersRowsExposedByTheCLI() {
-        let response = #"{"id":2,"jsonrpc":"2.0","result":{"models":[{"modelId":"muse-wonder-1.0","displayLabel":"Muse Wonder","description":"Complex coding","isDefault":true,"variants":["low","high"],"defaultReasoningEffort":"high"},{"modelId":"muse-wonder-full-1.0","displayLabel":"Muse Wonder Full","isDefault":false,"variants":["high"]}]}}"#
+        let response = #"{"id":2,"jsonrpc":"2.0","result":{"models":[{"modelId":"muse-wonder-1.0","displayLabel":"muse-wonder-1.0","description":"Complex coding","isDefault":true,"variants":["low","high"],"defaultReasoningEffort":"high"},{"modelId":"muse-wonder-full-1.0","displayLabel":"muse-wonder-full-1.0","isDefault":false,"variants":["high"]},{"modelId":"muse-spark-1.3","displayLabel":"muse-spark-1.3","variants":["minimal","max"]},{"modelId":"muse-spark-1.2","displayLabel":"muse-spark-1.2","variants":["low","high"]},{"modelId":"muse-ember-1.0","displayLabel":"muse-ember-1.0","isDefault":false,"variants":["minimal","max"],"defaultReasoningEffort":"max"}]}}"#
         let catalog = MusePlugin.catalog(response)
-        #expect(catalog?.models.map(\.id) == ["muse-wonder-1.0", "muse-wonder-full-1.0"])
+        #expect(catalog?.models.map(\.id) == ["muse-wonder-1.0", "muse-wonder-full-1.0",
+                                              "muse-spark-1.3", "muse-spark-1.2", "muse-ember-1.0"])
+        #expect(catalog?.models.map(\.label) == ["Muse Wonder", "Muse Wonder Full",
+                                                 "Muse Spark 1.3", "Muse Spark 1.2", "Muse Ember"])
         #expect(catalog?.accountDefault?.id == "muse-wonder-1.0")
         #expect(catalog?.models.first?.defaultEffort == "high")
+        #expect(catalog?.models.last?.efforts == ["minimal", "max"])
+        #expect(catalog?.models.last?.defaultEffort == "max")
         let fullOnly = #"{"id":2,"result":{"models":[{"modelId":"muse-wonder-full-1.0","isDefault":false}]}}"#
         #expect(MusePlugin.catalog(fullOnly)?.models.map(\.id)
-            == ["muse-wonder-1.0", "muse-wonder-full-1.0"])
+            == ["muse-wonder-full-1.0"])
+        let sparkOnly = #"{"id":2,"result":{"models":[{"modelId":"muse-spark-1.3","isDefault":true,"variants":["high","unrecognized"]}]}}"#
+        #expect(MusePlugin.catalog(sparkOnly)?.models.map(\.id) == ["muse-spark-1.3"])
+        #expect(MusePlugin.catalog(sparkOnly)?.models.first?.efforts == ["high"])
+        #expect(MusePlugin.catalog(sparkOnly)?.accountDefault?.id == "muse-spark-1.3")
         #expect(MusePlugin.catalog(#"{"id":2,"result":{"models":[]}}"#) == nil)
     }
 
@@ -502,7 +532,7 @@ struct MuseProviderTests {
     func modelDiscoveryCompletesAgainstTheInstalledCLI() async {
         let binary = ProcessInfo.processInfo.environment["ABSTRACT_MUSE_PROBE_BIN"]!
         let catalog = await provider.discoverModels(executor: LocalExecutor.shared, binary: binary)
-        #expect(catalog?.models.contains { $0.id == "muse-wonder-1.0" } == true)
+        #expect(catalog?.models.isEmpty == false)
     }
 }
 
