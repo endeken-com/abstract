@@ -307,8 +307,12 @@ private struct SkillFixture {
         #expect(SkillLibrary.unsupportedNote(provider: NoSkills(), skills: skills)
                 == "Plain Agent can't take skills from Abstract, so this chat runs without review.")
         #expect(SkillLibrary.unsupportedNote(provider: NoSkills(), skills: []) == nil)
-        #expect(ProviderRegistry.all.allSatisfy { SkillLibrary.unsupportedNote(provider: $0, skills: skills) == nil },
-                "Claude, Codex, OpenCode and Muse Code all take them")
+        #expect([Agents.claude, Agents.codex, Agents.opencode, Agents.muse].allSatisfy {
+            SkillLibrary.unsupportedNote(provider: $0, skills: skills) == nil
+        }, "Claude, Codex, OpenCode and Muse Code all take them")
+        let gemini = try #require(AgentPlugins.shared.anyAgent("gemini"))
+        #expect(SkillLibrary.unsupportedNote(provider: gemini, skills: skills)
+                == "Gemini can't take skills from Abstract, so this chat runs without review.")
         _ = launch(NoSkills(), f)
         #expect(!FileManager.default.fileExists(atPath: f.data + "/agent-config/chat-1"))
     }
