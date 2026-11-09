@@ -248,6 +248,37 @@ import AbstractCore
         #expect(SidebarChats.Filter(projects: ["abstract"], agents: ["codex"]).matches(here) == false, "every filter must pass")
     }
 
+    @Test func activityFiltersUseLocalTodayAndRollingDayBoundaries() {
+        var sample = chat("sample")
+        let startOfToday = Calendar.current.startOfDay(for: now)
+        let today = SidebarChats.Filter(activity: .today)
+        sample.session.lastEventAt = startOfToday
+        #expect(today.matches(sample, now: now))
+        sample.session.lastEventAt = startOfToday.addingTimeInterval(-1)
+        #expect(!today.matches(sample, now: now))
+
+        for (activity, days) in [(SidebarChats.Filter.Activity.last3Days, 3), (.last7Days, 7), (.last30Days, 30)] {
+            let recent = SidebarChats.Filter(activity: activity)
+            sample.session.lastEventAt = now.addingTimeInterval(-Double(days) * 86_400)
+            #expect(recent.matches(sample, now: now))
+            sample.session.lastEventAt = now.addingTimeInterval(-Double(days) * 86_400 - 1)
+            #expect(!recent.matches(sample, now: now))
+        }
+        let older = SidebarChats.Filter(activity: .olderThan30Days)
+        #expect(older.matches(sample, now: now))
+        sample.session.lastEventAt = now.addingTimeInterval(-30 * 86_400)
+        #expect(!older.matches(sample, now: now))
+    }
+
+    @Test func activityCombinesWithOtherFiltersAndKeepsMatchingChildsParent() {
+        let parent = chat("parent", ago: 10 * 86_400, project: "alpha")
+        let child = chat("child", ago: 60, project: "beta", parent: "parent")
+        let other = chat("other", ago: 60, project: "alpha")
+        let filter = SidebarChats.Filter(projects: ["beta"], activity: .last3Days)
+        let visible = SidebarChats.visible([parent, child, other], filter: filter, query: "child", showArchived: false, now: now)
+        #expect(visible.map(\.id) == ["parent", "child"])
+    }
+
     @Test func visibleAppliesArchiveFilterAndSearchTogether() {
         let chats = [
             chat("Fix login", pr: .init(number: 3981, state: .open), project: "abstract", branch: "abstract/oauth-callback"),
@@ -313,8 +344,12 @@ import AbstractCore
     }
 
     @Test func filterChoicesSurviveARoundTrip() throws {
-        let filter = SidebarChats.Filter(projects: ["abstract"], agents: ["codex"], macs: ["Studio"])
+        let filter = SidebarChats.Filter(projects: ["abstract"], agents: ["codex"], macs: ["Studio"], activity: .last7Days)
         #expect(try JSONDecoder().decode(SidebarChats.Filter.self, from: JSONEncoder().encode(filter)) == filter)
+        let old = try JSONDecoder().decode(SidebarChats.Filter.self,
+                                           from: Data(#"{"projects":["abstract"],"agents":[],"macs":[]}"#.utf8))
+        #expect(old.activity == nil)
+        #expect(old.projects == ["abstract"])
     }
 
     // MARK: Unmerged work

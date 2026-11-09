@@ -402,11 +402,40 @@ test('filters narrow by project, agent and Mac', () => {
   assert.deepEqual(g.narrow([...all, archived], { ...g.defaultPrefs, showArchived: true }, 'd').map(c => c.session.id), ['d']);
 });
 
+test('activity filters use local today and rolling day boundaries', () => {
+  const sample = chat('sample');
+  const todayStart = new Date((now + 978_307_200) * 1000);
+  todayStart.setHours(0, 0, 0, 0);
+  sample.session.lastEventAt = todayStart.getTime() / 1000 - 978_307_200;
+  const matches = activity => g.filterMatches({ ...g.noFilter, activity }, sample, now);
+  assert.ok(matches('today'));
+  sample.session.lastEventAt -= 1;
+  assert.ok(!matches('today'));
+  for (const [activity, days] of [['last3Days', 3], ['last7Days', 7], ['last30Days', 30]]) {
+    sample.session.lastEventAt = now - days * 86_400;
+    assert.ok(matches(activity));
+    sample.session.lastEventAt -= 1;
+    assert.ok(!matches(activity));
+  }
+  assert.ok(matches('olderThan30Days'));
+  sample.session.lastEventAt = now - 30 * 86_400;
+  assert.ok(!matches('olderThan30Days'));
+});
+
+test('activity combines with search and project while keeping a matching child’s parent', () => {
+  const parent = chat('parent', 'idle', { ago: 10 * 86_400, projectName: 'alpha' });
+  const child = chat('child', 'running', { parentSessionId: 'parent', projectName: 'beta' });
+  const other = chat('other', 'idle', { projectName: 'alpha' });
+  const prefs = { ...g.defaultPrefs, filter: { ...g.noFilter, projects: ['beta'], activity: 'last3Days' } };
+  assert.deepEqual(g.narrow([parent, child, other], prefs, 'child', now).map(c => c.session.id), ['parent', 'child']);
+});
+
 test('the choices survive a relaunch, and bad stored values fall back', () => {
-  const prefs = { arrangement: 'project', filter: { projects: ['abstract'], agents: ['codex'], macs: ['Studio'] }, showArchived: true };
+  const prefs = { arrangement: 'project', filter: { projects: ['abstract'], agents: ['codex'], macs: ['Studio'], activity: 'last7Days' }, showArchived: true };
   assert.deepEqual(g.parsePrefs(JSON.stringify(prefs)), prefs);
   assert.deepEqual(g.parsePrefs(null), g.defaultPrefs);
   assert.deepEqual(g.parsePrefs('not json'), g.defaultPrefs);
   assert.equal(g.parsePrefs('{"arrangement":"kanban"}').arrangement, 'status');
-  assert.deepEqual(g.parsePrefs('{"filter":{"projects":["abstract"]}}').filter, { projects: ['abstract'], agents: [], macs: [] }, 'saved before Mac filters existed');
+  assert.deepEqual(g.parsePrefs('{"filter":{"projects":["abstract"]}}').filter, { projects: ['abstract'], agents: [], macs: [], activity: null }, 'saved before Mac and activity filters existed');
+  assert.equal(g.parsePrefs('{"filter":{"activity":"unknown"}}').filter.activity, null);
 });
