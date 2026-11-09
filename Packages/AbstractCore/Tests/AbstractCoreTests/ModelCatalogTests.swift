@@ -17,16 +17,21 @@ private func initializeResponse(requestId: String, subtype: String = "success", 
         + #"","response":{"commands":[],"models":"# + models.replacingOccurrences(of: "\n", with: "") + #","pid":1}}}"#
 }
 
-/// Excerpt of codex-cli 0.153.4's ~/.codex/models_cache.json, out of priority
-/// order on purpose, with one hidden model and one being retired.
+/// Sanitized excerpt of codex-cli 0.166.0's account catalogue. The entries
+/// are out of priority order to check that discovery uses the CLI's order.
 private let codexCache = #"""
-{"fetched_at":"2026-09-22T12:00:00Z","etag":"W/\"abc\"","client_version":"0.153.4","models":[
- {"slug":"gpt-5.5","display_name":"GPT-5.5","description":"Proven previous-generation model for coding and general work.","default_reasoning_level":"medium","supported_reasoning_levels":[{"effort":"low","description":"Fast responses with lighter reasoning"},{"effort":"medium","description":"Balances speed and reasoning depth for everyday tasks"},{"effort":"high","description":"Greater reasoning depth for complex problems"},{"effort":"xhigh","description":"Extra high reasoning depth for complex problems"}],"visibility":"list","priority":12,"upgrade":{"model":"gpt-5.6-sol","migration_markdown":"GPT-5.5 retires on October 14, 2026.","retirement_at":"2026-10-14T19:00:00Z"}},
- {"slug":"gpt-6-astra","display_name":"GPT-6-Astra","description":"Our most capable model for complex, demanding work.","default_reasoning_level":"low","supported_reasoning_levels":[{"effort":"low","description":"x"},{"effort":"medium","description":"x"},{"effort":"high","description":"x"},{"effort":"xhigh","description":"x"},{"effort":"max","description":"x"},{"effort":"ultra","description":"x"}],"visibility":"list","priority":1,"upgrade":null},
- {"slug":"gpt-reserve","display_name":"GPT-Reserve","description":"Fast and affordable agentic coding model.","default_reasoning_level":"medium","supported_reasoning_levels":[{"effort":"low","description":"x"}],"visibility":"hide","priority":3,"upgrade":null},
- {"slug":"gpt-6-sol","display_name":"GPT-6-Sol","description":"Balanced.","default_reasoning_level":"medium","supported_reasoning_levels":[{"effort":"low","description":"x"},{"effort":"medium","description":"x"}],"visibility":"list","priority":2,"upgrade":null}
+{"client_version":"0.166.0","models":[
+ {"slug":"gpt-6.1-terra","display_name":"GPT-6.1 Terra","description":"GPT-6.1 Terra Codex model.","default_reasoning_level":"low","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"},{"effort":"xhigh"},{"effort":"max"},{"effort":"ultra"}],"visibility":"list","priority":3,"upgrade":null},
+ {"slug":"gpt-6.1-sol","display_name":"GPT-6.1-Sol","description":"Latest workhorse model for coding and everyday work.","default_reasoning_level":"low","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"},{"effort":"xhigh"},{"effort":"max"},{"effort":"ultra"}],"visibility":"list","priority":1,"upgrade":null},
+ {"slug":"gpt-6-luna","display_name":"GPT-6-Luna","description":"Fast and affordable model for easier tasks.","default_reasoning_level":"medium","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"},{"effort":"xhigh"},{"effort":"max"}],"visibility":"list","priority":6,"upgrade":null},
+ {"slug":"gpt-6-astra","display_name":"GPT-6-Astra","description":"Frontier intelligence for the most demanding work.","default_reasoning_level":"medium","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"},{"effort":"xhigh"},{"effort":"max"},{"effort":"ultra"}],"visibility":"list","priority":2,"upgrade":null},
+ {"slug":"gpt-6-sol","display_name":"GPT-6-Sol","description":"Previous generation workhorse model.","default_reasoning_level":"medium","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"},{"effort":"xhigh"},{"effort":"max"},{"effort":"ultra"}],"visibility":"list","priority":4,"upgrade":null},
+ {"slug":"gpt-reserve","display_name":"GPT-Reserve","default_reasoning_level":"medium","supported_reasoning_levels":[{"effort":"low"}],"visibility":"hide","priority":5,"upgrade":null}
 ]}
 """#
+
+/// Historical retirement metadata stays visible when a user's CLI still lists it.
+private let retiringCodexCache = #"{"models":[{"slug":"gpt-5.5","display_name":"GPT-5.5","default_reasoning_level":"medium","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"}],"visibility":"list","priority":1,"upgrade":{"model":"gpt-5.6-sol","retirement_at":"2026-10-14T19:00:00Z"}}]}"#
 
 /// The real executor with another home directory.
 private struct HomeExecutor: Executor {
@@ -167,20 +172,37 @@ struct CodexModelCatalogTests {
 
     @Test func listedModelsComeInPriorityOrder() throws {
         let catalog = try #require(CodexProvider.modelCatalog(modelsCache: codexCache, now: beforeRetirement, timeZone: utc))
-        #expect(catalog.models.map(\.id) == ["gpt-6-astra", "gpt-6-sol", "gpt-5.5"], "hidden models are left out")
+        #expect(catalog.models.map(\.id) == ["gpt-6.1-sol", "gpt-6-astra", "gpt-6.1-terra", "gpt-6-sol", "gpt-6-luna"], "hidden models are left out")
         let astra = try #require(catalog.option("gpt-6-astra"))
         #expect(astra.label == "GPT-6-Astra")
-        #expect(astra.detail == "Our most capable model for complex, demanding work.")
+        #expect(astra.detail == "Frontier intelligence for the most demanding work.")
         #expect(astra.efforts == ["low", "medium", "high", "xhigh", "max", "ultra"])
-        #expect(astra.defaultEffort == "low")
+        #expect(astra.defaultEffort == "medium")
         #expect(astra.note == nil)
         #expect(catalog.versions.isEmpty && catalog.accountDefault == nil)
     }
 
+    @Test func newlyReleasedModelsUseTheirCliLabelsAndEfforts() throws {
+        let catalog = try #require(CodexProvider.modelCatalog(modelsCache: codexCache))
+        for (id, label, defaultEffort, efforts) in [
+            ("gpt-6.1-sol", "GPT-6.1-Sol", "low", ["low", "medium", "high", "xhigh", "max", "ultra"]),
+            ("gpt-6.1-terra", "GPT-6.1 Terra", "low", ["low", "medium", "high", "xhigh", "max", "ultra"]),
+            ("gpt-6-luna", "GPT-6-Luna", "medium", ["low", "medium", "high", "xhigh", "max"]),
+        ] {
+            let option = try #require(catalog.option(id))
+            #expect(option.label == label)
+            #expect(option.defaultEffort == defaultEffort)
+            #expect(option.efforts == efforts)
+            #expect(catalog.defaultOption(configured: id)?.id == id, "saved selections keep their exact CLI id")
+        }
+        #expect(catalog.option("gpt-reserve") == nil)
+        #expect(catalog.option("gpt-image-2.6-sunburst") == nil, "image API models are not in the CLI catalogue")
+    }
+
     @Test func aModelBeingRetiredSaysWhen() throws {
-        let before = try #require(CodexProvider.modelCatalog(modelsCache: codexCache, now: beforeRetirement, timeZone: utc))
+        let before = try #require(CodexProvider.modelCatalog(modelsCache: retiringCodexCache, now: beforeRetirement, timeZone: utc))
         #expect(before.option("gpt-5.5")?.note == "Retires Oct 14")
-        let after = try #require(CodexProvider.modelCatalog(modelsCache: codexCache, now: beforeRetirement.addingTimeInterval(86_400 * 60), timeZone: utc))
+        let after = try #require(CodexProvider.modelCatalog(modelsCache: retiringCodexCache, now: beforeRetirement.addingTimeInterval(86_400 * 60), timeZone: utc))
         #expect(after.option("gpt-5.5")?.note == "Retired Oct 14")
     }
 
@@ -199,7 +221,7 @@ struct CodexModelCatalogTests {
         try FileManager.default.createDirectory(atPath: home + "/.codex", withIntermediateDirectories: true)
         try codexCache.write(toFile: home + "/.codex/models_cache.json", atomically: true, encoding: .utf8)
         let catalog = await Agents.codex.discoverModels(executor: HomeExecutor(homeDirectory: home), binary: nil)
-        #expect(catalog?.models.first?.id == "gpt-6-astra")
+        #expect(catalog?.models.first?.id == "gpt-6.1-sol")
     }
 }
 
@@ -248,6 +270,21 @@ struct EffortSelectionTests {
         #expect(spec.args.last == "do it")
         let resume = Agents.codex.buildResume(LaunchContext(cwd: "/w", prompt: "more", permissionPolicy: .autoEdits, effort: "low"), resumeId: "t")
         #expect(resume.args.contains(#"model_reasoning_effort="low""#))
+    }
+
+    @Test func newlyReleasedCodexModelsLaunchAndResumeWithSupportedEfforts() throws {
+        for (model, effort) in [("gpt-6.1-sol", "ultra"), ("gpt-6.1-terra", "max"), ("gpt-6-luna", "max")] {
+            let context = LaunchContext(cwd: "/w", prompt: "review", permissionPolicy: .autoEdits,
+                                        model: model, effort: effort)
+            let launch = Agents.codex.buildLaunch(context)
+            #expect(launch.args.contains(model))
+            #expect(launch.args.contains(#"model_reasoning_effort="\#(effort)""#))
+            #expect(launch.args.last == "review")
+            let resume = Agents.codex.buildResume(context, resumeId: "thread")
+            #expect(resume.args.contains(model))
+            #expect(resume.args.contains(#"model_reasoning_effort="\#(effort)""#))
+            #expect(resume.args.last == "review")
+        }
     }
 
     @Test func noEffortMeansTheAgentsOwnDefault() {
