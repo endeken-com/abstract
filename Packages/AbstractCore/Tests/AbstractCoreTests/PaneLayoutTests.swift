@@ -57,12 +57,12 @@ import AbstractCore
         }
     }
 
-    @Test func standardHasChangesAndFilesBesideTheChat() {
+    @Test func standardOpensPullRequestBesideChangesAndFiles() {
         let layout = PanelLayout.standard()
         #expect(layout.side.isOpen)
-        #expect(layout.side.tabs.map(\.kind) == [.changes, .files])
+        #expect(layout.side.tabs.map(\.kind) == [.changes, .files, .review])
         #expect(!layout.bottom.isOpen && layout.bottom.tabs.isEmpty)
-        #expect(layout.isShowing(.changes) && !layout.isShowing(.files))
+        #expect(layout.isShowing(.review) && !layout.isShowing(.changes) && !layout.isShowing(.files))
     }
 
     @Test func openingAnEmptyPanelGivesItItsDefaultTab() {
@@ -126,13 +126,15 @@ import AbstractCore
 
     @Test func closingPicksANeighbourAndTheLastTabClosesThePanel() {
         var layout = PanelLayout.standard()
-        let changes = layout.side.tabs[0], files = layout.side.tabs[1]
-        layout.close(changes.id)
+        let changes = layout.side.tabs[0], files = layout.side.tabs[1], review = layout.side.tabs[2]
+        layout.close(review.id)
         #expect(layout.side.active?.id == files.id)
         layout.close(files.id)
+        #expect(layout.side.active?.id == changes.id)
+        layout.close(changes.id)
         #expect(layout.side.tabs.isEmpty && !layout.side.isOpen)
         layout.toggle(.side)
-        #expect(layout.side.tabs.map(\.kind) == [.changes])
+        #expect(layout.side.tabs.map(\.kind) == [.review])
     }
 
     @Test func sizesStayInRange() {

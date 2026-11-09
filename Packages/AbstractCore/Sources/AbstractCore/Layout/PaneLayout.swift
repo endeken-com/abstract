@@ -81,7 +81,7 @@ public enum PanelSlot: String, Codable, Sendable, CaseIterable, Hashable {
     case bottom
 
     /// The tab an empty panel gets when it is opened.
-    public var defaultKind: PaneKind { self == .side ? .changes : .terminal }
+    public var defaultKind: PaneKind { self == .side ? .review : .terminal }
     public var other: PanelSlot { self == .side ? .bottom : .side }
     /// Allowed width (side) or height (bottom), in points.
     public var sizes: ClosedRange<Double> { self == .side ? 280...1100 : 120...800 }
@@ -110,10 +110,12 @@ public struct PanelLayout: Codable, Hashable, Sendable {
 
     public init(side: Panel, bottom: Panel) { self.side = side; self.bottom = bottom }
 
-    /// Changes and Files on the right; the bottom panel waits for a terminal.
+    /// Pull Request opens beside Changes and Files; the bottom panel waits for a terminal.
     public static func standard() -> PanelLayout {
-        PanelLayout(side: Panel(tabs: [PaneItem(kind: .changes), PaneItem(kind: .files)], isOpen: true, size: 460),
-                    bottom: Panel(size: 240))
+        let review = PaneItem(kind: .review)
+        return PanelLayout(side: Panel(tabs: [PaneItem(kind: .changes), PaneItem(kind: .files), review],
+                                       activeId: review.id, isOpen: true, size: 460),
+                           bottom: Panel(size: 240))
     }
 
     public subscript(slot: PanelSlot) -> Panel {
