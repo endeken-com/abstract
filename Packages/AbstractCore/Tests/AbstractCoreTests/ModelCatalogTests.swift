@@ -74,6 +74,8 @@ struct ClaudeModelCatalogTests {
         let catalog = try #require(ClaudeProvider.modelCatalog(initializeResponse: initializeResponse(requestId: "r1")))
         // claude-fable-5-1 is what the Fable entry (itself a full id) runs.
         #expect(catalog.versions.map(\.id) == ["claude-opus-5-5", "claude-opus-5-5[1m]", "claude-sonnet-5", "claude-haiku-4-5-20251001"])
+        #expect(catalog.option("claude-fable-5-2") == nil)
+        #expect(catalog.option("claude-mythos-5-2") == nil)
         #expect(catalog.versions.map(\.label) == ["Opus 5.5", "Opus 5.5 · 1M context", "Sonnet 5", "Haiku 4.5"])
         #expect(catalog.option("claude-opus-5-5")?.efforts.count == 5, "inherited from the 1M-context entry")
         #expect(catalog.option("claude-haiku-4-5-20251001")?.efforts == [])
@@ -85,6 +87,27 @@ struct ClaudeModelCatalogTests {
         #expect(catalog.versions.last?.id == "claude-sonnet-5-1")
         #expect(catalog.versions.last?.label == "Sonnet 5.1")
         #expect(catalog.versions.last?.efforts == ["low", "high"])
+    }
+
+    @Test func fable52AppearsOnlyWhenTheCLIExposesIt() throws {
+        let models = #"[{"value":"default","resolvedModel":"claude-fable-5-2","displayName":"Default (recommended)","supportsEffort":true,"supportedEffortLevels":["medium","high"]},{"value":"fable","resolvedModel":"claude-fable-5-2","displayName":"Fable","description":"Available on this account","supportsEffort":true,"supportedEffortLevels":["medium","high"]}]"#
+        let catalog = try #require(ClaudeProvider.modelCatalog(initializeResponse: initializeResponse(requestId: "r", models: models)))
+        #expect(catalog.accountDefault?.label == "Fable 5.2")
+        #expect(catalog.models.map(\.id) == ["fable"])
+        #expect(catalog.option("fable")?.detail == "Available on this account")
+        #expect(catalog.option("claude-fable-5-2")?.efforts == ["medium", "high"])
+        #expect(catalog.option("claude-mythos-5-2") == nil)
+        #expect(catalog.defaultOption(configured: "claude-fable-5-1")?.id == "claude-fable-5-1", "saved selections stay selectable")
+    }
+
+    @Test func verifiedMythosEntryKeepsTheCLIsLabelAndEfforts() throws {
+        let models = #"[{"value":"fable","resolvedModel":"claude-fable-5-2","displayName":"Fable 5.2","supportsEffort":true,"supportedEffortLevels":["low","medium","high","xhigh","max"]},{"value":"claude-mythos-5-2","resolvedModel":"claude-mythos-5-2","displayName":"Mythos 5.2 (verified)","supportsEffort":true,"supportedEffortLevels":["high","xhigh"]}]"#
+        let catalog = try #require(ClaudeProvider.modelCatalog(initializeResponse: initializeResponse(requestId: "r", models: models)))
+        #expect(catalog.models.map(\.id) == ["fable", "claude-mythos-5-2"])
+        #expect(catalog.option("claude-mythos-5-2")?.label == "Mythos 5.2 (verified)")
+        #expect(catalog.option("claude-mythos-5-2")?.efforts == ["high", "xhigh"])
+        #expect(catalog.versions.map(\.id).contains("claude-fable-5-2"))
+        #expect(!catalog.versions.map(\.id).contains("claude-mythos-5-2"), "the direct CLI entry is already in Models")
     }
 
     @Test func anythingButTheMatchingSuccessfulResponseIsIgnored() {
@@ -101,6 +124,8 @@ struct ClaudeModelCatalogTests {
         #expect(ClaudeProvider.displayName("claude-haiku-4-5-20251001") == "Haiku 4.5")
         #expect(ClaudeProvider.displayName("claude-sonnet-5") == "Sonnet 5")
         #expect(ClaudeProvider.displayName("claude-fable-5-1") == "Fable 5.1")
+        #expect(ClaudeProvider.displayName("claude-fable-5-2") == "Fable 5.2")
+        #expect(ClaudeProvider.displayName("claude-mythos-5-2") == "Mythos 5.2")
         #expect(ClaudeProvider.displayName("claude-3-5-sonnet-20241022") == "Sonnet 3.5")
         #expect(ClaudeProvider.displayName("opus[1m]") == "Opus · 1M context")
         #expect(ClaudeProvider.displayName("sonnet") == "Sonnet")
@@ -110,7 +135,10 @@ struct ClaudeModelCatalogTests {
     @Test func theFallbackOffersAliasesAndPinnedVersions() {
         let fallback = Agents.claude.fallbackModels
         #expect(fallback.models.map(\.id) == ["fable", "opus", "sonnet", "haiku"])
-        #expect(fallback.versions.map(\.id) == ClaudeProvider.pinnedVersions)
+        #expect(ClaudeProvider.pinnedVersions.prefix(2) == ["claude-fable-5-2", "claude-mythos-5-2"])
+        #expect(fallback.versions.map(\.id) == Array(ClaudeProvider.pinnedVersions.dropFirst(2)))
+        #expect(fallback.option("claude-fable-5-2") == nil)
+        #expect(fallback.option("claude-mythos-5-2") == nil)
         #expect(fallback.option("haiku")?.efforts == [])
         #expect(fallback.option("claude-opus-5-5")?.efforts == ClaudeProvider.effortLevels)
     }
@@ -233,6 +261,18 @@ struct ModelCatalogTests {
 
 @Suite("Effort selection")
 struct EffortSelectionTests {
+    @Test func newClaudeModelsUseExactCLIArguments() throws {
+        for model in ["claude-fable-5-2", "claude-mythos-5-2"] {
+            let context = LaunchContext(cwd: "/w", prompt: "p", permissionPolicy: .ask, model: model, effort: "xhigh")
+            for spec in [Agents.claude.buildLaunch(context), Agents.claude.buildResume(context, resumeId: "abc")] {
+                let modelIndex = try #require(spec.args.firstIndex(of: "--model"))
+                let effortIndex = try #require(spec.args.firstIndex(of: "--effort"))
+                #expect(spec.args[modelIndex + 1] == model)
+                #expect(spec.args[effortIndex + 1] == "xhigh")
+            }
+        }
+    }
+
     @Test func claudePassesTheChosenEffort() throws {
         let spec = Agents.claude.buildLaunch(LaunchContext(cwd: "/w", prompt: "p", permissionPolicy: .ask, model: "sonnet", effort: "high"))
         let i = try #require(spec.args.firstIndex(of: "--effort"))

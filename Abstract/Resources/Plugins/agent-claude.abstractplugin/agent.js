@@ -33,8 +33,10 @@ const BASE_ARGS = [
  * after it would be read as one). */
 const NAMING_ARGS = ["-p", "--tools", "", "--model", "haiku", "--output-format", "json", "--no-session-persistence"];
 
+/** New models are offered only when this account's Claude Code lists them. */
+const DISCOVERED_ONLY_VERSIONS = ["claude-fable-5-2", "claude-mythos-5-2"];
 /** Offered under "Specific versions" alongside whatever the account's aliases resolve to today. */
-const PINNED_VERSIONS = ["claude-fable-5-1", "claude-opus-5-5", "claude-opus-5-5[1m]", "claude-sonnet-5", "claude-haiku-4-5-20251001"];
+const PINNED_VERSIONS = DISCOVERED_ONLY_VERSIONS.concat(["claude-fable-5-1", "claude-opus-5-5", "claude-opus-5-5[1m]", "claude-sonnet-5", "claude-haiku-4-5-20251001"]);
 /** The levels claude 2.1.274 reports for every model that takes an effort. */
 const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"];
 const DISCOVERY_TIMEOUT = 15;
@@ -1139,7 +1141,8 @@ function fallbackModels() {
   const efforts = id => family(id) === "haiku" ? [] : EFFORT_LEVELS.slice();
   return {
     models: ["fable", "opus", "sonnet", "haiku"].map(id => modelOption(id, displayName(id), undefined, efforts(id))),
-    versions: PINNED_VERSIONS.map(id => modelOption(id, displayName(id), id, efforts(id))),
+    versions: PINNED_VERSIONS.filter(id => !DISCOVERED_ONLY_VERSIONS.includes(id))
+      .map(id => modelOption(id, displayName(id), id, efforts(id))),
   };
 }
 
@@ -1175,7 +1178,9 @@ function catalogFromEntries(entries) {
     .flatMap(option => [option.id, option.resolvedId].filter(x => x !== undefined)).map(canon));
   const versionIds = [];
   const listed = new Set();
-  for (const id of PINNED_VERSIONS.concat(parsed.map(option => option.resolvedId).filter(x => x !== undefined))) {
+  const exposed = id => parsed.some(option => same(option.id, id) || sameOptional(option.resolvedId, id));
+  const pinned = PINNED_VERSIONS.filter(id => !DISCOVERED_ONLY_VERSIONS.includes(id) || exposed(id));
+  for (const id of pinned.concat(parsed.map(option => option.resolvedId).filter(x => x !== undefined))) {
     if (listed.has(canon(id))) continue;
     listed.add(canon(id));
     if (!pinnedByEntries.has(canon(id))) versionIds.push(id);
