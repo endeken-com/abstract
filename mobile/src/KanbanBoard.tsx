@@ -91,7 +91,7 @@ function BoardCardView({ card, onPress }: { card: BoardCard; onPress: () => void
   const label = [card.title, meta, card.branch, card.pullRequestLine, `Last activity ${card.age}${card.age === 'now' ? '' : ' ago'}`, card.archived && 'Archived'].filter(Boolean).join(', ');
   return <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress} style={[styles.card, dimmed && { opacity: 0.5 }]}>
     <View style={styles.cardTitleRow}>
-      <ProviderLogo provider={card.agentId} size={15} />
+      <ProviderLogo provider={card.agentId} presentation={card.chat.providerPresentation} size={15} />
       <Text numberOfLines={2} style={styles.cardTitle}>{card.title}</Text>
       {card.pinned && <Text style={styles.pin}>Pinned</Text>}
     </View>

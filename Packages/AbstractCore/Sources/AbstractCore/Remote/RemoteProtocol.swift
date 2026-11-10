@@ -2,10 +2,8 @@ import Foundation
 
 /// What a paired device may ask this one, and what this one tells it.
 ///
-/// The host streams each chat's raw agent output, line by line with its
-/// sequence number, and the controller parses it with the same provider code
-/// the host uses. So any agent Abstract can run can be driven from another
-/// device, with no per-agent remote support.
+/// The host streams sequenced chat lines with events from its agent plugin.
+/// Other Macs can replay raw lines; phones render the normalized events.
 public enum RemoteMessage: Codable, Sendable {
     case request(id: Int, RemoteRequest)
     case response(id: Int, RemoteResponse)
@@ -249,6 +247,9 @@ public struct RemotePlugin: Codable, Sendable, Hashable {
     public var description: String?
     /// `bundled` or `user`.
     public var source: String
+    /// Whether this is an app-bundled plugin or its approved moved repository.
+    /// Optional so older peers' plugin snapshots still decode.
+    public var trustedBrand: Bool?
     public var enabled: Bool
     /// Enabled and able to run.
     public var usable: Bool
@@ -274,6 +275,7 @@ public struct RemotePlugin: Codable, Sendable, Hashable {
         id = record.id; name = record.name; version = record.version
         description = manifest?.description
         source = record.source.rawValue
+        trustedBrand = MovedPlugins.trustsBrand(pluginId: record.id, source: record.source)
         enabled = record.enabled; usable = installed.isUsable
         problem = installed.problem; lastError = record.lastError
         requestedCapabilities = manifest?.capabilities ?? record.grantedCapabilities.map(\.rawValue).sorted()
@@ -429,11 +431,45 @@ public struct RemoteTheming: Codable, Sendable, Hashable {
     }
 }
 
+/// Presentation supplied by an agent plugin. Optional in snapshots from older Macs.
+public struct RemoteProvider: Codable, Sendable, Hashable {
+    public var id: String
+    public var label: String
+    /// Bundled app asset; user plugins cannot select one of Abstract's marks.
+    public var asset: String?
+    /// A small, self-contained SVG from the plugin package.
+    public var icon: String?
+
+    public init(id: String, label: String, asset: String? = nil, icon: String? = nil) {
+        self.id = id; self.label = label; self.asset = asset; self.icon = icon
+    }
+
+    public init(_ provider: ScriptedProvider) {
+        self.init(provider.declaration, folder: provider.script.folder, bundled: provider.bundled)
+    }
+
+    public init(_ declaration: PluginAgentDeclaration, folder: URL, bundled: Bool) {
+        self.init(id: declaration.id, label: declaration.label,
+                  asset: bundled ? declaration.asset : nil,
+                  icon: declaration.icon.flatMap { Self.safeSVG(folder.appendingPathComponent($0)) })
+    }
+
+    /// Limit and reject SVG features that could load external content on a phone.
+    private static func safeSVG(_ url: URL) -> String? {
+        guard let data = try? Data(contentsOf: url), data.count <= 32_768,
+              let svg = String(data: data, encoding: .utf8) else { return nil }
+        let lower = svg.lowercased()
+        guard lower.contains("<svg"), !["<script", "<foreignobject", "<image", "<!", "href=", "url("].contains(where: lower.contains) else { return nil }
+        return svg
+    }
+}
+
 /// A host's projects and chats, and the agents it can run.
 public struct RemoteSnapshot: Codable, Sendable, Hashable {
     public var projects: [Project]
     public var sessions: [Session]
     public var providers: [String]
+    public var providerPresentations: [RemoteProvider]?
     /// Chats whose agent process is running.
     public var alive: [String]
     /// That Mac's home folder.
@@ -525,6 +561,7 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
     public static let maxProjectIconBytes = 512 << 10
 
     public init(projects: [Project], sessions: [Session], providers: [String], alive: [String],
+                providerPresentations: [RemoteProvider]? = nil,
                 home: String? = nil, modelCatalogs: [String: ModelCatalog]? = nil,
                 defaultModelNames: [String: String]? = nil,
                 pullRequests: [String: RemotePullRequest]? = nil, automations: [Automation]? = nil,
@@ -544,7 +581,8 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
                 plugins: [RemotePlugin]? = nil, pluginProjects: [RemotePluginProject]? = nil,
                 pluginsSupported: Bool? = nil, theme: RemoteTheming? = nil) {
         self.theme = theme
-        self.projects = projects; self.sessions = sessions; self.providers = providers; self.alive = alive
+        self.projects = projects; self.sessions = sessions; self.providers = providers
+        self.providerPresentations = providerPresentations; self.alive = alive
         self.home = home; self.modelCatalogs = modelCatalogs; self.defaultModelNames = defaultModelNames
         self.pullRequests = pullRequests
         self.automations = automations
@@ -745,8 +783,17 @@ public struct RemotePullRequestCheck: Codable, Sendable, Hashable {
 public struct RemoteLine: Codable, Sendable, Hashable {
     public var seq: Int
     public var line: OutputLine
+    /// The host's plugin parser output for this line. Raw events are omitted:
+    /// the original line is already here for Mac replay and send receipts.
+    public var events: [JSONValue]?
 
-    public init(seq: Int, line: OutputLine) { self.seq = seq; self.line = line }
+    public init(seq: Int, line: OutputLine, events: [AgentEvent]? = nil) {
+        self.seq = seq; self.line = line
+        self.events = events?.compactMap { event in
+            if case .raw = event { return nil }
+            return AgentEventJSON.encode(event)
+        }
+    }
 
     /// Longest line sent whole; past it the line is cut (a tool that printed megabytes).
     public static let maxLine = 4 << 20
@@ -760,7 +807,9 @@ public struct RemoteLine: Codable, Sendable, Hashable {
             if line.line.line.utf8.count > maxLine {
                 line.line.line = String(line.line.line.utf8.prefix(maxLine)) ?? String(line.line.line.prefix(maxLine / 4))
             }
-            let count = line.line.line.utf8.count + 64
+            // Events can be larger than the wire line (edit previews, tool
+            // results). Count the encoded payload, not just the raw output.
+            let count = (try? JSONEncoder().encode(line).count) ?? line.line.line.utf8.count + 64
             if !batch.isEmpty, size + count > bytes {
                 out.append(batch)
                 batch = []

@@ -1,6 +1,7 @@
-import type { PullRequest } from './types';
+import type { PullRequest, ProviderPresentation } from './types';
 import type { MacView } from './macs';
 import { activeAt, age, checksOf, queryMatches, statusOf, type ChatFacts } from './chatGroups';
+import { providerLabel } from './providerPresentation';
 
 // The phone's Kanban board: chats by progress, with the same columns and
 // grouping rules as the Mac plugin's board.js
@@ -20,11 +21,9 @@ export const boardColumns: { key: BoardProgress; title: string; empty: string }[
 export const standaloneKey = '__standalone__';
 export const standaloneName = 'Standalone';
 
-const agentNames: Record<string, string> = {
-  claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode', muse: 'Muse Code',
-  ollama: 'Codex · Ollama', lmstudio: 'Codex · LM Studio',
-};
-export const agentName = (agentId: string) => agentNames[agentId] || agentId || '';
+const retiredAgentNames: Record<string, string> = { ollama: 'Codex · Ollama', lmstudio: 'Codex · LM Studio' };
+export const agentName = (agentId: string, presentation?: ProviderPresentation) =>
+  presentation?.label || retiredAgentNames[agentId] || providerLabel(undefined, agentId);
 
 // Same shape as PluginSnapshot.projectKey: tells same-named projects on two
 // Macs apart.
@@ -69,7 +68,7 @@ export function agentOptions(chats: ChatFacts[]): { key: string; label: string }
   for (const chat of chats) {
     if (!seen.has(chat.session.providerId)) {
       seen.add(chat.session.providerId);
-      options.push({ key: chat.session.providerId, label: agentName(chat.session.providerId) });
+      options.push({ key: chat.session.providerId, label: agentName(chat.session.providerId, chat.providerPresentation) });
     }
   }
   return options.sort((a, b) => a.label.localeCompare(b.label));
@@ -158,7 +157,7 @@ export function buildBoard(macs: MacView[], chats: ChatFacts[], rawFilter: unkno
       id: chat.session.id, chat, title: chat.session.name || '',
       projectKey: projectKeyOf(chat),
       projectName: project ? project.label : standaloneName,
-      agentId: chat.session.providerId, agentName: agentName(chat.session.providerId),
+      agentId: chat.session.providerId, agentName: agentName(chat.session.providerId, chat.providerPresentation),
       branch: chat.session.branch || '', macId: chat.hostId,
       // A disambiguated project label already names its Mac; saying it twice helps nobody.
       macName: multipleMacs && !(project && project.labelIncludesMac) ? chat.mac : '',

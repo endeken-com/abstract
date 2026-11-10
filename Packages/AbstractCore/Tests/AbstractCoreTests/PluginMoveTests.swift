@@ -8,6 +8,18 @@ import Testing
     let fm = FileManager.default
     let commit = String(repeating: "e", count: 40)
 
+    @Test func onlyBundledAndApprovedMovedSourcesKeepBrandTrust() {
+        let official = PluginGitSource(owner: "abstract-ade", repo: "abstract-plugin-jira", commit: commit,
+                                       listing: "abstract-ade/jira")
+        let lookalike = PluginGitSource(owner: "someone-else", repo: "abstract-plugin-jira", commit: commit,
+                                        listing: "someone-else/jira")
+        #expect(MovedPlugins.trustsBrand(pluginId: "sh.abstract.jira", source: .bundled))
+        #expect(MovedPlugins.trustsBrand(pluginId: "sh.abstract.jira", source: .git(official)))
+        #expect(!MovedPlugins.trustsBrand(pluginId: "sh.abstract.jira", source: .git(lookalike)))
+        #expect(!MovedPlugins.trustsBrand(pluginId: "sh.example.jira", source: .git(official)))
+        #expect(!MovedPlugins.trustsBrand(pluginId: "sh.abstract.jira", source: .user))
+    }
+
     var repo: URL {
         URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()

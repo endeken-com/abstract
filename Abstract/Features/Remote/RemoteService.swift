@@ -403,6 +403,27 @@ final class RemoteService {
         guard let model else { return nil }
         let sharedProjects = model.projects.filter { $0.archivedAt == nil }
         let sharedProfiles = model.profiles
+        let activePresentations = ProviderRegistry.all.compactMap { provider -> RemoteProvider? in
+            guard let agent = provider as? ScriptedProvider else { return nil }
+            return RemoteProvider(agent)
+        }
+        let activeIds = Set(activePresentations.map(\.id))
+        let retainedPresentations = Set(model.sessions.map(\.providerId)).subtracting(activeIds)
+            .sorted().compactMap { id -> RemoteProvider? in
+                guard let agent = AgentPlugins.shared.anyAgent(id) else { return nil }
+                return RemoteProvider(agent)
+            }
+        let retainedIds = activeIds.union(retainedPresentations.map(\.id))
+        let historicalPresentations = model.plugins.installed.filter { $0.problem == nil }
+            .sorted { $0.record.source == .bundled && $1.record.source != .bundled }
+            .flatMap { plugin -> [RemoteProvider] in
+                (plugin.manifest?.contributes.agents ?? []).filter { !retainedIds.contains($0.id) }.map {
+                    RemoteProvider($0, folder: plugin.packageURL, bundled: plugin.record.source == .bundled)
+                }
+            }
+        var seenPresentations = Set<String>()
+        let presentations = (activePresentations + retainedPresentations + historicalPresentations)
+            .filter { seenPresentations.insert($0.id).inserted }
         return RemoteSnapshot(projects: sharedProjects.map { item in
                                   var safe = item; safe.iconImagePath = nil; return safe
                               },
@@ -419,6 +440,7 @@ final class RemoteService {
                               },
                               providers: ProviderRegistry.all.map(\.id).filter { model.providerStatus[$0]?.available ?? false },
                               alive: Array(model.alive),
+                              providerPresentations: presentations,
                               home: model.executor.homeDirectory, modelCatalogs: model.modelCatalogs,
                               defaultModelNames: Dictionary(uniqueKeysWithValues: ProviderRegistry.all.compactMap { provider in
                                   model.defaultModelName(for: provider.id).map { (provider.id, $0) }
@@ -544,10 +566,8 @@ final class RemoteService {
     /// A chat's new output, to the Macs watching it.
     func forward(sessionId: String, seq: Int, line: OutputLine) {
         guard hosted.values.contains(where: { $0.watches(sessionId) }) else { return }
-        // A line longer than the link carries is cut, not a dropped link.
-        let lines = RemoteLine.batches([RemoteLine(seq: seq, line: line)], bytes: .max).first ?? []
         for peer in hosted.values where peer.watches(sessionId) {
-            peer.post(.event(.lines(sessionId: sessionId, lines)))
+            peer.forward(sessionId: sessionId, seq: seq, line: line)
         }
     }
 
@@ -850,6 +870,8 @@ final class HostedPeer {
     /// Plugin bridges for screens this device is showing, by plugin id.
     var pluginBridges: [String: PluginBridge] = [:]
     private var subscriptions: Set<String> = []
+    private var transcripts: [String: ChatStream] = [:]
+    private var transcriptLastSeq: [String: Int] = [:]
     private var lastSnapshot: RemoteSnapshot?
     private let outbox = AsyncStream<RemoteMessage>.makeStream()
 
@@ -858,6 +880,31 @@ final class HostedPeer {
     }
 
     func watches(_ session: String) -> Bool { subscriptions.contains(session) }
+
+    /// Replay from the start so a later page has the same parser state as the
+    /// Mac's full transcript, including handoffs and reused tool IDs.
+    private func normalizedReplay(_ session: String, model: AppModel, include: (Int) -> Bool)
+        -> (lines: [RemoteLine], stream: ChatStream, lastSeq: Int) {
+        let saved = model.engine.replay(sessionId: session)
+        let provider = model.session(session)?.providerId ?? ""
+        let stream = ChatStream(providerId: ChatStream.firstProvider(in: saved.map(\.line), current: provider))
+        let parsed = stream.feed(batch: saved.map(\.line))
+        let lines = zip(saved, parsed).compactMap { item, events in
+            include(item.seq) ? RemoteLine(seq: item.seq, line: item.line, events: events) : nil
+        }
+        return (lines, stream, saved.last?.seq ?? 0)
+    }
+
+    func forward(sessionId: String, seq: Int, line: OutputLine) {
+        guard subscriptions.contains(sessionId), seq > (transcriptLastSeq[sessionId] ?? 0) else { return }
+        let stream = transcripts[sessionId] ?? ChatStream(providerId: service?.model?.session(sessionId)?.providerId ?? "")
+        transcripts[sessionId] = stream
+        transcriptLastSeq[sessionId] = seq
+        // A line longer than the link carries is cut, not a dropped link.
+        let remote = RemoteLine(seq: seq, line: line, events: stream.feed(line))
+        let lines = RemoteLine.batches([remote], bytes: .max).first ?? []
+        post(.event(.lines(sessionId: sessionId, lines)))
+    }
 
     /// Queues a message; one sender keeps them in order.
     func post(_ message: RemoteMessage) { outbox.continuation.yield(message) }
@@ -902,7 +949,9 @@ final class HostedPeer {
         case let .subscribe(session, after):
             // Watch first, then catch up: anything in between arrives twice and the controller drops repeats.
             subscriptions.insert(session)
-            let lines = model.engine.replay(sessionId: session, after: after).map { RemoteLine(seq: $0.seq, line: $0.line) }
+            let (lines, stream, lastSeq) = normalizedReplay(session, model: model) { $0 > after }
+            transcripts[session] = stream
+            transcriptLastSeq[session] = lastSeq
             // In batches of about 2 MB: a batch of huge tool outputs must never
             // pass the link's frame limit (which would drop the link, and the chat
             // would never show there).
@@ -911,16 +960,22 @@ final class HostedPeer {
         case let .subscribeRecent(session, limit):
             subscriptions.insert(session)
             let page = model.engine.replayPage(sessionId: session, limit: limit)
-            let lines = page.lines.map { RemoteLine(seq: $0.seq, line: $0.line) }
+            let pageSequences = Set(page.lines.map(\.seq))
+            let (lines, stream, lastSeq) = normalizedReplay(session, model: model) { pageSequences.contains($0) }
+            transcripts[session] = stream
+            transcriptLastSeq[session] = lastSeq
             for batch in RemoteLine.batches(lines, bytes: 2 << 20) { post(.event(.lines(sessionId: session, batch))) }
             return .historyPage(beforeSeq: page.beforeSeq, hasMore: page.hasMore)
         case let .history(session, before, limit):
             let page = model.engine.replayPage(sessionId: session, beforeSeq: before, limit: limit)
-            let lines = page.lines.map { RemoteLine(seq: $0.seq, line: $0.line) }
+            let pageSequences = Set(page.lines.map(\.seq))
+            let (lines, _, _) = normalizedReplay(session, model: model) { pageSequences.contains($0) }
             for batch in RemoteLine.batches(lines, bytes: 2 << 20) { post(.event(.lines(sessionId: session, batch))) }
             return .historyPage(beforeSeq: page.beforeSeq, hasMore: page.hasMore)
         case .unsubscribe(let session):
             subscriptions.remove(session)
+            transcripts[session] = nil
+            transcriptLastSeq[session] = nil
             return .ok
         case let .send(session, text):
             do { try model.sendFollowUp(session, text: text); return .ok } catch { return .failed(error.localizedDescription) }

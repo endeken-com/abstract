@@ -44,6 +44,16 @@ import Testing
         #expect(PluginGalleryItem.filter(items, query: "review", view: .installed, category: nil).isEmpty)
     }
 
+    @Test func agentContributionsAppearUnderProviders() {
+        let agent = PluginAgentDeclaration(id: "orbit", label: "Orbit", command: ["orbit"],
+                                           capabilities: ["prompt.message"])
+        var package = manifest("example.orbit", "Orbit")
+        package.contributes.agents = [agent]
+        let items = PluginGalleryItem.items(installed: [], bundled: [package], catalog: [])
+        #expect(items.first?.category == .providers)
+        #expect(PluginGalleryItem.filter(items, query: "", view: .all, category: .providers).map(\.id) == [package.id])
+    }
+
     @Test func updatesAndOfflineInstalledManagement() {
         let manifest = manifest("sh.abstract.local", "Local notes")
         let plugin = installed(manifest, source: .catalog)

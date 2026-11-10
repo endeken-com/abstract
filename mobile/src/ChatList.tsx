@@ -10,7 +10,7 @@ import { PullRequestIcon } from './PullRequestIcon';
 import { swiftDate } from './types';
 import { onTheme, themedStyles } from './theme';
 import {
-  activeAt, age, agentNames, badgeOf, chatKey, defaultPrefs, filterIsEmpty, groupTitles, lineIsEmpty, lineOf, lineText,
+  activeAt, age, badgeOf, chatKey, defaultPrefs, filterIsEmpty, groupTitles, lineIsEmpty, lineOf, lineText,
   noFilter, parsePrefs, rowLabel, sections, standalone, statusOf, type ActivityFilter, type ChatFacts, type ChatGroup, type ChatListPrefs, type ChatLine,
 } from './chatGroups';
 
@@ -122,7 +122,7 @@ function FilterMenu({ all, prefs, setPrefs }: { all: ChatFacts[]; prefs: ChatLis
       { id: 'arrangement:project', title: 'Project', state: on(prefs.arrangement === 'project') },
     ] },
     { id: 'projects', title: 'Project', subactions: projects.map(name => ({ id: `project:${name}`, title: name, state: on(prefs.filter.projects.includes(name)) })) },
-    { id: 'agents', title: 'Agent', subactions: agents.map(id => ({ id: `agent:${id}`, title: agentNames[id] || id, state: on(prefs.filter.agents.includes(id)) })) },
+    { id: 'agents', title: 'Agent', subactions: agents.map(id => ({ id: `agent:${id}`, title: all.find(chat => chat.session.providerId === id)?.providerPresentation?.label || id, state: on(prefs.filter.agents.includes(id)) })) },
     ...(macs.length > 1 ? [{ id: 'macs', title: 'Mac', subactions: macs.map(name => ({ id: `mac:${name}`, title: name, state: on(prefs.filter.macs.includes(name)) })) }] : []),
     { id: 'activity', title: 'Last Active', subactions: [
       { id: 'activity:any', title: 'Any Time', state: on(!prefs.filter.activity) },
@@ -196,7 +196,7 @@ function ChatMark({ chat }: { chat: ChatFacts }) {
   return <View style={styles.mark}>
     {chat.icon.kind === 'project'
       ? <ProjectIcon mark={chat.icon.mark} size={markSize} />
-      : <ProviderLogo provider={chat.session.providerId} size={19} />}
+      : <ProviderLogo provider={chat.session.providerId} presentation={chat.providerPresentation} size={19} />}
     {badge && <View style={[styles.badgeHole, badge !== 'working' && styles.badgeHoleDiamond]}>
       {badge === 'working' ? <BrandLoadingIndicator size={11} color={running} decorative /> : <View style={[styles.badge, { backgroundColor: color }]} />}
     </View>}

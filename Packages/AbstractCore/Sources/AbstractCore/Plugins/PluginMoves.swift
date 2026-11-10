@@ -71,6 +71,14 @@ public enum MovedPlugins {
         all.first { $0.pluginId == pluginId }
     }
 
+    /// Bundled plugins and their approved moved repositories may use a
+    /// catalog brand glyph. A matching manifest name from another source may not.
+    public static func trustsBrand(pluginId: String, source: PluginSource) -> Bool {
+        if source == .bundled { return true }
+        guard let moved = move(pluginId), let git = source.git else { return false }
+        return git.owner == owner && git.repo == "abstract-plugin-\(moved.slug)"
+    }
+
     public static let bitbucket = "sh.abstract.bitbucket"
 }
 

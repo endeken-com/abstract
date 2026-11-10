@@ -10,8 +10,9 @@ import Testing
         ToolIndicator.resolve(name: "Bash", input: .object(["command": .string(command)]))
     }
 
-    private func resolve(_ name: String, _ input: JSONValue = .object([:]), pluginId: String? = nil) -> ToolIndicator {
-        ToolIndicator.resolve(name: name, input: input, pluginId: pluginId)
+    private func resolve(_ name: String, _ input: JSONValue = .object([:]), pluginId: String? = nil,
+                         pluginName: String? = nil, trustedBrand: Bool = false) -> ToolIndicator {
+        ToolIndicator.resolve(name: name, input: input, pluginId: pluginId, pluginName: pluginName, trustedBrand: trustedBrand)
     }
 
     @Test(arguments: [
@@ -216,16 +217,19 @@ import Testing
 
     @Test func pluginTools() {
         let github = "mcp__abstract-plugins__github_list_prs"
-        #expect(resolve(github, pluginId: "sh.abstract.github") == .brand("GitHub"))
-        #expect(resolve(github, pluginId: "sh.abstract.bitbucket") == .brand("Bitbucket"))
-        #expect(resolve(github, pluginId: "sh.abstract.linear") == .brand("Linear"))
-        #expect(resolve(github, pluginId: "sh.abstract.jira") == .brand("Jira"))
-        // Any other plugin keeps today's puzzle piece. The brand comes
-        // from the plugin id, never from the tool's name text.
+        #expect(resolve(github, pluginId: "sh.abstract.github", pluginName: "GitHub", trustedBrand: true) == .brand("GitHub"))
+        #expect(resolve(github, pluginId: "sh.abstract.bitbucket", pluginName: "Bitbucket", trustedBrand: true) == .brand("Bitbucket"))
+        #expect(resolve(github, pluginId: "sh.abstract.linear", pluginName: "Linear", trustedBrand: true) == .brand("Linear"))
+        #expect(resolve(github, pluginId: "sh.abstract.jira", pluginName: "Jira", trustedBrand: true) == .brand("Jira"))
+        #expect(resolve(github, pluginId: "sh.example.service", pluginName: "GitHub", trustedBrand: true) == .brand("GitHub"),
+                "the bundled manifest name, rather than its id, selects a known glyph")
+        #expect(resolve(github, pluginId: "dev.example.echo", pluginName: "Orbit") == .plugin(name: "Orbit"))
+        #expect(resolve(github, pluginId: "dev.example.github", pluginName: "GitHub") == .plugin(name: "GitHub"),
+                "a user plugin may not claim a bundled brand")
         #expect(resolve(github, pluginId: "dev.example.echo") == .kind(symbol: "puzzlepiece.extension"))
         // Uninstalled since the chat ran: Abstract's own mark.
         #expect(resolve(github) == .brand("Abstract"))
-        #expect(resolve("abstract-plugins_github_list_prs", pluginId: "sh.abstract.github") == .brand("GitHub"))
+        #expect(resolve("abstract-plugins_github_list_prs", pluginId: "sh.abstract.github", pluginName: "GitHub", trustedBrand: true) == .brand("GitHub"))
     }
 
     @Test(arguments: [

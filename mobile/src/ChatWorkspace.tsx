@@ -8,7 +8,8 @@ import { CompactMenu as MenuView } from './CompactMenu';
 import * as Haptics from 'expo-haptics';
 import Markdown from 'react-native-markdown-display';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ProviderLogo, providerMenuImage } from './ProviderLogo';
+import { ProviderLogo, providerMenuImage, providerPresentation, providerLabel as labelForProvider } from './ProviderLogo';
+import type { ProviderPresentation } from './types';
 import { ProgressiveBlur } from './ProgressiveBlur';
 import { ScrollingTitle } from './ScrollingTitle';
 import { remote, type RemoteClient } from './remote';
@@ -80,10 +81,10 @@ function ConnectionEdge({ notice, reduceMotion, onAction }: { notice: Connection
   </Animated.View>;
 }
 // Agent, model, effort and mode behind one platform menu; the trigger reads them in one line.
-function ComposerSettingsMenu({ settings, provider, summary, onChoose }: { settings: ComposerSetting[]; provider: string; summary: string[]; onChoose: (event: string) => void }) {
+function ComposerSettingsMenu({ settings, provider, presentation, summary, onChoose }: { settings: ComposerSetting[]; provider: string; presentation?: ProviderPresentation; summary: string[]; onChoose: (event: string) => void }) {
   return <MenuView title="Agent settings" actions={settingsMenuActions(settings, Platform.OS)} onPressAction={({ nativeEvent }) => onChoose(nativeEvent.event)} style={composerStyles.settingsMenu}>
     <View accessible accessibilityRole="button" accessibilityLabel={settingsAccessibilityLabel(settings)} accessibilityHint="Opens agent, model, effort and mode choices" style={composerStyles.settings}>
-      <ProviderLogo provider={provider} size={14} />
+      <ProviderLogo provider={provider} presentation={presentation} size={14} />
       <Text numberOfLines={1} maxFontSizeMultiplier={1.4} style={composerStyles.settingsValue}>{summary[0]}{summary.slice(1).map((part, index) => <Text key={index} style={composerStyles.settingsDetail}>{` · ${part}`}</Text>)}</Text>
       <Glyph name="chevron" size={10} color={tertiary} />
     </View>
@@ -253,7 +254,7 @@ function ToolEditPreview({ edit, showAll, onShowAll }: { edit: EditPreview; show
 }
 const monogramColors = ['#4A4A51', '#7A7A83', '#8E877C', '#7C8B74', '#9E7F7F', '#86778A', '#A09780'];
 function ToolRowIcon({ indicator, failed, path }: { indicator: ToolIndicator; failed?: boolean; path?: string }) {
-  const monogram = indicator.kind === 'mcpServer' ? toolMonogram(indicator.name) : null;
+  const monogram = indicator.kind === 'mcpServer' || indicator.kind === 'plugin' ? toolMonogram(indicator.name) : null;
   const glyph = indicator.kind === 'brand' ? brandGlyph(indicator.id) : null;
   return <View accessibilityLabel={indicator.label} style={s.toolIcon}>
     {path ? <FileIcon path={path} size={15} /> : glyph ? <Svg width={15} height={15} viewBox="0 0 24 24"><Path d={glyph} fill={tertiary} fillRule={indicator.kind === 'brand' && indicator.id === 'Abstract' ? 'evenodd' : 'nonzero'} /></Svg>
@@ -497,7 +498,7 @@ export function ChatWorkspace({ route, navigation }: any) {
       headerTransparent: true,
       headerStyle: { backgroundColor: 'transparent' },
       headerBackground: () => <ProgressiveBlur edge="top" blurTarget={blurTarget} />,
-      headerTitle: () => <ScrollingTitle title={chat.name} provider={chat.providerId} subtitle={chat.profileId && chat.profileName ? chat.profileName : null} width={Math.max(72, Math.min(192, windowWidth - 245))} />,
+      headerTitle: () => <ScrollingTitle title={chat.name} provider={chat.providerId} presentation={providerPresentation(mac.snapshot, chat.providerId)} subtitle={chat.profileId && chat.profileName ? chat.profileName : null} width={Math.max(72, Math.min(192, windowWidth - 245))} />,
       headerLeft: () => <ToolbarAction label="Open sidebar" onPress={() => popToRootNatively().then(done => { if (!done) navigation.popTo('Sidebar', { selectedChat: id }); })}><Glyph name="menu" size={19} color={ink} /></ToolbarAction>,
       headerRight: () => <View style={chrome.nativeActions}>
         <ToolbarAction label="Review changes" onPress={() => navigation.navigate('Review', { hostId, sessionId: id })}><Glyph name="review" size={17} color={muted} /></ToolbarAction>
@@ -529,7 +530,7 @@ export function ChatWorkspace({ route, navigation }: any) {
         }}><View style={chrome.toolbarButton} accessibilityLabel="More chat actions"><Glyph name="manage" size={20} /></View></MenuView>
       </View>,
     });
-  }, [navigation, id, windowWidth, chat?.name, chat?.providerId, chat?.profileId, chat?.profileName, chat?.archivedAt, chat?.worktreePath, pr?.state, pr?.isDraft, mac.snapshot?.plugins]);
+  }, [navigation, id, windowWidth, chat?.name, chat?.providerId, chat?.profileId, chat?.profileName, chat?.archivedAt, chat?.worktreePath, pr?.state, pr?.isDraft, mac.snapshot?.plugins, mac.snapshot?.providerPresentations]);
   useEffect(() => {
     if (mac.status !== 'online') { setSyncing(false); return; }
     let active = true;
@@ -557,7 +558,7 @@ export function ChatWorkspace({ route, navigation }: any) {
   const defaultModelLabel = mac.snapshot?.defaultModelNames?.[chat.providerId] || catalog?.accountDefault?.label;
   const modelLabel = chat.model ? modelOption?.label || chat.model : defaultModelLabel || 'Default model';
   const effortLabel = (chat.effort || modelOption?.defaultEffort || catalog?.accountDefault?.defaultEffort || 'Default effort').replace(/^./, x => x.toUpperCase());
-  const providerLabel = { codex: 'Codex', claude: 'Claude Code', opencode: 'OpenCode', muse: 'Muse Code' }[chat.providerId] || chat.providerId;
+  const providerLabel = labelForProvider(mac.snapshot, chat.providerId);
   const policyLabel = policyTitle(chat.permissionPolicy);
   const act = (name: string, args: Record<string, unknown> = {}) => mac.request(name, { sessionId: id, ...args }).catch(e => Alert.alert('Abstract', String(e)));
   const send = () => {
@@ -672,12 +673,12 @@ export function ChatWorkspace({ route, navigation }: any) {
     setSlashChoosing(null);
     return true;
   };
-  const providerChoices = (mac.snapshot?.providers || []).map(value => ({ id: value, title: ({ codex: 'Codex', claude: 'Claude Code', opencode: 'OpenCode', muse: 'Muse Code', gemini: 'Gemini' } as Record<string, string>)[value] || value, selected: value === chat.providerId, image: Platform.OS === 'ios' ? providerMenuImage(value) : undefined }));
+  const providerChoices = (mac.snapshot?.providers || []).map(value => ({ id: value, title: labelForProvider(mac.snapshot, value), selected: value === chat.providerId, image: Platform.OS === 'ios' ? providerMenuImage(value, providerPresentation(mac.snapshot, value)) : undefined }));
   const modelChoices = [{ id: '', title: defaultModelLabel ? `Default (${defaultModelLabel})` : 'Default model', selected: !chat.model }, ...(catalog?.models || []).map(value => ({ id: value.id, title: value.label, selected: value.id === chat.model }))];
   const effortChoices = [{ id: '', title: 'Default effort', selected: !chat.effort }, ...(modelOption?.efforts || catalog?.accountDefault?.efforts || []).map(value => ({ id: value, title: value.replace(/^./, x => x.toUpperCase()), selected: value === chat.effort }))];
   const policyChoices = MODE_CHOICES.map(({ id, title }) => ({ id, title, selected: id === chat.permissionPolicy }));
   const settings: ComposerSetting[] = [
-    { kind: 'agent', title: 'Agent', value: providerLabel, image: providerMenuImage(chat.providerId), choices: providerChoices },
+    { kind: 'agent', title: 'Agent', value: providerLabel, image: providerMenuImage(chat.providerId, providerPresentation(mac.snapshot, chat.providerId)), choices: providerChoices },
     { kind: 'model', title: 'Model', value: modelLabel, image: 'cpu', choices: modelChoices },
     { kind: 'effort', title: 'Reasoning effort', value: effortLabel === 'Default effort' ? 'Default' : effortLabel, image: 'gauge.with.dots.needle.67percent', choices: effortChoices },
     { kind: 'mode', title: 'Mode', value: policyLabel, image: 'hand.raised', choices: policyChoices },
@@ -765,7 +766,7 @@ export function ChatWorkspace({ route, navigation }: any) {
           {sending
             ? <Pressable accessibilityRole="button" accessibilityLabel="Attach files" accessibilityState={{ disabled: sending || !!editingQueued }} disabled={sending || !!editingQueued} onPress={pickFiles} android_ripple={{ color: palette.borderStrong, borderless: true }} style={({ pressed }) => [composerStyles.iconButton, (sending || !!editingQueued) && { opacity: 0.4 }, pressed && Platform.OS === 'ios' && { opacity: 0.5 }]}><Glyph name="attach" size={20} color={muted} /></Pressable>
             : <MenuView title="Add to message" actions={addActions} onPressAction={({ nativeEvent }) => nativeEvent.event === 'attach' ? pickFiles() : nativeEvent.event === 'photos' ? pickFromLibrary() : openLinks(nativeEvent.event as LinkKind)}><View accessible accessibilityRole="button" accessibilityLabel={root ? 'Add files, photos, issues or pull requests' : 'Add files or photos'} style={composerStyles.iconButton}><Glyph name="attach" size={20} color={muted} /></View></MenuView>}
-          <ComposerSettingsMenu settings={settings} provider={chat.providerId} summary={settingsSummary} onChoose={chooseSetting} />
+          <ComposerSettingsMenu settings={settings} provider={chat.providerId} presentation={providerPresentation(mac.snapshot, chat.providerId)} summary={settingsSummary} onChoose={chooseSetting} />
           {!!message && <Pressable accessibilityRole="button" accessibilityLabel={previewingMarkdown ? 'Edit Markdown' : 'Preview Markdown'} onPress={() => setPreviewingMarkdown(!previewingMarkdown)} style={({ pressed }) => [composerStyles.textButton, pressed && { opacity: 0.5 }]}><Text maxFontSizeMultiplier={1.4} style={composerStyles.textButtonLabel}>{previewingMarkdown ? 'Edit' : 'Preview'}</Text></Pressable>}
           <Pressable accessibilityRole="button" accessibilityLabel={sendLabel} accessibilityState={{ disabled: sendDisabled, busy: sending }} disabled={sendDisabled} onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {}); if (primary === 'stop' && !editingQueued) act('stop'); else send(); }} style={composerStyles.sendTarget}>
             {({ pressed }) => <View style={[composerStyles.send, !sendDisabled && composerStyles.sendReady, pressed && { opacity: 0.7 }]}>{sending ? <ActivityIndicator size="small" color={muted} /> : <Glyph name={primary === 'stop' && !editingQueued ? 'stop' : 'send'} size={primary === 'stop' && !editingQueued ? 13 : 16} color={sendDisabled ? tertiary : canvas} />}</View>}

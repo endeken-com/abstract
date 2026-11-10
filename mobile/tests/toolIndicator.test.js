@@ -41,15 +41,22 @@ test('MCP aliases, private servers, and plugin IDs', () => {
   assert.equal(kind(resolveToolIndicator('mcp__abstract-code-history__code_history')), 'Abstract');
   assert.equal(kind(resolveToolIndicator('mcp__weather__forecast')), 'weather');
   assert.equal(kind(resolveToolIndicator('weather_forecast')), 'wrench.and.screwdriver');
-  assert.equal(kind(resolveToolIndicator('mcp__abstract-plugins__github_list_prs', {}, [{ id: 'sh.abstract.github', name: 'GitHub' }])), 'GitHub');
-  assert.equal(kind(resolveToolIndicator('mcp__abstract-plugins__github_list_prs', {}, [{ id: 'dev.example.github', name: 'GitHub' }])), 'puzzlepiece.extension');
+  assert.equal(kind(resolveToolIndicator('mcp__abstract-plugins__github_list_prs', {}, [{ id: 'sh.abstract.github', name: 'GitHub', source: 'bundled' }])), 'GitHub');
+  assert.equal(kind(resolveToolIndicator('mcp__abstract-plugins__github_list_prs', {}, [{ id: 'sh.example.service', name: 'GitHub', source: 'bundled' }])), 'GitHub');
+  assert.equal(kind(resolveToolIndicator('mcp__abstract-plugins__github_list_prs', {}, [{ id: 'sh.abstract.github', name: 'GitHub', source: 'git', trustedBrand: true }])), 'GitHub');
+  assert.equal(resolveToolIndicator('mcp__abstract-plugins__github_list_prs', {}, [{ id: 'sh.abstract.github', name: 'GitHub', source: 'git', trustedBrand: false }]).kind, 'plugin');
+  assert.equal(resolveToolIndicator('mcp__abstract-plugins__github_list_prs', {}, [{ id: 'dev.example.github', name: 'GitHub', source: 'user' }]).kind, 'plugin');
+  const synthetic = resolveToolIndicator('mcp__abstract-plugins__orbit_lookup', {}, [{ id: 'dev.example.orbit', name: 'Orbit', source: 'user' }]);
+  assert.deepEqual(synthetic, { kind: 'plugin', name: 'Orbit', label: 'Orbit plugin' });
   assert.equal(kind(resolveToolIndicator('mcp__abstract-plugins__github_list_prs')), 'Abstract');
   assert.deepEqual(toolMonogram('weather'), toolMonogram('weather'));
 });
 
 test('Codex tool input reaches the phone indicator', () => {
-  const item = { id: 'command-1', type: 'command_execution', command: '/bin/zsh -lc "gh pr list"', status: 'completed', exit_code: 0 };
-  const lines = ['item.started', 'item.completed'].map((type, index) => ({ seq: index + 1, line: { stream: 'stdout', line: JSON.stringify({ type, item }) } }));
+  const lines = [{ seq: 1, line: { stream: 'stdout', line: '' }, events: [
+    { type: 'toolUse', id: 'codex:1:command-1', name: 'command_execution', input: { command: '/bin/zsh -lc "gh pr list"' } },
+    { type: 'toolResult', toolUseId: 'codex:1:command-1', output: '', isError: false },
+  ] }];
   const row = chatTimeline(lines, 'icons-codex').find(item => item.kind === 'tool');
   assert.equal(kind(resolveToolIndicator(row.toolName, row.toolInput)), 'GitHub');
 });

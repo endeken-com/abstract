@@ -1,12 +1,12 @@
 import type { PendingPhoneMessage } from './chatSending';
 import type { QueuedMessage, Session, Snapshot } from './types';
+import { providerLabel } from './providerPresentation';
 
 // Messages sent while the agent works (ABS-103), as the Mac keeps them
 // (Abstract/App/AppModel+Queue.swift). The Mac decides whether a message
 // waits: mid-turn, `send` queues it, and the queue goes as one message when
 // the turn ends. The phone shows the queue and offers Steer and Interrupt.
 
-const providerNames: Record<string, string> = { codex: 'Codex', claude: 'Claude Code', opencode: 'OpenCode', muse: 'Muse Code' };
 const midTurn = ['running', 'provisioning', 'waiting_input'];
 
 export const queuedMessages = (snapshot: Snapshot | null | undefined, chatId: string): QueuedMessage[] =>
@@ -40,7 +40,7 @@ export function composerActions(snapshot: Snapshot | null | undefined, chat: Ses
     primary: hasDraft ? 'queue' : 'stop',
     steer: pending ? {
       enabled: steerable && alive && chat.status !== 'provisioning',
-      reason: steerable ? null : `${providerNames[chat.providerId] || chat.providerId} reads messages between turns`,
+      reason: steerable ? null : `${providerLabel(snapshot, chat.providerId)} reads messages between turns`,
     } : null,
     interrupt: pending,
     queueCaption: queue.length ? 'Sent together when this turn ends.' : null,

@@ -4,8 +4,9 @@ import MaskedView from '@react-native-masked-view/masked-view';
 import { LinearGradient } from 'expo-linear-gradient';
 import { ProviderLogo } from './ProviderLogo';
 import { themedStyles, palette } from './theme';
+import type { ProviderPresentation } from './types';
 
-export function ScrollingTitle({ title, provider, width, subtitle }: { title: string; provider: string; width: number; subtitle?: string | null }) {
+export function ScrollingTitle({ title, provider, presentation, width, subtitle }: { title: string; provider: string; presentation?: ProviderPresentation; width: number; subtitle?: string | null }) {
   const [textWidth, setTextWidth] = useState(0);
   const offset = useRef(new Animated.Value(0)).current;
   const overflow = Math.max(0, textWidth - width + 2);
@@ -23,7 +24,7 @@ export function ScrollingTitle({ title, provider, width, subtitle }: { title: st
   }, [title, overflow, offset]);
   return <View accessibilityLabel={subtitle ? `${title}, ${subtitle}` : title} style={styles.column}>
     <View style={styles.row}>
-    <ProviderLogo provider={provider} size={14} />
+    <ProviderLogo provider={provider} presentation={presentation} size={14} />
     <MaskedView style={[styles.viewport, { width }]} maskElement={overflow > 0 ? <LinearGradient colors={['transparent', 'black', 'black', 'transparent']} locations={[0, 0.09, 0.91, 1]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={StyleSheet.absoluteFill} /> : <View style={styles.solidMask} />}>
       <Animated.View style={[styles.moving, { transform: [{ translateX: offset }] }]}>
         <Text onTextLayout={event => setTextWidth(Math.ceil(event.nativeEvent.lines[0]?.width || 0))} numberOfLines={1} style={[styles.title, { width: Math.max(width * 3, title.length * 14) }]}>{title}</Text>

@@ -236,8 +236,13 @@ struct ToolCallView: View {
                     // never while it waits for an answer: that shows what runs.
                     let skill = asking ? nil : SkillUse.name(tool: call.name, input: call.input)
                     let name = skill == nil ? call.name : "skill"
+                    let pluginId = PluginToolLabels.shared.pluginId(call.name)
+                    let plugin = model.plugins.installed.first { $0.id == pluginId }
                     ToolIcon(indicator: ToolIndicator.resolve(name: call.name, input: call.input,
-                                                              pluginId: PluginToolLabels.shared.pluginId(call.name), skillUse: !asking),
+                                                              pluginId: pluginId, pluginName: plugin?.manifest?.name,
+                                                              trustedBrand: plugin.map {
+                                                                  MovedPlugins.trustsBrand(pluginId: $0.id, source: $0.record.source)
+                                                              } ?? false, skillUse: !asking),
                              open: isOpen, hovering: hovering && !asking, failed: outcome.isFailure,
                              working: working && !asking, file: kind == .edit ? ToolPresentation.path(call) : nil)
                     let verb = asking ? ToolPresentation.ask(name) : ToolPresentation.verb(name, pending: working)
@@ -561,7 +566,7 @@ private struct ToolIcon: View {
         case .brand(let id):
             Image("ToolBrand\(id)").resizable().renderingMode(.template).scaledToFit()
                 .frame(width: 14, height: 14)
-        case .mcpServer(let name):
+        case .mcpServer(let name), .plugin(let name):
             let monogram = ToolIndicator.monogram(name: name)
             let colors: [UInt32] = [0x4A4A51, 0x7A7A83, 0x8E877C, 0x7C8B74, 0x9E7F7F, 0x86778A, 0xA09780]
             Text(monogram.letter)

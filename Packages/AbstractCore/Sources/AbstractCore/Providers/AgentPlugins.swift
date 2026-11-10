@@ -44,7 +44,7 @@ public final class AgentPlugins: @unchecked Sendable {
         let usable = plugins.filter { $0.isUsable && $0.record.grantedCapabilities.contains(.agents) }
         let loaded = usable.flatMap { plugin -> [ScriptedProvider] in
             guard let manifest = plugin.manifest else { return [] }
-            return load(folder: plugin.packageURL, manifest: manifest)
+            return load(folder: plugin.packageURL, manifest: manifest, bundled: plugin.record.source == .bundled)
         }
         let recorded = Set(plugins.map(\.id))
         let unoffered = loadBundled().filter { !recorded.contains($0.pluginId) && !offered.contains($0.pluginId) }
@@ -69,14 +69,14 @@ public final class AgentPlugins: @unchecked Sendable {
             guard let data = try? Data(contentsOf: folder.appendingPathComponent("manifest.json")),
                   let manifest = try? PluginManifest.decode(data), (try? manifest.validate()) != nil,
                   Self.bundledPluginIds.contains(manifest.id) else { return [] }
-            return load(folder: folder, manifest: manifest)
+            return load(folder: folder, manifest: manifest, bundled: true)
         }
         let agents = Self.ordered(found, reserved: [])
         bundledAgents = agents
         return agents
     }
 
-    private func load(folder: URL, manifest: PluginManifest) -> [ScriptedProvider] {
+    private func load(folder: URL, manifest: PluginManifest, bundled: Bool) -> [ScriptedProvider] {
         guard let file = manifest.agent, !manifest.contributes.agents.isEmpty else { return [] }
         let key = folder.standardizedFileURL.path + "#" + manifest.version
         let script: AgentScript
@@ -88,7 +88,7 @@ public final class AgentPlugins: @unchecked Sendable {
             scripts[key] = script
         }
         guard script.loadError == nil else { return [] }
-        return manifest.contributes.agents.map { ScriptedProvider(declaration: $0, script: script) }
+        return manifest.contributes.agents.map { ScriptedProvider(declaration: $0, script: script, bundled: bundled) }
     }
 
     /// Bundled first in their order, then by label; one agent per id.
