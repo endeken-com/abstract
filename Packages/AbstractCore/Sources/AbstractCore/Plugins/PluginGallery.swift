@@ -4,6 +4,7 @@ import Foundation
 /// installed and bundled packages are always included independently of it.
 public struct PluginGalleryItem: Identifiable, Sendable {
     public enum Category: String, CaseIterable, Sendable {
+        case providers = "Providers"
         case chats = "Chats"
         case projects = "Projects"
         case reviews = "Reviews"
@@ -117,6 +118,7 @@ public struct PluginGalleryItem: Identifiable, Sendable {
     private static func category(for manifest: PluginManifest?) -> Category {
         guard let manifest else { return .other }
         let adds = manifest.contributes
+        if !adds.agents.isEmpty { return .providers }
         if adds.issueTracker != nil || adds.codeHost != nil { return .connections }
         if !adds.reviewActions.isEmpty || !adds.pullRequestSwitches.isEmpty { return .reviews }
         if !adds.homeWidgets.isEmpty { return .projects }

@@ -10,131 +10,86 @@ require.extensions['.ts'] = (module, path) => {
 };
 const { chatTimeline } = require('../src/chatTimeline.ts');
 const { toolKind } = require('../src/toolPresentation.ts');
-const line = (seq, stream, value) => ({ seq, line: { stream, line: typeof value === 'string' ? value : JSON.stringify(value) } });
+const line = (seq, events, stream = 'stdout') => ({ seq, line: { stream, line: '{"event":"provider-specific"}' }, events });
 
-test('Mac follow-ups stay visible alongside agent output and replay', () => {
-  const lines = [line(1, 'user', 'First request'), line(2, 'stdout', { type: 'assistant', message: { content: [{ type: 'text', text: 'Done.' }] } })];
-  assert.deepEqual(chatTimeline(lines, 'mac-followup').map(row => row.text), ['First request', 'Done.']);
-  lines.push(line(3, 'user', 'Follow-up from the Mac'));
-  assert.deepEqual(chatTimeline(lines, 'mac-followup').filter(row => row.kind === 'user').map(row => row.text), ['First request', 'Follow-up from the Mac']);
-});
-
-test('edit summaries count the full Claude patch', () => {
+test('synthetic plugin events show on the phone without a provider parser', () => {
   const lines = [
-    line(1, 'stdout', { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'edit-1', name: 'Edit', input: { file_path: '/a.swift' } }] } }),
-    line(2, 'stdout', { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'edit-1', content: 'ok' }] }, tool_use_result: { structuredPatch: [{ lines: [2, ' keep', '-old', '+new', '+more'] }] } }),
+    line(1, [{ type: 'text', role: 'user', text: 'Inspect this' }], 'user'),
+    line(2, [{ type: 'toolUse', id: 'orbit:1', name: 'read_file', input: { file_path: '/workspace/README.md' } }]),
+    line(3, [{ type: 'toolResult', toolUseId: 'orbit:1', output: 'Hello', isError: false },
+      { type: 'text', role: 'assistant', text: 'It says hello.', blockId: 'answer', partial: false }]),
   ];
-  const edit = chatTimeline(lines, 'claude-edit').find(row => row.kind === 'tool');
-  assert.equal(edit.additions, 2);
-  assert.equal(edit.deletions, 1);
+  const rows = chatTimeline(lines, 'orbit');
+  assert.deepEqual(rows.map(row => row.kind), ['user', 'tool', 'prose']);
+  assert.deepEqual(rows.map(row => row.text), ['Inspect this', 'Read', 'It says hello.']);
+  assert.equal(rows[1].target, 'README.md');
+  assert.equal(rows[1].detail, 'Hello');
 });
 
-test('Codex change diffs count each file once', () => {
-  const lines = [line(1, 'stdout', { type: 'item.completed', item: { id: 'change-1', type: 'file_change', diff: '@@ -1 +1 @@\n-old\n+new', changes: [{ path: '/a.ts', diff: '@@ -1 +1 @@\n-old\n+new' }] } })];
-  const edit = chatTimeline(lines, 'codex-edit').find(row => row.kind === 'tool');
-  assert.equal(edit.additions, 1);
-  assert.equal(edit.deletions, 1);
-});
-
-test('JavaScript tool calls read as commands with their task title', () => {
-  const lines = [line(1, 'stdout', { type: 'item.completed', item: { id: 'js-1', type: 'mcp_tool_call', server: 'cua_repl', tool: 'js', arguments: "{'code': 'await app.getAXState();', 'title': 'Inspect chat'}", result: { content: [{ type: 'text', text: 'Done' }] }, status: 'completed' } })];
-  const row = chatTimeline(lines, 'js-tool')[0];
-  assert.equal(toolKind(row.toolName), 'command');
-  assert.equal(row.text, 'Ran');
-  assert.equal(row.target, 'Inspect chat');
-  assert.match(row.detail, /Done/);
-  const mcpLines = [line(1, 'stdout', { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'js-2', name: 'mcp__cua_repl__js', input: { code: 'await app.getAXState()', title: 'Inspect screen' } }] } })];
-  const mcpRow = chatTimeline(mcpLines, 'mcp-js')[0];
-  assert.equal(toolKind(mcpRow.toolName), 'command');
-  assert.equal(mcpRow.text, 'Running');
-  assert.equal(mcpRow.target, 'Inspect screen');
-});
-
-test('Codex reuses item IDs in later turns without losing messages or commands', () => {
+test('streaming blocks complete in place and replay identically', () => {
   const lines = [
-    line(1, 'stdout', { type: 'turn.started' }),
-    line(2, 'stdout', { type: 'item.completed', item: { id: 'item_1', type: 'agent_message', text: 'First reply' } }),
-    line(3, 'stdout', { type: 'item.completed', item: { id: 'item_2', type: 'command_execution', command: 'echo first', aggregated_output: 'first' } }),
-    line(4, 'user', 'Follow-up'),
-    line(5, 'stdout', { type: 'turn.started' }),
-    line(6, 'stdout', { type: 'item.completed', item: { id: 'item_1', type: 'agent_message', text: 'Second reply' } }),
-    line(7, 'stdout', { type: 'item.completed', item: { id: 'item_2', type: 'command_execution', command: 'echo second', aggregated_output: 'second' } }),
+    line(1, [{ type: 'thinking', text: 'Checking ', blockId: 'reason', partial: true }]),
+    line(2, [{ type: 'thinking', text: 'the file', blockId: 'reason', partial: true },
+      { type: 'text', role: 'assistant', text: 'First ', blockId: 'answer', partial: true }]),
   ];
-  chatTimeline(lines.slice(0, 3), 'reused-codex-items');
-  const rows = chatTimeline(lines, 'reused-codex-items');
-  assert.deepEqual(rows.map(row => row.text), ['First reply', 'Ran', 'Follow-up', 'Second reply', 'Ran']);
+  assert.deepEqual(chatTimeline(lines, 'stream').map(row => [row.text, row.pending]),
+    [['Checking the file', true], ['First ', true]]);
+  lines.push(line(3, [{ type: 'thinking', text: 'Checked the file', blockId: 'reason', partial: false },
+    { type: 'text', role: 'assistant', text: 'First answer', blockId: 'answer', partial: false }]));
+  const rows = chatTimeline(lines, 'stream');
+  assert.deepEqual(rows.map(row => [row.text, row.pending]),
+    [['Checked the file', false], ['First answer', false]]);
+  assert.deepEqual(chatTimeline(lines, 'stream-replay'), rows);
+});
+
+test('host scoped IDs preserve reused tool names across turns', () => {
+  const lines = [
+    line(1, [{ type: 'toolUse', id: 'codex:1:item_2', name: 'command_execution', input: { command: 'echo first' } },
+      { type: 'toolResult', toolUseId: 'codex:1:item_2', output: 'first', isError: false }]),
+    line(2, [{ type: 'text', role: 'user', text: 'Again' }], 'user'),
+    line(3, [{ type: 'toolUse', id: 'codex:2:item_2', name: 'command_execution', input: { command: 'echo second' } },
+      { type: 'toolResult', toolUseId: 'codex:2:item_2', output: 'second', isError: false }]),
+  ];
+  const rows = chatTimeline(lines, 'scoped-ids');
   assert.deepEqual(rows.filter(row => row.kind === 'tool').map(row => row.target), ['echo first', 'echo second']);
+  assert.deepEqual(rows.filter(row => row.kind === 'tool').map(row => row.detail), ['first', 'second']);
 });
 
-test('Muse Code serve items show files, changes and searches', () => {
-  const item = (seq, method, it) => line(seq, 'stdout', { jsonrpc: '2.0', method, params: { item: it } });
+test('host edit previews, results, and failures render without wire knowledge', () => {
+  const edit = { filePath: '/workspace/App.swift', additions: 2, deletions: 1,
+    lines: [{ origin: '-', content: 'old', oldLine: 1 }, { origin: '+', content: 'new', newLine: 1 }] };
   const lines = [
-    item(1, 'item/started', { itemId: 'i1', kind: 'toolCall', revision: 1, status: 'inProgress', tool: 'read_file', callId: 'c1', args: '{"path":"src/App.swift"}' }),
-    item(2, 'item/completed', { itemId: 'i1', kind: 'toolCall', revision: 2, status: 'completed', tool: 'read_file', callId: 'c1', args: '{"path":"src/App.swift"}', visibleOutput: 'Read text file `App.swift`.' }),
-    item(3, 'item/completed', { itemId: 'i2', kind: 'toolCall', revision: 2, status: 'completed', tool: 'search', callId: 'c2', args: '{"pattern":"needle"}', visibleOutput: 'App.swift:2:needle' }),
-    item(4, 'item/completed', { itemId: 'i3', kind: 'toolCall', revision: 2, status: 'completed', tool: 'edit_file', callId: 'c3', args: '{"path":"App.swift","find":"old","replace":"new"}', visibleOutput: 'edited' }),
-    item(5, 'item/completed', { itemId: 'i4', kind: 'toolCall', revision: 2, status: 'completed', tool: 'write_file', callId: 'c4', args: '{"path":"made.txt","content":"made"}', visibleOutput: 'wrote 4 bytes' }),
-    item(6, 'item/completed', { itemId: 'i5', kind: 'toolCall', revision: 2, status: 'completed', tool: 'bash', callId: 'c5', args: '{"command":"echo hi"}', visibleOutput: 'hi' }),
-    item(7, 'item/completed', { itemId: 'i6', kind: 'toolCall', revision: 2, status: 'completed', tool: 'web_search', callId: 'c6', args: '{"query":"swift version"}', visibleOutput: '{}' }),
-    item(8, 'item/completed', { itemId: 'i7', kind: 'toolCall', revision: 2, status: 'failed', tool: 'read_file', callId: 'c7', args: '{"path":"missing.txt"}', failureReason: 'No such file' }),
-    item(9, 'item/completed', { itemId: 'm1', kind: 'agentMessage', revision: 1, status: 'completed', text: 'done' }),
-    line(10, 'stdout', { jsonrpc: '2.0', method: 'turn/completed', params: { terminal: 'completed', durationMs: 1200 } }),
+    line(1, [{ type: 'toolUse', id: 'gemini:2', name: 'write_to_file', input: { file_path: '/workspace/App.swift' }, edit }]),
+    line(2, [{ type: 'toolResult', toolUseId: 'gemini:2', output: 'Permission denied', isError: true }]),
   ];
-  const rows = chatTimeline(lines, 'muse-serve');
-  const tools = rows.filter(row => row.kind === 'tool');
-  assert.deepEqual(tools.map(row => row.toolName), ['read_file', 'search', 'edit_file', 'write_file', 'bash', 'web_search', 'read_file']);
-  assert.deepEqual(tools.map(row => row.text), ['Read', 'Searched', 'Edited', 'Created', 'Ran', 'Searched the web', 'Read']);
-  assert.deepEqual(tools.map(row => row.target), ['App.swift', 'needle', 'App.swift', 'made.txt', 'echo hi', 'swift version', 'missing.txt']);
-  assert.equal(tools[0].path, 'src/App.swift');
-  assert.equal(toolKind('read_file'), 'explore');
-  assert.equal(toolKind('edit_file'), 'edit');
-  assert.equal(toolKind('web_fetch'), 'explore');
-  assert.equal(tools[2].additions, 1);
-  assert.equal(tools[2].deletions, 1);
-  assert.equal(tools[3].additions, 1);
-  assert.equal(tools.at(-1).failed, true);
-  assert.equal(tools.at(-1).detail, 'No such file');
-  assert.equal(rows.find(row => row.kind === 'prose')?.text, 'done');
-  assert.equal(rows.find(row => row.kind === 'turn')?.durationMs, 1200);
+  const row = chatTimeline(lines, 'gemini-edit')[0];
+  assert.equal(row.failed, true);
+  assert.equal(row.detail, 'Permission denied');
+  assert.equal(row.additions, 2);
+  assert.equal(row.deletions, 1);
+  assert.equal(row.edits[0].lines[0].text, '-old');
 });
 
-test('Muse Code calls with unparsable arguments keep their output and no target', () => {
-  const lines = [line(1, 'stdout', { jsonrpc: '2.0', method: 'item/completed', params: { item: { itemId: 'i1', kind: 'toolCall', revision: 1, status: 'completed', tool: 'read_file', callId: 'c1', args: '{path: x', visibleOutput: 'the output' } } })];
-  const row = chatTimeline(lines, 'muse-bad-args').find(r => r.kind === 'tool');
-  assert.equal(row.target, '');
-  assert.equal(row.detail, 'the output');
+test('generic tool rows keep names, targets, and turn timing', () => {
+  const lines = [line(1, [
+    { type: 'toolUse', id: 'tool:1', name: 'mcp__cua_repl__js', input: { title: 'Inspect screen', code: 'await app.getAXState()' } },
+    { type: 'toolResult', toolUseId: 'tool:1', output: 'Done', isError: false },
+    { type: 'turnEnd', durationMs: 1200 },
+  ])];
+  const rows = chatTimeline(lines, 'js-tool');
+  assert.equal(toolKind(rows[0].toolName), 'command');
+  assert.equal(rows[0].text, 'Ran');
+  assert.equal(rows[0].target, 'Inspect screen');
+  assert.equal(rows[1].durationMs, 1200);
 });
 
-test('Muse Code reasoning summaries show as thinking, the same as the Mac', () => {
-  const muse = (seq, method, params) => line(seq, 'stdout', { jsonrpc: '2.0', method, params });
-  const lines = [
-    muse(1, 'item/started', { item: { itemId: 'r1', kind: 'reasoning', revision: 1, status: 'inProgress' } }),
-    muse(2, 'item/delta', { itemId: 'r1', field: 'summary.0', delta: '**Counting**' }),
-    muse(3, 'item/delta', { itemId: 'r1', field: 'summary.0', delta: ' sheep' }),
-    muse(4, 'item/delta', { itemId: 'r1', field: 'summary.1', delta: 'Nine remain.' }),
-  ];
-  let thinking = chatTimeline(lines, 'muse-reasoning').filter(r => r.kind === 'thinking');
-  assert.deepEqual(thinking.map(r => [r.text, r.pending]), [['**Counting** sheep\n\nNine remain.', true]]);
-  lines.push(muse(5, 'item/completed', { item: { itemId: 'r1', kind: 'reasoning', revision: 3, status: 'completed', summary: ['**Counting** sheep', 'Nine remain.'] } }));
-  thinking = chatTimeline(lines, 'muse-reasoning').filter(r => r.kind === 'thinking');
-  assert.deepEqual(thinking.map(r => [r.text, r.pending]), [['**Counting** sheep\n\nNine remain.', false]]);
-  // Replayed from scratch, the same row.
-  assert.deepEqual(chatTimeline(lines, 'muse-reasoning-replay').filter(r => r.kind === 'thinking').map(r => r.text), ['**Counting** sheep\n\nNine remain.']);
-});
-
-test('the recorded Muse Code reasoning turn reads as on the Mac', () => {
-  const recording = fs.readFileSync(require.resolve('../../Packages/AbstractCore/Tests/AbstractCoreTests/Fixtures/muse-serve-reasoning.jsonl'), 'utf8');
-  const lines = recording.split('\n').filter(Boolean).map((text, index) => line(index + 1, 'stdout', text));
-  const rows = chatTimeline(lines, 'muse-reasoning-recording').filter(r => r.kind === 'thinking' || r.kind === 'prose');
-  assert.deepEqual(rows.map(r => r.kind), ['thinking', 'prose']);
-  assert.equal(rows[0].text, 'Evaluating two puzzle interpretations and applying arithmetic under abstract output constraints.\n\nChecking each step of both readings before settling on one count.');
-  assert.equal(rows[0].pending, false);
-});
-
-test('Muse Code reasoning with nothing readable shows no thinking', () => {
-  const lines = [
-    line(1, 'stdout', { jsonrpc: '2.0', method: 'item/completed', params: { item: { itemId: 'r3', kind: 'reasoning', revision: 1, status: 'completed', providerItemId: 'rs_1' } } }),
-    line(2, 'stdout', { jsonrpc: '2.0', method: 'session/tokenUsage', params: { usage: { inputTokens: 10, outputTokens: 5, reasoningTokens: 200 } } }),
-  ];
-  assert.equal(chatTimeline(lines, 'muse-reasoning-empty').filter(r => r.kind === 'thinking').length, 0);
+test('historical pages rebuild from normalized events and raw output never parses', () => {
+  const recent = [line(3, [{ type: 'text', role: 'assistant', text: 'new' }]),
+    line(4, [{ type: 'error', message: 'Try again' }])];
+  assert.deepEqual(chatTimeline(recent, 'pages').map(row => row.text), ['new', 'Try again']);
+  const older = [line(1, [{ type: 'text', role: 'user', text: 'old' }], 'user'),
+    line(2, []), ...recent];
+  assert.deepEqual(chatTimeline(older, 'pages').map(row => row.text), ['old', 'new', 'Try again']);
+  const noEvents = [line(1, undefined)];
+  assert.deepEqual(chatTimeline(noEvents, 'no-events'), []);
 });

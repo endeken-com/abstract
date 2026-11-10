@@ -53,8 +53,10 @@ test('MCP aliases, private servers, and plugin IDs', () => {
 });
 
 test('Codex tool input reaches the phone indicator', () => {
-  const item = { id: 'command-1', type: 'command_execution', command: '/bin/zsh -lc "gh pr list"', status: 'completed', exit_code: 0 };
-  const lines = ['item.started', 'item.completed'].map((type, index) => ({ seq: index + 1, line: { stream: 'stdout', line: JSON.stringify({ type, item }) } }));
+  const lines = [{ seq: 1, line: { stream: 'stdout', line: '' }, events: [
+    { type: 'toolUse', id: 'codex:1:command-1', name: 'command_execution', input: { command: '/bin/zsh -lc "gh pr list"' } },
+    { type: 'toolResult', toolUseId: 'codex:1:command-1', output: '', isError: false },
+  ] }];
   const row = chatTimeline(lines, 'icons-codex').find(item => item.kind === 'tool');
   assert.equal(kind(resolveToolIndicator(row.toolName, row.toolInput)), 'GitHub');
 });

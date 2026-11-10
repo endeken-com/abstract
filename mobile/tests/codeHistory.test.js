@@ -11,7 +11,7 @@ require.extensions['.ts'] = (module, path) => {
 const { historyTool, parseLineRange, toolKind, toolTarget, toolVerb } = require('../src/toolPresentation.ts');
 const { chatTimeline } = require('../src/chatTimeline.ts');
 const { relativePath } = require('../src/askAuthor.ts');
-const line = (seq, value) => ({ seq, line: { stream: 'stdout', line: JSON.stringify(value) } });
+const line = (seq, events) => ({ seq, line: { stream: 'stdout', line: '' }, events });
 
 test('history tools are recognised under every agent spelling', () => {
   assert.equal(historyTool('code_history'), 'code_history');
@@ -51,8 +51,8 @@ test('a history lookup names its file and lines', () => {
 
 test('Claude history lookup reads readably in the timeline', () => {
   const lines = [
-    line(1, { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'h1', name: 'mcp__abstract-code-history__code_history', input: { path: 'Sources/Diff.swift', lines: '220-245' } }] } }),
-    line(2, { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'h1', content: [{ type: 'text', text: 'Decided: never write the index.' }] }] } }),
+    line(1, [{ type: 'toolUse', id: 'h1', name: 'mcp__abstract-code-history__code_history', input: { path: 'Sources/Diff.swift', lines: '220-245' } }]),
+    line(2, [{ type: 'toolResult', toolUseId: 'h1', output: 'Decided: never write the index.', isError: false }]),
   ];
   const row = chatTimeline(lines, 'claude-history').find(row => row.kind === 'tool');
   assert.equal(row.text, 'Looked up history of');
@@ -63,10 +63,11 @@ test('Claude history lookup reads readably in the timeline', () => {
 
 test('Codex history lookup and failed excerpt read readably', () => {
   const lines = [
-    line(1, { type: 'turn.started' }),
-    line(2, { type: 'item.started', item: { id: 'i1', type: 'mcp_tool_call', server: 'abstract-code-history', tool: 'code_history', arguments: { path: 'Sources/Diff.swift', lines: '220-245' }, status: 'in_progress' } }),
-    line(3, { type: 'item.completed', item: { id: 'i1', type: 'mcp_tool_call', server: 'abstract-code-history', tool: 'code_history', arguments: { path: 'Sources/Diff.swift', lines: '220-245' }, status: 'completed', result: { content: [{ type: 'text', text: 'Decided: never write the index.' }], isError: false } } }),
-    line(4, { type: 'item.completed', item: { id: 'i2', type: 'mcp_tool_call', server: 'abstract-code-history', tool: 'chat_excerpt', arguments: { chat: 's-old', turn: 1 }, status: 'failed', error: { message: 'MCP tool call requires approval' } } }),
+    line(1, []),
+    line(2, [{ type: 'toolUse', id: 'codex:1:i1', name: 'mcp__abstract-code-history__code_history', input: { path: 'Sources/Diff.swift', lines: '220-245' } }]),
+    line(3, [{ type: 'toolResult', toolUseId: 'codex:1:i1', output: 'Decided: never write the index.', isError: false }]),
+    line(4, [{ type: 'toolUse', id: 'codex:1:i2', name: 'mcp__abstract-code-history__chat_excerpt', input: { chat: 's-old', turn: 1 } },
+      { type: 'toolResult', toolUseId: 'codex:1:i2', output: 'MCP tool call requires approval', isError: true }]),
   ];
   const rows = chatTimeline(lines, 'codex-history').filter(row => row.kind === 'tool');
   assert.equal(rows[0].text, 'Looked up history of');
@@ -78,7 +79,8 @@ test('Codex history lookup and failed excerpt read readably', () => {
 });
 
 test('OpenCode history lookup reads readably', () => {
-  const lines = [line(1, { type: 'tool_use', part: { type: 'tool', tool: 'abstract-code-history_code_history', callID: 'c1', state: { status: 'completed', input: { path: 'Packages/Diff.swift' }, output: 'Decided: read with --no-optional-locks.' } } })];
+  const lines = [line(1, [{ type: 'toolUse', id: 'c1', name: 'abstract-code-history_code_history', input: { path: 'Packages/Diff.swift' } },
+    { type: 'toolResult', toolUseId: 'c1', output: 'Decided: read with --no-optional-locks.', isError: false }])];
   const row = chatTimeline(lines, 'opencode-history').find(row => row.kind === 'tool');
   assert.equal(row.text, 'Looked up history of');
   assert.equal(row.target, 'Diff.swift');

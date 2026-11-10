@@ -81,6 +81,6 @@ export type Peer = { id: string; name: string; publicKey: string };
 export type InternetAddress = { endpointId: string };
 export type Device = { peer: Peer; address: string; pairedAt: number; internetAddress?: InternetAddress };
 export type Nearby = { id: string; name: string; address: string };
-export type RemoteLine = { seq: number; line: { stream: string; line: string } };
+export type RemoteLine = { seq: number; line: { stream: string; line: string }; events?: Record<string, any>[] };
 export const swiftDate = () => Date.now() / 1000 - 978307200;
 export const displayDate = (value?: number | null) => value == null ? '' : new Date((value + 978307200) * 1000).toLocaleString();

@@ -2,10 +2,8 @@ import Foundation
 
 /// What a paired device may ask this one, and what this one tells it.
 ///
-/// The host streams each chat's raw agent output, line by line with its
-/// sequence number, and the controller parses it with the same provider code
-/// the host uses. So any agent Abstract can run can be driven from another
-/// device, with no per-agent remote support.
+/// The host streams sequenced chat lines with events from its agent plugin.
+/// Other Macs can replay raw lines; phones render the normalized events.
 public enum RemoteMessage: Codable, Sendable {
     case request(id: Int, RemoteRequest)
     case response(id: Int, RemoteResponse)
@@ -785,8 +783,17 @@ public struct RemotePullRequestCheck: Codable, Sendable, Hashable {
 public struct RemoteLine: Codable, Sendable, Hashable {
     public var seq: Int
     public var line: OutputLine
+    /// The host's plugin parser output for this line. Raw events are omitted:
+    /// the original line is already here for Mac replay and send receipts.
+    public var events: [JSONValue]?
 
-    public init(seq: Int, line: OutputLine) { self.seq = seq; self.line = line }
+    public init(seq: Int, line: OutputLine, events: [AgentEvent]? = nil) {
+        self.seq = seq; self.line = line
+        self.events = events?.compactMap { event in
+            if case .raw = event { return nil }
+            return AgentEventJSON.encode(event)
+        }
+    }
 
     /// Longest line sent whole; past it the line is cut (a tool that printed megabytes).
     public static let maxLine = 4 << 20
@@ -800,7 +807,9 @@ public struct RemoteLine: Codable, Sendable, Hashable {
             if line.line.line.utf8.count > maxLine {
                 line.line.line = String(line.line.line.utf8.prefix(maxLine)) ?? String(line.line.line.prefix(maxLine / 4))
             }
-            let count = line.line.line.utf8.count + 64
+            // Events can be larger than the wire line (edit previews, tool
+            // results). Count the encoded payload, not just the raw output.
+            let count = (try? JSONEncoder().encode(line).count) ?? line.line.line.utf8.count + 64
             if !batch.isEmpty, size + count > bytes {
                 out.append(batch)
                 batch = []
