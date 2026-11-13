@@ -64,7 +64,8 @@ final class PluginService {
         async let registry = try? PluginRegistry.fetch()
         do {
             let channel = UpdateChannel(stored: UserDefaults.standard.string(forKey: UpdateChannel.defaultsKey))
-            catalog = try await PluginCatalog.fetch(channel: channel).plugins
+            // A nightly release without its catalog falls back to stable (ABS-158).
+            catalog = try await PluginCatalog.load(channel: channel).plugins
             catalogProblem = nil
         } catch {
             catalogProblem = error.localizedDescription
