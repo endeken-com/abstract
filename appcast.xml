@@ -5,16 +5,21 @@
     <link>https://endeken-com.github.io/abstract/appcast.xml</link>
     <language>en</language>
     <item>
-      <title>Abstract 0.13.0-nightly.79</title>
-      <pubDate>Tue, 10 Nov 2026 16:19:21 GMT</pubDate>
-      <sparkle:version>0.13.0.79</sparkle:version>
-      <sparkle:shortVersionString>0.13.0-nightly.79</sparkle:shortVersionString>
+      <title>Abstract 0.13.0-nightly.85</title>
+      <pubDate>Mon, 16 Nov 2026 14:36:32 GMT</pubDate>
+      <sparkle:version>0.13.0.85</sparkle:version>
+      <sparkle:shortVersionString>0.13.0-nightly.85</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
       <sparkle:channel>nightly</sparkle:channel>
       <sparkle:fullReleaseNotesLink>https://github.com/endeken-com/abstract/releases/tag/nightly</sparkle:fullReleaseNotesLink>
       <description>
-&lt;p dir="auto"&gt;&lt;strong&gt;Full Changelog&lt;/strong&gt;: &lt;a class="commit-link" href="https://github.com/endeken-com/abstract/compare/v0.12.0...15ce76ab6c7127c4cf0d538f6de93af30d7baf02"&gt;&lt;tt&gt;v0.12.0...15ce76a&lt;/tt&gt;&lt;/a&gt;&lt;/p&gt;</description>
-      <enclosure url="https://github.com/endeken-com/abstract/releases/download/nightly/Abstract-0.13.0-nightly.79.dmg" length="60123738" type="application/octet-stream" sparkle:edSignature="LftPPXgPNKOeKriRzbDyS7PXCike89/8cR525O8ALC+U5qDnXeycvWYxVfIn9n1J1xCRagFFHJUnG5GZRFXSBw==" />
+&lt;h2 dir="auto"&gt;What's Changed&lt;/h2&gt;
+&lt;h3 dir="auto"&gt;Fixed&lt;/h3&gt;
+&lt;ul dir="auto"&gt;
+&lt;li&gt;Plugin updates from the catalog reach nightly users by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/wesguirra/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/wesguirra"&gt;@wesguirra&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="6375828722" data-permission-text="Title is private" data-url="https://github.com/endeken-com/abstract/issues/218" data-hovercard-type="pull_request" data-hovercard-url="/endeken-com/abstract/pull/218/hovercard" href="https://github.com/endeken-com/abstract/pull/218"&gt;#218&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p dir="auto"&gt;&lt;strong&gt;Full Changelog&lt;/strong&gt;: &lt;a class="commit-link" href="https://github.com/endeken-com/abstract/compare/v0.12.0...f6fdc762d5e936718d8d335a3828d53fe52ddec9"&gt;&lt;tt&gt;v0.12.0...f6fdc76&lt;/tt&gt;&lt;/a&gt;&lt;/p&gt;</description>
+      <enclosure url="https://github.com/endeken-com/abstract/releases/download/nightly/Abstract-0.13.0-nightly.85.dmg" length="60126975" type="application/octet-stream" sparkle:edSignature="tn/Hsx5T89MaUymZnp2Uqr5PNz8w6xlsCpDFdXSOATU4RMiHU2p5c6tRYx1WojceyOVjCHPq/yVrNdkrYtQABQ==" />
     </item>
     <item>
       <title>Abstract 0.12.0</title>
