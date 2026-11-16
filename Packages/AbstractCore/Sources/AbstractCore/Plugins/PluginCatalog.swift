@@ -45,12 +45,44 @@ public struct PluginCatalog: Decodable, Sendable {
         return catalog
     }
 
+    /// One channel's catalog. Every failure is a `PluginCatalogError`.
     public static func fetch(channel: UpdateChannel = .stable, session: URLSession = .shared) async throws -> PluginCatalog {
-        let (data, response) = try await session.data(from: url(for: channel))
-        guard (response as? HTTPURLResponse)?.statusCode == 200, data.count <= 1_000_000 else {
+        guard let (data, response) = try? await session.data(from: url(for: channel)),
+              (response as? HTTPURLResponse)?.statusCode == 200, data.count <= 1_000_000 else {
             throw PluginCatalogError.unavailable
         }
-        return try decode(data)
+        do { return try decode(data) } catch { throw PluginCatalogError.invalidIndex }
+    }
+
+    /// The channel's catalog, or the stable one when the nightly catalog
+    /// can't be read (ABS-158): a nightly release missing its catalog
+    /// shouldn't hide the plugins every release ships.
+    public static func load(channel: UpdateChannel, session: URLSession = .shared) async throws(LoadFailure) -> PluginCatalog {
+        do {
+            return try await fetch(channel: channel, session: session)
+        } catch {
+            let reason = error as? PluginCatalogError ?? .unavailable
+            guard channel == .nightly else { throw LoadFailure(catalog: channel, reason: reason, stableAlsoFailed: false) }
+            if let stable = try? await fetch(channel: .stable, session: session) { return stable }
+            throw LoadFailure(catalog: channel, reason: reason, stableAlsoFailed: true)
+        }
+    }
+
+    /// Why no catalog loaded, naming the one that failed.
+    public struct LoadFailure: Error, LocalizedError, Equatable, Sendable {
+        public let catalog: UpdateChannel
+        public let reason: PluginCatalogError
+        /// The nightly catalog failed and so did the stable one tried instead.
+        public let stableAlsoFailed: Bool
+
+        public var errorDescription: String? {
+            let name = catalog.rawValue
+            let what = switch reason {
+            case .invalidIndex: "The \(name) plugin catalog couldn't be read."
+            default: "The \(name) plugin catalog isn't available right now."
+            }
+            return stableAlsoFailed ? what + " The stable catalog didn't load either." : what
+        }
     }
 }
 

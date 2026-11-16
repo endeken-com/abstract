@@ -33,6 +33,7 @@ jobs:
           sh scripts/tests/require-tested-test.sh
           sh scripts/tests/notarize-test.sh
           sh scripts/tests/make-icons-test.sh
+          sh scripts/tests/superseded-nightly-dmgs-test.sh
           python3 -m unittest discover -s scripts/tests -v
 
       - name: App icons
