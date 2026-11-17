@@ -69,18 +69,23 @@ public final class AbelEngine {
 
     @ObservationIgnored private let ears: any AbelEars
     @ObservationIgnored private let voice: any AbelVoice
-    @ObservationIgnored private let abstract: any AbstractConnection
-    @ObservationIgnored private var lastLanguage: String
+    @ObservationIgnored let abstract: any AbstractConnection
+    @ObservationIgnored var lastLanguage: String
     @ObservationIgnored private var collapseTask: Task<Void, Never>?
     /// Something ABEL read back and waits on "yes" for.
-    @ObservationIgnored private var pending: Pending?
+    @ObservationIgnored var pending: Pending?
+    /// The reply being read, for "continue".
+    @ObservationIgnored var reading: (text: SpeakableText, index: Int, chat: String)?
+    /// The chats "what needs me" just read, in order: "approve" means the first.
+    @ObservationIgnored var lastListed: [String] = []
     /// How long a read-back waits for "yes".
     @ObservationIgnored public var confirmationWindow: Duration = .seconds(10)
 
-    private struct Pending {
+    struct Pending {
         var asked: Date
         var language: String
-        var run: @MainActor () async -> Void
+        /// Called once: true on a clear yes in time, false on anything else.
+        var decide: @MainActor (Bool) async -> Void
     }
     /// How long the panel stays open after ABEL finishes speaking.
     @ObservationIgnored public var lingering: Duration = .seconds(4)
@@ -154,6 +159,17 @@ public final class AbelEngine {
             let recent = Array(history.suffix(50))
             return AbelLink.HelperReply(ok: true, message: (try? encoder.encode(recent)).map { String(decoding: $0, as: UTF8.self) },
                                         state: stateSentence)
+        case .tool:
+            let outcome = await tool(request.name ?? "", arguments: request.text ?? "{}", from: request.chatId)
+            return AbelLink.HelperReply(ok: !outcome.isError, message: outcome.text)
+        case .hear:
+            #if DEBUG
+            guard let text = request.text else { return AbelLink.HelperReply(ok: false) }
+            Task { await simulate(text, trigger: .wakePhrase) }
+            return AbelLink.HelperReply(ok: true)
+            #else
+            return AbelLink.HelperReply(ok: false, message: "Only debug builds take a transcript.")
+            #endif
         }
     }
 
@@ -253,15 +269,32 @@ public final class AbelEngine {
         lastLanguage = language
         if let waiting = pending {
             pending = nil
-            if AbelConfirmation.isYes(text), Date().timeIntervalSince(waiting.asked) < Double(confirmationWindow.components.seconds) {
-                await waiting.run()
-            } else {
-                record(.refused, "Didn't hear yes, so nothing was done")
-                say(AbelPhrases(language: language).cancelled)
-            }
+            let yes = AbelConfirmation.isYes(text)
+                && Date().timeIntervalSince(waiting.asked) < Double(confirmationWindow.components.seconds)
+            await waiting.decide(yes)
             return
         }
         await refreshContext()
+        guard let context else { say(AbelPhrases(language: language).abstractClosed); return }
+        // Holding the key over a chat in Abstract dictates into it; a
+        // command then starts with "Abel", or is one needing no name.
+        let dictating = trigger == .pushToTalk && context.isFrontmost && context.shownChatId != nil
+        if dictating {
+            let words = AbelText.words(text)
+            if words.first == "abel" {
+                await command(WakePhrase.strippingWake(text), language: language, trigger: trigger)
+                return
+            }
+            if !AbelGrammar.isBareCommand(text) || AbelRouter.isSendIt(text) {
+                await dictate(text, language: language, trigger: trigger)
+                return
+            }
+        }
+        await command(text, language: language, trigger: trigger)
+    }
+
+    /// Dictation and "send it", for the chat on screen (ABS-203).
+    func dictate(_ text: String, language: String, trigger: AbelMachine.Trigger) async {
         switch AbelRouter.route(text, context: context, language: language) {
         case let .dictate(chatId, words):
             let reply = await abstract.ask(AbelLink.Request(kind: .dictate, chatId: chatId, text: words))
@@ -275,7 +308,9 @@ public final class AbelEngine {
             // Holding the key is you; the wake phrase could be a TV. Sending
             // on the wake phrase is read back and needs "yes".
             if trigger == .wakePhrase {
-                ask(AbelPhrases(language: language).confirmSend(context?.shownChatTitle ?? "the chat"), language: language, then: send)
+                ask(AbelPhrases(language: language).confirmSend(context?.shownChatTitle ?? "the chat"), language: language) { yes in
+                    if yes { await send() } else { self.cancelled(language) }
+                }
             } else {
                 await send()
             }
@@ -284,7 +319,7 @@ public final class AbelEngine {
         }
     }
 
-    private func finish(_ reply: AbelLink.Reply?, done: (String) -> String, record what: String) {
+    func finish(_ reply: AbelLink.Reply?, done: (String) -> String, record what: String) {
         guard let reply else { say(AbelPhrases(language: lastLanguage).abstractClosed); return }
         guard reply.ok else { say(reply.message ?? "That didn't work."); return }
         let chat = reply.chatTitle ?? "the chat"
@@ -296,10 +331,16 @@ public final class AbelEngine {
 
     /// Reads `question` back and waits for "yes": the next thing you say,
     /// with the key or, with the wake phrase on, without it.
-    func ask(_ question: String, language: String, then run: @escaping @MainActor () async -> Void) {
-        pending = Pending(asked: Date(), language: language, run: run)
+    func ask(_ question: String, language: String, then decide: @escaping @MainActor (Bool) async -> Void) {
+        pending = Pending(asked: Date(), language: language, decide: decide)
         say(question)
         awaitingYes = true
+    }
+
+    /// Nothing was done, and ABEL says so.
+    func cancelled(_ language: String) {
+        record(.refused, "Didn't hear yes, so nothing was done")
+        say(AbelPhrases(language: language).cancelled)
     }
 
     @ObservationIgnored private var awaitingYes = false

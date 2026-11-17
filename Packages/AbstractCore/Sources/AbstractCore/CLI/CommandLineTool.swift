@@ -15,6 +15,7 @@ import Synchronization
 ///     abstract mcp              --chat <id>   (the code-history tools, over stdio)
 ///     abstract mcp              --chat <id> --plugins   (the chat's plugin tools, over stdio)
 ///     abstract mcp              --chat <id> --branch    (the chat's branch-name tool, over stdio)
+///     abstract mcp              --chat <id> --abel      (ABEL's tools, for ABEL's own chat, over stdio)
 ///
 /// `--project` takes a project's id, root path or name. Every command prints
 /// one JSON value on stdout and nothing else; a failure prints
@@ -45,6 +46,14 @@ public enum CommandLineTool {
                     return 1
                 }
                 await BranchMCPServer(chatId: chat).run()
+                return 0
+            }
+            if args.contains("--abel") {
+                guard let chat = option("chat", in: Array(args.dropFirst())), !chat.isEmpty else {
+                    FileHandle.standardError.write(Data("abstract mcp: no chat to serve ABEL's tools for.\n".utf8))
+                    return 1
+                }
+                await PluginMCPServer(source: AbelToolSource(chatId: chat), name: AbelTools.serverName).run()
                 return 0
             }
             if args.contains("--plugins") {
@@ -80,7 +89,7 @@ public enum CommandLineTool {
         agent find --session <id> | agent send --session <id> --agent <id> --text-file <path|-> | \
         agent respawn --session <id> --agent <agent> --prompt-file <path|-> | \
         branch name <exact-name> | plugin add <owner/repo[/path][@ref]> [--ref <ref>] | \
-        history <file>[:<line>[-<line>]] [--project <p>] | mcp --chat <id> [--plugins|--branch]
+        history <file>[:<line>[-<line>]] [--project <p>] | mcp --chat <id> [--plugins|--branch|--abel]
         """
 
     /// `--name value` or `--name=value` among `tokens`; nil when absent.

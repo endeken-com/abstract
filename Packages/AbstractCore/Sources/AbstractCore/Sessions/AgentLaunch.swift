@@ -67,6 +67,9 @@ public struct LaunchSettings: Sendable {
     /// The `abstract` command that serves this launch's plugin tools
     /// (ABS-97), when a plugin offers any; nil leaves the agent without.
     public var pluginToolsCommand: String?
+    /// The `abstract` command that serves ABEL's tools (ABS-204), for ABEL's
+    /// own chat only; nil everywhere else.
+    public var abelToolsCommand: String?
     /// The MCP servers of the launch's project (ABS-123); each agent gets
     /// the ones chosen for it.
     public var toolServers: [ProjectToolServer]
@@ -166,7 +169,8 @@ public enum AgentLaunch {
                                 pluginTools: settings.pluginToolsCommand.map {
                                     PluginToolsLaunch(command: $0, chatId: session.id)
                                 },
-                                toolServers: settings.toolServers(for: session, provider: provider),
+                                toolServers: settings.toolServers(for: session, provider: provider)
+                                    + (settings.abelToolsCommand.map { [AbelTools.server(command: $0, chatId: session.id)] } ?? []),
                                 configDirectory: settings.agentConfigRoot.map {
                                     ChatConfigFiles.directory(root: $0, chatId: session.id)
                                 },

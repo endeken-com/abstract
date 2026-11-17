@@ -21,12 +21,14 @@ public protocol PluginToolSource: Sendable {
 public final class PluginMCPServer: Sendable {
     let source: any PluginToolSource
     let pollInterval: Duration
+    /// What the server calls itself to the agent.
+    let name: String
     /// The tools last given to the agent; nil until it asked.
     private let listed = Mutex<[JSONValue]?>(nil)
     private let output = Mutex<Void>(())
 
-    public init(source: any PluginToolSource, pollInterval: Duration = .seconds(2)) {
-        self.source = source; self.pollInterval = pollInterval
+    public init(source: any PluginToolSource, pollInterval: Duration = .seconds(2), name: String = PluginTools.serverName) {
+        self.source = source; self.pollInterval = pollInterval; self.name = name
     }
 
     public static let listChangedNotification =
@@ -83,7 +85,7 @@ public final class PluginMCPServer: Sendable {
             return reply(id, result: .object([
                 "protocolVersion": params["protocolVersion"] ?? .string("2024-11-05"),
                 "capabilities": .object(["tools": .object(["listChanged": .bool(true)])]),
-                "serverInfo": .object(["name": .string(PluginTools.serverName), "version": .string("1")]),
+                "serverInfo": .object(["name": .string(name), "version": .string("1")]),
             ]))
         case "ping":
             return reply(id, result: .object([:]))

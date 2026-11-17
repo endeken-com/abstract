@@ -22,14 +22,24 @@ public struct AbelSettings: Codable, Sendable, Equatable {
     /// Show the orb. Off hides it; push-to-talk and the wake phrase still
     /// bring it up while ABEL listens or answers.
     public var showOrb: Bool
+    /// The agent that runs ABEL's own chat (ABS-204), and the profile it
+    /// starts from; any agent Abstract runs.
+    public var agentId: String
+    public var profileId: String?
+    /// ABEL's own chat, once there is one.
+    public var chatId: String?
 
     public init(wakePhrase: Bool = false, languages: [String] = ["en-US"], voice: String? = nil,
-                speakReplies: [String] = [], showOrb: Bool = true) {
+                speakReplies: [String] = [], showOrb: Bool = true, agentId: String = "claude",
+                profileId: String? = nil, chatId: String? = nil) {
         self.wakePhrase = wakePhrase
         self.languages = Self.valid(languages)
         self.voice = voice
         self.speakReplies = speakReplies
         self.showOrb = showOrb
+        self.agentId = agentId
+        self.profileId = profileId
+        self.chatId = chatId
     }
 
     public init(from decoder: any Decoder) throws {
@@ -39,10 +49,14 @@ public struct AbelSettings: Codable, Sendable, Equatable {
         voice = try c.decodeIfPresent(String.self, forKey: .voice)
         speakReplies = try c.decodeIfPresent([String].self, forKey: .speakReplies) ?? []
         showOrb = try c.decodeIfPresent(Bool.self, forKey: .showOrb) ?? true
+        agentId = try c.decodeIfPresent(String.self, forKey: .agentId) ?? "claude"
+        profileId = try c.decodeIfPresent(String.self, forKey: .profileId)
+        chatId = try c.decodeIfPresent(String.self, forKey: .chatId)
     }
 
-    /// Whether ABEL reads `chatId`'s finished replies aloud.
-    public func speaks(_ chatId: String) -> Bool { speakReplies.contains(chatId) }
+    /// Whether ABEL reads `chatId`'s finished replies aloud: ABEL's own
+    /// chat always.
+    public func speaks(_ chatId: String) -> Bool { speakReplies.contains(chatId) || chatId == self.chatId }
 
     public mutating func setSpeaks(_ chatId: String, _ on: Bool) {
         speakReplies.removeAll { $0 == chatId }

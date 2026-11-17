@@ -413,6 +413,7 @@ final class Calls: @unchecked Sendable {
             case .context: AbelLink.Reply(ok: true, context: AbelLink.Context(shownChatId: "chat-1", shownChatTitle: "Sidebar fix"))
             case .dictate: AbelLink.Reply(ok: true, chatTitle: request.text)
             case .sendDraft: .failed("Nothing to send.")
+            default: .failed("Not in this test.")
             }
         })
         let server = try #require(made)

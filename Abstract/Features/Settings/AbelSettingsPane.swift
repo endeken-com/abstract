@@ -32,6 +32,7 @@ struct AbelSettingsPane: View {
             if model.abelInstalled {
                 listening.id("abel.listening")
                 speaking.id("abel.speaking")
+                abelChat.id("abel.chat")
             }
         }
         .settingsScrollablePane()
@@ -107,6 +108,36 @@ struct AbelSettingsPane: View {
             Text("Speaking")
         } footer: {
             Text("Turn on Read Replies Aloud from a chat's menu in the sidebar. ABEL reads the reply's first paragraph and skips code; talking or pressing ⌥Space stops it.")
+                .font(.btCaption)
+                .foregroundStyle(Color.btTextTertiary)
+        }
+    }
+
+    /// ABEL's own chat (ABS-204): what the grammar doesn't understand goes
+    /// there, to the agent you pick.
+    private var abelChat: some View {
+        Section {
+            Picker(selection: binding(\.agentId)) {
+                ForEach(ProviderRegistry.all, id: \.id) { provider in
+                    Text(ProviderRegistry.name(provider.id)).tag(provider.id)
+                }
+            } label: {
+                Text("Agent")
+                Text("Runs ABEL's chat, which answers what isn't a command, like “which chats touched the plugin catalog this week?”")
+            }
+            Picker("Profile", selection: binding(\.profileId)) {
+                Text("None").tag(String?.none)
+                ForEach(model.profiles, id: \.id) { profile in Text(profile.name).tag(Optional(profile.id)) }
+            }
+            if let id = model.abelSettings.chatId, model.session(id) != nil {
+                LabeledContent("ABEL's chat") {
+                    Button("Open") { model.destination = .session(id) }
+                }
+            }
+        } header: {
+            Text("ABEL's chat")
+        } footer: {
+            Text("ABEL reads back anything its chat wants to do, and does it only when you say yes. It never merges, pushes, deletes or turns on Full autonomy by voice.")
                 .font(.btCaption)
                 .foregroundStyle(Color.btTextTertiary)
         }
