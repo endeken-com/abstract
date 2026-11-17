@@ -72,6 +72,12 @@ final class AbelDelegate: NSObject, NSApplicationDelegate {
         #endif
         engine = AbelEngine(ears: DeviceEars(source: MicrophoneSource()), voice: speaker, abstract: LinkedAbstract(storePath: storePath))
         if let settings = kept.settings { engine.use(settings) }
+        let apps = MacAppControl()
+        #if DEBUG
+        // Demos and checks: a stand-in for `shortcuts`, so no real shortcut runs.
+        if let tool = ProcessInfo.processInfo.environment["ABEL_SHORTCUTS_TOOL"] { apps.shortcutsTool = tool }
+        #endif
+        engine.appControl = apps
         engine.onSettings = { [weak self] settings in
             self?.kept.settings = settings
             voice.voiceIdentifier = settings.voice

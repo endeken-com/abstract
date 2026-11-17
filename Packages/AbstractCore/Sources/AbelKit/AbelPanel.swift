@@ -63,6 +63,16 @@ public struct AbelPanelView: View {
                             .foregroundStyle(display.mode == .listening ? palette.text.color : palette.secondary.color)
                             .lineLimit(3)
                     }
+                    if !display.detail.isEmpty {
+                        Text(display.detail)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(palette.text.color)
+                            // Never cut: scripts longer than this are refused before they're shown.
+                            .lineLimit(nil)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(6)
+                            .background(RoundedRectangle(cornerRadius: 6).fill(palette.border.color.opacity(0.35)))
+                    }
                     if !display.answer.isEmpty {
                         Text(display.answer)
                             .font(.system(size: 13, weight: .medium))
@@ -70,7 +80,7 @@ public struct AbelPanelView: View {
                             .lineLimit(5)
                     }
                 }
-                .frame(width: 280, alignment: .leading)
+                .frame(width: display.detail.isEmpty ? 280 : 560, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
             }
         }

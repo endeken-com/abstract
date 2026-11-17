@@ -28,10 +28,14 @@ public struct AbelSettings: Codable, Sendable, Equatable {
     public var profileId: String?
     /// ABEL's own chat, once there is one.
     public var chatId: String?
+    /// What ABEL may do in other apps (ABS-205). Opening apps, files and
+    /// links is on from the start; every other kind is off until turned on.
+    public var appControl: AbelAppControl
 
     public init(wakePhrase: Bool = false, languages: [String] = ["en-US"], voice: String? = nil,
                 speakReplies: [String] = [], showOrb: Bool = true, agentId: String = "claude",
-                profileId: String? = nil, chatId: String? = nil) {
+                profileId: String? = nil, chatId: String? = nil,
+                appControl: AbelAppControl = AbelAppControl(kinds: [.open])) {
         self.wakePhrase = wakePhrase
         self.languages = Self.valid(languages)
         self.voice = voice
@@ -40,6 +44,7 @@ public struct AbelSettings: Codable, Sendable, Equatable {
         self.agentId = agentId
         self.profileId = profileId
         self.chatId = chatId
+        self.appControl = appControl
     }
 
     public init(from decoder: any Decoder) throws {
@@ -52,6 +57,7 @@ public struct AbelSettings: Codable, Sendable, Equatable {
         agentId = try c.decodeIfPresent(String.self, forKey: .agentId) ?? "claude"
         profileId = try c.decodeIfPresent(String.self, forKey: .profileId)
         chatId = try c.decodeIfPresent(String.self, forKey: .chatId)
+        appControl = try c.decodeIfPresent(AbelAppControl.self, forKey: .appControl) ?? AbelAppControl(kinds: [.open])
     }
 
     /// Whether ABEL reads `chatId`'s finished replies aloud: ABEL's own

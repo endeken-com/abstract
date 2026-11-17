@@ -135,4 +135,33 @@ extension AbelPhrases {
                 : "I don't delete anything by voice." + (opened ? " I've opened the chat\(place)." : "")
         }
     }
+
+    // MARK: Other apps (ABS-205)
+
+    public func openAsk(_ thing: String) -> String { portuguese ? "Abrir \(thing)? Diga sim para abrir." : "Open \(thing)? Say yes to open." }
+    public func shortcutAsk(_ name: String) -> String {
+        portuguese ? "Rodar o atalho \(name)? Diga sim para rodar." : "Run the shortcut \(name)? Say yes to run it."
+    }
+    public func shortcutRan(_ name: String, output: String?) -> String {
+        guard let output, !output.isEmpty else { return portuguese ? "Rodei o atalho \(name)." : "Ran the shortcut \(name)." }
+        return portuguese ? "\(name) diz: \(output)" : "\(name) says: \(output)"
+    }
+    public func scriptAsk(_ app: String, lines: Int) -> String {
+        let count = lines == 1 ? (portuguese ? "de uma linha" : "one-line") : (portuguese ? "de \(lines) linhas" : "\(lines)-line")
+        return portuguese ? "Rodar este AppleScript \(count) no \(app)? Ele está no painel. Diga sim para rodar."
+            : "Run this \(count) AppleScript in \(app)? It's on the panel. Say yes to run it."
+    }
+    public func readUIAsk(_ app: String) -> String {
+        portuguese ? "Ler a janela do \(app)? Diga sim para ler." : "Read \(app)'s window? Say yes to read it."
+    }
+    public func pressAsk(_ element: String, _ app: String) -> String {
+        portuguese ? "Apertar \(element) no \(app)? Diga sim para apertar." : "Press \(element) in \(app)? Say yes to press it."
+    }
+    public func typeAsk(_ text: String, _ app: String) -> String {
+        portuguese ? "Digitar \(text) no \(app)? Diga sim para digitar." : "Type \(text) in \(app)? Say yes to type it."
+    }
+    public var noPullRequest: String { portuguese ? "Esse chat não tem pull request." : "That chat has no pull request." }
+    public func noShortcut(_ heard: String) -> String {
+        portuguese ? "Não encontrei um atalho chamado \(heard)." : "I couldn't find a shortcut called \(heard)."
+    }
 }

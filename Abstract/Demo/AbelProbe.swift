@@ -7,6 +7,8 @@ import Foundation
 /// screen to dictate into and a reply to read. Every second it writes what
 /// ABEL can change to `ABSTRACT_DEMO_ABEL_OUT` (JSON): the chat on screen,
 /// its reply box, the last message you sent and the last reply.
+/// `ABSTRACT_DEMO_ABEL_APPS=1` also turns on every kind of control of
+/// other apps (ABS-205), with Notes set to Off.
 enum AbelProbe {
     static func runIfRequested(_ model: AppModel) {
         guard let prefix = ProcessInfo.processInfo.environment["ABSTRACT_DEMO_ABEL"] else { return }
@@ -21,6 +23,13 @@ enum AbelProbe {
             }
             model.destination = .session(chat.id)
             model.setAbelSpeaks(chat.id, true)
+            // ABS-205: every kind of control on, Notes set to Off.
+            if ProcessInfo.processInfo.environment["ABSTRACT_DEMO_ABEL_APPS"] != nil {
+                model.updateAbelSettings {
+                    $0.appControl = AbelAppControl(kinds: Set(AbelAppControl.Kind.allCases), apps: ["com.apple.Notes": .off],
+                                                   names: ["com.apple.Notes": "Notes"])
+                }
+            }
             log("abel probe: showing “\(chat.name)”, read aloud on")
             while true {
                 if let out { write(model, chat.id, to: out) }

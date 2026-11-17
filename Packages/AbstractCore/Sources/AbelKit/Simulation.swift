@@ -107,9 +107,11 @@ public enum AbelSimulation {
     }
 
     public static func run(_ transcripts: [String], language: String, abstract: any AbstractConnection,
-                           renderTo: URL? = nil, trigger: AbelMachine.Trigger = .pushToTalk) async -> Report {
+                           renderTo: URL? = nil, trigger: AbelMachine.Trigger = .pushToTalk,
+                           apps: (any AppControlling)? = nil) async -> Report {
         let voice = RecordingVoice(renderTo: renderTo)
         let engine = AbelEngine(ears: QuietEars(), voice: voice, abstract: abstract)
+        engine.appControl = apps
         engine.lingering = .milliseconds(10)
         await engine.start()
         var panel: [String] = []

@@ -43,8 +43,10 @@ struct DebugRun {
         switch mode {
         case let .simulate(transcripts):
             if let speechOut { try? FileManager.default.createDirectory(at: speechOut, withIntermediateDirectories: true) }
+            let apps = MacAppControl()
+            if let tool = ProcessInfo.processInfo.environment["ABEL_SHORTCUTS_TOOL"] { apps.shortcutsTool = tool }
             let report = await AbelSimulation.run(transcripts, language: language, abstract: LinkedAbstract(), renderTo: speechOut,
-                                                  trigger: wake ? .wakePhrase : .pushToTalk)
+                                                  trigger: wake ? .wakePhrase : .pushToTalk, apps: apps)
             // Rendering into files finishes in the background.
             if speechOut != nil { try? await Task.sleep(for: .seconds(3)) }
             print(json(report))
@@ -110,6 +112,9 @@ struct DebugRun {
                                       answer: "Sidebar fix says: I added a test for the grouping, and 12 lines of code.")),
             ("asking", AbelDisplay(mode: .answering, words: "approve",
                                    answer: "Let Sidebar fix run swift test? Say yes to allow.")),
+            ("script", AbelDisplay(mode: .answering, words: "Notes",
+                                   answer: "Run this 3-line AppleScript in Notes? It's on the panel. Say yes to run it.",
+                                   detail: "tell application \"Notes\"\n    make new note with properties {body:\"Build log\"}\nend tell")),
             ("paused", AbelDisplay(mode: .paused, answer: AbelMachine.PauseReason.screenShared.sentence)),
         ]
         var written: [String] = []

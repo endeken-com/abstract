@@ -24,7 +24,7 @@ extension AppModel {
                                     agent: ProviderRegistry.name(chat.session.providerId), state: state,
                                     waiting: state == .needsYou ? abelWaiting(chat.id) : nil, activeAt: chat.activeAt,
                                     pullRequest: chat.pullRequest?.number, checks: chat.pullRequest?.checks?.rawValue,
-                                    branch: chat.session.branch)
+                                    branch: chat.session.branch, pullRequestURL: pullRequests[chat.id]?.url?.absoluteString)
             }
             .sorted { (rank[$0.state] ?? 9, $1.activeAt) < (rank[$1.state] ?? 9, $0.activeAt) }
     }
