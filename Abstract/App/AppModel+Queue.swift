@@ -144,6 +144,7 @@ extension AppModel {
     func turnEnded(_ sessionId: String, _ status: SessionStatus, stopped: Bool) {
         guard !handingOff.contains(sessionId), !relaunching.contains(sessionId), !turnInProgress(sessionId) else { return }
         let interrupted = interrupting.remove(sessionId) != nil
+        if !stopped, !interrupted { abelTurnEnded(sessionId) }
         guard FollowUp.sendsQueue(after: status, stopped: stopped, interrupting: interrupted) else { return }
         guard engine.queued(sessionId: sessionId).isEmpty else { sendQueue(sessionId); return }
         // Done, unless its workflow hands it on: the chat waits for you.

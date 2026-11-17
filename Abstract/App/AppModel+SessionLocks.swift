@@ -148,10 +148,14 @@ extension AppModel {
     /// Lets `abstract` hand the app the agent of each chat it creates or
     /// respawns while the app is open, so the chat is the app's from the start.
     func serveCommandLine() {
-        appLink = AppLink.Server(storePath: storePath) { [weak self] request in
+        appLink = AppLink.Server(storePath: storePath, handler: { [weak self] request in
             guard let self else { return AppLink.StartReply(agent: nil, message: "Abstract is quitting.") }
             return await self.startForCommandLine(request)
-        }
+        }, abel: { [weak self] request in
+            guard let self else { return .failed("Abstract is quitting.") }
+            return await self.answerAbel(request)
+        })
+        loadAbel()
     }
 
     /// Starts the agent of a chat `abstract` just made (or respawned), as

@@ -279,6 +279,10 @@ struct ComposerView: View {
         }
         // Closing ⌘F's bar hands the keyboard back here.
         .onChange(of: model.feed(session.id).find.closings) { focused = true }
+        // "Send it", said to ABEL (ABS-203): the same Send as the button.
+        .onReceive(NotificationCenter.default.publisher(for: AppModel.abelSendDraft)) { note in
+            if note.object as? String == session.id { send() }
+        }
     }
 
     private func send() {

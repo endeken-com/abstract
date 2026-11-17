@@ -5,7 +5,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
     case appearance, notifications, usage
     case general, worktrees, integrations, plugins
     case agents, profiles, workflows, skills
-    case devices, advanced
+    case devices, abel, advanced
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -21,6 +21,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .integrations: "Integrations"
         case .plugins: "Plugins"
         case .devices: "Devices"
+        case .abel: "ABEL"
         case .advanced: "Advanced"
         }
     }
@@ -38,6 +39,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .integrations: "link"
         case .plugins: "puzzlepiece.extension"
         case .devices: "laptopcomputer.and.iphone"
+        case .abel: "waveform"
         case .advanced: "flask"
         }
     }
@@ -57,6 +59,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .integrations: "Connect Revund to review a chat's changes."
         case .plugins: "Plugins add panels, tools and background work to Abstract."
         case .devices: "Paired Macs, and phones that drive this one."
+        case .abel: "A voice assistant over every app: dictate into chats and hear their replies, all on this Mac."
         case .advanced: "Options for debugging Abstract and its agents."
         }
     }
@@ -76,6 +79,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .integrations: "revund api key"
         case .plugins: "plugins kanban extensions"
         case .devices: "pair remote mac phone mobile internet"
+        case .abel: "abel voice assistant speech dictation microphone hey abel speak read aloud wake"
         case .advanced: "debug raw output developer"
         }
     }
@@ -91,7 +95,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         ("App", [.general, .appearance, .notifications, .usage]),
         ("Projects", [.worktrees, .integrations, .plugins]),
         ("Agents", [.agents, .profiles, .workflows, .skills]),
-        ("System", [.devices, .advanced]),
+        ("System", [.devices, .abel, .advanced]),
     ]
 
     var groupTitle: String {
@@ -450,6 +454,7 @@ struct SettingsView: View {
         case .integrations: IntegrationsSettingsPane()
         case .plugins: PluginsSettingsPane(selectedView: $pluginFilter)
         case .devices: DevicesSettingsPane()
+        case .abel: AbelSettingsPane()
         case .usage: UsageSettingsPane()
         }
     }

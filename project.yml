@@ -62,6 +62,14 @@ targets:
         copy:
           destination: wrapper
           subpath: Contents/Helpers
+      # ABEL, the voice assistant (ABS-203): its own app with its own bundle
+      # id and permissions, turned on and off with SMAppService.
+      - target: Abel
+        embed: true
+        codeSign: true
+        copy:
+          destination: wrapper
+          subpath: Contents/Library/LoginItems
     info:
       path: Abstract/Resources/Info.plist
       properties:
@@ -95,6 +103,49 @@ targets:
         # Off for local (ad hoc) builds: the runtime's library validation refuses the
         # ad hoc Sparkle.framework, so the app wouldn't launch. scripts/sign-app.sh
         # turns it on when it signs a release with the Developer ID.
+        ENABLE_HARDENED_RUNTIME: NO
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "-"
+        SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+        SWIFT_APPROACHABLE_CONCURRENCY: YES
+        GENERATE_INFOPLIST_FILE: NO
+  Abel:
+    type: application
+    platform: macOS
+    # SpeechAnalyzer, ABEL's on-device recognizer, is macOS 26 (ABS-202).
+    deploymentTarget: "26.0"
+    sources:
+      - path: Abel
+    dependencies:
+      - package: AbstractCore
+        product: AbstractCore
+      - package: AbstractCore
+        product: AbelKit
+    info:
+      path: Abel/Resources/Info.plist
+      properties:
+        CFBundleDisplayName: ABEL
+        CFBundleName: Abel
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        LSMinimumSystemVersion: "26.0"
+        # No Dock icon: ABEL lives in its floating panel and the menu bar.
+        LSUIElement: true
+        NSHumanReadableCopyright: ""
+        NSMicrophoneUsageDescription: "ABEL listens while you hold ⌥Space, or for “Hey Abel” if you turn that on. What it hears is understood on this Mac and never sent anywhere or saved."
+        NSSpeechRecognitionUsageDescription: "ABEL understands what you say on this Mac. Nothing is sent anywhere."
+        NSAppleEventsUsageDescription: "ABEL controls apps you allow in Abstract's Settings › ABEL, after reading each action back to you."
+    entitlements:
+      path: Abel/Resources/Abel.entitlements
+      properties:
+        com.apple.security.app-sandbox: false
+        com.apple.security.device.audio-input: true
+        com.apple.security.automation.apple-events: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: sh.abstract.abel
+        PRODUCT_NAME: Abel
+        MACOSX_DEPLOYMENT_TARGET: "26.0"
         ENABLE_HARDENED_RUNTIME: NO
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_IDENTITY: "-"

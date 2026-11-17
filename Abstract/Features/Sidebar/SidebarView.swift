@@ -846,6 +846,10 @@ struct RailChatRow: View {
     @ViewBuilder private var localActions: some View {
         Button("Rename") { draft = session.name; renaming = true }
         Button(session.pinnedAt == nil ? "Pin" : "Unpin") { model.setPinned(session.id, session.pinnedAt == nil) }
+        if model.abelInstalled {
+            let speaks = model.abelSpeaks(session.id)
+            Button(speaks ? "Stop Reading Replies Aloud" : "Read Replies Aloud") { model.setAbelSpeaks(session.id, !speaks) }
+        }
         Button(session.archivedAt == nil ? "Archive" : "Unarchive") { model.setArchived(session.id, session.archivedAt == nil) }
         if let path = session.worktreePath {
             Button(standalone ? "Reveal Folder in Finder" : "Reveal Worktree in Finder") {

@@ -63,6 +63,9 @@ enum SettingsSearchIndex {
         .init(.devices, "Mac and phone pairing", "Pair or manage devices.", anchor: "devices.pairing", terms: "nearby remote"),
         .init(.devices, "Internet access", "Let paired devices connect over the internet.", anchor: "devices.internet", terms: "invitation relay"),
         .init(.devices, "Device hosting", "Let paired devices use this Mac.", anchor: "devices.hosting", terms: "share"),
+        .init(.abel, "Install ABEL", "Add or remove the voice assistant that floats over every app.", anchor: "abel.install", terms: "voice assistant microphone dictation"),
+        .init(.abel, "Wake phrase", "Listen for “Hey Abel” instead of holding ⌥Space.", anchor: "abel.listening", terms: "hey abel ei abel language portuguese english orb"),
+        .init(.abel, "ABEL's voice", "Choose the voice ABEL reads replies with.", anchor: "abel.speaking", terms: "speak read aloud replies"),
         .init(.advanced, "Raw agent output", "Show unrecognized output for debugging.", anchor: "advanced.developer", terms: "developer"),
     ]
 

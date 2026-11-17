@@ -6,6 +6,8 @@ let package = Package(
     platforms: [.macOS(.v15)],
     products: [
         .library(name: "AbstractCore", targets: ["AbstractCore"]),
+        // ABEL's voice, panel and hands (ABS-203), for Abel.app.
+        .library(name: "AbelKit", targets: ["AbelKit"]),
         .executable(name: "abstract", targets: ["AbstractCLI"]),
     ],
     dependencies: [
@@ -16,6 +18,7 @@ let package = Package(
             name: "AbstractCore",
             dependencies: [.product(name: "GRDB", package: "GRDB.swift")]
         ),
+        .target(name: "AbelKit", dependencies: ["AbstractCore"]),
         // `abstract`, the command line. The app embeds it too (project.yml).
         .executableTarget(name: "AbstractCLI", dependencies: ["AbstractCore"]),
         // Sets up the test process itself: it ignores SIGPIPE, so one stray
@@ -27,5 +30,6 @@ let package = Package(
             dependencies: ["AbstractCore", "AbstractCLI", "TestProcess"],
             resources: [.copy("Fixtures")]
         ),
+        .testTarget(name: "AbelKitTests", dependencies: ["AbelKit", "AbstractCore", "TestProcess"]),
     ]
 )
