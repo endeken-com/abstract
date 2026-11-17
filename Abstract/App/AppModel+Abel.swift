@@ -62,13 +62,13 @@ extension AppModel {
         abelSettings = settings
         try? store.setSetting(AbelSettings.storeKey, settings)
         let storePath = storePath
-        Task.detached { _ = AbelLink.tell(AbelLink.HelperRequest(kind: .reload), storePath: storePath) }
+        DispatchQueue.global(qos: .utility).async { _ = AbelLink.tell(AbelLink.HelperRequest(kind: .reload), storePath: storePath) }
     }
 
     /// What ABEL says it's doing, for Settings › ABEL; nil when it isn't running.
     func abelStatus() async -> String? {
         let storePath = storePath
-        return await Task.detached { AbelLink.tell(AbelLink.HelperRequest(kind: .status), storePath: storePath)?.state }.value
+        return await AbelLink.offThePool { AbelLink.tell(AbelLink.HelperRequest(kind: .status), storePath: storePath)?.state }
     }
 
     // MARK: ABEL asking
@@ -121,7 +121,7 @@ extension AppModel {
         guard abelSettings.speaks(sessionId), let session = session(sessionId),
               let reply = feed(sessionId).timeline.lastReply else { return }
         let storePath = storePath, title = session.name
-        Task.detached {
+        DispatchQueue.global(qos: .utility).async {
             _ = AbelLink.tell(AbelLink.HelperRequest(kind: .speak, text: reply, chatId: sessionId, chatTitle: title),
                               storePath: storePath)
         }

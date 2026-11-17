@@ -398,7 +398,7 @@ final class Calls: @unchecked Sendable {
 /// `AppLink`, and Abstract asking ABEL over ABEL's own. Waits are long,
 /// for a busy CI runner.
 @Suite struct AbelLinkTests {
-    let wait: Int32 = 60_000
+    let wait: Int32 = 20_000
 
     func storePath() -> String {
         FileManager.default.temporaryDirectory.appendingPathComponent("abel-link-\(UUID().uuidString)/abstract.sqlite").path
@@ -417,11 +417,11 @@ final class Calls: @unchecked Sendable {
         })
         let server = try #require(made)
         defer { server.stop() }
-        let context = await Task.detached { AbelLink.ask(AbelLink.Request(kind: .context), storePath: path, timeoutMs: wait) }.value
+        let context = await AbelLink.offThePool { AbelLink.ask(AbelLink.Request(kind: .context), storePath: path, timeoutMs: wait) }
         #expect(context?.context?.shownChatTitle == "Sidebar fix")
-        let dictated = await Task.detached { AbelLink.ask(AbelLink.Request(kind: .dictate, text: "hi"), storePath: path, timeoutMs: wait) }.value
+        let dictated = await AbelLink.offThePool { AbelLink.ask(AbelLink.Request(kind: .dictate, text: "hi"), storePath: path, timeoutMs: wait) }
         #expect(dictated == AbelLink.Reply(ok: true, chatTitle: "hi"))
-        let sent = await Task.detached { AbelLink.ask(AbelLink.Request(kind: .sendDraft), storePath: path, timeoutMs: wait) }.value
+        let sent = await AbelLink.offThePool { AbelLink.ask(AbelLink.Request(kind: .sendDraft), storePath: path, timeoutMs: wait) }
         #expect(sent == .failed("Nothing to send."))
     }
 
@@ -430,14 +430,14 @@ final class Calls: @unchecked Sendable {
         let made = AppLink.Server(storePath: path, handler: { _ in AppLink.StartReply(agent: nil, message: nil) })
         let server = try #require(made)
         defer { server.stop() }
-        let reply = await Task.detached { AbelLink.ask(AbelLink.Request(kind: .context), storePath: path, timeoutMs: wait) }.value
+        let reply = await AbelLink.offThePool { AbelLink.ask(AbelLink.Request(kind: .context), storePath: path, timeoutMs: wait) }
         #expect(reply?.ok == false)
     }
 
     @Test func noAbstractMeansNoReply() async {
         let path = storePath()
-        #expect(await Task.detached { AbelLink.ask(AbelLink.Request(kind: .context), storePath: path) }.value == nil)
-        #expect(await Task.detached { AbelLink.tell(AbelLink.HelperRequest(kind: .status), storePath: path) }.value == nil)
+        #expect(await AbelLink.offThePool { AbelLink.ask(AbelLink.Request(kind: .context), storePath: path) } == nil)
+        #expect(await AbelLink.offThePool { AbelLink.tell(AbelLink.HelperRequest(kind: .status), storePath: path) } == nil)
     }
 
     @Test func abstractAsksABEL() async throws {
@@ -448,10 +448,10 @@ final class Calls: @unchecked Sendable {
         }
         let server = try #require(made)
         defer { server.stop() }
-        let reply = await Task.detached {
+        let reply = await AbelLink.offThePool {
             AbelLink.tell(AbelLink.HelperRequest(kind: .speak, text: "Done.", chatTitle: "Sidebar fix"), storePath: path,
                           timeoutMs: wait)
-        }.value
+        }
         #expect(reply == AbelLink.HelperReply(ok: true, message: "Done.", state: "speak"))
         // One ABEL per data folder.
         let second = AbelLink.LineServer<AbelLink.HelperRequest, AbelLink.HelperReply>(

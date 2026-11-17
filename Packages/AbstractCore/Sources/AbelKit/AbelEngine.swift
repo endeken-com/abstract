@@ -15,7 +15,7 @@ public struct LinkedAbstract: AbstractConnection {
 
     public func ask(_ request: AbelLink.Request) async -> AbelLink.Reply? {
         let storePath = storePath
-        return await Task.detached { AbelLink.ask(request, storePath: storePath) }.value
+        return await AbelLink.offThePool { AbelLink.ask(request, storePath: storePath) }
     }
 }
 

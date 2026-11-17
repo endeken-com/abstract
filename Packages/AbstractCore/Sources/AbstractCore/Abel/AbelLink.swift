@@ -16,6 +16,15 @@ public enum AbelLink {
     /// Where Abel.app sits inside Abstract.app.
     public static let bundledPath = "Contents/Library/LoginItems/Abel.app"
 
+    /// Runs blocking socket work on a GCD thread, never on Swift's
+    /// cooperative pool: a pool thread waiting on a reply could be the one
+    /// the reply needs, and on a small machine every thread is.
+    public static func offThePool<T: Sendable>(_ work: @escaping @Sendable () -> T) async -> T {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async { continuation.resume(returning: work()) }
+        }
+    }
+
     // MARK: ABEL asking Abstract
 
     /// What ABEL asks Abstract.
