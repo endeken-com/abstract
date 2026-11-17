@@ -36,14 +36,59 @@ public enum AbelLink {
             case dictate
             /// Send the reply box of the chat on screen (or `chatId`), as Send would.
             case sendDraft
+            /// Show `chatId` in Abstract's window (ABS-204).
+            case open
+            /// `chatId`'s last reply, as Markdown, in `text`.
+            case reply
+            /// The first request waiting for an answer in `chatId` (or any chat), in `pending`.
+            case pending
+            /// Answer `requestId` in `chatId`: `allow` or decline.
+            case answer
+            /// Stop `chatId`'s agent.
+            case stop
+            /// Pause every agent.
+            case pauseAll
+            /// Start a chat in `projectId` (or one of its own) with `text` as its prompt.
+            case startChat
+            /// Send `text` to `chatId` as a follow-up.
+            case tell
+            /// Open the screen where you do what ABEL won't: `screen` is `pullRequest` or `chat`.
+            case showScreen
+            /// Ask ABEL's own chat `text`; its answer is read aloud when it's done.
+            case ask
         }
 
         public var kind: Kind
         public var chatId: String?
         public var text: String?
+        public var requestId: String?
+        public var allow: Bool?
+        public var projectId: String?
+        public var screen: String?
 
-        public init(kind: Kind, chatId: String? = nil, text: String? = nil) {
-            self.kind = kind; self.chatId = chatId; self.text = text
+        public init(kind: Kind, chatId: String? = nil, text: String? = nil, requestId: String? = nil, allow: Bool? = nil,
+                    projectId: String? = nil, screen: String? = nil) {
+            self.kind = kind; self.chatId = chatId; self.text = text; self.requestId = requestId; self.allow = allow
+            self.projectId = projectId; self.screen = screen
+        }
+    }
+
+    /// A request waiting in a chat, as ABEL reads it back.
+    public struct Pending: Codable, Sendable, Equatable {
+        public var chatId: String
+        public var chatTitle: String
+        public var requestId: String
+        /// What answering yes lets through, in words: "run `swift test`".
+        public var summary: String
+        /// A question to answer in the chat, not a yes or no.
+        public var isQuestion: Bool
+        /// Too long or tangled to read back whole: only answered on screen.
+        public var onScreenOnly: Bool
+
+        public init(chatId: String, chatTitle: String, requestId: String, summary: String, isQuestion: Bool = false,
+                    onScreenOnly: Bool = false) {
+            self.chatId = chatId; self.chatTitle = chatTitle; self.requestId = requestId; self.summary = summary
+            self.isQuestion = isQuestion; self.onScreenOnly = onScreenOnly
         }
     }
 
@@ -55,9 +100,15 @@ public enum AbelLink {
         public var context: Context?
         /// The chat the request acted on.
         public var chatTitle: String?
+        public var chatId: String?
+        /// A reply's Markdown, for `reply`.
+        public var text: String?
+        public var pending: Pending?
 
-        public init(ok: Bool, message: String? = nil, context: Context? = nil, chatTitle: String? = nil) {
+        public init(ok: Bool, message: String? = nil, context: Context? = nil, chatTitle: String? = nil,
+                    chatId: String? = nil, text: String? = nil, pending: Pending? = nil) {
             self.ok = ok; self.message = message; self.context = context; self.chatTitle = chatTitle
+            self.chatId = chatId; self.text = text; self.pending = pending
         }
 
         public static func failed(_ message: String) -> Reply { Reply(ok: false, message: message) }
@@ -75,12 +126,28 @@ public enum AbelLink {
         public var settings: AbelSettings
         /// The theme Abstract is drawn in, so the orb matches it.
         public var themeId: String?
+        /// This Mac's chats (needing you first) and projects (ABS-204).
+        public var chats: [AbelChatInfo]
+        public var projects: [AbelProjectInfo]
 
         public init(shownChatId: String? = nil, shownChatTitle: String? = nil, isFrontmost: Bool = false,
                     vocabulary: AbelVocabulary = AbelVocabulary(), settings: AbelSettings = AbelSettings(),
-                    themeId: String? = nil) {
+                    themeId: String? = nil, chats: [AbelChatInfo] = [], projects: [AbelProjectInfo] = []) {
             self.shownChatId = shownChatId; self.shownChatTitle = shownChatTitle; self.isFrontmost = isFrontmost
             self.vocabulary = vocabulary; self.settings = settings; self.themeId = themeId
+            self.chats = chats; self.projects = projects
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            shownChatId = try c.decodeIfPresent(String.self, forKey: .shownChatId)
+            shownChatTitle = try c.decodeIfPresent(String.self, forKey: .shownChatTitle)
+            isFrontmost = try c.decodeIfPresent(Bool.self, forKey: .isFrontmost) ?? false
+            vocabulary = try c.decodeIfPresent(AbelVocabulary.self, forKey: .vocabulary) ?? AbelVocabulary()
+            settings = try c.decodeIfPresent(AbelSettings.self, forKey: .settings) ?? AbelSettings()
+            themeId = try c.decodeIfPresent(String.self, forKey: .themeId)
+            chats = try c.decodeIfPresent([AbelChatInfo].self, forKey: .chats) ?? []
+            projects = try c.decodeIfPresent([AbelProjectInfo].self, forKey: .projects) ?? []
         }
     }
 
@@ -113,15 +180,21 @@ public enum AbelLink {
             case reload
             /// What ABEL heard, did and said lately, newest last, as JSON in `message`.
             case history
+            /// A tool call from ABEL's chat (ABS-204): `name`, with `text` its arguments as JSON.
+            case tool
+            /// `text`, acted on as if ABEL heard it (debug builds only: demos and checks).
+            case hear
         }
 
         public var kind: Kind
         public var text: String?
         public var chatId: String?
         public var chatTitle: String?
+        /// The tool, for `tool`.
+        public var name: String?
 
-        public init(kind: Kind, text: String? = nil, chatId: String? = nil, chatTitle: String? = nil) {
-            self.kind = kind; self.text = text; self.chatId = chatId; self.chatTitle = chatTitle
+        public init(kind: Kind, text: String? = nil, chatId: String? = nil, chatTitle: String? = nil, name: String? = nil) {
+            self.kind = kind; self.text = text; self.chatId = chatId; self.chatTitle = chatTitle; self.name = name
         }
     }
 

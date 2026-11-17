@@ -43,7 +43,8 @@ struct DebugRun {
         switch mode {
         case let .simulate(transcripts):
             if let speechOut { try? FileManager.default.createDirectory(at: speechOut, withIntermediateDirectories: true) }
-            let report = await AbelSimulation.run(transcripts, language: language, abstract: LinkedAbstract(), renderTo: speechOut)
+            let report = await AbelSimulation.run(transcripts, language: language, abstract: LinkedAbstract(), renderTo: speechOut,
+                                                  trigger: wake ? .wakePhrase : .pushToTalk)
             // Rendering into files finishes in the background.
             if speechOut != nil { try? await Task.sleep(for: .seconds(3)) }
             print(json(report))
@@ -107,6 +108,8 @@ struct DebugRun {
             ("listening", AbelDisplay(mode: .listening, words: "add a test for the sidebar grouping")),
             ("answering", AbelDisplay(mode: .answering, words: "",
                                       answer: "Sidebar fix says: I added a test for the grouping, and 12 lines of code.")),
+            ("asking", AbelDisplay(mode: .answering, words: "approve",
+                                   answer: "Let Sidebar fix run swift test? Say yes to allow.")),
             ("paused", AbelDisplay(mode: .paused, answer: AbelMachine.PauseReason.screenShared.sentence)),
         ]
         var written: [String] = []

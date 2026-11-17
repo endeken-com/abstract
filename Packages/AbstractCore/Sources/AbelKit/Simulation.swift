@@ -107,14 +107,14 @@ public enum AbelSimulation {
     }
 
     public static func run(_ transcripts: [String], language: String, abstract: any AbstractConnection,
-                           renderTo: URL? = nil) async -> Report {
+                           renderTo: URL? = nil, trigger: AbelMachine.Trigger = .pushToTalk) async -> Report {
         let voice = RecordingVoice(renderTo: renderTo)
         let engine = AbelEngine(ears: QuietEars(), voice: voice, abstract: abstract)
         engine.lingering = .milliseconds(10)
         await engine.start()
         var panel: [String] = []
         for transcript in transcripts {
-            await engine.simulate(transcript, language: language)
+            await engine.simulate(transcript, language: language, trigger: trigger)
             panel.append(engine.display.mode.rawValue)
             // Let a reply that's being spoken settle.
             try? await Task.sleep(for: .milliseconds(50))

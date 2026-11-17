@@ -100,6 +100,8 @@ extension AppModel {
             // The chat's own Send does it, review comments and all.
             NotificationCenter.default.post(name: Self.abelSendDraft, object: chatId)
             return AbelLink.Reply(ok: true, chatTitle: session.name)
+        default:
+            return await answerAbelCommand(request)
         }
     }
 
@@ -111,7 +113,10 @@ extension AppModel {
         let shown = selectedSessionId.flatMap { session($0) }
         return AbelLink.Context(shownChatId: shown?.id, shownChatTitle: shown?.name, isFrontmost: NSApp.isActive,
                                 vocabulary: vocabulary, settings: abelSettings,
-                                themeId: ThemeState.shared.theme(for: NSApp.effectiveAppearance).id)
+                                themeId: ThemeState.shared.theme(for: NSApp.effectiveAppearance).id,
+                                chats: abelChats(), projects: projects.filter { $0.archivedAt == nil }.map {
+                                    AbelProjectInfo(id: $0.id, name: $0.name)
+                                })
     }
 
     // MARK: Reading replies aloud

@@ -1,0 +1,105 @@
+# What the on-device recognizer heard (synthetic `say` voices, ABS-202/204), and what ABEL should do.
+# Columns: heard <TAB> expected. Expected: a command, `name:` resolved against the test chats and
+# projects; `chat` = goes to ABEL's chat; `unknown:<kind>` = a command whose name matches nothing.
+What needs me?	whatNeedsMe
+Was waiting for me?	whatNeedsMe
+What's waiting for me?	whatNeedsMe
+What needs my attention?	whatNeedsMe
+Okay, what needs me?	whatNeedsMe
+O que precisa de mim?	whatNeedsMe
+Por que precisa de mim?	whatNeedsMe
+Open sidebar fix.	open:Sidebar fix
+Open the sidebar fix chat.	open:Sidebar fix
+Open the sidebar fixed chat.	open:Sidebar fix
+Go to pallet overlay.	open:Palette overlay
+Go to palette overlay.	open:Palette overlay
+Open nightly catalog.	open:Nightly catalog
+Open the chat about the plug-in catalog.	open:Plugin catalog
+Open the shadow about the blue jen catalog.	unknown:open
+Open catalog.	ambiguous:open
+Abrir sair de Bar Fix.	open:Sidebar fix
+Abrir sidebar fix.	open:Sidebar fix
+Open worktree naming.	open:Worktree naming
+Open work tree naming.	open:Worktree naming
+Show me the gemini transport chat.	open:Gemini transport
+Switch to revund review.	open:Revund review
+Open mobile push notifications.	open:Mobile push notifications
+Next one.	next
+Next.	next
+Próximo	next
+The next one.	next
+Read the last reply.	readLast:-
+Read the last reply in nightly catalog.	readLast:Nightly catalog
+Read the last reply under one chat.	unknown:readLast
+Read the last reply in the revund chat.	readLast:Revund review
+Ler a última resposta.	readLast:-
+Read it.	readLast:-
+Continue.	continue
+Keep reading.	continue
+Continuar	continue
+Approved.	approve:-
+Approve it.	approve:-
+Approve.	approve:-
+Aprovar	approve:-
+Approve sidebar fix.	approve:Sidebar fix
+Allow it.	approve:-
+Deny.	deny:-
+Decline that.	deny:-
+Negar	deny:-
+Deny the palette overlay request.	deny:Palette overlay
+Stop.	stop:-
+Stop sidebar fix.	stop:Sidebar fix
+Stop the agent and work renaming.	stop:Worktree naming
+Stop the agent in worktree naming.	stop:Worktree naming
+Parar	stop:-
+Stop using the old API.	unknown:stop
+Cause everything.	pauseEverything
+Pause everything.	pauseEverything
+Pause all agents.	pauseEverything
+Pausar tudo	pauseEverything
+How was everything?	unknown:status
+Status of palid overlay.	status:Palette overlay
+Status of palette overlay.	status:Palette overlay
+Status of Gemini transport.	status:Gemini transport
+Status of the nightly catalog chat.	status:Nightly catalog
+How was the sidebar fix doing?	status:Sidebar fix
+How is the sidebar fix doing?	status:Sidebar fix
+Status do Palete Overlay.	status:Palette overlay
+Status of the weather.	unknown:status
+Start a chat in abstract to fix the palette overlay.	start:Abstract|fix the palette overlay
+Start a chat in Abstract to make the orb draggable.	start:Abstract|make the orb draggable
+Start a new chat in backtick to add a dark mode toggle.	start:Backtick|add a dark mode toggle
+Start a chat in payments API to retry failed webhooks.	start:payments-api|retry failed webhooks
+Started shattered back to add a dark mode igle.	chat
+Start a chat to write release notes.	start:-|write release notes
+Iniciar um chat no Abstract para corrigir o overlay da paleta.	start:Abstract|corrigir o overlay da paleta
+Iniciar um chat no Ara para corrigir o overly da paleta.	unknown:start
+Start a chat in the moon to fix gravity.	unknown:start
+Tell sidebar fix to add a test for the grouping.	tell:Sidebar fix|add a test for the grouping
+Tell palette overlay to use the new colors.	tell:Palette overlay|use the new colors
+Phil palette overlay, they use the new colors.	chat
+Tell Claude to use XCTest instead of Swift Testing.	unknown:tell
+Diga ao sidebar fix para adicionar um teste.	tell:Sidebar fix|adicionar um teste
+Diga o que de Barões para desligar o teste.	unknown:tell
+Ask nightly catalog to rerun the build.	tell:Nightly catalog|rerun the build
+Merge it.	forbidden:merge
+Merge the PR.	forbidden:merge
+Faz o Merge	forbidden:merge
+Push the branch.	forbidden:push
+Push it.	forbidden:push
+Turn on full autonomy.	forbidden:fullAutonomy
+Delete the sidebar fixed chat.	forbidden:delete|Sidebar fix
+Delete it.	forbidden:delete
+Yes.	yes
+Yeah.	yes
+Sim	yes
+No.	no
+Não	no
+Send it.	sendIt
+Enviar	sendIt
+Envia	sendIt
+Which chats touched the plug-in catalog this week?	chat
+Summarize what the nightly catalog changed.	chat
+Quais chats mexeram no catálogo de plugins esta semana?	chat
+Open the PR for the palette chat.	unknown:open
+Run shortcut stand up.	chat

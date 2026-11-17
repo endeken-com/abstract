@@ -397,6 +397,9 @@ final class AppModel {
     var abelSettings = AbelSettings()
     /// Whether ABEL is installed, can't run here, or waits for approval.
     var abelState: AbelInstaller.State = .notInstalled
+    /// The one-off profile id of ABEL's chat while it starts: its agent gets
+    /// ABEL's tools before the chat's id is saved.
+    @ObservationIgnored var abelStartingProfile: String?
     /// Chats whose agent was just started for `abstract`, waiting to be up.
     @ObservationIgnored var startWaits: [String: CheckedContinuation<AgentStart.Outcome, Never>] = [:]
     @ObservationIgnored private var configuredModels: [String: (model: String?, read: Date)] = [:]
@@ -1177,6 +1180,7 @@ final class AppModel {
             if FileManager.default.isExecutableFile(atPath: tool) { settings.branchCommand = tool }
         }
         settings.pluginToolsCommand = pluginToolsCommand(for: session)
+        settings.abelToolsCommand = abelToolsCommand(for: session)
         settings.addSkills(for: session, project: project(session.projectId), profile: profile(session.profileId),
                            sources: skillSources, dataDirectory: dataDirectory)
         settings.environment.merge(projectIssueTrackers(session.projectId).environment) { $1 }

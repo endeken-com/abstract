@@ -12,7 +12,8 @@ final class FakeAbstract: AbstractConnection, @unchecked Sendable {
     var context: AbelLink.Context?
     var replies: [AbelLink.Request.Kind: AbelLink.Reply] = [:]
 
-    init(context: AbelLink.Context? = AbelLink.Context(shownChatId: "chat-1", shownChatTitle: "Sidebar fix")) {
+    /// By default Abstract is in front, showing Sidebar fix: holding the key dictates.
+    init(context: AbelLink.Context? = AbelLink.Context(shownChatId: "chat-1", shownChatTitle: "Sidebar fix", isFrontmost: true)) {
         self.context = context
     }
 
@@ -73,7 +74,7 @@ func eventually(_ condition: () -> Bool) async {
     }
 
     @Test func sendingOnTheWakePhraseIsReadBackAndNeedsYes() async {
-        var context = AbelLink.Context(shownChatId: "chat-1", shownChatTitle: "Sidebar fix")
+        var context = AbelLink.Context(shownChatId: "chat-1", shownChatTitle: "Sidebar fix", isFrontmost: true)
         context.settings.wakePhrase = true
         let abstract = FakeAbstract(context: context)
         let engine = await engine(abstract)
@@ -129,7 +130,7 @@ func eventually(_ condition: () -> Bool) async {
         let engine = await engine(FakeAbstract(context: AbelLink.Context()))
         await engine.simulate("escreva isso", language: "pt-BR")
         #expect(voice.spoken.first?.language == "pt-BR")
-        #expect(voice.spoken.first?.text == AbelPhrases(language: "pt-BR").openAChat)
+        #expect(voice.spoken.first?.text == AbelPhrases(language: "pt-BR").askingABEL)
     }
 
     @Test func readsAFinishedReplyWithoutItsCode() async {
@@ -183,7 +184,7 @@ func eventually(_ condition: () -> Bool) async {
     }
 
     @Test func followsTheWakePhraseSettingFromAbstract() async {
-        var context = AbelLink.Context(shownChatId: "chat-1", shownChatTitle: "Sidebar fix")
+        var context = AbelLink.Context(shownChatId: "chat-1", shownChatTitle: "Sidebar fix", isFrontmost: true)
         context.settings = AbelSettings(wakePhrase: true, languages: ["en-US", "pt-BR"])
         let abstract = FakeAbstract(context: context)
         let engine = await engine(abstract)
@@ -195,8 +196,9 @@ func eventually(_ condition: () -> Bool) async {
         #expect(engine.stateSentence == "Hold ⌥Space to talk.")
     }
 
-    @Test func aWakeThenACommandDictates() async {
-        var context = AbelLink.Context(shownChatId: "chat-1", shownChatTitle: "Sidebar fix")
+    /// The wake phrase gives commands (ABS-204): what isn't one goes to ABEL's chat.
+    @Test func aWakeThenAQuestionGoesToABELsChat() async {
+        var context = AbelLink.Context(shownChatId: "chat-1", shownChatTitle: "Sidebar fix", isFrontmost: true)
         context.settings.wakePhrase = true
         let abstract = FakeAbstract(context: context)
         let engine = await engine(abstract)
@@ -205,7 +207,7 @@ func eventually(_ condition: () -> Bool) async {
         #expect(ears.calls.last == "capture wakePhrase")
         ears.onFinal?("add a test", "en-US")
         await eventually { !abstract.acting.isEmpty }
-        #expect(abstract.acting.first?.kind == .dictate)
+        #expect(abstract.acting.first?.kind == .ask)
     }
 
     @Test func nothingHeardSaysSo() async {

@@ -10,7 +10,7 @@ import SwiftUI
 ///
 /// Debug builds also take:
 ///
-///     Abel --simulate "<what you said>" [--simulate "<next>"…] [--language pt-BR] [--speech-out <dir>]
+///     Abel --simulate "<what you said>" [--simulate "<next>"…] [--wake] [--language pt-BR] [--speech-out <dir>]
 ///     Abel --simulate-audio <file>… [--wake] [--language pt-BR]
 ///     Abel --snapshot <dir> [--resources <Abstract.app/Contents/Resources>]
 ///
