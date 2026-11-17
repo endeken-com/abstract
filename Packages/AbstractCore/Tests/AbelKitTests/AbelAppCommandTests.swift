@@ -149,16 +149,18 @@ final class FakeAppControl: AppControlling {
         let engine = await engine()
         async let first = tool(engine, "open_url", #"{"url":"https://example.com"}"#)
         async let second = tool(engine, "run_shortcut", #"{"name":"standup"}"#)
+        // Whichever asks first is answered, then the other asks.
         await waitForQuestion(engine)
+        let firstQuestion = said
         await engine.simulate("yes", trigger: .wakePhrase)
-        for _ in 0..<200 where !(engine.isWaitingForYes && said?.contains("shortcut") == true) {
+        for _ in 0..<300 where !(engine.isWaitingForYes && said != firstQuestion) {
             try? await Task.sleep(for: .milliseconds(10))
         }
-        #expect(said == "Run the shortcut Standup? Say yes to run it.")
+        #expect(Set([firstQuestion, said]) == ["Open example.com? Say yes to open.", "Run the shortcut Standup? Say yes to run it."])
         await engine.simulate("yes", trigger: .wakePhrase)
         #expect(await first.ok)
         #expect(await second.ok)
-        #expect(apps.did == ["open https://example.com", "shortcut Standup"])
+        #expect(Set(apps.did) == ["open https://example.com", "shortcut Standup"])
     }
 
     @Test func aLongScriptIsRefusedRatherThanCutShort() async {

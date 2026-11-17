@@ -149,6 +149,10 @@ extension AbelEngine {
                 let gate = await mayAct(.open, app: Self.finder.bundleId, name: Self.finder.name, action: "open",
                                         question: say.openAsk(url.lastPathComponent))
                 guard gate.ok else { return (gate.why ?? "Not done.", true) }
+                // Checked again after the yes: what's opened is still what was checked.
+                guard AbelAppChecks.openable(url.path, home: NSHomeDirectory()).url == url else {
+                    return ("That file changed while ABEL asked. Nothing was opened.", true)
+                }
                 try await control.open(url: url)
                 return done("Opened \(url.lastPathComponent)", "Opened \(url.path).")
             case "run_shortcut":

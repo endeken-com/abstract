@@ -122,6 +122,10 @@ import Testing
         #"tell application "Notes" to activate -- comment"#,
         #"tell application "Notes" to set x to (read POSIX file "/etc/hosts")"#,
         #"tell application "Notes" to open for access "x""#,
+        #"tell application "Notes" to tell application id "com.apple.mail" to activate"#,
+        #"tell application "Notes" to get name of application file "x""#,
+        "tell application \"Notes\"\nget name of application id \"com.apple.Safari\"\nend tell",
+        #"tell app "Notes" to tell app "Mail" to activate"#,
         "tell application \"Notes\" to make new note with properties {body:\"" + String(repeating: "x", count: 90) + "\"}",
     ])
     func scriptsThatReachFurtherAreRefused(_ script: String) {

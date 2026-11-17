@@ -177,13 +177,18 @@ public enum AbelAppChecks {
         func matches(_ regex: NSRegularExpression?, _ line: String) -> Bool {
             regex?.firstMatch(in: line, range: NSRange(location: 0, length: (line as NSString).length)) != nil
         }
-        let tells = body.filter { $0.lowercased().hasPrefix("tell ") || $0.lowercased().contains(" tell ") }.count
-        if body.count == 1, matches(oneLine, first) { return nil }
-        guard matches(opens, first), body.last?.lowercased() == "end tell", tells == 1,
-              !body.dropFirst().dropLast().contains(where: { $0.lowercased().hasPrefix("end tell") }),
-              !folded.contains("application \"") || folded.components(separatedBy: "application \"").count == 2,
-              !folded.contains("app \"") || folded.components(separatedBy: "app \"").count <= 2 else {
-            return "ABEL runs one block, tell application \"\(app)\" … end tell, with nothing outside it."
+        // The app is named exactly once, as the one `tell` target: no second
+        // tell, no `application id`, `application file` or `of application`.
+        let appWords = (try? NSRegularExpression(pattern: #"\b(?:application|app)\b"#, options: [.caseInsensitive]))?
+            .numberOfMatches(in: script, range: NSRange(location: 0, length: (script as NSString).length)) ?? 0
+        let tellWords = (try? NSRegularExpression(pattern: #"\btell\b"#, options: [.caseInsensitive]))?
+            .numberOfMatches(in: script, range: NSRange(location: 0, length: (script as NSString).length)) ?? 0
+        let oneBlock = "ABEL runs one block, tell application \"\(app)\" … end tell, naming no other app."
+        guard appWords == 1 else { return oneBlock }
+        if body.count == 1 { return matches(oneLine, first) && tellWords == 1 ? nil : oneBlock }
+        guard matches(opens, first), body.last?.lowercased() == "end tell", tellWords == 2,
+              !body.dropFirst().dropLast().contains(where: { $0.lowercased().contains("end tell") }) else {
+            return oneBlock
         }
         return nil
     }
