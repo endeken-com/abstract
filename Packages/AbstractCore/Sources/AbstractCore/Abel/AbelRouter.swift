@@ -50,6 +50,10 @@ public struct AbelPhrases: Sendable {
     public func replied(_ chat: String) -> String { portuguese ? "\(chat) respondeu:" : "\(chat) says:" }
     public var listening: String { portuguese ? "Ouvindo…" : "Listening…" }
     public var notHeard: String { portuguese ? "Não ouvi nada." : "I didn't catch that." }
+    public func confirmSend(_ chat: String) -> String {
+        portuguese ? "Enviar a caixa de resposta de \(chat)? Diga sim para enviar." : "Send the reply box of \(chat)? Say yes to send."
+    }
+    public var cancelled: String { portuguese ? "Cancelado." : "Cancelled." }
 }
 
 /// Dictated words added to a reply box.
@@ -61,5 +65,19 @@ public enum AbelDictation {
         guard !words.isEmpty else { return draft }
         guard let last = draft.last else { return words }
         return last.isWhitespace ? draft + words : draft + " " + words
+    }
+}
+
+/// "Yes" and "no" to something ABEL read back, in English or Portuguese.
+/// Anything else counts as no: an action that needs "yes" only happens
+/// on a clear yes.
+public enum AbelConfirmation {
+    static let yes: Set<String> = [
+        "yes", "yeah", "yep", "yes please", "yes do it", "do it", "confirm", "confirmed", "go ahead", "yes go ahead",
+        "sim", "pode", "pode sim", "sim pode", "confirmo", "confirma", "manda ver",
+    ]
+
+    public static func isYes(_ text: String) -> Bool {
+        yes.contains(AbelText.normalized(text))
     }
 }

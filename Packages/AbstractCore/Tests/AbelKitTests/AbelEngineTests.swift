@@ -72,6 +72,44 @@ func eventually(_ condition: () -> Bool) async {
         #expect(abstract.acting == [AbelLink.Request(kind: .sendDraft, chatId: "chat-1")])
     }
 
+    @Test func sendingOnTheWakePhraseIsReadBackAndNeedsYes() async {
+        var context = AbelLink.Context(shownChatId: "chat-1", shownChatTitle: "Sidebar fix")
+        context.settings.wakePhrase = true
+        let abstract = FakeAbstract(context: context)
+        let engine = await engine(abstract)
+        await engine.simulate("send it", trigger: .wakePhrase)
+        #expect(abstract.acting.isEmpty)
+        #expect(voice.spoken.last?.text == "Send the reply box of Sidebar fix? Say yes to send.")
+        #expect(engine.isWaitingForYes)
+        // Once the question is said, ABEL listens for the answer without the wake phrase.
+        voice.finish()
+        #expect(ears.calls.last == "capture wakePhrase")
+        await engine.simulate("yes", trigger: .wakePhrase)
+        #expect(abstract.acting == [AbelLink.Request(kind: .sendDraft, chatId: "chat-1")])
+        #expect(!engine.isWaitingForYes)
+    }
+
+    @Test func anythingButYesCancels() async {
+        let abstract = FakeAbstract()
+        let engine = await engine(abstract)
+        await engine.simulate("send it", trigger: .wakePhrase)
+        await engine.simulate("send it now", trigger: .wakePhrase)
+        #expect(abstract.acting.isEmpty)
+        #expect(voice.spoken.last?.text == "Cancelled.")
+        #expect(engine.history.contains { $0.kind == .refused })
+    }
+
+    @Test func aLateYesDoesNothing() async {
+        let abstract = FakeAbstract()
+        let engine = await engine(abstract)
+        engine.confirmationWindow = .zero
+        await engine.simulate("envia", language: "pt-BR", trigger: .wakePhrase)
+        #expect(voice.spoken.last?.text == "Enviar a caixa de resposta de Sidebar fix? Diga sim para enviar.")
+        await engine.simulate("sim", language: "pt-BR", trigger: .wakePhrase)
+        #expect(abstract.acting.isEmpty)
+        #expect(voice.spoken.last?.text == "Cancelado.")
+    }
+
     @Test func saysWhyWhenAbstractRefuses() async {
         let abstract = FakeAbstract()
         abstract.replies[.sendDraft] = .failed("The reply box of “Sidebar fix” is empty.")

@@ -225,6 +225,11 @@ import Testing
             == .say(AbelPhrases(language: "pt-BR").openAChat))
     }
 
+    @Test func onlyAClearYesIsYes() {
+        for yes in ["Yes.", "yeah", "Sim!", "pode sim", "go ahead"] { #expect(AbelConfirmation.isYes(yes)) }
+        for no in ["no", "yes but not now", "send it", "", "não", "simulate"] { #expect(!AbelConfirmation.isYes(no)) }
+    }
+
     @Test func dictationJoinsTakes() {
         #expect(AbelDictation.appending("add a test", to: "") == "add a test")
         #expect(AbelDictation.appending("for grouping", to: "add a test") == "add a test for grouping")

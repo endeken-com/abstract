@@ -72,6 +72,16 @@ public final class AbelEngine {
     @ObservationIgnored private let abstract: any AbstractConnection
     @ObservationIgnored private var lastLanguage: String
     @ObservationIgnored private var collapseTask: Task<Void, Never>?
+    /// Something ABEL read back and waits on "yes" for.
+    @ObservationIgnored private var pending: Pending?
+    /// How long a read-back waits for "yes".
+    @ObservationIgnored public var confirmationWindow: Duration = .seconds(10)
+
+    private struct Pending {
+        var asked: Date
+        var language: String
+        var run: @MainActor () async -> Void
+    }
     /// How long the panel stays open after ABEL finishes speaking.
     @ObservationIgnored public var lingering: Duration = .seconds(4)
     /// Called when the settings Abstract handed over change, so they can be kept.
@@ -91,7 +101,7 @@ public final class AbelEngine {
         ears.onSilence = { [weak self] in self?.send(.silence) }
         ears.onTalk = { [weak self] in self?.send(.talkedOver) }
         ears.onProblem = { [weak self] problem in self?.problem(problem) }
-        voice.onFinished = { [weak self] in self?.send(.speechFinished) }
+        voice.onFinished = { [weak self] in self?.spoke() }
     }
 
     /// Asks Abstract for its settings and starts the wake listener if it's on.
@@ -114,10 +124,13 @@ public final class AbelEngine {
     public func pause(_ on: Bool) { send(.pausedByYou(on)) }
 
     /// What you said, taken as if heard: `Abel --simulate` and tests.
-    public func simulate(_ text: String, language: String? = nil) async {
+    public func simulate(_ text: String, language: String? = nil, trigger: AbelMachine.Trigger = .pushToTalk) async {
         record(.heard, text)
-        await handle(text, language: language ?? settings.languages.first ?? "en-US")
+        await handle(text, language: language ?? settings.languages.first ?? "en-US", trigger: trigger)
     }
+
+    /// Whether ABEL is waiting for "yes" to something it read back.
+    public var isWaitingForYes: Bool { pending != nil }
 
     // MARK: Abstract and `abstract` asking ABEL
 
@@ -181,11 +194,11 @@ public final class AbelEngine {
             case .stopSpeaking:
                 voice.stop()
                 ears.setBargeIn(false)
-            case let .handle(text, _):
+            case let .handle(text, trigger):
                 record(.heard, text)
                 display.words = text
                 display.mode = .thinking
-                Task { await handle(text, language: lastLanguage) }
+                Task { await handle(text, language: lastLanguage, trigger: trigger) }
             case .startWakeListener:
                 ears.setWakeListening(true, languages: settings.languages, vocabulary: context?.vocabulary.contextualStrings ?? [])
             case .stopWakeListener:
@@ -199,6 +212,14 @@ public final class AbelEngine {
                 display = AbelDisplay(mode: .paused, answer: reason.sentence)
             }
         }
+    }
+
+    /// ABEL finished speaking: after a question, it listens for the answer.
+    private func spoke() {
+        send(.speechFinished)
+        guard awaitingYes else { return }
+        awaitingYes = false
+        if settings.wakePhrase, !machine.isPaused { send(.wake(command: "")) }
     }
 
     private func heardSoFar(_ words: String) {
@@ -228,16 +249,36 @@ public final class AbelEngine {
 
     // MARK: Doing what was said
 
-    func handle(_ text: String, language: String) async {
+    func handle(_ text: String, language: String, trigger: AbelMachine.Trigger) async {
         lastLanguage = language
+        if let waiting = pending {
+            pending = nil
+            if AbelConfirmation.isYes(text), Date().timeIntervalSince(waiting.asked) < Double(confirmationWindow.components.seconds) {
+                await waiting.run()
+            } else {
+                record(.refused, "Didn't hear yes, so nothing was done")
+                say(AbelPhrases(language: language).cancelled)
+            }
+            return
+        }
         await refreshContext()
         switch AbelRouter.route(text, context: context, language: language) {
         case let .dictate(chatId, words):
             let reply = await abstract.ask(AbelLink.Request(kind: .dictate, chatId: chatId, text: words))
             finish(reply, done: { AbelPhrases(language: language).dictated($0) }, record: "Put “\(words)” in the reply box")
         case let .sendDraft(chatId):
-            let reply = await abstract.ask(AbelLink.Request(kind: .sendDraft, chatId: chatId))
-            finish(reply, done: { AbelPhrases(language: language).sent($0) }, record: "Sent the reply box")
+            let send: @MainActor () async -> Void = { [weak self] in
+                guard let self else { return }
+                let reply = await self.abstract.ask(AbelLink.Request(kind: .sendDraft, chatId: chatId))
+                self.finish(reply, done: { AbelPhrases(language: language).sent($0) }, record: "Sent the reply box")
+            }
+            // Holding the key is you; the wake phrase could be a TV. Sending
+            // on the wake phrase is read back and needs "yes".
+            if trigger == .wakePhrase {
+                ask(AbelPhrases(language: language).confirmSend(context?.shownChatTitle ?? "the chat"), language: language, then: send)
+            } else {
+                await send()
+            }
         case let .say(sentence):
             say(sentence)
         }
@@ -252,6 +293,16 @@ public final class AbelEngine {
         display = AbelDisplay(mode: .answering, words: display.words, answer: done(chat))
         collapseSoon()
     }
+
+    /// Reads `question` back and waits for "yes": the next thing you say,
+    /// with the key or, with the wake phrase on, without it.
+    func ask(_ question: String, language: String, then run: @escaping @MainActor () async -> Void) {
+        pending = Pending(asked: Date(), language: language, run: run)
+        say(question)
+        awaitingYes = true
+    }
+
+    @ObservationIgnored private var awaitingYes = false
 
     /// Says `sentence` and shows it.
     public func say(_ sentence: String) {
