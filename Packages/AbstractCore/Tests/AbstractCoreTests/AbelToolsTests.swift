@@ -115,6 +115,7 @@ import Testing
         #expect(AbelReadBack.readablePath("/w/chat/Sources/App/Row.swift", in: "/w/chat") == "Sources/App/Row.swift")
         #expect(AbelReadBack.readablePath("Sources/Row.swift", in: "/w/chat") == "Sources/Row.swift")
         #expect(AbelReadBack.readablePath("/w/chat/../other/secret.txt", in: "/w/chat") == nil)
+        #expect(AbelReadBack.readablePath("/w/chatty/secret.txt", in: "/w/chat") == nil)
         #expect(AbelReadBack.readablePath("/etc/hosts", in: "/w/chat") == nil)
         #expect(AbelReadBack.readablePath("/w/chat/a.swift", in: nil) == nil)
     }
@@ -128,6 +129,15 @@ import Testing
         defer { try? fm.removeItem(at: root) }
         try fm.createSymbolicLink(at: chat.appendingPathComponent("escape"), withDestinationURL: outside)
         #expect(AbelReadBack.readablePath(chat.appendingPathComponent("escape/secret.txt").path, in: chat.path) == nil)
+        #expect(AbelReadBack.readablePath("escape/secret.txt", in: chat.path) == nil)
+        // A broken link, and a link inside the folder too: never read back.
+        try fm.createSymbolicLink(atPath: chat.appendingPathComponent("dangling").path, withDestinationPath: "/nonexistent/place")
+        #expect(AbelReadBack.readablePath("dangling/file.txt", in: chat.path) == nil)
+        try fm.createSymbolicLink(at: chat.appendingPathComponent("Alias"), withDestinationURL: chat.appendingPathComponent("Sources"))
+        #expect(AbelReadBack.readablePath("Alias/Row.swift", in: chat.path) == nil)
+        #expect(AbelReadBack.readablePath("Sources/./Row.swift", in: chat.path) == nil)
+        #expect(AbelReadBack.readablePath("Sources/../Sources/Row.swift", in: chat.path) == nil)
         #expect(AbelReadBack.readablePath(chat.appendingPathComponent("Sources/Row.swift").path, in: chat.path) == "Sources/Row.swift")
+        #expect(AbelReadBack.readablePath("Sources/New.swift", in: chat.path) == "Sources/New.swift")
     }
 }

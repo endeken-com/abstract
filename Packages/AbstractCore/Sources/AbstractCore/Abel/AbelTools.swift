@@ -111,28 +111,40 @@ public enum AbelReadBack {
         !command.isEmpty && command.count <= longest && command.unicodeScalars.allSatisfy(plain.contains)
     }
 
-    /// `path` with every link in it followed, even when its last parts don't
-    /// exist yet: the deepest folder that does is resolved, the rest appended.
-    static func resolved(_ path: String) -> String {
-        var existing = path
-        var rest: [String] = []
-        while !FileManager.default.fileExists(atPath: existing), existing != "/", !existing.isEmpty {
-            rest.insert((existing as NSString).lastPathComponent, at: 0)
-            existing = (existing as NSString).deletingLastPathComponent
+    /// Whether `relative`, below `root`, passes through a link in any part
+    /// that exists. Links aren't followed or guessed at: any one, even a
+    /// broken one, means the path isn't read back. The root itself (the
+    /// chat's folder) is trusted.
+    public static func passesThroughLink(_ relative: String, below root: String) -> Bool {
+        var current = root
+        for part in relative.split(separator: "/") {
+            current = (current as NSString).appendingPathComponent(String(part))
+            if (try? FileManager.default.destinationOfSymbolicLink(atPath: current)) != nil { return true }
+            guard FileManager.default.fileExists(atPath: current) else { return false }
         }
-        let real = URL(fileURLWithPath: existing).resolvingSymlinksInPath().path
-        return rest.reduce(real) { ($0 as NSString).appendingPathComponent($1) }
+        return false
     }
 
-    /// `path` relative to `root`, when it's inside it and plain enough to read back; nil otherwise.
+    /// `path` relative to `root`, when it's plainly inside it: no `.` or
+    /// `..`, no link on the way, and words that read back whole. nil sends
+    /// the approval to the screen.
     public static func readablePath(_ path: String, in root: String?) -> String? {
-        guard let root else { return nil }
-        // Symlinks resolved on both sides: a link inside the folder that
-        // points out of it is outside.
-        let base = resolved(URL(fileURLWithPath: root).standardizedFileURL.path)
-        let full = resolved(URL(fileURLWithPath: path, relativeTo: URL(fileURLWithPath: root + "/")).standardizedFileURL.path)
-        guard full.hasPrefix(base + "/") else { return nil }
-        let relative = String(full.dropFirst(base.count + 1))
+        guard let root, !root.isEmpty else { return nil }
+        let parts = path.split(separator: "/")
+        guard !parts.contains(where: { $0 == "." || $0 == ".." }) else { return nil }
+        // The chat's own folder under either of its names (/var is /private/var).
+        let base = URL(fileURLWithPath: root).resolvingSymlinksInPath().standardizedFileURL.path
+        let given = path.hasPrefix("/") ? path : (root as NSString).appendingPathComponent(path)
+        // Written under the root's name as given, or as resolved.
+        let relative: String
+        if given.hasPrefix(base + "/") {
+            relative = String(given.dropFirst(base.count + 1))
+        } else {
+            let plainRoot = URL(fileURLWithPath: root).standardizedFileURL.path
+            guard given.hasPrefix(plainRoot + "/") else { return nil }
+            relative = String(given.dropFirst(plainRoot.count + 1))
+        }
+        guard !relative.isEmpty, !passesThroughLink(relative, below: root) else { return nil }
         return canReadBack(command: relative) ? relative : nil
     }
 }
