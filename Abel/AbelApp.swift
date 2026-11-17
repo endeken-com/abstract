@@ -91,6 +91,20 @@ final class AbelDelegate: NSObject, NSApplicationDelegate {
         // Another ABEL already answers for this data folder.
         guard server != nil else { NSApp.terminate(nil); return }
         panel = PanelController(engine: engine)
+        panel.model.onOpen = { [weak self] in self?.openAbstract() }
+        panel.model.onTalk = { [weak self] in self?.engine.toggleListening() }
+        panel.model.onNewChat = { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                if await !self.engine.openNewChat() { self.openAbstract() }
+            }
+        }
+        panel.model.onNeedsYou = { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                if await !self.engine.openWhatNeedsYou() { self.openAbstract() }
+            }
+        }
         hotKey.onPress = { [weak self] in self?.engine.pushDown() }
         hotKey.onRelease = { [weak self] in self?.engine.pushUp() }
         hotKey.register()
@@ -142,7 +156,8 @@ final class AbelDelegate: NSObject, NSApplicationDelegate {
 
     private func makeStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        item.button?.image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "ABEL")
+        // Abstract's mark: ABEL is part of Abstract.
+        item.button?.image = AbelMark.image(height: 15)
         item.menu = NSMenu()
         statusItem = item
         updateMenu()
@@ -155,7 +170,7 @@ final class AbelDelegate: NSObject, NSApplicationDelegate {
         state.isEnabled = false
         menu.addItem(state)
         menu.addItem(.separator())
-        menu.addItem(item(panel.isHidden ? "Show the Orb" : "Hide the Orb", #selector(toggleOrb)))
+        menu.addItem(item(panel.isHidden ? "Show ABEL" : "Hide ABEL", #selector(toggleOrb)))
         menu.addItem(item(pausedByYou ? "Resume ABEL" : "Pause ABEL", #selector(togglePause)))
         menu.addItem(.separator())
         menu.addItem(item("Open Abstract", #selector(openAbstract)))
@@ -177,7 +192,7 @@ final class AbelDelegate: NSObject, NSApplicationDelegate {
         updateMenu()
     }
 
-    @objc private func openAbstract() {
+    @objc func openAbstract() {
         // Abel.app sits in Abstract.app's Contents/Library/LoginItems.
         let app = Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
@@ -203,14 +218,14 @@ final class KeptSettings {
     }
 }
 
-/// Keeps the floating panel in step with the engine: its size, whether it
-/// shows, and the theme Abstract is drawn in.
+/// Keeps the floating widget in step with the engine: what ABEL shows,
+/// how big the widget is, whether it shows, and Abstract's theme.
 @MainActor
 final class PanelController {
     private let engine: AbelEngine
     private let window = AbelPanel()
-    private let host: NSHostingView<AbelPanelView>
-    private var palette: AbelPalette
+    let model: AbelWidgetModel
+    private let host: AbelWidgetHost
     private let themes = AbelPalette.themes(in: AbelPalette.containingAppResources())
     var isKey: Bool { window.isKeyWindow }
     /// Hidden from the menu bar item; it still shows while ABEL listens or answers.
@@ -218,8 +233,8 @@ final class PanelController {
 
     init(engine: AbelEngine) {
         self.engine = engine
-        palette = AbelPalette(theme: themes.standard(.dark))
-        host = NSHostingView(rootView: AbelPanelView(display: engine.display, palette: palette))
+        model = AbelWidgetModel(palette: AbelPalette(theme: themes.standard(.dark)))
+        host = AbelWidgetHost(model: model)
         host.sizingOptions = [.intrinsicContentSize]
         window.contentView = host
         window.setContentSize(host.fittingSize)
@@ -230,7 +245,7 @@ final class PanelController {
 
     func refreshTheme() {
         let theme = engine.context?.themeId.map { themes.theme($0) } ?? themes.standard(.dark)
-        palette = AbelPalette(theme: theme)
+        model.palette = AbelPalette(theme: theme)
         update()
     }
 
@@ -238,6 +253,8 @@ final class PanelController {
         withObservationTracking {
             _ = engine.display
             _ = engine.settings.showOrb
+            _ = engine.context
+            _ = model.hovered
         } onChange: { [weak self] in
             Task { @MainActor in
                 self?.update()
@@ -247,8 +264,11 @@ final class PanelController {
     }
 
     private func update() {
-        host.rootView = AbelPanelView(display: engine.display, palette: palette)
-        window.resize(to: host.fittingSize)
+        if model.display != engine.display { model.display = engine.display }
+        if model.needsYou != engine.needsYouCount { model.needsYou = engine.needsYouCount }
+        host.layoutSubtreeIfNeeded()
+        let size = host.fittingSize
+        if window.frame.size != size { window.resize(to: size) }
         let shows = engine.display.isExpanded || (engine.settings.showOrb && !isHidden)
         if shows { window.orderFrontRegardless() } else { window.orderOut(nil) }
     }

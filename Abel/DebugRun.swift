@@ -107,6 +107,7 @@ struct DebugRun {
         let themes = AbelPalette.themes(in: resources ?? AbelPalette.containingAppResources())
         let states: [(String, AbelDisplay)] = [
             ("idle", AbelDisplay()),
+            ("hover", AbelDisplay()),
             ("listening", AbelDisplay(mode: .listening, words: "add a test for the sidebar grouping")),
             ("answering", AbelDisplay(mode: .answering, words: "",
                                       answer: "Sidebar fix says: I added a test for the grouping, and 12 lines of code.")),
@@ -122,7 +123,11 @@ struct DebugRun {
             let theme = themes.theme(id)
             for (name, display) in states {
                 let palette = AbelPalette(theme: theme)
-                guard let png = AbelSnapshot.png(display: display, palette: palette, backdrop: theme.canvas) else { continue }
+                // A desktop-like backdrop, as the widget really floats over one.
+                let desk = Swatch(0x4A3426)
+                guard let png = AbelSnapshot.png(display: display, palette: palette, backdrop: desk,
+                                                 hovered: name == "hover", needsYou: name == "hover" ? 1 : 0)
+                else { continue }
                 let url = dir.appendingPathComponent("abel-\(theme.shortId)-\(name).png")
                 try? png.write(to: url)
                 written.append(url.lastPathComponent)
