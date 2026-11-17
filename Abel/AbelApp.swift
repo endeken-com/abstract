@@ -1,0 +1,249 @@
+import AbelKit
+import AbstractCore
+import AppKit
+import SwiftUI
+
+/// ABEL, Abstract's Built-in Expert Listener (ABS-203): its own app, inside
+/// Abstract.app at `Contents/Library/LoginItems`, started at login once you
+/// install it from Settings › ABEL. It floats over every app, holds the
+/// microphone under its own name, and talks to Abstract over `AppLink`.
+///
+/// Debug builds also take:
+///
+///     Abel --simulate "<what you said>" [--simulate "<next>"…] [--language pt-BR] [--speech-out <dir>]
+///     Abel --simulate-audio <file>… [--wake] [--language pt-BR]
+///     Abel --snapshot <dir> [--resources <Abstract.app/Contents/Resources>]
+///
+/// Each runs against the Abstract of `ABSTRACT_DATA_DIR` (a demo's, say),
+/// prints a JSON report and exits; none uses the microphone.
+@main
+enum AbelMain {
+    static func main() {
+        let arguments = Array(CommandLine.arguments.dropFirst())
+        #if DEBUG
+        if let run = DebugRun(arguments) {
+            let app = NSApplication.shared
+            app.setActivationPolicy(.accessory)
+            Task { @MainActor in
+                let code = await run.perform()
+                exit(code)
+            }
+            app.run()
+            return
+        }
+        #endif
+        let app = NSApplication.shared
+        let delegate = AbelDelegate()
+        app.delegate = delegate
+        app.setActivationPolicy(.accessory)
+        withExtendedLifetime(delegate) { app.run() }
+    }
+}
+
+/// The running assistant: engine, panel, menu bar item, push-to-talk and
+/// the screen watch.
+@MainActor
+final class AbelDelegate: NSObject, NSApplicationDelegate {
+    private var engine: AbelEngine!
+    private var panel: PanelController!
+    private var server: AbelLink.LineServer<AbelLink.HelperRequest, AbelLink.HelperReply>?
+    private let hotKey = HotKey(.optionSpace)
+    private let escapeKey = HotKey(.escape)
+    private let screen = ScreenWatch()
+    private var statusItem: NSStatusItem?
+    private var pausedByYou = false
+    private let kept = KeptSettings()
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        let storePath = Store.defaultPath()
+        guard ProcessInfo.processInfo.isOperatingSystemAtLeast(AbelInstaller.minimumMacOS) else {
+            NSApp.terminate(nil)
+            return
+        }
+        let voice = SystemVoice()
+        voice.warmUp()
+        var speaker: any AbelVoice = voice
+        #if DEBUG
+        // Demos and checks at night: what ABEL says goes to sound files, not the speakers.
+        if let dir = ProcessInfo.processInfo.environment["ABEL_VOICE_OUT"] {
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            speaker = RecordingVoice(renderTo: URL(fileURLWithPath: dir))
+        }
+        #endif
+        engine = AbelEngine(ears: DeviceEars(source: MicrophoneSource()), voice: speaker, abstract: LinkedAbstract(storePath: storePath))
+        if let settings = kept.settings { engine.use(settings) }
+        engine.onSettings = { [weak self] settings in
+            self?.kept.settings = settings
+            voice.voiceIdentifier = settings.voice
+        }
+        voice.voiceIdentifier = engine.settings.voice
+        let helperPath = AbelLink.helperSocketPath(storePath: storePath)
+        let engine = engine!
+        server = AbelLink.LineServer(path: helperPath) { request in
+            await engine.receive(request)
+        }
+        // Another ABEL already answers for this data folder.
+        guard server != nil else { NSApp.terminate(nil); return }
+        panel = PanelController(engine: engine)
+        hotKey.onPress = { [weak self] in self?.engine.pushDown() }
+        hotKey.onRelease = { [weak self] in self?.engine.pushUp() }
+        hotKey.register()
+        escapeKey.onPress = { [weak self] in self?.engine.escape() }
+        screen.onChange = { [weak self] reading in
+            self?.engine.screen(locked: reading.locked, shared: reading.shared)
+            self?.updateMenu()
+        }
+        screen.start()
+        makeStatusItem()
+        observeListening()
+        Task {
+            await engine.start()
+            panel.refreshTheme()
+            updateMenu()
+        }
+        // Settings and names change while ABEL runs: look again now and then.
+        Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                Task { await self.engine.refreshContext(); self.panel.refreshTheme() }
+            }
+        }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        server?.stop()
+        hotKey.unregister()
+        escapeKey.unregister()
+    }
+
+    /// Escape ends listening while ABEL listens or speaks, and is left
+    /// alone otherwise.
+    private func observeListening() {
+        withObservationTracking { _ = engine.display.mode } onChange: { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                switch self.engine.display.mode {
+                case .listening, .answering: self.escapeKey.register()
+                default: self.escapeKey.unregister()
+                }
+                self.updateMenu()
+                self.observeListening()
+            }
+        }
+    }
+
+    // MARK: Menu bar
+
+    private func makeStatusItem() {
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        item.button?.image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "ABEL")
+        item.menu = NSMenu()
+        statusItem = item
+        updateMenu()
+    }
+
+    private func updateMenu() {
+        guard let menu = statusItem?.menu, let engine else { return }
+        menu.removeAllItems()
+        let state = NSMenuItem(title: engine.stateSentence, action: nil, keyEquivalent: "")
+        state.isEnabled = false
+        menu.addItem(state)
+        menu.addItem(.separator())
+        menu.addItem(item(panel.isHidden ? "Show the Orb" : "Hide the Orb", #selector(toggleOrb)))
+        menu.addItem(item(pausedByYou ? "Resume ABEL" : "Pause ABEL", #selector(togglePause)))
+        menu.addItem(.separator())
+        menu.addItem(item("Open Abstract", #selector(openAbstract)))
+        menu.addItem(item("Quit ABEL", #selector(quit)))
+        statusItem?.button?.appearsDisabled = engine.machine.isPaused
+    }
+
+    private func item(_ title: String, _ action: Selector) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        item.target = self
+        return item
+    }
+
+    @objc private func toggleOrb() { panel.isHidden.toggle(); updateMenu() }
+
+    @objc private func togglePause() {
+        pausedByYou.toggle()
+        engine.pause(pausedByYou)
+        updateMenu()
+    }
+
+    @objc private func openAbstract() {
+        // Abel.app sits in Abstract.app's Contents/Library/LoginItems.
+        let app = Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let configuration = NSWorkspace.OpenConfiguration()
+        if app.pathExtension == "app" {
+            NSWorkspace.shared.openApplication(at: app, configuration: configuration)
+        } else if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "sh.abstract.app") {
+            NSWorkspace.shared.openApplication(at: url, configuration: configuration)
+        }
+    }
+
+    @objc private func quit() { NSApp.terminate(nil) }
+}
+
+/// The settings Abstract last handed over, kept for when it's closed.
+@MainActor
+final class KeptSettings {
+    private let key = "settings"
+
+    var settings: AbelSettings? {
+        get { UserDefaults.standard.data(forKey: key).flatMap { try? JSONDecoder().decode(AbelSettings.self, from: $0) } }
+        set { UserDefaults.standard.set(newValue.flatMap { try? JSONEncoder().encode($0) }, forKey: key) }
+    }
+}
+
+/// Keeps the floating panel in step with the engine: its size, whether it
+/// shows, and the theme Abstract is drawn in.
+@MainActor
+final class PanelController {
+    private let engine: AbelEngine
+    private let window = AbelPanel()
+    private let host: NSHostingView<AbelPanelView>
+    private var palette: AbelPalette
+    private let themes = AbelPalette.themes(in: AbelPalette.containingAppResources())
+    var isKey: Bool { window.isKeyWindow }
+    /// Hidden from the menu bar item; it still shows while ABEL listens or answers.
+    var isHidden = false { didSet { update() } }
+
+    init(engine: AbelEngine) {
+        self.engine = engine
+        palette = AbelPalette(theme: themes.standard(.dark))
+        host = NSHostingView(rootView: AbelPanelView(display: engine.display, palette: palette))
+        host.sizingOptions = [.intrinsicContentSize]
+        window.contentView = host
+        window.setContentSize(host.fittingSize)
+        window.restoreOrigin()
+        update()
+        observe()
+    }
+
+    func refreshTheme() {
+        let theme = engine.context?.themeId.map { themes.theme($0) } ?? themes.standard(.dark)
+        palette = AbelPalette(theme: theme)
+        update()
+    }
+
+    private func observe() {
+        withObservationTracking {
+            _ = engine.display
+            _ = engine.settings.showOrb
+        } onChange: { [weak self] in
+            Task { @MainActor in
+                self?.update()
+                self?.observe()
+            }
+        }
+    }
+
+    private func update() {
+        host.rootView = AbelPanelView(display: engine.display, palette: palette)
+        window.resize(to: host.fittingSize)
+        let shows = engine.display.isExpanded || (engine.settings.showOrb && !isHidden)
+        if shows { window.orderFrontRegardless() } else { window.orderOut(nil) }
+    }
+}

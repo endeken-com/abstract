@@ -48,8 +48,10 @@ public enum AppLink {
         private let source: any DispatchSourceRead
 
         /// Listens for the data folder at `storePath`; nil when another app
-        /// already does, or the socket can't be made.
-        public init?(storePath: String, handler: @escaping @Sendable (StartRequest) async -> StartReply) {
+        /// already does, or the socket can't be made. `abel` answers ABEL's
+        /// requests (`AbelLink`), which carry an `abel` key.
+        public init?(storePath: String, handler: @escaping @Sendable (StartRequest) async -> StartReply,
+                     abel: (@Sendable (AbelLink.Request) async -> AbelLink.Reply)? = nil) {
             let path = AppLink.socketPath(storePath: storePath)
             if let other = HostSocket.connect(path: path) {
                 close(other)
@@ -65,8 +67,19 @@ public enum AppLink {
                 guard client >= 0 else { return }
                 var on: Int32 = 1
                 setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
-                guard let line = HostSocket.readLine(client, timeoutMs: 5_000),
-                      let request = try? JSONDecoder().decode(StartRequest.self, from: line) else {
+                guard let line = HostSocket.readLine(client, timeoutMs: 5_000) else {
+                    close(client)
+                    return
+                }
+                if let envelope = try? JSONDecoder().decode(AbelLink.Envelope.self, from: line) {
+                    Task {
+                        let reply = await abel?(envelope.abel) ?? .failed("This Abstract can't answer ABEL.")
+                        HostSocket.writeLine(client, (try? JSONEncoder().encode(reply)) ?? Data())
+                        close(client)
+                    }
+                    return
+                }
+                guard let request = try? JSONDecoder().decode(StartRequest.self, from: line) else {
                     close(client)
                     return
                 }

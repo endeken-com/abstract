@@ -393,6 +393,10 @@ final class AppModel {
     @ObservationIgnored var storeObserver: Int32?
     /// Where `abstract` hands the app the agents of chats it makes; see AppModel+SessionLocks.
     @ObservationIgnored var appLink: AppLink.Server?
+    /// Settings › ABEL (ABS-203), kept in the store and handed to ABEL.
+    var abelSettings = AbelSettings()
+    /// Whether ABEL is installed, can't run here, or waits for approval.
+    var abelState: AbelInstaller.State = .notInstalled
     /// Chats whose agent was just started for `abstract`, waiting to be up.
     @ObservationIgnored var startWaits: [String: CheckedContinuation<AgentStart.Outcome, Never>] = [:]
     @ObservationIgnored private var configuredModels: [String: (model: String?, read: Date)] = [:]
