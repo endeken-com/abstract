@@ -30,9 +30,11 @@ public struct AbelDisplay: Sendable, Equatable {
     public var words = ""
     /// What ABEL answered or is saying.
     public var answer = ""
+    /// Something to read in full before saying yes: an AppleScript (ABS-205).
+    public var detail = ""
 
-    public init(mode: Mode = .idle, words: String = "", answer: String = "") {
-        self.mode = mode; self.words = words; self.answer = answer
+    public init(mode: Mode = .idle, words: String = "", answer: String = "", detail: String = "") {
+        self.mode = mode; self.words = words; self.answer = answer; self.detail = detail
     }
 
     public var isExpanded: Bool { mode != .idle }
@@ -60,7 +62,7 @@ public struct AbelEvent: Sendable, Equatable, Codable {
 @MainActor
 @Observable
 public final class AbelEngine {
-    public private(set) var display = AbelDisplay()
+    public internal(set) var display = AbelDisplay()
     public private(set) var settings: AbelSettings
     public private(set) var context: AbelLink.Context?
     /// Everything heard, done and said since launch, newest last.
@@ -89,6 +91,8 @@ public final class AbelEngine {
     }
     /// How long the panel stays open after ABEL finishes speaking.
     @ObservationIgnored public var lingering: Duration = .seconds(4)
+    /// How ABEL acts on other apps (ABS-205); nil leaves it unable to.
+    @ObservationIgnored public var appControl: (any AppControlling)?
     /// Called when the settings Abstract handed over change, so they can be kept.
     @ObservationIgnored public var onSettings: ((AbelSettings) -> Void)?
 

@@ -1,6 +1,8 @@
 import AbstractCore
+import AppKit
 import AVFoundation
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Settings › ABEL (ABS-203): install or remove ABEL, the voice assistant
 /// that floats over every app, and how it listens and speaks.
@@ -33,6 +35,7 @@ struct AbelSettingsPane: View {
                 listening.id("abel.listening")
                 speaking.id("abel.speaking")
                 abelChat.id("abel.chat")
+                otherApps.id("abel.apps")
             }
         }
         .settingsScrollablePane()
@@ -140,6 +143,63 @@ struct AbelSettingsPane: View {
             Text("ABEL reads back anything its chat wants to do, and does it only when you say yes. It never merges, pushes, deletes or turns on Full autonomy by voice.")
                 .font(.btCaption)
                 .foregroundStyle(Color.btTextTertiary)
+        }
+    }
+
+    /// Other apps (ABS-205): each kind off until turned on, opening aside,
+    /// and each app Allowed, Ask first or Off.
+    private var otherApps: some View {
+        Section {
+            ForEach(AbelAppControl.Kind.allCases, id: \.self) { kind in
+                Toggle(isOn: Binding(
+                    get: { model.abelSettings.appControl.kinds.contains(kind) },
+                    set: { on in model.updateAbelSettings { settings in
+                        if on { settings.appControl.kinds.insert(kind) } else { settings.appControl.kinds.remove(kind) }
+                    } })) {
+                    Text(kind.title)
+                    Text(kind.detail)
+                }
+            }
+            ForEach(appRows, id: \.id) { row in
+                Picker(row.name, selection: Binding(
+                    get: { model.abelSettings.appControl.mode(for: row.id) },
+                    set: { mode in model.updateAbelSettings { $0.appControl.apps[row.id] = mode } })) {
+                    ForEach(AbelAppControl.Mode.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+            }
+            LabeledContent {
+                Button("Add an App…") { addApp() }
+            } label: {
+                Text("Apps")
+                Text("Apps not listed are Ask first. Off keeps ABEL out of an app entirely.")
+            }
+        } header: {
+            Text("Other apps")
+        } footer: {
+            Text("ABEL reads back anything Ask first before doing it, and anything that sends, buys, deletes or posts even in an Allowed app. It never types into a password field, and does nothing while the screen is locked or shared.")
+                .font(.btCaption)
+                .foregroundStyle(Color.btTextTertiary)
+        }
+    }
+
+    private var appRows: [(id: String, name: String)] {
+        let control = model.abelSettings.appControl
+        return control.apps.keys.map { ($0, control.names[$0] ?? $0) }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    private func addApp() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.application]
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.allowsMultipleSelection = true
+        panel.prompt = "Add"
+        guard panel.runModal() == .OK else { return }
+        model.updateAbelSettings { settings in
+            for url in panel.urls {
+                guard let bundle = Bundle(url: url), let id = bundle.bundleIdentifier else { continue }
+                settings.appControl.names[id] = FileManager.default.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: "")
+                if settings.appControl.apps[id] == nil { settings.appControl.apps[id] = .askFirst }
+            }
         }
     }
 

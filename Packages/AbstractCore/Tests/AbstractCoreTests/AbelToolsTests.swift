@@ -29,7 +29,8 @@ import Testing
         let initialize = try #require(await server.handle(#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#))
         #expect(initialize.contains(#""name":"abel""#))
         let list = try #require(await server.handle(#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#))
-        for name in ["list_chats", "chat_status", "read_reply", "start_chat", "send_to_chat", "stop_chat", "answer_permission"] {
+        for name in ["list_chats", "chat_status", "read_reply", "start_chat", "send_to_chat", "stop_chat", "answer_permission",
+                     "open_app", "open_url", "open_file", "run_shortcut", "run_applescript", "ui_read", "ui_press", "ui_type"] {
             #expect(list.contains(#""name":"\#(name)""#))
         }
     }

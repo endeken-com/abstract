@@ -23,6 +23,10 @@ public enum AbelCommand: Sendable, Equatable {
     case yes, no
     /// Never done by voice: ABEL opens the right screen instead.
     case forbidden(AbelForbidden, chat: String?)
+    /// A chat's pull request, in the browser (ABS-205).
+    case openPullRequest(chat: String)
+    /// One of your shortcuts, by name (ABS-205).
+    case runShortcut(name: String)
 }
 
 /// What ABEL never does by voice (ABS-202 §5).
@@ -120,6 +124,16 @@ public enum AbelGrammar {
         add(["tell", "say to", "send to", "ask", "diga ao", "diga a", "diga para", "fala pro", "fala para", "manda pro",
              "manda para", "pede ao", "pede para"],
             { rest in AbelNames.splitNameAndText(rest).map { .tell(chat: $0.name, text: $0.text) } })
+        add(["open the pr for", "open the pull request for", "open pr for", "show the pr for", "open the pr of",
+             "abrir o pr do", "abrir o pr da", "abre o pr do", "abrir o pull request do"],
+            requiredChat { .openPullRequest(chat: $0) })
+        add(["run shortcut", "run the shortcut", "run my shortcut", "run my", "start shortcut", "rodar atalho",
+             "rodar o atalho", "roda o atalho", "executar atalho", "executar o atalho", "executa o atalho"],
+            { rest in
+                var words = rest
+                if words.last == "shortcut" || words.last == "atalho" { words.removeLast() }
+                return words.isEmpty ? nil : .runShortcut(name: words.joined(separator: " "))
+            })
         add(["merge", "merge it", "merge the pr", "merge the pull request", "merge this", "merge that", "faz o merge",
              "fazer o merge", "fazer merge", "mesclar", "mescla"],
             chatArgument { .forbidden(.merge, chat: $0) })
@@ -323,13 +337,15 @@ public struct AbelChatInfo: Codable, Sendable, Equatable, Identifiable {
     /// The pull request's checks: "passing", "failing", "pending".
     public var checks: String?
     public var branch: String?
+    /// Where its pull request is on the web (ABS-205).
+    public var pullRequestURL: String?
 
     public init(id: String, title: String, project: String? = nil, agent: String = "Claude", state: State = .done,
                 waiting: String? = nil, activeAt: Date = Date(), pullRequest: Int? = nil, checks: String? = nil,
-                branch: String? = nil) {
+                branch: String? = nil, pullRequestURL: String? = nil) {
         self.id = id; self.title = title; self.project = project; self.agent = agent; self.state = state
         self.waiting = waiting; self.activeAt = activeAt; self.pullRequest = pullRequest; self.checks = checks
-        self.branch = branch
+        self.branch = branch; self.pullRequestURL = pullRequestURL
     }
 }
 
@@ -357,10 +373,17 @@ public enum AbelIntent: Sendable, Equatable {
     case ambiguous(command: String, chatIds: [String])
     /// Not a command: ABEL's chat answers it.
     case askABEL(String)
+    /// Other apps (ABS-205).
+    case openApp(AbelAppInfo)
+    case openFile(String)
+    case openURL(String, chatId: String)
+    case runShortcut(String)
 }
 
 public enum AbelResolver {
-    public static func resolve(_ text: String, chats: [AbelChatInfo], projects: [AbelProjectInfo]) -> AbelIntent {
+    public static func resolve(_ text: String, chats: [AbelChatInfo], projects: [AbelProjectInfo],
+                               apps: [AbelAppInfo] = [], shortcuts: [String] = [],
+                               home: String = NSHomeDirectory()) -> AbelIntent {
         guard let command = AbelGrammar.parse(text) else { return .askABEL(text) }
         let named = chats.map { (id: $0.id, name: $0.title) }
         func chat(_ heard: String?, _ kind: String, _ make: (String?) -> AbelIntent) -> AbelIntent {
@@ -379,7 +402,29 @@ public enum AbelResolver {
         case .sendIt: return .sendIt
         case .yes: return .yes
         case .no: return .no
-        case let .open(heard): return chat(heard, "open") { .open(chatId: $0!) }
+        case let .open(heard):
+            // A chat first; else one of your folders, else an app.
+            switch AbelNames.match(heard, among: named) {
+            case let .one(id, _): return .open(chatId: id)
+            case let .ambiguous(ids): return .ambiguous(command: "open", chatIds: ids)
+            case .none: break
+            }
+            if let folder = AbelFolders.path(heard, home: home) { return .openFile(folder) }
+            if case let .one(index, _) = AbelNames.match(heard, among: apps.enumerated().map { (id: $0.offset, name: $0.element.name) }) {
+                return .openApp(apps[index])
+            }
+            return .notFound(command: "open", heard: heard)
+        case let .openPullRequest(heard):
+            return chat(heard, "openPullRequest") { id in
+                guard let id, let url = chats.first(where: { $0.id == id })?.pullRequestURL else {
+                    return .notFound(command: "pullRequest", heard: heard)
+                }
+                return .openURL(url, chatId: id)
+            }
+        case let .runShortcut(heard):
+            guard case let .one(index, _) = AbelNames.match(heard, among: shortcuts.enumerated().map { (id: $0.offset, name: $0.element) })
+            else { return .notFound(command: "shortcut", heard: heard) }
+            return .runShortcut(shortcuts[index])
         case let .readLast(heard): return chat(heard, "readLast") { .readLast(chatId: $0) }
         case let .approve(heard): return chat(heard, "approve") { .approve(chatId: $0) }
         case let .deny(heard): return chat(heard, "deny") { .deny(chatId: $0) }
@@ -395,5 +440,27 @@ public enum AbelResolver {
             case .ambiguous, .none: return .notFound(command: "start", heard: project)
             }
         }
+    }
+}
+
+/// The folders you'd name out loud: "open downloads", "open tilde slash
+/// Downloads" (heard as "film slash download", even).
+public enum AbelFolders {
+    static let known: [(words: [String], folder: String)] = [
+        (["downloads", "download", "transferencias"], "Downloads"),
+        (["desktop", "mesa"], "Desktop"),
+        (["documents", "documentos"], "Documents"),
+        (["home", "inicio"], ""),
+    ]
+
+    public static func path(_ heard: String, home: String) -> String? {
+        let words = AbelText.words(heard)
+        guard words.count <= 6 else { return nil }
+        for entry in known where words.contains(where: { entry.words.contains($0) }) {
+            // "open the downloads folder", "tilde slash downloads": a folder; "download the logs": not.
+            guard words.last.map({ entry.words.contains($0) || ["folder", "pasta", "directory"].contains($0) }) == true else { continue }
+            return entry.folder.isEmpty ? home : (home as NSString).appendingPathComponent(entry.folder)
+        }
+        return nil
     }
 }

@@ -276,8 +276,9 @@ func eventually(_ condition: () -> Bool) async {
     }
 
     @Test func theRealChecksRunHere() {
-        // This Mac is unlocked while tests run, and isn't sharing its screen.
-        #expect(ScreenWatch.isLocked() == false)
+        // Locked or not depends on the moment (a run at night found the
+        // screen locked, rightly); the process check doesn't.
+        _ = ScreenWatch.isLocked()
         #expect(ScreenWatch.isRunning("launchd"))
         #expect(!ScreenWatch.isRunning("no-such-process-abel"))
     }

@@ -101,5 +101,5 @@ Envia	sendIt
 Which chats touched the plug-in catalog this week?	chat
 Summarize what the nightly catalog changed.	chat
 Quais chats mexeram no catálogo de plugins esta semana?	chat
-Open the PR for the palette chat.	unknown:open
-Run shortcut stand up.	chat
+Open the PR for the palette chat.	unknown:pullRequest
+Run shortcut stand up.	unknown:shortcut

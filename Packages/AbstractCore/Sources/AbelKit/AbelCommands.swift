@@ -14,7 +14,10 @@ extension AbelEngine {
 
     func command(_ text: String, language: String, trigger: AbelMachine.Trigger) async {
         let say = AbelPhrases(language: language)
-        let intent = AbelResolver.resolve(text, chats: chats, projects: context?.projects ?? [])
+        let wantsShortcut = if case .runShortcut = AbelGrammar.parse(text) { true } else { false }
+        let shortcuts = wantsShortcut ? await appControl?.shortcuts() ?? [] : []
+        let intent = AbelResolver.resolve(text, chats: chats, projects: context?.projects ?? [],
+                                          apps: appControl?.installedApps() ?? [], shortcuts: shortcuts)
         switch intent {
         case .whatNeedsMe:
             let waiting = chats.filter { $0.state == .needsYou }
@@ -77,7 +80,26 @@ extension AbelEngine {
         case let .forbidden(action, chatId):
             await refuse(action, chatId: chatId ?? context?.shownChatId, language: language)
         case let .notFound(command, heard):
-            self.say(command == "start" ? say.projectNotFound(heard) : say.notFound(heard))
+            switch command {
+            case "start": self.say(say.projectNotFound(heard))
+            case "pullRequest": self.say(say.noPullRequest)
+            case "shortcut": self.say(say.noShortcut(heard))
+            default: self.say(say.notFound(heard))
+            }
+        case let .openApp(app):
+            await openApp(app, language: language)
+        case let .openFile(path):
+            let checked = AbelAppChecks.openable(path, home: NSHomeDirectory())
+            guard let url = checked.url else { self.say(checked.problem ?? say.notFound(path)); return }
+            await openLocation(url, label: url.lastPathComponent, appName: Self.finder.name,
+                               bundleId: Self.finder.bundleId, language: language)
+        case let .openURL(url, chatId):
+            guard let link = URL(string: url) else { return }
+            let title = chat(chatId)?.title ?? ""
+            await openLocation(link, label: say.portuguese ? "o pull request de \(title)" : "the pull request for \(title)",
+                               appName: Self.browser.name, bundleId: Self.browser.bundleId, language: language)
+        case let .runShortcut(name):
+            await runShortcut(name, language: language)
         case let .ambiguous(_, ids):
             self.say(say.whichOne(ids.compactMap { chat($0)?.title }))
         case let .askABEL(question):
@@ -170,6 +192,10 @@ extension AbelEngine {
         if let reason = machine.pauseReason { return (reason.sentence, true) }
         guard AbelTools.definitions.contains(where: { $0["name"]?.string == name }) else { return ("ABEL has no tool “\(name)”.", true) }
         let arguments = (try? JSONDecoder().decode(JSONValue.self, from: Data(json.utf8))) ?? .object([:])
+        if AbelTools.appTools.contains(name) {
+            await refreshContext()
+            return await appTool(name, arguments)
+        }
         await refreshContext()
         guard context != nil else { return ("Abstract isn't open.", true) }
         let say = AbelPhrases(language: lastLanguage)
@@ -267,6 +293,8 @@ extension AbelEngine {
     /// Reads `question` back and waits for your answer; false on anything
     /// but a clear yes, or after a while with no answer.
     func confirm(_ question: String) async -> Bool {
+        // One question at a time: a second tool call waits its turn.
+        for _ in 0..<300 where pending != nil { try? await Task.sleep(for: .milliseconds(100)) }
         guard pending == nil else { return false }
         let language = lastLanguage
         let window = confirmationWindow + .seconds(20)

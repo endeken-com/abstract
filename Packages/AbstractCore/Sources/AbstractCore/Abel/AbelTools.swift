@@ -20,6 +20,8 @@ public enum AbelTools {
         - Each acting tool is read back to the person, who must say yes. If they decline, say so and stop.
         - Never merge, push, delete anything or turn on full autonomy, and don't ask to: tell the person to \
         do that on screen.
+        - For other Mac apps, use open_app, open_url, open_file, run_shortcut, run_applescript and the ui_ tools. \
+        If one is refused because it's off, say so in one sentence; don't try another way around it.
         """
 
     /// The tools' `tools/list` entries.
@@ -44,10 +46,40 @@ public enum AbelTools {
              + "person, who must say yes.",
              ["chat": chatParameter, "allow": .object(["type": .string("boolean"), "description": .string("true to allow, false to decline.")])],
              required: ["chat", "allow"]),
+        // Other apps (ABS-205): each kind on only if the person turned it on,
+        // each app Allowed, Ask first or Off.
+        tool("open_app", "Open an app on this Mac by name.", ["app": appParameter], required: ["app"]),
+        tool("open_url", "Open a web link (https) in the default browser.",
+             ["url": .object(["type": .string("string"), "description": .string("An https:// link.")])], required: ["url"]),
+        tool("open_file", "Open a file or folder in the person's home folder with its usual app.",
+             ["path": .object(["type": .string("string"), "description": .string("A path, like ~/Downloads.")])], required: ["path"]),
+        tool("run_shortcut", "Run one of the person's Shortcuts by name, and get what it outputs.",
+             ["name": .object(["type": .string("string"), "description": .string("The shortcut's name.")]),
+              "input": .object(["type": .string("string"), "description": .string("Text handed to the shortcut, if any.")])],
+             required: ["name"]),
+        tool("run_applescript", "Run an AppleScript that controls an app. The script is shown to the person first, "
+             + "and anything that sends, buys, deletes or posts needs their yes.",
+             ["app": appParameter, "script": .object(["type": .string("string"), "description": .string("The AppleScript source.")])],
+             required: ["app", "script"]),
+        tool("ui_read", "Read the buttons, fields and labels in an app's front window (Accessibility).",
+             ["app": appParameter], required: ["app"]),
+        tool("ui_press", "Press a button or menu item, by its title, in an app's front window.",
+             ["app": appParameter, "element": .object(["type": .string("string"), "description": .string("The control's title.")])],
+             required: ["app", "element"]),
+        tool("ui_type", "Type text into the field that has focus in an app. Never into a password field.",
+             ["app": appParameter, "text": .object(["type": .string("string"), "description": .string("What to type.")])],
+             required: ["app", "text"]),
     ]
 
     /// The tools that change something, and so are read back first.
     public static let acting: Set<String> = ["start_chat", "send_to_chat", "stop_chat", "answer_permission"]
+    /// The tools that act on other apps, under Settings › ABEL › Other apps.
+    public static let appTools: Set<String> = ["open_app", "open_url", "open_file", "run_shortcut", "run_applescript",
+                                               "ui_read", "ui_press", "ui_type"]
+
+    static let appParameter: JSONValue = .object([
+        "type": .string("string"), "description": .string("The app's name, like Notes or Safari."),
+    ])
 
     static let chatParameter: JSONValue = .object([
         "type": .string("string"), "description": .string("The chat's title, as the person said it, or its id."),

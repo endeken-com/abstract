@@ -279,7 +279,9 @@ import Testing
 
     @Test func toolDefinitionsAreWhatTheServerLists() async {
         #expect(AbelTools.definitions.compactMap { $0["name"]?.string }
-            == ["list_chats", "chat_status", "read_reply", "start_chat", "send_to_chat", "stop_chat", "answer_permission"])
+            == ["list_chats", "chat_status", "read_reply", "start_chat", "send_to_chat", "stop_chat", "answer_permission",
+                "open_app", "open_url", "open_file", "run_shortcut", "run_applescript", "ui_read", "ui_press", "ui_type"])
+        #expect(Set(AbelTools.definitions.compactMap { $0["name"]?.string }).subtracting(AbelTools.appTools).count == 7)
         #expect(AbelTools.acting == ["start_chat", "send_to_chat", "stop_chat", "answer_permission"])
         // No tool merges, pushes, deletes or changes permissions.
         #expect(!AbelTools.definitions.contains { ($0["name"]?.string ?? "").contains("merge") || ($0["name"]?.string ?? "").contains("push") })
