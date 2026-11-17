@@ -111,11 +111,26 @@ public enum AbelReadBack {
         !command.isEmpty && command.count <= longest && command.unicodeScalars.allSatisfy(plain.contains)
     }
 
+    /// `path` with every link in it followed, even when its last parts don't
+    /// exist yet: the deepest folder that does is resolved, the rest appended.
+    static func resolved(_ path: String) -> String {
+        var existing = path
+        var rest: [String] = []
+        while !FileManager.default.fileExists(atPath: existing), existing != "/", !existing.isEmpty {
+            rest.insert((existing as NSString).lastPathComponent, at: 0)
+            existing = (existing as NSString).deletingLastPathComponent
+        }
+        let real = URL(fileURLWithPath: existing).resolvingSymlinksInPath().path
+        return rest.reduce(real) { ($0 as NSString).appendingPathComponent($1) }
+    }
+
     /// `path` relative to `root`, when it's inside it and plain enough to read back; nil otherwise.
     public static func readablePath(_ path: String, in root: String?) -> String? {
         guard let root else { return nil }
-        let base = URL(fileURLWithPath: root).standardizedFileURL.path
-        let full = URL(fileURLWithPath: path, relativeTo: URL(fileURLWithPath: base + "/")).standardizedFileURL.path
+        // Symlinks resolved on both sides: a link inside the folder that
+        // points out of it is outside.
+        let base = resolved(URL(fileURLWithPath: root).standardizedFileURL.path)
+        let full = resolved(URL(fileURLWithPath: path, relativeTo: URL(fileURLWithPath: root + "/")).standardizedFileURL.path)
         guard full.hasPrefix(base + "/") else { return nil }
         let relative = String(full.dropFirst(base.count + 1))
         return canReadBack(command: relative) ? relative : nil

@@ -118,4 +118,16 @@ import Testing
         #expect(AbelReadBack.readablePath("/etc/hosts", in: "/w/chat") == nil)
         #expect(AbelReadBack.readablePath("/w/chat/a.swift", in: nil) == nil)
     }
+
+    @Test func aLinkPointingOutOfTheFolderIsOutside() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("abel-readback-\(UUID().uuidString)")
+        let chat = root.appendingPathComponent("chat"), outside = root.appendingPathComponent("outside")
+        try fm.createDirectory(at: chat.appendingPathComponent("Sources"), withIntermediateDirectories: true)
+        try fm.createDirectory(at: outside, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+        try fm.createSymbolicLink(at: chat.appendingPathComponent("escape"), withDestinationURL: outside)
+        #expect(AbelReadBack.readablePath(chat.appendingPathComponent("escape/secret.txt").path, in: chat.path) == nil)
+        #expect(AbelReadBack.readablePath(chat.appendingPathComponent("Sources/Row.swift").path, in: chat.path) == "Sources/Row.swift")
+    }
 }
