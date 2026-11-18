@@ -6,20 +6,31 @@ import Foundation
 /// asks Abstract over `AppLink`, and the replies it reads aloud. ABEL is
 /// its own app, `Abel.app`, inside this one; it holds the microphone, and
 /// Abstract never asks for it.
+private extension Result where Failure == any Error {
+    var failure: (any Error)? { if case let .failure(error) = self { error } else { nil } }
+}
+
 extension AppModel {
     static let abelSendDraft = Notification.Name("AbelSendDraft")
 
     var abelInstaller: AbelInstaller {
-        AbelInstaller(appURL: AbelInstaller.bundledApp(in: Bundle.main.bundleURL), launch: { url in
+        let storePath = storePath
+        return AbelInstaller(appURL: AbelInstaller.bundledApp(in: Bundle.main.bundleURL), launch: { url in
             let configuration = NSWorkspace.OpenConfiguration()
             configuration.activates = false
             configuration.addsToRecentItems = false
             NSWorkspace.shared.openApplication(at: url, configuration: configuration)
-        }, quit: {
-            Task { @MainActor in
-                NSRunningApplication.runningApplications(withBundleIdentifier: AbelLink.bundleIdentifier)
-                    .forEach { $0.terminate() }
+        }, quit: { forget in
+            // ABEL quits itself (and with `forget`, stops starting at login);
+            // anything still running a moment later is asked to terminate.
+            _ = AbelLink.tell(AbelLink.HelperRequest(kind: .quit, text: forget ? "forget" : nil), storePath: storePath,
+                              timeoutMs: 2_000)
+            for _ in 0..<30 {
+                let running = NSRunningApplication.runningApplications(withBundleIdentifier: AbelLink.bundleIdentifier)
+                if running.isEmpty { return }
+                Thread.sleep(forTimeInterval: 0.1)
             }
+            NSRunningApplication.runningApplications(withBundleIdentifier: AbelLink.bundleIdentifier).forEach { $0.terminate() }
         })
     }
 
@@ -27,6 +38,18 @@ extension AppModel {
     func loadAbel() {
         abelSettings = store.setting(AbelSettings.storeKey, as: AbelSettings.self) ?? AbelSettings()
         refreshAbelState()
+        guard !isDemo else { return }
+        // Keeps ABEL's own copy in step with this Abstract, and moves an ABEL
+        // installed the old way (inside Abstract.app) to its own copy.
+        let installer = abelInstaller
+        DispatchQueue.global(qos: .utility).async {
+            if installer.legacy.status == .enabled {
+                try? installer.install()
+            } else {
+                try? installer.updateIfNeeded()
+            }
+            DispatchQueue.main.async { [weak self] in self?.refreshAbelState() }
+        }
     }
 
     func refreshAbelState() {
@@ -36,22 +59,20 @@ extension AppModel {
 
     var abelInstalled: Bool { abelState == .installed }
 
-    func installAbel() {
-        do {
-            try abelInstaller.install()
-        } catch {
-            flash(error.localizedDescription, isError: true)
-        }
-        refreshAbelState()
-    }
+    func installAbel() { runAbelInstaller { try $0.install() } }
 
-    func removeAbel() {
-        do {
-            try abelInstaller.remove()
-        } catch {
-            flash(error.localizedDescription, isError: true)
+    func removeAbel() { runAbelInstaller { try $0.remove() } }
+
+    /// Installing and removing wait for ABEL to quit: off the main thread.
+    private func runAbelInstaller(_ work: @escaping @Sendable (AbelInstaller) throws -> Void) {
+        let installer = abelInstaller
+        DispatchQueue.global(qos: .userInitiated).async {
+            let failure = Result { try work(installer) }.failure
+            DispatchQueue.main.async { [weak self] in
+                if let failure { self?.flash(failure.localizedDescription, isError: true) }
+                self?.refreshAbelState()
+            }
         }
-        refreshAbelState()
     }
 
     /// Saves ABEL's settings and tells ABEL to pick them up.

@@ -49,7 +49,6 @@ struct AbelSettingsPane: View {
         switch model.abelState {
         case .installed: "A voice assistant that floats over every app. Hold ⌥Space to talk to it."
         case .notInstalled: "A voice assistant that floats over every app: dictate into chats and hear their replies."
-        case .needsApproval: "macOS is waiting for you to allow ABEL in System Settings › General › Login Items."
         case let .unavailable(reason): reason
         }
     }
@@ -60,10 +59,6 @@ struct AbelSettingsPane: View {
             Button("Remove ABEL") { model.removeAbel() }
         case .notInstalled:
             Button("Install ABEL") { model.installAbel() }
-        case .needsApproval:
-            Button("Open Login Items") {
-                NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension")!)
-            }
         case .unavailable:
             EmptyView()
         }
