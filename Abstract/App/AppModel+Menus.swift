@@ -23,6 +23,8 @@ struct MenuFacts: Equatable {
     /// An image shows: ⌘0 and ⌘1 zoom it.
     var hasImage = false
     var everythingPaused = false
+    /// Chats picked in the rail (ABS-206): Archive Chat acts on them.
+    var picked = 0
     /// ⌘1 to ⌘9.
     var chats: [Chat] = []
 }
@@ -52,6 +54,7 @@ extension AppModel {
         facts.hasFile = file != nil
         if let file, case .image = file.content { facts.hasImage = true }
         facts.everythingPaused = everythingPaused
+        facts.picked = chatSelection.count
         facts.chats = menuChats.map { MenuFacts.Chat(id: $0, name: chatName($0) ?? "") }
         return facts
     }

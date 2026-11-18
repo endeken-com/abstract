@@ -155,21 +155,12 @@ extension AppModel {
     }
 
     /// Before a worktree is removed: the teardown script, in the worktree,
-    /// through a login shell, for at most a minute. Its failure is reported
+    /// through a login shell, for at most two minutes. Its failure is reported
     /// and removal goes ahead.
     func runTeardownScript(_ project: Project, worktree path: String) async {
         guard let script = Project.nonBlank(project.teardownScript), FileManager.default.fileExists(atPath: path) else { return }
-        let spec = LaunchSpec(command: "/bin/zsh", args: ["-lc", script], cwd: path, keepStdinOpen: false)
-        do {
-            let result = try await executor.run(spec, timeout: .seconds(60))
-            if result.timedOut {
-                flash("Teardown script stopped after 60 seconds", isError: true)
-            } else if !result.ok {
-                let why = result.lastLine ?? result.code.map { "exit code \($0)" } ?? "it was stopped"
-                flash("Teardown script failed: \(why)", isError: true)
-            }
-        } catch {
-            flash("Teardown script didn't run: \(error.localizedDescription)", isError: true)
+        if let problem = await ChatTrash.runTeardown(executor, script: script, in: path, limit: ChatTrash.teardownLimit) {
+            flash(problem, isError: true)
         }
     }
 }

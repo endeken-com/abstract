@@ -18,7 +18,7 @@ enum ProjectPage {
 
 /// The page's sections, in order. The rail lists them.
 enum ProjectSettingsSection: String, CaseIterable, Identifiable, Hashable {
-    case chats, permissions, git, context, scripts, danger
+    case chats, permissions, git, context, scripts, cleanup, danger
 
     var id: String { rawValue }
 
@@ -29,6 +29,7 @@ enum ProjectSettingsSection: String, CaseIterable, Identifiable, Hashable {
         case .git: "Git"
         case .context: "Agent context"
         case .scripts: "Scripts"
+        case .cleanup: "Clean up"
         case .danger: "Danger zone"
         }
     }
@@ -40,6 +41,7 @@ enum ProjectSettingsSection: String, CaseIterable, Identifiable, Hashable {
         case .git: "arrow.triangle.branch"
         case .context: "books.vertical"
         case .scripts: "terminal"
+        case .cleanup: "trash"
         case .danger: "exclamationmark.triangle"
         }
     }
@@ -52,6 +54,7 @@ enum ProjectSettingsSection: String, CaseIterable, Identifiable, Hashable {
         case .git: "The repository, and how each chat's worktree and branch are made."
         case .context: "What this project's agents get beside their own setup. A change reaches a chat the next time its agent starts."
         case .scripts: "Commands run for workspace setup, teardown, and the Run button."
+        case .cleanup: "Clear out old chats and the worktrees they leave on disk, in one go."
         case .danger: nil
         }
     }

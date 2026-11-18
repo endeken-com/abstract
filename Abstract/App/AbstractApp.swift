@@ -273,9 +273,13 @@ struct AbstractCommands: Commands {
             Button("Background Tasks") { if let s = model.selectedSession { model.tasksOpen = TasksFocus(sessionId: s.id) } }
                 .disabled(!facts.hasBackgroundTasks)
             Divider()
-            Button("Archive Chat") { if let s = model.selectedSession { model.requestArchive = s.id } }
+            // Several chats picked in the rail: all of them, after one question.
+            Button(facts.picked > 1 ? "Archive \(facts.picked) Chats" : "Archive Chat") {
+                if model.chatSelection.count > 1 { model.perform(.archive, on: model.chatSelection.ids) }
+                else if let s = model.selectedSession { model.requestArchive = s.id }
+            }
                 .keyboardShortcut(.delete, modifiers: [.command, .shift])
-                .disabled(!facts.hasChat)
+                .disabled(!facts.hasChat && facts.picked < 2)
         }
     }
 }

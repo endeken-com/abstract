@@ -39,6 +39,13 @@ final class ShownMark {
     fileprivate(set) var isShown = false
 }
 
+/// Whether a chat is picked for a bulk action, observed chat by chat, so a
+/// ⌘-click redraws only the row it picks (ABS-206).
+@Observable
+final class PickMark {
+    fileprivate(set) var isPicked = false
+}
+
 struct PendingPermission: Identifiable, Hashable {
     var id: String { requestId }
     let requestId: String
@@ -290,8 +297,41 @@ final class AppModel {
     var showArchived = UserDefaults.standard.bool(forKey: "sidebar.showArchived") {
         didSet { UserDefaults.standard.set(showArchived, forKey: "sidebar.showArchived") }
     }
-    /// Archived chats picked in the rail for a bulk delete (ABS-181).
-    var archivedSelection = ChatSelection()
+    /// Chats picked in the rail with ⌘ and ⇧ clicks or ⌘A, any of them in
+    /// either layout, for the bulk actions (ABS-181, ABS-206).
+    var chatSelection = ChatSelection() {
+        didSet {
+            guard chatSelection != oldValue else { return }
+            let before = Set(oldValue.ids), after = Set(chatSelection.ids)
+            for id in before.symmetricDifference(after) { pickMarks[id]?.isPicked = after.contains(id) }
+        }
+    }
+    @ObservationIgnored private var pickMarks: [String: PickMark] = [:]
+
+    /// Whether a chat is picked, observed chat by chat like `shownMark`.
+    func pickMark(_ sessionId: String) -> PickMark {
+        if let mark = pickMarks[sessionId] { return mark }
+        let mark = PickMark()
+        mark.isPicked = _chatSelection.contains(sessionId)
+        pickMarks[sessionId] = mark
+        return mark
+    }
+    /// The chat ids the rail shows, top to bottom, as it last drew them:
+    /// what ⇧-click runs over and ⌘A picks.
+    @ObservationIgnored var shownChatOrder: [String] = []
+    /// Chats deleted whose folders are still being cleared, by id, with their
+    /// names: the rail's "Deleting 3 chats…" line.
+    var deletingChats: [String: String] = [:]
+    @ObservationIgnored var trashTasks: [String: Task<Void, Never>] = [:]
+    /// A project whose Clean up review should open, and the open review
+    /// confirmed as if Delete were clicked (the demo's probe).
+    var cleanupReviewProject: String?
+    var cleanupProbeConfirm = false
+    @ObservationIgnored let teardowns = Throttle(ChatTrash.concurrentTeardowns)
+    /// One `rm -rf` of the trash at a time.
+    @ObservationIgnored let purgeLine = Throttle(1)
+    /// What deleted chats left on disk, flashed once their batch is done.
+    @ObservationIgnored var trashProblems: [String] = []
     var newChatProjectId: String?? = nil
     /// What the next New Chat's prompt starts with, from asking about some lines.
     var newChatPrompt: String?
@@ -473,6 +513,8 @@ final class AppModel {
         }
         loadQueues()
         restoreInterruptedSetups(unfinished)
+        // Deleted chats' folders a quit left behind (ABS-206).
+        resumeTrash()
         Task { await listen() }
         watchCommandLine()
         serveCommandLine()
@@ -1812,9 +1854,11 @@ final class AppModel {
         if archived, !wasArchived { automationEvent(.chatArchived, in: sessionId) }
     }
 
-    /// Deletes the chat, its worktree or folder, session log and agent
-    /// config. Files that can't be removed are flashed, unless `quiet` (a
-    /// bulk delete reports them once), and returned either way.
+    /// Deletes the chat, its session log and agent config at once, and its
+    /// worktree or folder in the background (`ChatTrash`, ABS-206): the
+    /// chat leaves the rail, its tabs and the store before any file goes.
+    /// A worktree another chat works in stays, flashed unless `quiet` (a
+    /// bulk delete reports it once), and returned either way.
     @discardableResult
     func delete(_ sessionId: String, removeWorktree: Bool, quiet: Bool = false) async -> BulkChatDelete.Outcome {
         guard let s = session(sessionId) else { return .failed("Chat not found.") }
@@ -1824,17 +1868,15 @@ final class AppModel {
         // A reviewer's folder belongs to the chat it reviews (ABS-112).
         let removeWorktree = removeWorktree && s.reviewsSessionId == nil
         if removeWorktree, let path = s.worktreePath { detachReviewers(of: path, besides: sessionId) }
-        if removeWorktree, let path = s.worktreePath, let project = project(s.projectId) {
-            await runTeardownScript(project, worktree: path)
-            do {
-                try await Git.removeWorktree(executor, root: project.rootPath, path: path, deleteBranch: nil)
-            } catch {
-                leftFiles = "Worktree not removed: \(error.localizedDescription)"
+        var job: ChatTrash.Job?
+        if removeWorktree {
+            switch trashJob(for: s) {
+            case .success(let j)?: job = j
+            case .failure(let why)?: leftFiles = why.message
+            case nil: break
             }
-        } else if removeWorktree, s.projectId == nil, let path = s.worktreePath, Workspace.isChatFolder(path, home: executor.homeDirectory) {
-            // A standalone chat's own folder, which nothing else uses.
-            do { try executor.removeItem(path) } catch { leftFiles = "Folder not removed: \(error.localizedDescription)" }
         }
+        if let job { ChatTrash.record(job, trash: trashRoot) }
         if let leftFiles, !quiet { flash(leftFiles, isError: true) }
         engine.deleteLog(sessionId: sessionId)
         ChatConfigFiles.remove(root: Self.agentConfigRoot, chatId: sessionId)
@@ -1849,6 +1891,8 @@ final class AppModel {
         enrichers = enrichers.filter { !$0.key.hasPrefix(sessionId + "/") }
         if case .session(let id) = destination, id == sessionId { destination = .home }
         sessions = StoreOrder.deleting(sessionId, from: sessions)
+        if chatSelection.contains(sessionId) { chatSelection = chatSelection.keeping(chatSelection.ids.filter { $0 != sessionId }) }
+        if let job { clearInBackground(job, name: s.name) }
         return leftFiles.map(BulkChatDelete.Outcome.leftFiles) ?? .deleted
     }
 
