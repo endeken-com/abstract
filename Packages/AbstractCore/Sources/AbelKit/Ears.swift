@@ -55,6 +55,15 @@ public final class MicrophoneSource: AudioSource {
 
     public static var isAuthorized: Bool { AVCaptureDevice.authorizationStatus(for: .audio) == .authorized }
 
+    /// macOS hasn't asked yet: asking now shows its prompt.
+    public static var canAsk: Bool { AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined }
+
+    /// Privacy & Security › Microphone, where a microphone turned down is turned back on.
+    public static let settingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!
+
+    /// What ABEL says when it can't hear you, and where to fix it.
+    public static let deniedSentence = "ABEL can't hear you: turn on Abel in System Settings › Privacy & Security › Microphone."
+
     public func start(_ handler: @escaping @Sendable (AVAudioPCMBuffer) -> Void) throws {
         guard !isRunning else { return }
         let engine = AVAudioEngine()
@@ -235,6 +244,13 @@ public final class DeviceEars: AbelEars {
         captureGeneration += 1
         let generation = captureGeneration
         Task {
+            // The microphone first: asking can't wait on the recognizer, which might not start.
+            if source is MicrophoneSource, !MicrophoneSource.isAuthorized {
+                guard await MicrophoneSource.requestAccess() else {
+                    onProblem?(MicrophoneSource.deniedSentence)
+                    return
+                }
+            }
             do {
                 let listening = try await listen("capture", languages: languages, vocabulary: vocabulary) { [weak self] heard in
                     if !heard.text.isEmpty { self?.onWords?(heard.text) }
@@ -324,7 +340,7 @@ public final class DeviceEars: AbelEars {
                 guard capture != nil || wakeOn else { return }
                 Task {
                     if await MicrophoneSource.requestAccess() { self.updateSource() } else {
-                        self.onProblem?("ABEL can't hear you: allow the microphone for Abel in System Settings › Privacy & Security.")
+                        self.onProblem?(MicrophoneSource.deniedSentence)
                     }
                 }
                 return
