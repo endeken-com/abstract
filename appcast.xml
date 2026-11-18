@@ -5,10 +5,10 @@
     <link>https://endeken-com.github.io/abstract/appcast.xml</link>
     <language>en</language>
     <item>
-      <title>Abstract 0.13.0-nightly.90</title>
-      <pubDate>Wed, 18 Nov 2026 05:09:11 GMT</pubDate>
-      <sparkle:version>0.13.0.90</sparkle:version>
-      <sparkle:shortVersionString>0.13.0-nightly.90</sparkle:shortVersionString>
+      <title>Abstract 0.13.0-nightly.92</title>
+      <pubDate>Wed, 18 Nov 2026 19:19:39 GMT</pubDate>
+      <sparkle:version>0.13.0.92</sparkle:version>
+      <sparkle:shortVersionString>0.13.0-nightly.92</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
       <sparkle:channel>nightly</sparkle:channel>
       <sparkle:fullReleaseNotesLink>https://github.com/endeken-com/abstract/releases/tag/nightly</sparkle:fullReleaseNotesLink>
@@ -27,13 +27,14 @@
 &lt;li&gt;Plugin updates from the catalog reach nightly users by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/wesguirra/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/wesguirra"&gt;@wesguirra&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="6375828722" data-permission-text="Title is private" data-url="https://github.com/endeken-com/abstract/issues/218" data-hovercard-type="pull_request" data-hovercard-url="/endeken-com/abstract/pull/218/hovercard" href="https://github.com/endeken-com/abstract/pull/218"&gt;#218&lt;/a&gt;&lt;/li&gt;
 &lt;li&gt;Select any chats in any layout to archive, pin or delete them together, delete chats instantly however big their worktree, and clean up old chats from Project Settings by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/wesguirra/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/wesguirra"&gt;@wesguirra&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="6457410666" data-permission-text="Title is private" data-url="https://github.com/endeken-com/abstract/issues/224" data-hovercard-type="pull_request" data-hovercard-url="/endeken-com/abstract/pull/224/hovercard" href="https://github.com/endeken-com/abstract/pull/224"&gt;#224&lt;/a&gt;&lt;/li&gt;
 &lt;li&gt;A pull request opened in a submodule shows as that submodule's, with its own title and status, in the sidebar and the Pull Request tab by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/wesguirra/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/wesguirra"&gt;@wesguirra&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="6457498030" data-permission-text="Title is private" data-url="https://github.com/endeken-com/abstract/issues/225" data-hovercard-type="pull_request" data-hovercard-url="/endeken-com/abstract/pull/225/hovercard" href="https://github.com/endeken-com/abstract/pull/225"&gt;#225&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;Lets ABEL ask for the microphone and appear in Privacy &amp;amp; Security by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/wesguirra/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/wesguirra"&gt;@wesguirra&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="6468495001" data-permission-text="Title is private" data-url="https://github.com/endeken-com/abstract/issues/227" data-hovercard-type="pull_request" data-hovercard-url="/endeken-com/abstract/pull/227/hovercard" href="https://github.com/endeken-com/abstract/pull/227"&gt;#227&lt;/a&gt;&lt;/li&gt;
 &lt;/ul&gt;
 &lt;h3 dir="auto"&gt;Under the hood&lt;/h3&gt;
 &lt;ul dir="auto"&gt;
 &lt;li&gt;Spike: ABEL, an optional voice assistant that floats over the Mac, hears and speaks on-device, and controls Abstract and other apps without a model API by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/wesguirra/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/wesguirra"&gt;@wesguirra&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="6437413852" data-permission-text="Title is private" data-url="https://github.com/endeken-com/abstract/issues/219" data-hovercard-type="pull_request" data-hovercard-url="/endeken-com/abstract/pull/219/hovercard" href="https://github.com/endeken-com/abstract/pull/219"&gt;#219&lt;/a&gt;&lt;/li&gt;
 &lt;/ul&gt;
-&lt;p dir="auto"&gt;&lt;strong&gt;Full Changelog&lt;/strong&gt;: &lt;a class="commit-link" href="https://github.com/endeken-com/abstract/compare/v0.12.0...2eb6e426bb3c475e756439e24c789d813971d260"&gt;&lt;tt&gt;v0.12.0...2eb6e42&lt;/tt&gt;&lt;/a&gt;&lt;/p&gt;</description>
-      <enclosure url="https://github.com/endeken-com/abstract/releases/download/nightly/Abstract-0.13.0-nightly.90.dmg" length="73637351" type="application/octet-stream" sparkle:edSignature="Kxo7nJkaZf0LbEnQpyv0ZQlvo4cwA53e/Gt0ZLsxcPpBb+RgQTgfz42tdfoi85IAM7DN1jIKtlzyrT7atfgwDw==" />
+&lt;p dir="auto"&gt;&lt;strong&gt;Full Changelog&lt;/strong&gt;: &lt;a class="commit-link" href="https://github.com/endeken-com/abstract/compare/v0.12.0...f78010ddf1e688b170d18ae4e092f0c5c0ec712b"&gt;&lt;tt&gt;v0.12.0...f78010d&lt;/tt&gt;&lt;/a&gt;&lt;/p&gt;</description>
+      <enclosure url="https://github.com/endeken-com/abstract/releases/download/nightly/Abstract-0.13.0-nightly.92.dmg" length="73670939" type="application/octet-stream" sparkle:edSignature="rC1w+3+L2dSJpu1whDnv0TR3AzhIZi9iPLjnth/mugm5u74Eg1h96+/7uB+4/SZBAsrX91apDnslc9POy9aCBw==" />
     </item>
     <item>
       <title>Abstract 0.12.0</title>
