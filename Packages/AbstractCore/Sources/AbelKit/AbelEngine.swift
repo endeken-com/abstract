@@ -202,9 +202,13 @@ public final class AbelEngine {
         }
     }
 
-    /// ABEL's state in a sentence, for Settings › ABEL.
+    /// Whether ABEL may use the microphone; the real check by default.
+    @ObservationIgnored public var microphoneAllowed: () -> Bool = { true }
+
+    /// ABEL's state in a sentence, for Settings › ABEL and its menu.
     public var stateSentence: String {
         if let reason = machine.pauseReason { return reason.sentence }
+        if !microphoneAllowed() { return "ABEL can't hear you yet: allow the microphone from ABEL's menu." }
         switch machine.phase {
         case .listening, .transcribing: return "Listening."
         case .speaking: return "Speaking."

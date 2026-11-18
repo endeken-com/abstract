@@ -43,7 +43,7 @@ enum AbelMain {
 /// The running assistant: engine, panel, menu bar item, push-to-talk and
 /// the screen watch.
 @MainActor
-final class AbelDelegate: NSObject, NSApplicationDelegate {
+final class AbelDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var engine: AbelEngine!
     private var panel: PanelController!
     private var server: AbelLink.LineServer<AbelLink.HelperRequest, AbelLink.HelperReply>?
@@ -116,10 +116,17 @@ final class AbelDelegate: NSObject, NSApplicationDelegate {
         screen.start()
         makeStatusItem()
         observeListening()
+        engine.microphoneAllowed = { MicrophoneSource.isAuthorized }
         Task {
             await engine.start()
             panel.refreshTheme()
             updateMenu()
+            // Asked once, right after ABEL is installed, so it shows in
+            // Privacy & Security › Microphone before you first talk to it.
+            if MicrophoneSource.canAsk {
+                _ = await MicrophoneSource.requestAccess()
+                updateMenu()
+            }
         }
         // Settings and names change while ABEL runs: look again now and then.
         Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
@@ -158,7 +165,9 @@ final class AbelDelegate: NSObject, NSApplicationDelegate {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         // Abstract's mark: ABEL is part of Abstract.
         item.button?.image = AbelMark.image(height: 15)
-        item.menu = NSMenu()
+        let menu = NSMenu()
+        menu.delegate = self
+        item.menu = menu
         statusItem = item
         updateMenu()
     }
@@ -170,6 +179,10 @@ final class AbelDelegate: NSObject, NSApplicationDelegate {
         state.isEnabled = false
         menu.addItem(state)
         menu.addItem(.separator())
+        if !MicrophoneSource.isAuthorized {
+            menu.addItem(item("Allow the Microphone…", #selector(allowMicrophone)))
+            menu.addItem(.separator())
+        }
         menu.addItem(item(panel.isHidden ? "Show ABEL" : "Hide ABEL", #selector(toggleOrb)))
         menu.addItem(item(pausedByYou ? "Resume ABEL" : "Pause ABEL", #selector(togglePause)))
         menu.addItem(.separator())
@@ -178,10 +191,26 @@ final class AbelDelegate: NSObject, NSApplicationDelegate {
         statusItem?.button?.appearsDisabled = engine.machine.isPaused
     }
 
+    /// Read fresh each time it opens: the microphone may have been allowed since.
+    func menuNeedsUpdate(_ menu: NSMenu) { updateMenu() }
+
     private func item(_ title: String, _ action: Selector) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
         item.target = self
         return item
+    }
+
+    /// Asks macOS when it hasn't asked yet; once turned down, only System
+    /// Settings can turn it back on, so that's where this goes.
+    @objc private func allowMicrophone() {
+        Task { @MainActor in
+            if MicrophoneSource.canAsk {
+                _ = await MicrophoneSource.requestAccess()
+            } else {
+                NSWorkspace.shared.open(MicrophoneSource.settingsURL)
+            }
+            updateMenu()
+        }
     }
 
     @objc private func toggleOrb() { panel.isHidden.toggle(); updateMenu() }

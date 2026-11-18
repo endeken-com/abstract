@@ -226,6 +226,14 @@ func eventually(_ condition: () -> Bool) async {
         #expect(engine.display.mode == .idle)
     }
 
+    @Test func saysWhenItCantHearYouYet() async {
+        let engine = await engine()
+        engine.microphoneAllowed = { false }
+        #expect(engine.stateSentence == "ABEL can't hear you yet: allow the microphone from ABEL's menu.")
+        engine.microphoneAllowed = { true }
+        #expect(engine.stateSentence == "Hold ⌥Space to talk.")
+    }
+
     @Test func aProblemIsSaid() async {
         let engine = await engine()
         engine.pushDown()
