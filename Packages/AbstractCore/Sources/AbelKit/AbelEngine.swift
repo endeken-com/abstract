@@ -121,6 +121,31 @@ public final class AbelEngine {
 
     // MARK: Input
 
+    /// The widget's Talk button: a tap starts listening, the next ends it.
+    public func toggleListening() {
+        if case .listening(.pushToTalk) = machine.phase { pushUp() } else { pushDown() }
+    }
+
+    /// Chats waiting on you, for the widget's badge.
+    public var needsYouCount: Int { context?.chats.filter { $0.state == .needsYou }.count ?? 0 }
+
+    /// The widget's bell: the first chat that needs you, in Abstract.
+    /// False when Abstract isn't open, or nothing needs you.
+    @discardableResult
+    public func openWhatNeedsYou() async -> Bool {
+        await refreshContext()
+        guard let first = context?.chats.first(where: { $0.state == .needsYou }) else { return false }
+        let reply = await abstract.ask(AbelLink.Request(kind: .open, chatId: first.id))
+        if reply?.ok == true { record(.did, "Opened “\(first.title)”, asked by you") }
+        return reply?.ok == true
+    }
+
+    /// The widget's pencil: Abstract's new chat screen. False when Abstract isn't open.
+    @discardableResult
+    public func openNewChat() async -> Bool {
+        await abstract.ask(AbelLink.Request(kind: .newChat))?.ok == true
+    }
+
     public func pushDown() { send(.pushDown) }
     public func pushUp() { send(.pushUp) }
     public func escape() { send(.escape) }
@@ -177,9 +202,13 @@ public final class AbelEngine {
         }
     }
 
-    /// ABEL's state in a sentence, for Settings › ABEL.
+    /// Whether ABEL may use the microphone; the real check by default.
+    @ObservationIgnored public var microphoneAllowed: () -> Bool = { true }
+
+    /// ABEL's state in a sentence, for Settings › ABEL and its menu.
     public var stateSentence: String {
         if let reason = machine.pauseReason { return reason.sentence }
+        if !microphoneAllowed() { return "ABEL can't hear you yet: allow the microphone from ABEL's menu." }
         switch machine.phase {
         case .listening, .transcribing: return "Listening."
         case .speaking: return "Speaking."

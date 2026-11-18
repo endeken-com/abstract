@@ -128,6 +128,10 @@ extension AppModel {
                 guard let text = request.text, !text.isEmpty else { return .failed("There was nothing to ask.") }
                 let id = try await askAbelChat(text)
                 return AbelLink.Reply(ok: true, chatTitle: AbelTools.chatName, chatId: id)
+            case .newChat:
+                destination = .home
+                NSApp.activate()
+                return AbelLink.Reply(ok: true)
             case .context, .dictate, .sendDraft:
                 return .failed("Abstract can't do that here.")
             }

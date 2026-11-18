@@ -226,6 +226,14 @@ func eventually(_ condition: () -> Bool) async {
         #expect(engine.display.mode == .idle)
     }
 
+    @Test func saysWhenItCantHearYouYet() async {
+        let engine = await engine()
+        engine.microphoneAllowed = { false }
+        #expect(engine.stateSentence == "ABEL can't hear you yet: allow the microphone from ABEL's menu.")
+        engine.microphoneAllowed = { true }
+        #expect(engine.stateSentence == "Hold ⌥Space to talk.")
+    }
+
     @Test func aProblemIsSaid() async {
         let engine = await engine()
         engine.pushDown()
@@ -301,7 +309,8 @@ func eventually(_ condition: () -> Bool) async {
         #expect(panel.collectionBehavior.contains(.canJoinAllSpaces))
         #expect(panel.collectionBehavior.contains(.fullScreenAuxiliary))
         #expect(!panel.hidesOnDeactivate)
-        #expect(panel.isMovableByWindowBackground)
+        // ABEL drags itself, so a click on it can open Abstract.
+        #expect(!panel.isMovableByWindowBackground)
     }
 
     @Test func remembersWhereYouDraggedIt() {
@@ -309,21 +318,48 @@ func eventually(_ condition: () -> Bool) async {
         let defaults = UserDefaults(suiteName: "abel-panel-\(UUID().uuidString)")!
         let panel = AbelPanel(defaults: defaults)
         let visible = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 800, height: 600)
-        let spot = NSPoint(x: visible.minX + 100, y: visible.minY + 100)
-        panel.setFrameOrigin(spot)
-        #expect(defaults.string(forKey: AbelPanel.originKey) == NSStringFromPoint(spot))
+        panel.setContentSize(NSSize(width: 100, height: 100))
+        panel.setFrameOrigin(NSPoint(x: visible.minX + 100, y: visible.minY + 100))
+        // ABEL's spot is the top center of the widget, whatever its size.
+        let anchor = NSPoint(x: panel.frame.midX, y: panel.frame.maxY)
+        #expect(defaults.string(forKey: AbelPanel.originKey) == NSStringFromPoint(anchor))
         let again = AbelPanel(defaults: defaults)
+        again.setContentSize(NSSize(width: 300, height: 180))
         again.restoreOrigin()
-        #expect(again.frame.origin == spot)
+        #expect(again.frame.midX == anchor.x)
+        #expect(again.frame.maxY == anchor.y)
     }
 
-    @Test func growsDownFromItsTopEdge() {
+    @Test func growsDownAroundABEL() {
         _ = NSApplication.shared
         let panel = AbelPanel(defaults: UserDefaults(suiteName: "abel-panel-\(UUID().uuidString)")!)
-        panel.setFrame(NSRect(x: 100, y: 500, width: 44, height: 44), display: false)
-        panel.resize(to: NSSize(width: 340, height: 120))
-        #expect(panel.frame.maxY == 544)
-        #expect(panel.frame.minX == 100)
+        panel.setFrame(NSRect(x: 100, y: 500, width: 100, height: 100), display: false)
+        panel.resize(to: NSSize(width: 300, height: 220))
+        #expect(panel.frame.maxY == 600)
+        #expect(panel.frame.midX == 150)
+    }
+
+    @Test func clicksAndHoverWorkWhileNeverKey() {
+        _ = NSApplication.shared
+        let model = AbelWidgetModel(palette: AbelPalette(theme: AbelPalette.themes(in: Self.resources).standard(.dark)))
+        let host = AbelWidgetHost(model: model)
+        #expect(host.acceptsFirstMouse(for: nil))
+        host.updateTrackingAreas()
+        #expect(host.trackingAreas.contains { $0.options.contains(.activeAlways) })
+        host.mouseEntered(with: NSEvent())
+        #expect(model.hovered)
+    }
+
+    @Test func spritesHaveEveryPoseAndMove() {
+        for pose in AbelSprite.Pose.allCases {
+            #expect(AbelSprite.image(pose, tick: 0)?.width == AbelSprite.width)
+            let frames = Set((0..<64).map { AbelSprite.pixels(pose, tick: $0) })
+            #expect(frames.count > 1, "\(pose) never moves")
+        }
+        // Listening, thinking and answering each look their own way.
+        #expect(AbelSprite.pixels(.listening, tick: 4) != AbelSprite.pixels(.idle, tick: 4))
+        #expect(AbelSprite.pixels(.answering, tick: 4) != AbelSprite.pixels(.idle, tick: 4))
+        #expect(AbelMark.image().isTemplate)
     }
 
     @Test func drawsInGraphitePaperAndInk() throws {
@@ -337,8 +373,12 @@ func eventually(_ condition: () -> Bool) async {
                             AbelDisplay(mode: .answering, answer: "Sidebar fix says: done.")] {
                 let png = try #require(AbelSnapshot.png(display: display, palette: palette))
                 let image = try #require(NSImage(data: png))
-                #expect(image.size.width > (display.isExpanded ? 200 : 30))
+                #expect(image.size.width > (display.isExpanded ? 260 : 80))
             }
+            let hoveredPNG = try #require(AbelSnapshot.png(display: AbelDisplay(), palette: palette, hovered: true))
+            let stillPNG = try #require(AbelSnapshot.png(display: AbelDisplay(), palette: palette))
+            let hovered = try #require(NSImage(data: hoveredPNG)), still = try #require(NSImage(data: stillPNG))
+            #expect(hovered.size.height > still.size.height)
         }
     }
 }

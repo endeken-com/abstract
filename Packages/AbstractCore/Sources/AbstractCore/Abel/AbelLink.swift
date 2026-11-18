@@ -56,6 +56,8 @@ public enum AbelLink {
             case showScreen
             /// Ask ABEL's own chat `text`; its answer is read aloud when it's done.
             case ask
+            /// Bring Abstract forward on its new chat screen (the widget's pencil).
+            case newChat
         }
 
         public var kind: Kind
