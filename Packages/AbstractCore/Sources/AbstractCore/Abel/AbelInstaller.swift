@@ -34,37 +34,52 @@ public struct SystemLoginItem: LoginItemService {
     public func unregister() throws { try service.unregister() }
 }
 
-/// Installs and removes ABEL from Settings › ABEL (ABS-203). Abel.app ships
-/// inside Abstract.app, signed with it (ABS-202 §6): installing turns its
-/// login item on and starts it; removing turns it off and quits it.
-/// Nothing is downloaded, and Abstract itself never asks for the
-/// microphone: ABEL does, under its own name.
+/// Installs and removes ABEL from Settings › ABEL (ABS-203).
+///
+/// Abel.app ships inside Abstract.app, but it runs from its own copy in
+/// `~/Applications`. macOS judges a helper bundled inside another app as
+/// that app: from inside Abstract, ABEL's microphone request was Abstract's,
+/// which has no microphone entitlement, so macOS refused to ask and ABEL
+/// never appeared in Privacy & Security. Its own copy is its own app,
+/// asked for and listed as ABEL. It starts itself at login
+/// (`SMAppService.mainApp`), and Abstract keeps the copy in step with its
+/// own version. Abstract itself still never asks for the microphone.
 public struct AbelInstaller: Sendable {
     public enum State: Sendable, Equatable {
         /// ABEL can't run here, and why.
         case unavailable(String)
         case notInstalled
         case installed
-        /// macOS wants you to allow it in System Settings › General › Login Items.
-        case needsApproval
     }
 
     /// ABEL needs macOS 26: its recognizer (`SpeechAnalyzer`) is there,
     /// on the Mac, in English and Portuguese.
     public static let minimumMacOS = OperatingSystemVersion(majorVersion: 26, minorVersion: 0, patchVersion: 0)
 
-    public let service: any LoginItemService
-    /// Where Abel.app is; nil when this Abstract was built without it.
+    /// The login item ABEL used to be, from inside Abstract.app: turned off.
+    public let legacy: any LoginItemService
+    /// Abel.app inside Abstract.app, copied from; nil when this Abstract
+    /// was built without it.
     public let appURL: URL?
+    /// Where ABEL's own copy lives.
+    public let installURL: URL
     public let systemVersion: OperatingSystemVersion
+    /// Starts ABEL from `URL`.
     public let launch: @Sendable (URL) -> Void
-    public let quit: @Sendable () -> Void
+    /// Asks a running ABEL to stop starting at login and quit, then waits for it.
+    public let quit: @Sendable (_ forget: Bool) -> Void
 
-    public init(service: any LoginItemService = SystemLoginItem(), appURL: URL?,
+    public init(legacy: any LoginItemService = SystemLoginItem(), appURL: URL?,
+                installURL: URL = Self.defaultInstallURL,
                 systemVersion: OperatingSystemVersion = ProcessInfo.processInfo.operatingSystemVersion,
-                launch: @escaping @Sendable (URL) -> Void, quit: @escaping @Sendable () -> Void) {
-        self.service = service; self.appURL = appURL; self.systemVersion = systemVersion
+                launch: @escaping @Sendable (URL) -> Void, quit: @escaping @Sendable (_ forget: Bool) -> Void) {
+        self.legacy = legacy; self.appURL = appURL; self.installURL = installURL; self.systemVersion = systemVersion
         self.launch = launch; self.quit = quit
+    }
+
+    /// `~/Applications/Abel.app`: the user's own Applications folder, no administrator needed.
+    public static var defaultInstallURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications/\(AbelLink.appName)")
     }
 
     /// Abel.app inside the Abstract.app at `bundleURL`, when it's there.
@@ -78,28 +93,66 @@ public struct AbelInstaller: Sendable {
             return .unavailable("ABEL needs macOS 26 or later. This Mac has macOS \(systemVersion.majorVersion).")
         }
         guard appURL != nil else { return .unavailable("This copy of Abstract was built without ABEL.") }
-        switch service.status {
-        case .enabled: return .installed
-        case .requiresApproval: return .needsApproval
-        case .notRegistered, .notFound: return .notInstalled
-        }
+        return FileManager.default.fileExists(atPath: installURL.appendingPathComponent("Contents/Info.plist").path)
+            ? .installed : .notInstalled
     }
 
     public static func supports(_ version: OperatingSystemVersion) -> Bool {
         (version.majorVersion, version.minorVersion) >= (minimumMacOS.majorVersion, minimumMacOS.minorVersion)
     }
 
-    /// Turns ABEL on at login and starts it now.
+    /// The version a copy of Abel.app says it is.
+    public static func version(of app: URL) -> String? {
+        let info = NSDictionary(contentsOf: app.appendingPathComponent("Contents/Info.plist"))
+        guard let short = info?["CFBundleShortVersionString"] as? String else { return nil }
+        return "\(short) (\(info?["CFBundleVersion"] as? String ?? "?"))"
+    }
+
+    /// Whether ABEL's copy is a different version from the one Abstract ships.
+    public var needsUpdate: Bool {
+        guard state == .installed, let appURL else { return false }
+        return Self.version(of: appURL) != Self.version(of: installURL)
+    }
+
+    /// Copies ABEL to its own place and starts it; it then starts itself at login.
     public func install() throws {
         if case let .unavailable(reason) = state { throw AbstractError.message(reason) }
         guard let appURL else { return }
-        if service.status != .enabled { try service.register() }
-        launch(appURL)
+        // The old login item, from inside Abstract.app, never starts again.
+        if legacy.status == .enabled || legacy.status == .requiresApproval { try? legacy.unregister() }
+        quit(false)
+        try replaceCopy(from: appURL)
+        launch(installURL)
     }
 
-    /// Turns ABEL off at login and quits it.
+    /// Brings ABEL's copy up to Abstract's version, when it's installed and differs.
+    @discardableResult
+    public func updateIfNeeded() throws -> Bool {
+        guard needsUpdate, let appURL else { return false }
+        quit(false)
+        try replaceCopy(from: appURL)
+        launch(installURL)
+        return true
+    }
+
+    /// Stops ABEL starting at login, quits it and deletes its copy.
     public func remove() throws {
-        if service.status != .notRegistered, service.status != .notFound { try service.unregister() }
-        quit()
+        if legacy.status == .enabled || legacy.status == .requiresApproval { try? legacy.unregister() }
+        quit(true)
+        let fm = FileManager.default
+        if fm.fileExists(atPath: installURL.path) { try fm.removeItem(at: installURL) }
+    }
+
+    func replaceCopy(from source: URL) throws {
+        let fm = FileManager.default
+        try fm.createDirectory(at: installURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let staging = installURL.deletingLastPathComponent().appendingPathComponent(".\(AbelLink.appName).new")
+        if fm.fileExists(atPath: staging.path) { try fm.removeItem(at: staging) }
+        try fm.copyItem(at: source, to: staging)
+        if fm.fileExists(atPath: installURL.path) {
+            _ = try fm.replaceItemAt(installURL, withItemAt: staging)
+        } else {
+            try fm.moveItem(at: staging, to: installURL)
+        }
     }
 }

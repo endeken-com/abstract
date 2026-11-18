@@ -96,11 +96,16 @@ public final class MicrophoneSource: AudioSource {
         try? input.setVoiceProcessingEnabled(true)
         let format = input.outputFormat(forBus: 0)
         guard format.sampleRate > 0 else { throw AbelError("There's no microphone to listen with.") }
-        input.installTap(onBus: 0, bufferSize: 2_048, format: format) { buffer, _ in handler(buffer) }
+        // The tap runs on an audio thread: its block must not belong to the main actor.
+        input.installTap(onBus: 0, bufferSize: 2_048, format: format, block: Self.tap(handler))
         engine.prepare()
         try engine.start()
         self.engine = engine
         isRunning = true
+    }
+
+    nonisolated static func tap(_ handler: @escaping @Sendable (AVAudioPCMBuffer) -> Void) -> AVAudioNodeTapBlock {
+        { buffer, _ in handler(buffer) }
     }
 
     public func stop() {

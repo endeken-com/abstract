@@ -186,6 +186,8 @@ public enum AbelLink {
             case tool
             /// `text`, acted on as if ABEL heard it (debug builds only: demos and checks).
             case hear
+            /// Quit; with `text` "forget", stop starting at login first (Remove ABEL).
+            case quit
         }
 
         public var kind: Kind

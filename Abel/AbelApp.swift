@@ -1,6 +1,7 @@
 import AbelKit
 import AbstractCore
 import AppKit
+import ServiceManagement
 import SwiftUI
 
 /// ABEL, Abstract's Built-in Expert Listener (ABS-203): its own app, inside
@@ -55,6 +56,19 @@ final class AbelDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let kept = KeptSettings()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // The copy inside Abstract.app can't hold the microphone (macOS
+        // judges it as Abstract): when ABEL's own copy exists, that one runs.
+        if Bundle.main.bundlePath.contains("/Contents/Library/LoginItems/") {
+            let own = AbelInstaller.defaultInstallURL
+            if FileManager.default.fileExists(atPath: own.appendingPathComponent("Contents/Info.plist").path) {
+                NSWorkspace.shared.openApplication(at: own, configuration: NSWorkspace.OpenConfiguration())
+                NSApp.terminate(nil)
+                return
+            }
+        } else if SMAppService.mainApp.status != .enabled {
+            // ABEL's own copy starts itself at login.
+            try? SMAppService.mainApp.register()
+        }
         let storePath = Store.defaultPath()
         guard ProcessInfo.processInfo.isOperatingSystemAtLeast(AbelInstaller.minimumMacOS) else {
             NSApp.terminate(nil)
@@ -78,6 +92,10 @@ final class AbelDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let tool = ProcessInfo.processInfo.environment["ABEL_SHORTCUTS_TOOL"] { apps.shortcutsTool = tool }
         #endif
         engine.appControl = apps
+        engine.onQuit = { forget in
+            if forget { try? SMAppService.mainApp.unregister() }
+            NSApp.terminate(nil)
+        }
         engine.sounds = ChipChimes()
         engine.onSettings = { [weak self] settings in
             self?.kept.settings = settings
@@ -226,6 +244,8 @@ final class AbelDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             switch alert.runModal() {
             case .alertFirstButtonReturn:
                 MicrophoneSource.resetDecision()
+                // The permission service restarts after a reset: ask once it's back.
+                try? await Task.sleep(for: .milliseconds(1500))
                 NSApp.activate()
                 _ = await MicrophoneSource.requestAccess()
             case .alertSecondButtonReturn:

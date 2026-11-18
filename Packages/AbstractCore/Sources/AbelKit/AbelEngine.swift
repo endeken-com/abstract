@@ -91,6 +91,8 @@ public final class AbelEngine {
     }
     /// How long the panel stays open after ABEL finishes speaking.
     @ObservationIgnored public var lingering: Duration = .seconds(4)
+    /// Abstract asked ABEL to quit; `true` also stops it starting at login.
+    @ObservationIgnored public var onQuit: ((Bool) -> Void)?
     /// ABEL's chimes; nil keeps it silent (tests).
     @ObservationIgnored public var sounds: (any AbelSounds)?
     /// How ABEL acts on other apps (ABS-205); nil leaves it unable to.
@@ -193,6 +195,13 @@ public final class AbelEngine {
         case .tool:
             let outcome = await tool(request.name ?? "", arguments: request.text ?? "{}", from: request.chatId)
             return AbelLink.HelperReply(ok: !outcome.isError, message: outcome.text)
+        case .quit:
+            let forget = request.text == "forget"
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(200))
+                self.onQuit?(forget)
+            }
+            return AbelLink.HelperReply(ok: true)
         case .hear:
             #if DEBUG
             guard let text = request.text else { return AbelLink.HelperReply(ok: false) }
