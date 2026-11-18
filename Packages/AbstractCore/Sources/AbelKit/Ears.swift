@@ -58,6 +58,30 @@ public final class MicrophoneSource: AudioSource {
     /// macOS hasn't asked yet: asking now shows its prompt.
     public static var canAsk: Bool { AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined }
 
+    /// The microphone's state for ABEL, in words for its menu.
+    public static var stateTitle: String {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized: "Microphone: allowed"
+        case .notDetermined: "Microphone: not asked yet"
+        case .restricted: "Microphone: blocked by this Mac's settings"
+        default: "Microphone: turned off"
+        }
+    }
+
+    /// Forgets the answer macOS has stored for ABEL, so the next request asks
+    /// again. Only ABEL's own microphone entry is touched.
+    @discardableResult
+    public static func resetDecision(bundleIdentifier: String = AbelLink.bundleIdentifier) -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/tccutil")
+        process.arguments = ["reset", "Microphone", bundleIdentifier]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return false }
+        process.waitUntilExit()
+        return process.terminationStatus == 0
+    }
+
     /// Privacy & Security › Microphone, where a microphone turned down is turned back on.
     public static let settingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!
 

@@ -91,6 +91,8 @@ public final class AbelEngine {
     }
     /// How long the panel stays open after ABEL finishes speaking.
     @ObservationIgnored public var lingering: Duration = .seconds(4)
+    /// ABEL's chimes; nil keeps it silent (tests).
+    @ObservationIgnored public var sounds: (any AbelSounds)?
     /// How ABEL acts on other apps (ABS-205); nil leaves it unable to.
     @ObservationIgnored public var appControl: (any AppControlling)?
     /// Called when the settings Abstract handed over change, so they can be kept.
@@ -232,10 +234,12 @@ public final class AbelEngine {
         for effect in effects {
             switch effect {
             case let .startCapture(trigger):
+                sounds?.play(.listen)
                 collapseTask?.cancel()
                 display = AbelDisplay(mode: .listening)
                 ears.startCapture(trigger, languages: settings.languages, vocabulary: context?.vocabulary.contextualStrings ?? [])
             case .finishCapture:
+                sounds?.play(.done)
                 display.mode = .thinking
                 ears.finishCapture()
             case .cancelCapture:
@@ -398,6 +402,7 @@ public final class AbelEngine {
     }
 
     private func problem(_ message: String) {
+        sounds?.play(.problem)
         record(.refused, message)
         send(.escape)
         say(message)

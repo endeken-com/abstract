@@ -63,7 +63,7 @@ public final class AbelWidgetModel {
 
     var pose: AbelSprite.Pose {
         switch display.mode {
-        case .idle: .idle
+        case .idle: hovered ? .greeting : .idle
         case .listening: .listening
         case .thinking: .thinking
         case .answering: .answering
@@ -79,7 +79,8 @@ public struct AbelWidgetView: View {
 
     public init(model: AbelWidgetModel) { self.model = model }
 
-    public static let mascotScale: CGFloat = 4
+    /// The sprite is 48 pixels; two points each.
+    public static let mascotScale: CGFloat = 2
 
     public var body: some View {
         VStack(spacing: 6) {
@@ -117,7 +118,7 @@ public struct AbelWidgetView: View {
             }
             .frame(width: size, height: size)
             // A hop, not a zoom: pixel art stays crisp only at whole sizes.
-            .offset(y: model.hovered && !model.display.isExpanded ? -4 : 0)
+            .offset(y: model.hovered && !model.display.isExpanded ? -2 : 0)
             .animation(.spring(duration: 0.25, bounce: 0.4), value: model.hovered)
         }
         .frame(width: size, height: size + 4)
