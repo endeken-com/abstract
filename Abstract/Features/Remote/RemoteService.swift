@@ -509,7 +509,7 @@ final class RemoteService {
                                   RemotePluginProject(key: $0.key, name: $0.name)
                               },
                               pluginsSupported: true,
-                              theme: Self.theming())
+                              theme: Self.theming(), issueSearch: true)
     }
 
     /// The theme this Mac draws in, as colours for the phone (ABS-185).
@@ -940,6 +940,23 @@ final class HostedPeer {
         }
     }
 
+    /// What a phone's composer offers to link for a chat or project
+    /// (ABS-211): the trackers this Mac's composer would search, and the
+    /// project's code host.
+    private func issueSources(projectId: String?, chatId: String?, known: [String: String],
+                              model: AppModel) async -> RemoteResponse {
+        let project = model.project(projectId ?? chatId.flatMap { model.session($0)?.projectId })
+        var host: String?
+        var github = false
+        if let project {
+            host = await model.codeHost(for: project, chatId: chatId)?.title
+            github = await model.offersGitHubIssues(project)
+        }
+        return .issueSources(RemoteIssueSources(model.projectIssueTrackers(project?.id), installed: model.plugins.installed,
+                                                known: known, codeHost: host, githubIssues: github,
+                                                pullRequests: project != nil))
+    }
+
     private func handle(_ request: RemoteRequest, id: Int) async -> RemoteResponse {
         guard let service, let model = service.model, service.hosting else { return .failed("This Mac stopped sharing its agents.") }
         switch request {
@@ -1242,6 +1259,26 @@ final class HostedPeer {
         case let .askAuthor(root, path, lineStart, lineEnd, code, revision, session):
             return await askAuthor(root: root, path: path, lineStart: lineStart, lineEnd: lineEnd, code: code,
                                    revision: revision, sessionId: session, model: model)
+        case let .issueSources(projectId, chatId, iconVersions):
+            return await issueSources(projectId: projectId, chatId: chatId, known: iconVersions, model: model)
+        case let .searchIssues(projectId, chatId, trackerId, query, searchAll):
+            let project = projectId ?? chatId.flatMap { model.session($0)?.projectId }
+            let groups = await model.searchIssueTrackers(query, projectId: project, searchAll: searchAll, trackerId: trackerId)
+            if groups.isEmpty {
+                return .failed(trackerId == nil
+                    ? "\(service.identity.name) has no issue tracker turned on. Turn on Linear or Jira in Settings → Plugins there."
+                    : "That issue tracker is turned off on \(service.identity.name).")
+            }
+            return .issueGroups(groups.map { RemoteIssueGroup($0, macName: service.identity.name) })
+        case .completeIssue(let attachment):
+            return .attachment(await model.completeTrackerIssue(attachment))
+        case let .searchCodeHost(projectId, chatId, query, pullRequests):
+            guard let project = model.project(projectId ?? chatId.flatMap { model.session($0)?.projectId })
+            else { return .failed("Project not found.") }
+            do {
+                let (host, items) = try await model.searchCodeHostLinks(query, project: project, chatId: chatId, pullRequests: pullRequests)
+                return .issueGroups([RemoteIssueGroup(codeHost: host.pluginId, title: host.title, items: items)])
+            } catch { return .failed(error.localizedDescription) }
         case let .exec(command, args, cwd, stdin):
             return await exec(command, args, cwd: cwd, stdin: stdin)
         case .spawn(let spec):

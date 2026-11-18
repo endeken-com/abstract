@@ -135,6 +135,20 @@ public enum RemoteRequest: Codable, Sendable {
     /// answer carries the host envelopes to deliver back to it.
     case pluginMessage(pluginId: String, text: String, place: String, contributionId: String, chatId: String?)
 
+    // Linking issues from a phone (ABS-211): the Mac's issue trackers and
+    // code host answer, as in its own composer. Only send these to a Mac
+    // whose snapshot says `issueSearch`.
+    /// What the composer offers for a chat or project. `iconVersions` names
+    /// the tracker icons the asker already has, by plugin id, so they aren't sent again.
+    case issueSources(projectId: String?, chatId: String?, iconVersions: [String: String])
+    /// The project's trackers' results (or every tracker's, with
+    /// `searchAll`), grouped by tracker; `trackerId` asks only that one.
+    case searchIssues(projectId: String?, chatId: String?, trackerId: String?, query: String, searchAll: Bool)
+    /// A picked tracker issue, whole, as it goes with the message.
+    case completeIssue(PromptAttachment)
+    /// The project's code host's issues or pull requests.
+    case searchCodeHost(projectId: String?, chatId: String?, query: String, pullRequests: Bool)
+
     // The host's worktrees, so a chat there reviews, browses and edits here
     // as it would on the host. Only inside its projects and worktrees; only
     // git, gh and revund run.
@@ -237,6 +251,10 @@ public enum RemoteResponse: Codable, Sendable {
     /// Host-to-plugin envelopes (JSON text), and a chat the plugin asked to
     /// open, for the controller to show on its own screen.
     case pluginMessages(messages: [String], openChatId: String?)
+    /// Answers to the issue requests (ABS-211).
+    case issueSources(RemoteIssueSources)
+    case issueGroups([RemoteIssueGroup])
+    case attachment(PromptAttachment)
 }
 
 /// One plugin installed on the host, as a paired device sees it.
@@ -556,6 +574,9 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
     /// The theme picked on that Mac, as colours (ABS-185): the phone draws
     /// in it without running any plugin. Optional for older peers.
     public var theme: RemoteTheming?
+    /// A host that answers `issueSources`, `searchIssues`, `completeIssue`
+    /// and `searchCodeHost` (ABS-211). Optional for older peers.
+    public var issueSearch: Bool?
 
     /// The largest uploaded icon a snapshot carries; larger ones are left out.
     public static let maxProjectIconBytes = 512 << 10
@@ -579,8 +600,9 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
                 queuedMessages: [String: [QueuedMessage]]? = nil, messageQueue: Bool? = nil, steerAgents: [String]? = nil,
                 workflows: Bool? = nil,
                 plugins: [RemotePlugin]? = nil, pluginProjects: [RemotePluginProject]? = nil,
-                pluginsSupported: Bool? = nil, theme: RemoteTheming? = nil) {
+                pluginsSupported: Bool? = nil, theme: RemoteTheming? = nil, issueSearch: Bool? = nil) {
         self.theme = theme
+        self.issueSearch = issueSearch
         self.projects = projects; self.sessions = sessions; self.providers = providers
         self.providerPresentations = providerPresentations; self.alive = alive
         self.home = home; self.modelCatalogs = modelCatalogs; self.defaultModelNames = defaultModelNames

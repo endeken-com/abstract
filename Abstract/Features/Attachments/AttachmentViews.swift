@@ -213,9 +213,7 @@ struct AttachmentButtons: View {
                 supportsGitHubIssues = false
                 return
             }
-            let origin = await model.origin(of: project)
-            supportsGitHubIssues = origin.flatMap(GitRemote.host) == "github.com"
-                || model.codeHost(remote: origin, context: CodeHostContext())?.pluginId == "sh.abstract.github"
+            supportsGitHubIssues = await model.offersGitHubIssues(project)
         }
     }
 
@@ -518,20 +516,8 @@ private struct AttachPicker: View {
             case .githubIssue, .pullRequest:
                 // The project's code host answers (ABS-139).
                 guard repoRoot != nil, let project = model.project(projectId ?? model.session(sessionId)?.projectId) else { return }
-                guard let host = await model.codeHost(for: project, chatId: sessionId), host.answers(.searchIssuesAndPullRequests) else {
-                    problem = await model.codeHostMissing(project)
-                    return
-                }
-                switch await host.access() {
-                case .missing(let install):
-                    problem = "Linking \(host.title) needs its command-line tool." + (install.map { " Install it with `\($0)`." } ?? "")
-                    return
-                case .signedOut(let hint):
-                    problem = "\(host.title) isn't signed in." + (hint.map { " Run `\($0)` in a terminal, then try again." } ?? "")
-                    return
-                case .ready, .unavailable: break
-                }
-                let found = try await host.search(query, pullRequests: source == .pullRequest)
+                let (host, found) = try await model.searchCodeHostLinks(query, project: project, chatId: sessionId,
+                                                                        pullRequests: source == .pullRequest)
                 items = found.map {
                     var attachment = $0.attachment
                     if source == .pullRequest { attachment.trackerName = host.title }

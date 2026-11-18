@@ -36,6 +36,7 @@ import { PluginScreen, PluginView } from './PluginView';
 import { macContributions } from './plugins';
 import { uuid } from './secure';
 import { attachmentPayload, pickAttachments, type PickedAttachment } from './attachments';
+import { AttachmentGlyph, useIssueLinks } from './IssueLinkSheet';
 import { deleteRuleArgs, ruleDetail, rulesForProject } from './permissionRules';
 import { displayDate, swiftDate, type AgentProfile, type Automation, type AutomationRun, type AutomationTrigger, type Policy, type Project, type Session } from './types';
 import { appliedProfile, automationProfileName, findProfile, newProfile, profileIcons, profileSnapshotOf, sessionProfileName, sortedProfiles, visibleProfiles } from './profiles';
@@ -422,6 +423,9 @@ function NewChatScreen({ route, navigation }: any) {
   const selectedWorktree = worktrees.find(x => x.path === worktree);
   const worktreeLabel = selectedWorktree?.branch || (worktree ? worktree.split('/').pop() || worktree : 'New worktree');
   const worktreeHolder = worktree && state.snapshot?.sessions.find(x => x.worktreePath === worktree && !x.archivedAt);
+  // Issues and pull requests to start from, found by the chat's Mac (ABS-211).
+  const issueLinks = useIssueLinks({ mac: state, hostId, macName: macs.find(mac => mac.id === hostId)?.name || 'Mac', projectId: project?.id || null, chatId: null,
+    root: project?.rootPath || null, attachments, setAttachments });
   const canStart = !busy && state.status === 'online' && !!state.snapshot?.providers.includes(provider) && (!!project || standalone || !state.snapshot?.projects.length) && (!!prompt.trim() || attachments.length > 0);
   const chooseProfile = (id: string) => {
     const chosen = findProfile(state.snapshot?.profiles, id || null);
@@ -456,9 +460,10 @@ function NewChatScreen({ route, navigation }: any) {
     <View style={styles.launcherIntro}><BrandLogo color={ink} /><Text style={styles.launcherTitle}>{state.snapshot?.projects.length ? 'What should we build?' : 'Welcome to Abstract'}</Text><Text style={styles.launcherDescription}>{state.snapshot?.projects.length ? 'Each chat runs its own agent in an isolated worktree, so several can work at once without stepping on each other.' : 'Connect a Mac and start a standalone chat, or add a project on your Mac to work in isolated worktrees.'}</Text></View>
     <View style={styles.launcherBox}>
       <TextInput autoFocus={!!state.snapshot?.projects.length} style={styles.launcherPrompt} value={prompt} onChangeText={setPrompt} multiline textAlignVertical="top" placeholder="Describe the task. Be as specific as you would with a colleague." placeholderTextColor={tertiary} />
-      {attachments.length > 0 && <View style={styles.launcherAttachments}>{attachments.map(item => <Pressable key={item.id} accessibilityRole="button" accessibilityLabel={`Remove ${item.title}`} onPress={() => setAttachments(attachments.filter(x => x.id !== item.id))} style={styles.launcherAttachment}><Text numberOfLines={1} style={styles.launcherPickerText}>{item.title} ×</Text></Pressable>)}</View>}
+      {attachments.length > 0 && <View style={styles.launcherAttachments}>{attachments.map(item => <Pressable key={item.id} accessibilityRole="button" accessibilityLabel={`Remove ${item.title}`} onPress={() => setAttachments(attachments.filter(x => x.id !== item.id))} style={styles.launcherAttachment}><AttachmentGlyph kind={item.kind} tracker={item.tracker} /><Text numberOfLines={1} style={styles.launcherPickerText}>{item.reference ? `${item.reference} ` : ''}{item.title} ×</Text></Pressable>)}</View>}
       <View style={styles.launcherControls}>
-        <Pressable accessibilityRole="button" accessibilityLabel="Attach files or images" onPress={() => run(async () => setAttachments(await pickAttachments(attachments)))} style={styles.launcherPicker}><Icon name="plus" size={16} color={muted} /></Pressable>
+        <MenuView title="Add to message" actions={[{ id: 'attach', title: 'Attach files', image: Platform.OS === 'ios' ? 'paperclip' : undefined }, ...issueLinks.actions]} onPressAction={({ nativeEvent }) => { if (nativeEvent.event === 'attach') run(async () => setAttachments(await pickAttachments(attachments))); else issueLinks.handle(nativeEvent.event); }}><View accessible accessibilityRole="button" accessibilityLabel="Attach files, issues or pull requests" style={styles.launcherPicker}><Icon name="plus" size={16} color={muted} /></View></MenuView>
+        {issueLinks.sheet}
         <LauncherPicker label="Project" value={project?.name || 'No project'} choices={[...projectChoices.map(x => ({ id: x.id, title: x.title, selected: x.hostId === hostId && x.projectId === projectId })), { id: '', title: 'No project', selected: !projectId }]} onSelect={id => { const choice = projectChoices.find(x => x.id === id); const chosen = choice && macs.find(mac => mac.id === choice.hostId)?.snapshot?.projects.find(x => x.id === choice.projectId); setProfileId(null); if (choice && chosen) chooseProject(choice.hostId, chosen); else { setStandalone(true); setProjectId(null); setWorktree(''); setDeviceNotice(null); } }} />
         {!project && macs.length > 1 && <LauncherPicker label="Mac" value={macName(hostId)} leading={<Icon name="devices" size={13} color={muted} />} choices={macs.map(mac => ({ id: mac.id, title: mac.state === 'online' ? mac.name : `${mac.name} (${mac.state === 'connecting' ? 'connecting' : 'not reachable'})`, selected: mac.id === hostId }))} onSelect={id => { setHostId(id); setModelName(''); setEffort(''); setProfileId(null); }} />}
         {project && projectMacChoices.length > 1 && <LauncherPicker label="Mac" value={macName(hostId)} leading={<Icon name="devices" size={13} color={muted} />} choices={projectMacChoices.map(x => ({ id: x.macId, title: x.title, selected: x.macId === hostId }))} onSelect={id => { const choice = projectMacChoices.find(x => x.macId === id); if (!choice || choice.macId === hostId) return; setDeviceNotice(null); setHostId(choice.macId); setProjectId(choice.projectId); setWorktree(''); setModelName(''); setEffort(''); setProfileId(null); }} />}
@@ -949,7 +954,7 @@ const styles = themedStyles(() => StyleSheet.create({
   launcherBox: { width: '100%', maxWidth: 680, backgroundColor: panel, borderWidth: 1, borderColor: palette.borderStrong, borderRadius: 10, overflow: 'hidden' },
   launcherPrompt: { color: ink, fontFamily: 'Inter', fontSize: 15, lineHeight: 22, minHeight: 138, maxHeight: 260, paddingHorizontal: 18, paddingTop: 17, paddingBottom: 12 },
   launcherAttachments: { flexDirection: 'row', flexWrap: 'wrap', gap: 5, paddingHorizontal: 12, paddingBottom: 8 },
-  launcherAttachment: { maxWidth: '100%', paddingHorizontal: 9, paddingVertical: 6, borderRadius: 6, backgroundColor: raised },
+  launcherAttachment: { maxWidth: '100%', flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 9, paddingVertical: 6, borderRadius: 6, backgroundColor: raised },
   launcherControls: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 3, rowGap: 2, paddingHorizontal: 8 },
   launcherPicker: { height: 32, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 7, borderRadius: 6 },
   profileIconChoice: { width: 40, height: 40, borderRadius: 8, backgroundColor: raised, alignItems: 'center', justifyContent: 'center' },

@@ -27,11 +27,13 @@ extension AppModel {
 
     /// Every tracker's results for what was typed, grouped by tracker:
     /// the project's linked trackers within their link, or with
-    /// `searchAll` every tracker everywhere.
-    func searchIssueTrackers(_ query: String, projectId: String? = nil,
-                             searchAll: Bool = false) async -> [PluginIssueTrackers.Group] {
+    /// `searchAll` every tracker everywhere. `trackerId` asks only that
+    /// one (the phone's "Link a Jira issue", ABS-211).
+    func searchIssueTrackers(_ query: String, projectId: String? = nil, searchAll: Bool = false,
+                             trackerId: String? = nil) async -> [PluginIssueTrackers.Group] {
         let project = projectIssueTrackers(projectId)
-        return await PluginIssueTrackers.search(query, trackers: project.shown(searchAll: searchAll),
+        let trackers = project.shown(searchAll: searchAll).filter { trackerId == nil || $0.pluginId == trackerId }
+        return await PluginIssueTrackers.search(query, trackers: trackers,
                                                 scopes: project.scopes(searchAll: searchAll)) { [weak self] tracker, request in
             await self?.askTracker(tracker, request) ?? .failed("\(tracker.title) isn't running.")
         }
@@ -48,6 +50,40 @@ extension AppModel {
         var whole = issue.attachment(trackerId: tracker.pluginId, trackerName: tracker.title)
         whole.id = attachment.id
         return whole
+    }
+
+    /// Whether a project's composer offers "Link a GitHub issue": its
+    /// origin is on GitHub, or the GitHub plugin handles it.
+    func offersGitHubIssues(_ project: Project) async -> Bool {
+        let origin = await origin(of: project)
+        return origin.flatMap(GitRemote.host) == "github.com"
+            || codeHost(remote: origin, context: CodeHostContext())?.pluginId == "sh.abstract.github"
+    }
+
+    /// Why a code host search found nothing to list: no host, its tool
+    /// missing or signed out. Said in a sentence, as the picker shows it.
+    struct CodeHostLinkProblem: LocalizedError {
+        var errorDescription: String?
+    }
+
+    /// The project's code host's issues or pull requests for what was
+    /// typed (ABS-139), with the host that answered. Throws a
+    /// `CodeHostLinkProblem` when there's nothing it can ask.
+    func searchCodeHostLinks(_ query: String, project: Project, chatId: String?,
+                             pullRequests: Bool) async throws -> (host: CodeHost, items: [ForgeItem]) {
+        guard let host = await codeHost(for: project, chatId: chatId), host.answers(.searchIssuesAndPullRequests) else {
+            throw CodeHostLinkProblem(errorDescription: await codeHostMissing(project))
+        }
+        switch await host.access() {
+        case .missing(let install):
+            throw CodeHostLinkProblem(errorDescription: "Linking \(host.title) needs its command-line tool."
+                                      + (install.map { " Install it with `\($0)`." } ?? ""))
+        case .signedOut(let hint):
+            throw CodeHostLinkProblem(errorDescription: "\(host.title) isn't signed in."
+                                      + (hint.map { " Run `\($0)` in a terminal, then try again." } ?? ""))
+        case .ready, .unavailable: break
+        }
+        return (host, try await host.search(query, pullRequests: pullRequests))
     }
 
     /// Reads each tracker's icon from its package, once per version.

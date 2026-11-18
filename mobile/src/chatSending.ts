@@ -49,7 +49,8 @@ function matches(message: PendingPhoneMessage, raw: string): 'whole' | 'part' | 
   if (!whole && !part) return null;
   const attached = message.attachments.every(item => {
     const label = item.reference ? `${item.reference} ${item.title}` : item.title;
-    return raw.includes(`<attachment kind="${item.kind}" label="${attribute(label)}"`);
+    const tracker = item.tracker ? ` tracker="${attribute(item.tracker)}"` : '';
+    return raw.includes(`<attachment kind="${item.kind}"${tracker} label="${attribute(label)}"`);
   });
   return !attached ? null : whole ? 'whole' : 'part';
 }
