@@ -49,13 +49,29 @@ public final class SystemVoice: NSObject, AbelVoice, AVSpeechSynthesizerDelegate
         synthesizer.write(utterance) { _ in }
     }
 
+    /// ABEL's own way of speaking: a touch higher and a touch quicker than
+    /// the voice's usual, bright and brief.
+    public nonisolated static let pitch: Float = 1.08
+    public nonisolated static let pace: Float = 1.04
+
     nonisolated static func utterance(_ text: String, language: String, voice: String?) -> AVSpeechUtterance {
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = voice.flatMap(AVSpeechSynthesisVoice.init(identifier:))
             .flatMap { $0.language.hasPrefix(String(language.prefix(2))) ? $0 : nil }
-            ?? AVSpeechSynthesisVoice(language: language)
+            ?? bestVoice(for: language)
+        utterance.pitchMultiplier = pitch
+        utterance.rate = min(AVSpeechUtteranceMaximumSpeechRate, AVSpeechUtteranceDefaultSpeechRate * pace)
         utterance.prefersAssistiveTechnologySettings = false
         return utterance
+    }
+
+    /// The best-sounding voice installed for `language`: premium, then
+    /// enhanced, then the system's; never a novelty voice.
+    nonisolated static func bestVoice(for language: String) -> AVSpeechSynthesisVoice? {
+        let candidates = AVSpeechSynthesisVoice.speechVoices()
+            .filter { $0.language == language && !$0.voiceTraits.contains(.isNoveltyVoice) }
+        return candidates.max { $0.quality.rawValue < $1.quality.rawValue }.flatMap { $0.quality == .default ? nil : $0 }
+            ?? AVSpeechSynthesisVoice(language: language)
     }
 
     /// The installed voices for ABEL's languages, best first, for Settings.

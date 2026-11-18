@@ -1,5 +1,6 @@
 @testable import AbelKit
 import AbstractCore
+@preconcurrency import AVFoundation
 import AppKit
 import Foundation
 import Testing
@@ -226,6 +227,18 @@ func eventually(_ condition: () -> Bool) async {
         #expect(engine.display.mode == .idle)
     }
 
+    @Test func chimesWhenItStartsAndStopsListening() async {
+        let engine = await engine()
+        let sounds = FakeSounds()
+        engine.sounds = sounds
+        engine.pushDown()
+        ears.nextFinal = ("add a test", "en-US")
+        engine.pushUp()
+        #expect(sounds.played == [.listen, .done])
+        ears.onProblem?("No microphone.")
+        #expect(sounds.played.last == .problem)
+    }
+
     @Test func saysWhenItCantHearYouYet() async {
         let engine = await engine()
         engine.microphoneAllowed = { false }
@@ -350,6 +363,25 @@ func eventually(_ condition: () -> Bool) async {
         #expect(model.hovered)
     }
 
+    @Test func chimesAreShortAndQuiet() throws {
+        let format = try #require(AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1))
+        for cue in AbelCue.allCases {
+            let buffer = try #require(ChipChimes.render(cue, format: format, volume: 0.22))
+            let seconds = Double(buffer.frameLength) / 44_100
+            #expect(seconds > 0.1 && seconds < 0.4)
+            let peak = (0..<Int(buffer.frameLength)).map { abs(buffer.floatChannelData![0][$0]) }.max() ?? 0
+            #expect(peak > 0.1 && peak <= 0.3)
+        }
+        #expect(ChipChimes.notes(.listen).map(\.0) == ChipChimes.notes(.done).map(\.0).reversed())
+    }
+
+    @Test func abelHasItsOwnWayOfSpeaking() {
+        let utterance = SystemVoice.utterance("Hello", language: "en-US", voice: nil)
+        #expect(utterance.pitchMultiplier == SystemVoice.pitch)
+        #expect(utterance.rate > AVSpeechUtteranceDefaultSpeechRate)
+        #expect(utterance.voice?.voiceTraits.contains(.isNoveltyVoice) != true)
+    }
+
     @Test func spritesHaveEveryPoseAndMove() {
         for pose in AbelSprite.Pose.allCases {
             #expect(AbelSprite.image(pose, tick: 0)?.width == AbelSprite.width)
@@ -359,6 +391,9 @@ func eventually(_ condition: () -> Bool) async {
         // Listening, thinking and answering each look their own way.
         #expect(AbelSprite.pixels(.listening, tick: 4) != AbelSprite.pixels(.idle, tick: 4))
         #expect(AbelSprite.pixels(.answering, tick: 4) != AbelSprite.pixels(.idle, tick: 4))
+        #expect(AbelSprite.pixels(.greeting, tick: 4) != AbelSprite.pixels(.idle, tick: 4))
+        // Plenty of motion: idle alone has many distinct frames.
+        #expect(Set((0..<240).map { AbelSprite.pixels(.idle, tick: $0) }).count >= 6)
         #expect(AbelMark.image().isTemplate)
     }
 
@@ -381,4 +416,10 @@ func eventually(_ condition: () -> Bool) async {
             #expect(hovered.size.height > still.size.height)
         }
     }
+}
+
+@MainActor
+final class FakeSounds: AbelSounds {
+    var played: [AbelCue] = []
+    func play(_ cue: AbelCue) { played.append(cue) }
 }

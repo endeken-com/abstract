@@ -78,6 +78,7 @@ final class AbelDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let tool = ProcessInfo.processInfo.environment["ABEL_SHORTCUTS_TOOL"] { apps.shortcutsTool = tool }
         #endif
         engine.appControl = apps
+        engine.sounds = ChipChimes()
         engine.onSettings = { [weak self] settings in
             self?.kept.settings = settings
             voice.voiceIdentifier = settings.voice
@@ -123,7 +124,10 @@ final class AbelDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             updateMenu()
             // Asked once, right after ABEL is installed, so it shows in
             // Privacy & Security › Microphone before you first talk to it.
+            // A moment first, so a launch at login has a session to show the prompt in.
+            try? await Task.sleep(for: .seconds(3))
             if MicrophoneSource.canAsk {
+                NSApp.activate()
                 _ = await MicrophoneSource.requestAccess()
                 updateMenu()
             }
@@ -179,10 +183,13 @@ final class AbelDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         state.isEnabled = false
         menu.addItem(state)
         menu.addItem(.separator())
+        let microphone = NSMenuItem(title: MicrophoneSource.stateTitle, action: nil, keyEquivalent: "")
+        microphone.isEnabled = false
+        menu.addItem(microphone)
         if !MicrophoneSource.isAuthorized {
             menu.addItem(item("Allow the Microphone…", #selector(allowMicrophone)))
-            menu.addItem(.separator())
         }
+        menu.addItem(.separator())
         menu.addItem(item(panel.isHidden ? "Show ABEL" : "Hide ABEL", #selector(toggleOrb)))
         menu.addItem(item(pausedByYou ? "Resume ABEL" : "Pause ABEL", #selector(togglePause)))
         menu.addItem(.separator())
@@ -200,14 +207,31 @@ final class AbelDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return item
     }
 
-    /// Asks macOS when it hasn't asked yet; once turned down, only System
-    /// Settings can turn it back on, so that's where this goes.
+    /// Asks macOS, with ABEL in front so the prompt can't hide behind
+    /// another app. When macOS has an answer stored already and won't ask,
+    /// ABEL offers to forget it and ask again, or to open the settings.
     @objc private func allowMicrophone() {
         Task { @MainActor in
-            if MicrophoneSource.canAsk {
+            NSApp.activate()
+            if MicrophoneSource.canAsk, await MicrophoneSource.requestAccess() { updateMenu(); return }
+            guard !MicrophoneSource.isAuthorized else { updateMenu(); return }
+            let alert = NSAlert()
+            alert.messageText = "ABEL's microphone is turned off"
+            alert.informativeText = "macOS has turned the microphone off for ABEL, so it can't ask again by itself. "
+                + "Reset and Ask Again forgets that answer and shows the prompt; choose Allow. "
+                + "What ABEL hears is understood on this Mac and never sent anywhere or saved."
+            alert.addButton(withTitle: "Reset and Ask Again")
+            alert.addButton(withTitle: "Open Microphone Settings")
+            alert.addButton(withTitle: "Cancel")
+            switch alert.runModal() {
+            case .alertFirstButtonReturn:
+                MicrophoneSource.resetDecision()
+                NSApp.activate()
                 _ = await MicrophoneSource.requestAccess()
-            } else {
+            case .alertSecondButtonReturn:
                 NSWorkspace.shared.open(MicrophoneSource.settingsURL)
+            default:
+                break
             }
             updateMenu()
         }
