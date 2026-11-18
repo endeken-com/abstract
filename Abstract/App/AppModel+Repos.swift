@@ -73,6 +73,27 @@ extension AppModel {
         if currentRepoPath(sessionId) == path { currentRepo[sessionId] = nil }
     }
 
+    /// Once a run for each chat, when its worktree is made or the chat
+    /// opens: a submodule cloned from a local path (a main checkout's
+    /// `submodule.<name>.url` override does that) pushes to what
+    /// `.gitmodules` registers, so pushes and pull requests reach its code
+    /// host while fetches stay local (ABS-207). Says so when it changed one,
+    /// which happens once: the push URL stays.
+    func pointSubmodulePushes(_ sessionId: String) {
+        guard !isDemo, !sessionId.hasPrefix(RemoteService.mirrorPrefix), let worktree = session(sessionId)?.worktreePath,
+              submodulePushesChecked.insert(sessionId).inserted else { return }
+        let exec = executor(for: sessionId)
+        Task {
+            guard exec.fileExists(worktree + "/.gitmodules") else { return }
+            let changed = await Submodules.pushToRegisteredURLs(exec, worktree: worktree)
+            guard !changed.isEmpty else { return }
+            flash(changed.map { change in
+                let place = GitRemote.webURL(change.url).map { ($0.host ?? "") + $0.path } ?? change.url
+                return "\((change.path as NSString).lastPathComponent) pushes to \(place)"
+            }.joined(separator: "\n"))
+        }
+    }
+
     /// With a submodule current, where its branch stands: fetched in its own
     /// folder (at most once a minute, `.ifStale`) and measured against its own
     /// default branch, and whether you can push to it. Dropped while the
@@ -97,7 +118,8 @@ extension AppModel {
     /// it; nil when you can, when it isn't on GitHub, or while that isn't
     /// known yet (`gh` not ready).
     private func readOnlySlug(_ exec: any Executor, directory: String) async -> String? {
-        guard let out = try? await exec.run("git", ["remote", "get-url", "origin"], cwd: directory), out.ok,
+        // Where pushes go: a submodule cloned from a local path pushes to its code host (ABS-207).
+        guard let out = try? await exec.run("git", ["remote", "get-url", "--push", "origin"], cwd: directory), out.ok,
               let slug = GitRemote.githubSlug(out.stdout.trimmingCharacters(in: .whitespacesAndNewlines)) else { return nil }
         return await access(to: slug) == .readOnly ? slug : nil
     }

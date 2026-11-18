@@ -8,6 +8,10 @@ public struct ProjectRepo: Sendable, Hashable, Identifiable {
     /// Its `origin`; nil when it has none (or isn't checked out and
     /// `.gitmodules` names none).
     public var remote: String?
+    /// What its parent's `.gitmodules` registers for it, resolved as git
+    /// resolves it: a pull request's link may name it when `remote` is
+    /// another spelling, or a local path (ABS-207). Nil for the project's own.
+    public var registered: String?
 
     public var id: String { path }
     public var isMain: Bool { path.isEmpty }
@@ -16,8 +20,8 @@ public struct ProjectRepo: Sendable, Hashable, Identifiable {
     /// name, else its folder's.
     public var name: String? { ProjectRepos.name(path: path, remote: remote) }
 
-    public init(path: String, remote: String? = nil) {
-        self.path = path; self.remote = remote
+    public init(path: String, remote: String? = nil, registered: String? = nil) {
+        self.path = path; self.remote = remote; self.registered = registered
     }
 
     /// Its folder, given the project root's path.
@@ -47,7 +51,11 @@ public enum ProjectRepos {
         let submodulePaths = repos.filter(\.isSubmodule).map(\.path) + urls.map(\.path)
         let mainRemote = await Git.originURL(exec, root: root)
         var found: [(path: String, remote: String)] = []
+        var registeredURLs: [String: String] = [:]
         for path in paths(nested: project.nestedRepos, submodules: submodulePaths) {
+            if let url = urls.first(where: { $0.path == path })?.url {
+                registeredURLs[path] = mainRemote.map { GitRemote.resolveRelative(url, against: $0) } ?? url
+            }
             let remote: String?
             if path.isEmpty {
                 remote = mainRemote
@@ -55,10 +63,9 @@ public enum ProjectRepos {
                 let origin = await Git.originURL(exec, root: ProjectRepo(path: path).directory(in: root))
                 if let origin, GitRemote.host(origin) != nil {
                     remote = origin
-                } else if let url = urls.first(where: { $0.path == path })?.url {
+                } else if let resolved = registeredURLs[path] {
                     // Not checked out (or cloned from a local path): what
                     // `.gitmodules` registers, resolved as git resolves it.
-                    let resolved = mainRemote.map { GitRemote.resolveRelative(url, against: $0) } ?? url
                     remote = GitRemote.host(resolved) != nil ? resolved : origin
                 } else {
                     remote = origin
@@ -68,7 +75,7 @@ public enum ProjectRepos {
             else if path.isEmpty { found.append((path, "")) }
         }
         return dedupeByRemote(found)
-            .map { ProjectRepo(path: $0.path, remote: $0.remote.isEmpty ? nil : $0.remote) }
+            .map { ProjectRepo(path: $0.path, remote: $0.remote.isEmpty ? nil : $0.remote, registered: registeredURLs[$0.path]) }
     }
 
     /// `""` (the project's own), then `nested`, then `submodules`:

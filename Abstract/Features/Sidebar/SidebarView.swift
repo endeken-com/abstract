@@ -1073,7 +1073,7 @@ private struct RailChatLine: View {
                     PullRequestGlyph(kind: .init(state: pr.state, isDraft: pr.isDraft))
                         .foregroundStyle(Color.pullRequestInk(state: pr.state, isDraft: pr.isDraft))
                         .frame(width: 10, height: 10)
-                    part("#\(pr.number)").monospacedDigit()
+                    part(pr.label).monospacedDigit()
                     if let checks = line.checks {
                         HStack(spacing: 2) {
                             Image(systemName: checks.symbol)
@@ -1164,6 +1164,8 @@ private struct RailChatDetails: View {
         let state: PullRequest.State
         let isDraft: Bool
         let url: URL?
+        /// Its repository, where the number alone doesn't say which (ABS-207).
+        var repo: String? = nil
 
         var label: String {
             switch state {
@@ -1245,7 +1247,8 @@ private struct RailChatDetails: View {
             } content: {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
-                        Text("#\(pr.number)").font(BTFont.ui(12, .medium)).foregroundStyle(Color.btText)
+                        Text(verbatim: pr.repo.map { "\($0) #\(pr.number)" } ?? "#\(pr.number)")
+                            .font(BTFont.ui(12, .medium)).foregroundStyle(Color.btText)
                         Text(pr.label)
                             .font(BTFont.ui(10.5, .medium))
                             .foregroundStyle(pr.ink)
@@ -1295,7 +1298,8 @@ private struct RailChatDetails: View {
 
     private var pr: PR? {
         if let local = model.pullRequests[session.id] {
-            return PR(number: local.number, title: local.title, state: local.state, isDraft: local.isDraft, url: local.url)
+            return PR(number: local.number, title: local.title, state: local.state, isDraft: local.isDraft, url: local.url,
+                      repo: model.pullRequestRepoLabel(local, projectId: session.projectId))
         }
         guard let (device, hostId) = RemoteService.split(session.id),
               let remote = model.remote.links[device]?.snapshot?.pullRequests?[hostId] else { return nil }

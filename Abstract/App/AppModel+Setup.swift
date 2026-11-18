@@ -259,6 +259,7 @@ extension AppModel {
             replaceSession(current)
             guard !Task.isCancelled else { return }
             setup.finish(.worktree)
+            pointSubmodulePushes(id)
         } else if setup.phase(.worktree) != .done {
             setup.finish(.worktree)
         }

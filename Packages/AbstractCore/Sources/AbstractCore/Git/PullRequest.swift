@@ -82,7 +82,9 @@ public struct PullRequest: Sendable, Hashable, Identifiable {
     public var number: Int
     /// The repository in its project it belongs to, by path from the
     /// project's root; "" is the project's own (ABS-163). Set by the host
-    /// that asked for it, never by the code host's answer.
+    /// that asked for it, never by the code host's answer. A pull request
+    /// from outside the project (an agent's, whose link names no repository
+    /// of it) holds that repository's web address instead (ABS-207).
     public var repoPath: String = ""
     /// That repository's name, for its label in the PR screens.
     public var repoName: String? = nil
@@ -118,7 +120,14 @@ public struct PullRequest: Sendable, Hashable, Identifiable {
 
     /// One pull request of one repository: the same number in a nested
     /// repository or submodule is another pull request.
-    public var id: String { repoPath.isEmpty ? "#\(number)" : "\(repoPath)#\(number)" }
+    public var id: String { Self.id(repoPath: repoPath, number: number) }
+
+    public static func id(repoPath: String, number: Int) -> String {
+        repoPath.isEmpty ? "#\(number)" : "\(repoPath)#\(number)"
+    }
+
+    /// From a repository outside its project: `repoPath` is its web address.
+    public var isExternal: Bool { PullRequestLink.isExternal(repoPath) }
 
     /// Whether `other` is this pull request: same repository, same number.
     public func isSame(as other: PullRequest) -> Bool { number == other.number && repoPath == other.repoPath }

@@ -1,0 +1,150 @@
+{
+ "about": "ABS-207: the DGDEV-1381 chat of the dunsguide project, recorded 2026-11-17. Its agent opened a pull request in the dunsguide-backend submodule; the parent repository has another pull request with the same number. Authors, bodies, local paths and accounts are left out.",
+ "project": {
+  "origin": "git@github.com:CialDNB/dunsguide.git",
+  "branch": "feature/dgdev-1381-upgrade-the-ai-sdk-ai-from-v5-to-v6",
+  "submodules": [
+   {
+    "path": "dunsguide-backend",
+    "gitmodulesURL": "git@github.com:CialDNB/dunsguide-backend.git",
+    "mainCheckoutOrigin": "git@github.com:CialDNB/dunsguide-backend.git",
+    "worktreeOrigin": "/path/to/dunsguide/.git/modules/dunsguide-backend"
+   }
+  ]
+ },
+ "agentCommand": "gh pr create --repo CialDNB/dunsguide-backend --draft --base dev --head feature/dgdev-1381-upgrade-the-ai-sdk-ai-from-v5-to-v6 --title \"...\" --body-file pr.md",
+ "agentEvent": {
+  "type": "user",
+  "message": {
+   "role": "user",
+   "content": [
+    {
+     "tool_use_id": "pr-1",
+     "type": "tool_result",
+     "content": "https://github.com/CialDNB/dunsguide-backend/pull/3345",
+     "is_error": false
+    }
+   ]
+  },
+  "tool_use_result": {
+   "stdout": "https://github.com/CialDNB/dunsguide-backend/pull/3345",
+   "stderr": "",
+   "interrupted": false,
+   "isImage": false,
+   "noOutputExpected": false,
+   "gitOperation": {
+    "pr": {
+     "number": 3345,
+     "url": "https://github.com/CialDNB/dunsguide-backend/pull/3345",
+     "action": "created"
+    }
+   }
+  }
+ },
+ "gh": {
+  "CialDNB/dunsguide-backend#3345": {
+   "additions": 182,
+   "baseRefName": "dev",
+   "deletions": 70,
+   "headRefName": "feature/dgdev-1381-upgrade-the-ai-sdk-ai-from-v5-to-v6",
+   "isDraft": false,
+   "number": 3345,
+   "state": "OPEN",
+   "statusCheckRollup": [
+    {
+     "__typename": "CheckRun",
+     "name": "test (jest 1/3)",
+     "workflowName": "Dunsguide CI",
+     "status": "COMPLETED",
+     "conclusion": "SUCCESS"
+    },
+    {
+     "__typename": "CheckRun",
+     "name": "Run linters",
+     "workflowName": "Lint",
+     "status": "COMPLETED",
+     "conclusion": "SUCCESS"
+    },
+    {
+     "__typename": "CheckRun",
+     "name": "test (jest 2/3)",
+     "workflowName": "Dunsguide CI",
+     "status": "COMPLETED",
+     "conclusion": "SUCCESS"
+    },
+    {
+     "__typename": "CheckRun",
+     "name": "test (jest 3/3)",
+     "workflowName": "Dunsguide CI",
+     "status": "COMPLETED",
+     "conclusion": "SUCCESS"
+    },
+    {
+     "__typename": "CheckRun",
+     "name": "test (e2e)",
+     "workflowName": "Dunsguide CI",
+     "status": "COMPLETED",
+     "conclusion": "SUCCESS"
+    },
+    {
+     "__typename": "CheckRun",
+     "name": "test (mocha and the worker/forest e2e)",
+     "workflowName": "Dunsguide CI",
+     "status": "COMPLETED",
+     "conclusion": "SUCCESS"
+    },
+    {
+     "__typename": "CheckRun",
+     "name": "Deploy Dunsguide services",
+     "workflowName": "Dunsguide CI",
+     "status": "COMPLETED",
+     "conclusion": "SKIPPED"
+    },
+    {
+     "__typename": "CheckRun",
+     "name": "test",
+     "workflowName": "Dunsguide CI",
+     "status": "COMPLETED",
+     "conclusion": "SUCCESS"
+    },
+    {
+     "__typename": "CheckRun",
+     "name": "Sync release to Linear",
+     "workflowName": "Dunsguide CI",
+     "status": "COMPLETED",
+     "conclusion": "SKIPPED"
+    },
+    {
+     "__typename": "CheckRun",
+     "name": "auto-trigger dev environment deployment",
+     "workflowName": "Dunsguide CI",
+     "status": "COMPLETED",
+     "conclusion": "SKIPPED"
+    },
+    {
+     "__typename": "CheckRun",
+     "name": "Aikido Security: check code",
+     "workflowName": "",
+     "status": "COMPLETED",
+     "conclusion": "SUCCESS"
+    }
+   ],
+   "title": "DGDEV-1381 · Search filter extraction runs on AI SDK v6, clearing its security findings",
+   "url": "https://github.com/CialDNB/dunsguide-backend/pull/3345"
+  },
+  "CialDNB/dunsguide#3345": {
+   "additions": 47946,
+   "baseRefName": "master",
+   "deletions": 3661,
+   "headRefName": "staging",
+   "isDraft": false,
+   "mergeCommit": {
+    "oid": "03880e2e9e9676b0a204cc905ac6726b317a0484"
+   },
+   "number": 3345,
+   "state": "MERGED",
+   "title": "Staging into master [4.9.3]",
+   "url": "https://github.com/CialDNB/dunsguide/pull/3345"
+  }
+ }
+}

@@ -40,22 +40,28 @@ public enum SidebarChats {
         /// until the pull request's detail has been read (ABS-109).
         public var comments: Int
         public var failedChecks: Int
+        /// Its repository's name, where the number alone doesn't say which:
+        /// a project with several repositories, or one from outside it (ABS-207).
+        public var repo: String?
 
         public init(number: Int, state: PullRequest.State, isDraft: Bool = false, checks: Checks? = nil, changesRequested: Bool = false,
-                    comments: Int = 0, failedChecks: Int = 0) {
+                    comments: Int = 0, failedChecks: Int = 0, repo: String? = nil) {
             self.number = number; self.state = state; self.isDraft = isDraft
             self.checks = checks; self.changesRequested = changesRequested
-            self.comments = comments; self.failedChecks = failedChecks
+            self.comments = comments; self.failedChecks = failedChecks; self.repo = repo
         }
 
-        public init(_ pr: PullRequest) {
+        public init(_ pr: PullRequest, repo: String? = nil) {
             let sum = pr.checksSummary
             self.init(number: pr.number, state: pr.state, isDraft: pr.isDraft,
                       checks: Self.checks(passed: sum.passed, failed: sum.failed, pending: sum.pending),
                       changesRequested: pr.reviewDecision == .changesRequested,
                       comments: pr.reviews.count + pr.comments.count + pr.threads.reduce(0) { $0 + $1.comments.count },
-                      failedChecks: sum.failed)
+                      failedChecks: sum.failed, repo: repo)
         }
+
+        /// "#3345", or "dunsguide-backend #3345" when its repository is named.
+        public var label: String { repo.map { "\($0) #\(number)" } ?? "#\(number)" }
 
         /// A pull request as a paired Mac reports it.
         public init(_ pr: RemotePullRequest) {
@@ -273,7 +279,7 @@ public enum SidebarChats {
         public var text: String {
             var parts: [String] = []
             if let project { parts.append(project) }
-            if let pullRequest { parts.append("#\(pullRequest.number)") }
+            if let pullRequest { parts.append(pullRequest.label) }
             if let checks { parts.append(checks.rawValue) }
             if changesRequested { parts.append("changes requested") }
             if let mac { parts.append(mac) }
@@ -284,7 +290,7 @@ public enum SidebarChats {
         public var accessibilityText: String {
             var parts: [String] = []
             if let project { parts.append(project) }
-            if let pullRequest { parts.append("Pull request \(pullRequest.number)") }
+            if let pullRequest { parts.append("Pull request \(pullRequest.repo.map { "\($0) " } ?? "")\(pullRequest.number)") }
             if let checks { parts.append("checks \(checks.rawValue)") }
             if changesRequested { parts.append("changes requested") }
             if let mac { parts.append(mac) }
