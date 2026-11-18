@@ -514,9 +514,13 @@ extension AppModel {
     }
 
     /// The chat's pull request and the code host to act on it through:
-    /// its own repository's.
+    /// its own repository's. One from outside the project is only shown:
+    /// its link came from the agent's report, so nothing is changed there.
     private func pullRequestTarget(_ sessionId: String) async throws -> (CodeHost, Int)? {
         guard let pr = pullRequests[sessionId], let project = project(session(sessionId)?.projectId) else { return nil }
+        if pr.isExternal {
+            throw CodeHostError.failed("\(pr.repoName ?? "That repository") isn't one of \(project.name)'s, so Abstract only shows its pull request. Open it to act on it.")
+        }
         guard let host = await codeHost(for: project, repoPath: pr.repoPath, chatId: sessionId) else { throw CodeHostError.noHost(nil) }
         return (host, pr.number)
     }
