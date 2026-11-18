@@ -328,69 +328,108 @@ final class Calls: @unchecked Sendable {
     var list: [String] = []
 }
 
+/// Installing ABEL (ABS-203, redone): a copy of its own in ~/Applications,
+/// because macOS judges a helper inside Abstract.app as Abstract and won't
+/// ask for its microphone.
 @Suite struct AbelInstallerTests {
-    let app = URL(fileURLWithPath: "/Applications/Abstract.app/Contents/Library/LoginItems/Abel.app")
     let tahoe = OperatingSystemVersion(majorVersion: 26, minorVersion: 1, patchVersion: 0)
 
-    func installer(_ service: FakeLoginItem, calls: Calls, app: URL? = nil,
-                   version: OperatingSystemVersion? = nil) -> AbelInstaller {
-        AbelInstaller(service: service, appURL: app ?? self.app, systemVersion: version ?? tahoe,
-                      launch: { calls.list.append("launch \($0.lastPathComponent)") }, quit: { calls.list.append("quit") })
+    struct Place {
+        let root: URL
+        let bundled: URL
+        let installed: URL
     }
 
-    @Test func installTurnsTheLoginItemOnAndStartsIt() throws {
-        let service = FakeLoginItem(), calls = Calls()
-        let installer = installer(service, calls: calls)
+    /// A fake Abel.app inside a fake Abstract.app, and an empty ~/Applications.
+    func place(version: String = "1.0") throws -> Place {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("abel-install-\(UUID().uuidString)")
+        let bundled = root.appendingPathComponent("Abstract.app/\(AbelLink.bundledPath)")
+        try fm.createDirectory(at: bundled.appendingPathComponent("Contents/MacOS"), withIntermediateDirectories: true)
+        try write(version: version, to: bundled)
+        return Place(root: root, bundled: bundled, installed: root.appendingPathComponent("Home/Applications/Abel.app"))
+    }
+
+    func write(version: String, to app: URL) throws {
+        let info: NSDictionary = ["CFBundleIdentifier": AbelLink.bundleIdentifier, "CFBundleShortVersionString": version,
+                                  "CFBundleVersion": "1"]
+        try info.write(to: app.appendingPathComponent("Contents/Info.plist"))
+        try Data(version.utf8).write(to: app.appendingPathComponent("Contents/MacOS/Abel"))
+    }
+
+    func installer(_ place: Place, legacy: FakeLoginItem = FakeLoginItem(), calls: Calls,
+                   version: OperatingSystemVersion? = nil, bundled: Bool = true) -> AbelInstaller {
+        AbelInstaller(legacy: legacy, appURL: bundled ? place.bundled : nil, installURL: place.installed,
+                      systemVersion: version ?? tahoe,
+                      launch: { calls.list.append("launch \($0.path)") }, quit: { calls.list.append($0 ? "quit forget" : "quit") })
+    }
+
+    @Test func installCopiesABELOutOfAbstractAndStartsTheCopy() throws {
+        let place = try place(), calls = Calls()
+        defer { try? FileManager.default.removeItem(at: place.root) }
+        let installer = installer(place, calls: calls)
         #expect(installer.state == .notInstalled)
         try installer.install()
-        #expect(service.calls == ["register"])
-        #expect(calls.list == ["launch Abel.app"])
         #expect(installer.state == .installed)
+        #expect(AbelInstaller.version(of: place.installed) == "1.0 (1)")
+        // The copy is what runs: never the one inside Abstract.app.
+        #expect(calls.list == ["quit", "launch \(place.installed.path)"])
+        #expect(!place.installed.path.contains("/Contents/Library/LoginItems/"))
     }
 
-    @Test func removeTurnsItOffAndQuitsIt() throws {
-        let service = FakeLoginItem(.enabled), calls = Calls()
-        let installer = installer(service, calls: calls)
+    @Test func installTurnsTheOldLoginItemOff() throws {
+        let place = try place(), calls = Calls(), legacy = FakeLoginItem(.enabled)
+        defer { try? FileManager.default.removeItem(at: place.root) }
+        try installer(place, legacy: legacy, calls: calls).install()
+        #expect(legacy.calls == ["unregister"])
+        #expect(legacy.status == .notRegistered)
+    }
+
+    @Test func aNewAbstractBringsABELsCopyUpToDate() throws {
+        let place = try place(), calls = Calls()
+        defer { try? FileManager.default.removeItem(at: place.root) }
+        let installer = installer(place, calls: calls)
+        try installer.install()
+        #expect(!installer.needsUpdate)
+        #expect(try installer.updateIfNeeded() == false)
+        try write(version: "2.0", to: place.bundled)
+        #expect(installer.needsUpdate)
+        calls.list = []
+        #expect(try installer.updateIfNeeded())
+        #expect(AbelInstaller.version(of: place.installed) == "2.0 (1)")
+        #expect(calls.list == ["quit", "launch \(place.installed.path)"])
+    }
+
+    @Test func removeForgetsLoginQuitsAndDeletesTheCopy() throws {
+        let place = try place(), calls = Calls()
+        defer { try? FileManager.default.removeItem(at: place.root) }
+        let installer = installer(place, calls: calls)
+        try installer.install()
+        calls.list = []
         try installer.remove()
-        #expect(service.calls == ["unregister"])
-        #expect(calls.list == ["quit"])
+        #expect(calls.list == ["quit forget"])
+        #expect(!FileManager.default.fileExists(atPath: place.installed.path))
         #expect(installer.state == .notInstalled)
+        // Abstract's own copy stays: it's what a new install copies from.
+        #expect(FileManager.default.fileExists(atPath: place.bundled.path))
     }
 
-    @Test func installingTwiceDoesNotRegisterTwice() throws {
-        let service = FakeLoginItem(.enabled), calls = Calls()
-        try installer(service, calls: calls).install()
-        #expect(service.calls.isEmpty)
-        #expect(calls.list == ["launch Abel.app"])
-    }
-
-    @Test func needsMacOS26() {
-        let service = FakeLoginItem(), calls = Calls()
-        let old = installer(service, calls: calls, version: OperatingSystemVersion(majorVersion: 15, minorVersion: 6, patchVersion: 0))
+    @Test func needsMacOS26AndABELInside() throws {
+        let place = try place(), calls = Calls()
+        defer { try? FileManager.default.removeItem(at: place.root) }
+        let old = installer(place, calls: calls, version: OperatingSystemVersion(majorVersion: 15, minorVersion: 6, patchVersion: 0))
         #expect(old.state == .unavailable("ABEL needs macOS 26 or later. This Mac has macOS 15."))
         #expect(throws: (any Error).self) { try old.install() }
-        #expect(service.calls.isEmpty)
-    }
-
-    @Test func approvalAndFailuresAreReported() {
-        let calls = Calls()
-        #expect(installer(FakeLoginItem(.requiresApproval), calls: calls).state == .needsApproval)
-        let failing = FakeLoginItem()
-        failing.failRegister = true
-        #expect(throws: (any Error).self) { try installer(failing, calls: calls).install() }
+        #expect(installer(place, calls: calls, bundled: false).state == .unavailable("This copy of Abstract was built without ABEL."))
         #expect(calls.list.isEmpty)
     }
 
     @Test func findsAbelInsideAbstract() throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("abel-install-\(UUID().uuidString)/Abstract.app")
-        defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
-        #expect(AbelInstaller.bundledApp(in: root) == nil)
-        let contents = root.appendingPathComponent(AbelLink.bundledPath + "/Contents")
-        try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
-        try Data().write(to: contents.appendingPathComponent("Info.plist"))
-        #expect(AbelInstaller.bundledApp(in: root)?.lastPathComponent == "Abel.app")
-        let missing = AbelInstaller(service: FakeLoginItem(), appURL: nil, systemVersion: tahoe, launch: { _ in }, quit: {})
-        #expect(missing.state == .unavailable("This copy of Abstract was built without ABEL."))
+        let place = try place()
+        defer { try? FileManager.default.removeItem(at: place.root) }
+        #expect(AbelInstaller.bundledApp(in: place.root.appendingPathComponent("Abstract.app"))?.lastPathComponent == "Abel.app")
+        #expect(AbelInstaller.bundledApp(in: place.root) == nil)
+        #expect(AbelInstaller.defaultInstallURL.path.hasSuffix("/Applications/Abel.app"))
     }
 }
 
