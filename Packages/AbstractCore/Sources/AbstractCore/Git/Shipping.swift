@@ -289,8 +289,11 @@ public enum Shipping {
     /// history of branches and tags its shallow commits don't reach; `--depth`
     /// would cut the clone's own history at each tip instead, hiding the
     /// agent's commits. Never asks for credentials, gives up after 30 seconds.
+    /// A submodule that pushes elsewhere than it fetches from is asked
+    /// where it pushes: that is where its commits are published (ABS-207).
     private static func fetchOrigin(_ exec: any Executor, _ directory: String) async throws {
-        let spec = LaunchSpec(command: "git", args: ["fetch", "--quiet", "--prune", "--no-tags", "origin",
+        let source = await Git.separatePushURL(exec, root: directory) ?? "origin"
+        let spec = LaunchSpec(command: "git", args: ["fetch", "--quiet", "--prune", "--no-tags", source,
                                                      "+refs/heads/*:refs/remotes/origin/*", "+refs/tags/*:\(originTags)*"],
                               cwd: directory, env: ["GIT_TERMINAL_PROMPT": "0"], keepStdinOpen: false)
         let result = try await exec.run(spec, timeout: .seconds(30))

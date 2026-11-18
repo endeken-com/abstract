@@ -228,6 +228,39 @@ struct GitHubPluginTests {
         #expect(runs[0].where_["githubRepository"]?.string == "acme/app")
     }
 
+    @Test func everyPullRequestCallNamesItsRepository() throws {
+        // A submodule's calls run in a folder whose remote may be a local path (ABS-207).
+        let backend = #"{"projectKey":"mac:p1","chatId":"c1","host":"github.com","repository":"CialDNB/dunsguide-backend"}"#
+        let pr = #"{"number": 3345, "title": "T", "state": "OPEN", "headRefName": "b", "baseRefName": "dev"}"#
+        let calls: [(String, String, [String: [String: Any]])] = [
+            ("pullRequest", #"{"number": 3345}"#, ["pr view": ["stdout": pr]]),
+            ("pullRequest", #"{"branch": "b"}"#, ["pr view": ["stdout": pr]]),
+            ("listPullRequests", #"{"branches": ["b"]}"#, ["pr list": ["stdout": "[]"]]),
+            ("create", #"{"branch": "b", "title": "T", "body": ""}"#, ["pr create": [:], "pr view": ["stdout": pr]]),
+            ("merge", #"{"number": 3345, "method": "squash"}"#, ["pr merge": [:]]),
+            ("markReady", #"{"number": 3345}"#, ["pr ready": [:]]),
+            ("close", #"{"number": 3345}"#, ["pr close": [:]]),
+            ("updateBranch", #"{"number": 3345}"#, ["pr update-branch": [:]]),
+            ("searchIssuesAndPullRequests", #"{"query": "", "kind": "pullRequest"}"#, ["pr list": ["stdout": "[]"]]),
+        ]
+        for (op, input, replies) in calls {
+            let (_, runs) = try H.answer(op, input: input, context: backend, replies: replies)
+            #expect(!runs.isEmpty, "\(op) ran nothing")
+            for run in runs { #expect(Array(run.args.suffix(2)) == ["--repo", "CialDNB/dunsguide-backend"], "\(op): \(run.args)") }
+        }
+        let (_, threads) = try H.answer("reviewThreads", input: #"{"number": 3345}"#, context: backend,
+                                        replies: ["api graphql": ["stdout": #"{"data": {}}"#]])
+        #expect(threads.first?.args.contains("owner=CialDNB") == true && threads.first?.args.contains("name=dunsguide-backend") == true)
+        let enterprise = #"{"projectKey":"mac:p1","host":"github.example.com","repository":"acme/app"}"#
+        let (_, runs) = try H.answer("close", input: #"{"number": 1}"#, context: enterprise, replies: ["pr close": [:]])
+        #expect(runs.first?.args == ["pr", "close", "1", "--repo", "github.example.com/acme/app"])
+    }
+
+    @Test func aCallWithNoRepositoryLeavesItToTheFolder() throws {
+        let (_, runs) = try H.answer("close", input: #"{"number": 1}"#, replies: ["pr close": [:]])
+        #expect(runs.first?.args == ["pr", "close", "1"])
+    }
+
     @Test func accessChecksTheProjectsEnterpriseHost() throws {
         let (_, runs) = try H.answer("access", context: #"{"projectKey":"mac:p1","host":"github.example.com","repository":"acme/app"}"#,
                                      replies: ["auth status": ["code": 1, "stderr": "not signed in"]])

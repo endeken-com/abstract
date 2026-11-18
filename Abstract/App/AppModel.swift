@@ -255,6 +255,8 @@ final class AppModel {
     /// Each project's repositories (its own, nested ones, submodules) and
     /// their origins, read once per run, by project id (ABS-163).
     @ObservationIgnored var projectRepos: [String: [ProjectRepo]] = [:]
+    /// Chats whose submodules' push URLs were checked this run (ABS-207).
+    @ObservationIgnored var submodulePushesChecked: Set<String> = []
     /// Where each chat's branch stands, by chat id: for its git actions and its Pull Request tab.
     var branchStates: [String: BranchState] = [:]
     /// When origin was last fetched, by project id (a chat id, without one);
@@ -276,7 +278,10 @@ final class AppModel {
             guard destination != oldValue else { return }
             Perf.measure("destination.didSet") {
                 if case .session(let id) = oldValue { shownMarks[id]?.isShown = false }
-                if case .session(let id) = destination { shownMarks[id]?.isShown = true }
+                if case .session(let id) = destination {
+                    shownMarks[id]?.isShown = true
+                    pointSubmodulePushes(id)
+                }
                 syncLocks()
                 followCLIChat()
             }

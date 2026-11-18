@@ -466,7 +466,7 @@ private struct PullRequestDetail: View {
                 PullRequestStateBadge(pr: pr)
                 Text(verbatim: pr.label).font(.btCaptionMedium).foregroundStyle(Color.btTextSecondary)
                     .monospacedDigit()
-                if model.namesPullRequestRepos(session.projectId), let repo = pr.repoName {
+                if let repo = model.pullRequestRepoLabel(pr, projectId: session.projectId) {
                     Text(repo).font(.btCaption).foregroundStyle(Color.btTextTertiary).lineLimit(1)
                 }
                 Spacer(minLength: Space.sm)

@@ -25,7 +25,9 @@ extension AppModel {
                     iconsByProjectId[projectId] = icon
                 }
             } else { icon = .agentLogo }
-            return SidebarChats.Chat(session: s, pullRequest: pullRequests[s.id].map(SidebarChats.PullRequestFacts.init),
+            return SidebarChats.Chat(session: s, pullRequest: pullRequests[s.id].map {
+                                  SidebarChats.PullRequestFacts($0, repo: pullRequestRepoLabel($0, projectId: s.projectId))
+                              },
                               // A chat with no folder has nothing to review.
                               hasChanges: s.worktreePath == nil ? false : branchStates[s.id]?.hasUnmergedWork,
                               backgroundTasks: runningBackgroundTasks(s.id), projectName: project?.name,

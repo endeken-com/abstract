@@ -2,7 +2,7 @@
   "api": 2,
   "id": "sh.abstract.github",
   "name": "GitHub",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Pull requests, checks, reviews and merging for projects on GitHub, and GitHub issues and pull requests to attach in the composer. It uses the GitHub CLI and your gh sign-in; it keeps no GitHub token of its own. Turn it off and Abstract makes no gh calls.",
   "entry": "index.html",
   "capabilities": ["cli"],

@@ -100,9 +100,10 @@ extension AppModel {
             // chat's selected pull request is kept beyond the list's limit.
             let unread = (projectPullRequests[project.id] ?? []).filter { threw.contains($0.repoPath) }
             let retained = sessions.filter { $0.projectId == project.id }.compactMap { pullRequests[$0.id] }
-                .filter { old in !list.contains { $0.isSame(as: old) } }
+                .filter { old in !old.isExternal && !list.contains { $0.isSame(as: old) } }
             projectPullRequests[project.id] = ProjectRepos.ordered(ProjectRepos.deduped(list + unread + retained))
             pullRequestsListedAt[project.id] = .now
+            repairMisplacedPullRequests(project, repos: repos)
             var updatedPullRequests = pullRequests
             for session in sessions where session.projectId == project.id {
                 defer { if let pr = updatedPullRequests[session.id] { recordPullRequest(session, pr) } }
@@ -163,25 +164,70 @@ extension AppModel {
             Task { await refreshBranch(sessionId, fetch: .now) }
             Task { _ = try? await refreshPullRequest(sessionId) }
         case let .pullRequest(number, url, action):
-            if action == "created" || action == "reopened" {
-                // The agent's own pull request is the worktree's repository's.
-                pinnedPullRequests[sessionId] = "#\(number)"
-                if pullRequests[sessionId]?.id != "#\(number)" {
-                    pullRequests[sessionId] = PullRequest(contract: .object([
-                        "number": .number(Double(number)), "title": .string(""),
-                        "url": url.map { .string($0.absoluteString) } ?? .null,
-                        "head": .string(session.branch ?? ""), "base": .string(session.baseRef ?? ""),
-                    ]))
-                }
+            let pins = action == "created" || action == "reopened"
+            let refreshes = ["created", "edited", "merged", "commented", "closed", "reopened", "ready", "draft",
+                             "auto-merge-enabled", "auto-merge-disabled"].contains(action)
+                && !sessionId.hasPrefix(RemoteService.mirrorPrefix)
+            guard pins || refreshes else { return }
+            Task {
+                if pins { await pinAgentPullRequest(session, number: number, url: url) }
+                guard refreshes else { return }
+                _ = try? await refreshPullRequest(sessionId)
+                if action == "merged" { await refreshBranch(sessionId, fetch: .now) }
             }
-            if ["created", "edited", "merged", "commented", "closed", "reopened", "ready", "draft",
-                "auto-merge-enabled", "auto-merge-disabled"].contains(action),
-               !sessionId.hasPrefix(RemoteService.mirrorPrefix) {
-                Task {
-                    _ = try? await refreshPullRequest(sessionId)
-                    if action == "merged" { await refreshBranch(sessionId, fetch: .now) }
-                }
+        }
+    }
+
+    /// The agent opened (or reopened) pull request `number`: the chat keeps
+    /// it, in the repository its link names (a submodule's, say), never the
+    /// project's own by number alone (ABS-207). With no link, the
+    /// repositories are asked for the chat's branch, those it has commits
+    /// ahead of their base in first.
+    func pinAgentPullRequest(_ session: Session, number: Int, url: URL?) async {
+        // A chat whose project isn't on this Mac (a paired Mac's) keeps the number, as before.
+        var place = PullRequestLink.Place(repoPath: "", repoName: nil)
+        if let project = project(session.projectId) {
+            let repos = await repos(of: project)
+            let ahead = url == nil ? await reposAhead(session, repos: repos) : []
+            place = await AgentPullRequest.place(number: number, url: url, branch: session.branch, repos: repos, ahead: ahead) { @MainActor in
+                await self.codeHost(for: project, repo: $0, chatId: session.id)
             }
+        }
+        let id = PullRequest.id(repoPath: place.repoPath, number: number)
+        pinnedPullRequests[session.id] = id
+        guard pullRequests[session.id]?.id != id else { return }
+        pullRequests[session.id] = AgentPullRequest.placeholder(number: number, url: url, head: session.branch ?? "",
+                                                                base: session.baseRef ?? "", place: place)
+    }
+
+    /// The chat's worktree's other repositories it has commits in ahead of their base, by path.
+    private func reposAhead(_ session: Session, repos: [ProjectRepo]) async -> Set<String> {
+        guard let worktree = session.worktreePath else { return [] }
+        let exec = reader(for: session.id)
+        var ahead: Set<String> = []
+        for repo in repos where !repo.isMain {
+            let directory = repo.directory(in: worktree)
+            // Not checked out here: git would answer for the worktree.
+            guard exec.fileExists(directory + "/.git") else { continue }
+            if await GitActions.state(exec, worktree: directory, preferredBase: nil).aheadOfBase > 0 { ahead.insert(repo.path) }
+        }
+        return ahead
+    }
+
+    /// A chat's pull request held as one repository's while its own link
+    /// names another (pinned by number alone before ABS-207) moves to where
+    /// it is, pin and all, and is read again from there; a chat named after
+    /// the wrong one then takes the right one's title (ABS-69).
+    private func repairMisplacedPullRequests(_ project: Project, repos: [ProjectRepo]) {
+        for session in sessions where session.projectId == project.id {
+            guard let pr = pullRequests[session.id], let place = PullRequestLink.misplaced(pr, in: repos) else { continue }
+            var moved = pr
+            moved.repoPath = place.repoPath
+            moved.repoName = place.repoName
+            if pinnedPullRequests[session.id] == pr.id { pinnedPullRequests[session.id] = moved.id }
+            pullRequests[session.id] = moved
+            guard !session.id.hasPrefix(RemoteService.mirrorPrefix) else { continue }
+            Task { _ = try? await refreshPullRequest(session.id) }
         }
     }
 
@@ -241,7 +287,10 @@ extension AppModel {
         let stale = originFetchedAt[key].map { ContinuousClock.now - $0 >= .seconds(60) } ?? true
         guard fetch == .now || (fetch == .ifStale && stale) else { return }
         originFetchedAt[key] = .now
-        let spec = LaunchSpec(command: "git", args: ["fetch", "--quiet", "--prune", "origin"], cwd: directory,
+        // Fetched from a local copy while pushes go to the code host (ABS-207): pruning
+        // against the copy would drop the branches just pushed.
+        let prune = await Git.separatePushURL(exec, root: directory) == nil ? ["--prune"] : []
+        let spec = LaunchSpec(command: "git", args: ["fetch", "--quiet"] + prune + ["origin"], cwd: directory,
                               env: ["GIT_TERMINAL_PROMPT": "0"], keepStdinOpen: false)
         // A background read's fetch counts against the background budget too.
         if let reader = exec as? BudgetedExecutor {
@@ -328,6 +377,13 @@ extension AppModel {
             || Set((projectPullRequests[projectId] ?? []).map(\.repoPath)).count > 1
     }
 
+    /// The name a chat's pull request is labelled with beside its number:
+    /// in projects with several repositories, and always for one from
+    /// outside its project (ABS-207). Nil where the number alone says which.
+    func pullRequestRepoLabel(_ pr: PullRequest, projectId: String?) -> String? {
+        pr.isExternal || namesPullRequestRepos(projectId) ? pr.repoName : nil
+    }
+
     /// The project's own repository's code host: the enabled plugin that
     /// handles its `origin`, with its script running. `chatId` names the
     /// chat a call is about, so its commands run in that chat's worktree,
@@ -346,11 +402,13 @@ extension AppModel {
     }
 
     /// The code host of the project's repository at `repoPath`, read with
-    /// its repositories when they aren't yet. An unknown path (a pull
-    /// request kept from before) falls back to the main repository's.
+    /// its repositories when they aren't yet; an outside repository's web
+    /// address, its host. An unknown path (a pull request kept from before)
+    /// falls back to the main repository's.
     func codeHost(for project: Project, repoPath: String, chatId: String? = nil) async -> CodeHost? {
         if repoPath.isEmpty { return await codeHost(for: project, chatId: chatId) }
-        guard let repo = await repos(of: project).first(where: { $0.path == repoPath }) else {
+        // A pull request from outside the project is read from its own repository's host.
+        guard let repo = ProjectRepos.repo(forPullRequest: repoPath, in: await repos(of: project)), !repo.isMain else {
             return await codeHost(for: project, chatId: chatId)
         }
         return await codeHost(for: project, repo: repo, chatId: chatId)
@@ -456,9 +514,13 @@ extension AppModel {
     }
 
     /// The chat's pull request and the code host to act on it through:
-    /// its own repository's.
+    /// its own repository's. One from outside the project is only shown:
+    /// its link came from the agent's report, so nothing is changed there.
     private func pullRequestTarget(_ sessionId: String) async throws -> (CodeHost, Int)? {
         guard let pr = pullRequests[sessionId], let project = project(session(sessionId)?.projectId) else { return nil }
+        if pr.isExternal {
+            throw CodeHostError.failed("\(pr.repoName ?? "That repository") isn't one of \(project.name)'s, so Abstract only shows its pull request. Open it to act on it.")
+        }
         guard let host = await codeHost(for: project, repoPath: pr.repoPath, chatId: sessionId) else { throw CodeHostError.noHost(nil) }
         return (host, pr.number)
     }

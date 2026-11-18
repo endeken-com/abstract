@@ -148,6 +148,23 @@ const GitHubHost = (() => {
 
   function trimmed(value) { return String(value || "").trim(); }
 
+  /** The repository a call is about, as `--repo` takes it: `owner/name`, with its host when that isn't github.com. */
+  function repository(where) {
+    if (!where || !where.githubRepository) return null;
+    return where.githubHost && where.githubHost !== "github.com"
+      ? `${where.githubHost}/${where.githubRepository}` : where.githubRepository;
+  }
+
+  /**
+   * `args` naming the call's repository, so gh never takes it from the
+   * folder it runs in: a submodule's, or one cloned from a local path,
+   * would otherwise answer with another repository's pull request (ABS-207).
+   */
+  function scoped(args, where) {
+    const repo = repository(where);
+    return repo ? args.concat(["--repo", repo]) : args;
+  }
+
   function parse(out) {
     try { return JSON.parse(out.stdout); } catch { throw new Error("gh answered with something Abstract couldn't read."); }
   }
@@ -160,7 +177,7 @@ const GitHubHost = (() => {
   }
 
   async function view(run, selector, where) {
-    const out = await run(["pr", "view", String(selector), "--json", detailFields], where);
+    const out = await run(scoped(["pr", "view", String(selector), "--json", detailFields], where), where);
     if (!out.ok) {
       if (/no pull requests found/i.test(out.stderr)) return null;
       throw new Error(trimmed(out.stderr) || "gh pr view failed.");
@@ -181,13 +198,15 @@ const GitHubHost = (() => {
     const query = trimmed(input.query);
     const one = directReference(query);
     if (one) {
-      const out = await run([kind, "view", one, "--json", fields], where);
+      // A link names its own repository.
+      const args = [kind, "view", one, "--json", fields];
+      const out = await run(one.startsWith("https://") ? args : scoped(args, where), where);
       if (!out.ok) return { items: [] };
       const found = item(parse(out), isPR);
       return { items: found ? [found] : [] };
     }
     const filter = query ? ["--state", "all", "--search", query] : ["--state", "open"];
-    const out = await run([kind, "list", "--limit", String(input.limit || 30), "--json", fields].concat(filter), where);
+    const out = await run(scoped([kind, "list", "--limit", String(input.limit || 30), "--json", fields].concat(filter), where), where);
     if (!out.ok) {
       if (/git remote/.test(out.stderr)) throw new Error("This project's repository isn't on GitHub.");
       throw new Error(trimmed(out.stderr) || `gh ${kind} list failed.`);
@@ -223,14 +242,14 @@ const GitHubHost = (() => {
       }
       case "listPullRequests": {
         const state = input.state === "open" ? "open" : "all";
-        const out = await ok(run, ["pr", "list", "--state", state, "--limit", String(input.limit || 100),
-                                   "--json", summaryFields], where);
+        const out = await ok(run, scoped(["pr", "list", "--state", state, "--limit", String(input.limit || 100),
+                                          "--json", summaryFields], where), where);
         const list = (parse(out) || []).map(pullRequest).filter(Boolean);
         const seen = new Set(list.map((pr) => pr.head));
         for (const branch of new Set(Array.isArray(input.branches) ? input.branches : [])) {
           if (typeof branch !== "string" || !branch || seen.has(branch)) continue;
-          const old = await ok(run, ["pr", "list", "--head", branch, "--state", "all", "--limit", "5",
-                                     "--json", summaryFields], where);
+          const old = await ok(run, scoped(["pr", "list", "--head", branch, "--state", "all", "--limit", "5",
+                                            "--json", summaryFields], where), where);
           for (const pr of (parse(old) || []).map(pullRequest).filter(Boolean)) {
             if (!list.some((one) => one.number === pr.number)) list.push(pr);
           }
@@ -243,34 +262,37 @@ const GitHubHost = (() => {
         const args = ["pr", "create", "--head", input.branch, "--title", input.title, "--body", input.body || ""];
         if (input.base) args.push("--base", input.base);
         if (input.draft) args.push("--draft");
-        await ok(run, args, where);
+        await ok(run, scoped(args, where), where);
         return { pullRequest: await view(run, input.branch, where) };
       }
       case "merge": {
         if (!methods.includes(input.method)) throw new Error("GitHub merges by squash, merge or rebase.");
         const args = ["pr", "merge", number(), `--${input.method}`];
         if (input.deleteBranch) args.push("--delete-branch");
-        await ok(run, args, where);
+        await ok(run, scoped(args, where), where);
         return {};
       }
       case "markReady":
-        await ok(run, ["pr", "ready", number()], where);
+        await ok(run, scoped(["pr", "ready", number()], where), where);
         return {};
       case "close":
-        await ok(run, ["pr", "close", number()], where);
+        await ok(run, scoped(["pr", "close", number()], where), where);
         return {};
       case "updateBranch":
-        await ok(run, ["pr", "update-branch", number()], where);
+        await ok(run, scoped(["pr", "update-branch", number()], where), where);
         return {};
       case "rerunFailed": {
-        const out = await ok(run, ["pr", "view", number(), "--json", "statusCheckRollup"], where);
+        const out = await ok(run, scoped(["pr", "view", number(), "--json", "statusCheckRollup"], where), where);
         const runs = failedRuns(parse(out));
         if (!runs.length) throw new Error("No failed GitHub Actions runs to run again.");
-        for (const id of runs) await ok(run, ["run", "rerun", id, "--failed"], where);
+        for (const id of runs) await ok(run, scoped(["run", "rerun", id, "--failed"], where), where);
         return {};
       }
       case "reviewThreads": {
-        const out = await ok(run, ["api", "graphql", "-F", "owner={owner}", "-F", "name={repo}", "-F", `number=${number()}`,
+        // The call's repository by name, else the one gh finds in the folder.
+        const [owner, name] = where.githubRepository ? where.githubRepository.split("/") : ["{owner}", "{repo}"];
+        const field = where.githubRepository ? "-f" : "-F";
+        const out = await ok(run, ["api", "graphql", field, `owner=${owner}`, field, `name=${name}`, "-F", `number=${number()}`,
                                    "-f", `query=${threadsQuery}`], where);
         return { threads: threads(parse(out)) };
       }
@@ -285,7 +307,7 @@ const GitHubHost = (() => {
     }
   }
 
-  return { pullRequest, check, threads, item, directReference, access, signedInHosts, failedRuns, answer,
+  return { pullRequest, check, threads, item, directReference, access, signedInHosts, failedRuns, answer, scoped,
            summaryFields, detailFields };
 })();
 

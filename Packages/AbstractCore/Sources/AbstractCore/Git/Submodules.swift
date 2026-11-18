@@ -92,6 +92,40 @@ public enum Submodules {
         }
     }
 
+    /// Each checked-out submodule cloned from a local path (or a `file:`
+    /// URL), at any depth, pushes to what its parent's `.gitmodules`
+    /// registers: fetches keep coming from the local copy, which is fast,
+    /// while the agent's `git push` and Abstract's Push reach the code host
+    /// (ABS-207). Only the submodule's own config changes; a push URL
+    /// already set is left alone. Returns each one changed, by path from
+    /// `worktree`, with the URL it now pushes to.
+    public static func pushToRegisteredURLs(_ exec: any Executor, worktree: String) async -> [(path: String, url: String)] {
+        await pushToRegisteredURLs(exec, root: worktree, prefix: "", parentRemote: await Git.originURL(exec, root: worktree))
+    }
+
+    private static func pushToRegisteredURLs(_ exec: any Executor, root: String, prefix: String,
+                                             parentRemote: String?) async -> [(path: String, url: String)] {
+        var changed: [(path: String, url: String)] = []
+        for (path, url) in await ProjectRepos.submoduleURLs(exec, root: root) {
+            let directory = GitText.trimTrailingSlashes(root) + "/" + path
+            // Not checked out: git would answer for its parent instead.
+            guard exec.fileExists(directory + "/.git") else { continue }
+            let registered = url.map { url in parentRemote.map { GitRemote.resolveRelative(url, against: $0) } ?? url }
+                .flatMap { GitRemote.host($0) != nil ? $0 : nil }
+            let origin = await Git.originURL(exec, root: directory)
+            if let origin, GitRemote.host(origin) == nil, let registered {
+                let pushURL = try? await Git.git(exec, cwd: directory, ["config", "--get", "remote.origin.pushurl"])
+                if pushURL?.ok != true,
+                   (try? await Git.git(exec, cwd: directory, ["remote", "set-url", "--push", "origin", registered]))?.ok == true {
+                    changed.append((prefix + path, registered))
+                }
+            }
+            changed += await pushToRegisteredURLs(exec, root: directory, prefix: prefix + path + "/",
+                                                  parentRemote: registered ?? origin)
+        }
+        return changed
+    }
+
     /// The submodule paths `.gitmodules` registers in `root`, checked out or not.
     public static func registered(_ exec: any Executor, root: String) async -> [String] {
         guard let out = try? await Git.git(exec, cwd: root, ["config", "-z", "-f", ".gitmodules", "--get-regexp", #"^submodule\..*\.path$"#]),

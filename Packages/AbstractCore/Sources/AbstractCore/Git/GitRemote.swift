@@ -142,6 +142,16 @@ public extension Git {
         return url.isEmpty ? nil : url
     }
 
+    /// `origin`'s push URL when it has one of its own, apart from where it
+    /// fetches from: a submodule cloned from a local path pushes to its code
+    /// host (ABS-207). Nil otherwise.
+    static func separatePushURL(_ exec: any Executor, root: String) async -> String? {
+        guard let out = try? await git(exec, cwd: root, ["config", "--get", "remote.origin.pushurl"]), out.ok else { return nil }
+        let url = GitText.trimmed(out.stdout)
+        let fetch = await originURL(exec, root: root)
+        return url.isEmpty || url == fetch ? nil : url
+    }
+
     /// The history's first commits: the same set means the same repository,
     /// wherever its folder now is.
     static func rootCommits(_ exec: any Executor, root: String) async -> Set<String> {
