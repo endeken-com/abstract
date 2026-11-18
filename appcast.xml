@@ -5,10 +5,10 @@
     <link>https://endeken-com.github.io/abstract/appcast.xml</link>
     <language>en</language>
     <item>
-      <title>Abstract 0.13.0-nightly.86</title>
-      <pubDate>Tue, 17 Nov 2026 13:34:04 GMT</pubDate>
-      <sparkle:version>0.13.0.86</sparkle:version>
-      <sparkle:shortVersionString>0.13.0-nightly.86</sparkle:shortVersionString>
+      <title>Abstract 0.13.0-nightly.88</title>
+      <pubDate>Wed, 18 Nov 2026 00:42:33 GMT</pubDate>
+      <sparkle:version>0.13.0.88</sparkle:version>
+      <sparkle:shortVersionString>0.13.0-nightly.88</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
       <sparkle:channel>nightly</sparkle:channel>
       <sparkle:fullReleaseNotesLink>https://github.com/endeken-com/abstract/releases/tag/nightly</sparkle:fullReleaseNotesLink>
@@ -19,6 +19,7 @@
 &lt;li&gt;Install ABEL from Settings: a floating voice assistant over every app that dictates into chats and reads replies aloud, all on the Mac by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/wesguirra/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/wesguirra"&gt;@wesguirra&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="6438439299" data-permission-text="Title is private" data-url="https://github.com/endeken-com/abstract/issues/220" data-hovercard-type="pull_request" data-hovercard-url="/endeken-com/abstract/pull/220/hovercard" href="https://github.com/endeken-com/abstract/pull/220"&gt;#220&lt;/a&gt;&lt;/li&gt;
 &lt;li&gt;ABEL answers "what needs me?", approves, stops and starts chats by voice, and takes any other question to its own chat by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/wesguirra/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/wesguirra"&gt;@wesguirra&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="6439407141" data-permission-text="Title is private" data-url="https://github.com/endeken-com/abstract/issues/221" data-hovercard-type="pull_request" data-hovercard-url="/endeken-com/abstract/pull/221/hovercard" href="https://github.com/endeken-com/abstract/pull/221"&gt;#221&lt;/a&gt;&lt;/li&gt;
 &lt;li&gt;ABEL opens and controls other Mac apps by voice, through Shortcuts, AppleScript and Accessibility, asking first by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/wesguirra/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/wesguirra"&gt;@wesguirra&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="6440162497" data-permission-text="Title is private" data-url="https://github.com/endeken-com/abstract/issues/222" data-hovercard-type="pull_request" data-hovercard-url="/endeken-com/abstract/pull/222/hovercard" href="https://github.com/endeken-com/abstract/pull/222"&gt;#222&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;ABEL becomes an animated mascot with actions on hover, and asks for the microphone when it starts by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/wesguirra/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/wesguirra"&gt;@wesguirra&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="6456897707" data-permission-text="Title is private" data-url="https://github.com/endeken-com/abstract/issues/223" data-hovercard-type="pull_request" data-hovercard-url="/endeken-com/abstract/pull/223/hovercard" href="https://github.com/endeken-com/abstract/pull/223"&gt;#223&lt;/a&gt;&lt;/li&gt;
 &lt;/ul&gt;
 &lt;h3 dir="auto"&gt;Fixed&lt;/h3&gt;
 &lt;ul dir="auto"&gt;
@@ -28,8 +29,8 @@
 &lt;ul dir="auto"&gt;
 &lt;li&gt;Spike: ABEL, an optional voice assistant that floats over the Mac, hears and speaks on-device, and controls Abstract and other apps without a model API by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/wesguirra/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/wesguirra"&gt;@wesguirra&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="6437413852" data-permission-text="Title is private" data-url="https://github.com/endeken-com/abstract/issues/219" data-hovercard-type="pull_request" data-hovercard-url="/endeken-com/abstract/pull/219/hovercard" href="https://github.com/endeken-com/abstract/pull/219"&gt;#219&lt;/a&gt;&lt;/li&gt;
 &lt;/ul&gt;
-&lt;p dir="auto"&gt;&lt;strong&gt;Full Changelog&lt;/strong&gt;: &lt;a class="commit-link" href="https://github.com/endeken-com/abstract/compare/v0.12.0...c750b55b8cde624444cfc6a7bf995a6c67d9d0e5"&gt;&lt;tt&gt;v0.12.0...c750b55&lt;/tt&gt;&lt;/a&gt;&lt;/p&gt;</description>
-      <enclosure url="https://github.com/endeken-com/abstract/releases/download/nightly/Abstract-0.13.0-nightly.86.dmg" length="72667959" type="application/octet-stream" sparkle:edSignature="irtUH5Vdx2Cke59LknMxlbTnoXMSftFoIJhitJk5SG8iJJMCg+VNdxaweF8z2rk+Ni03Z9HGQsnGaWbCf5JyAA==" />
+&lt;p dir="auto"&gt;&lt;strong&gt;Full Changelog&lt;/strong&gt;: &lt;a class="commit-link" href="https://github.com/endeken-com/abstract/compare/v0.12.0...fe8fd4698d0024a2a848842bf48e29e2cf34e2e6"&gt;&lt;tt&gt;v0.12.0...fe8fd46&lt;/tt&gt;&lt;/a&gt;&lt;/p&gt;</description>
+      <enclosure url="https://github.com/endeken-com/abstract/releases/download/nightly/Abstract-0.13.0-nightly.88.dmg" length="72785269" type="application/octet-stream" sparkle:edSignature="xfrEkuElj/d8hIa64lFF0+h3eHoSNrCBbbTgEiSRTjbbRtYfJ0CQNWbb+bodh4C7ARW6aCC6TFOS0aakOVe5Cw==" />
     </item>
     <item>
       <title>Abstract 0.12.0</title>
