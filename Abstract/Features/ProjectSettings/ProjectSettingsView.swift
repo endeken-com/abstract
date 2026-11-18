@@ -42,6 +42,7 @@ struct ProjectSettingsView: View {
                                     GitSection(project: project)
                                     ContextSection(project: project)
                                     ScriptsSection(project: project)
+                                    ProjectCleanupSection(project: project)
                                     DangerSection(project: project)
                                 }
                             }

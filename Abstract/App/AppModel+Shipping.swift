@@ -8,6 +8,8 @@ extension AppModel {
     /// its submodules that no remote has. They live in the worktree's own
     /// clone of each and go with it. Nil when there are none.
     func unpushedSubmoduleWarning(_ exec: any Executor, worktree: String) async -> String? {
+        // No submodules, nothing to ask git (ABS-206): deleting stays quick.
+        guard exec.fileExists((worktree as NSString).appendingPathComponent(".gitmodules")) else { return nil }
         let repos = await Submodules.list(exec, worktree: worktree)
         let lost = await Shipping.unpushedWork(exec, worktree: worktree, repos: repos)
         guard !lost.isEmpty else { return nil }

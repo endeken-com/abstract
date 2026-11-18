@@ -321,6 +321,22 @@ struct RemoteDevicesSection: View {
             RemoteDeviceGroup(link: link, chats: chats, narrowing: narrowing)
         }
     }
+
+    /// The paired Macs' chat ids as their groups show them, top to bottom,
+    /// leaving out folded Macs: for picking chats with ⇧-click and ⌘A.
+    static func order(_ model: AppModel, chats: [String: SidebarChats.Chat]) -> [String] {
+        let folded = Set((UserDefaults.standard.string(forKey: "sidebar.remoteCollapsed") ?? "").split(separator: ",").map(String.init))
+        return model.remote.paired.compactMap { model.remote.links[$0.id] }.flatMap { link -> [String] in
+            guard let snapshot = link.snapshot, !folded.contains(link.device.id) else { return [] }
+            let shown = { (sessions: [Session]) in
+                sessions.compactMap { chats[RemoteService.mirrorId(device: link.device.id, session: $0.id)] }
+                    .sorted { $0.activeAt > $1.activeAt }.map(\.id)
+            }
+            return snapshot.projects.sorted { $0.sortOrder < $1.sortOrder }
+                .flatMap { project in shown(snapshot.sessions.filter { $0.projectId == project.id }) }
+                + shown(snapshot.sessions.filter { $0.projectId == nil })
+        }
+    }
 }
 
 private struct RemoteDeviceGroup: View {

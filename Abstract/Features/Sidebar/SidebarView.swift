@@ -23,6 +23,7 @@ struct SidebarView: View {
         let _ = Perf.event("body.Sidebar")
         VStack(spacing: 0) {
             list
+            DeletingLine()
             Text("Version \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—")")
                 .font(.btCaption)
                 .foregroundStyle(Color.btTextTertiary)
@@ -56,7 +57,7 @@ struct SidebarView: View {
     private var list: some View {
         let allChats = model.sidebarChats()
         let chats = visibleChats(allChats)
-        let archived = archivedOrder(chats)
+        let order = shownOrder(chats)
         return ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 VStack(alignment: .leading, spacing: 1) {
@@ -76,7 +77,10 @@ struct SidebarView: View {
                 }
 
                 RailSection(title: arrangement == .status ? "Chats" : model.remote.identity.name, collapsed: $projectsCollapsed,
-                            showsTrailing: searching || !filter.isEmpty) {
+                            showsTrailing: searching || !filter.isEmpty || !model.chatSelection.isEmpty) {
+                    if !model.chatSelection.isEmpty {
+                        SelectionActions()
+                    } else {
                     HStack(spacing: 0) {
                         Button {
                             searching.toggle()
@@ -90,6 +94,7 @@ struct SidebarView: View {
                             .buttonStyle(RailIconStyle())
                             .help("Add project")
                             .accessibilityLabel("Add project")
+                    }
                     }
                 }
 
@@ -126,41 +131,51 @@ struct SidebarView: View {
         .focusable()
         .focused($focused)
         .focusEffectDisabled()
-        .onKeyPress(.downArrow) { step(1, in: chats) }
-        .onKeyPress(.upArrow) { step(-1, in: chats) }
-        // Delete and ⌘⌫ delete the picked archived chats (or the open one), after asking.
-        .onKeyPress(keys: [.delete, .deleteForward]) { _ in deletePicked(in: archived) }
+        .onKeyPress(.downArrow) { step(1, in: order) }
+        .onKeyPress(.upArrow) { step(-1, in: order) }
+        // Delete and ⌘⌫ delete the picked chats (or the open one), after asking;
+        // ⌘⇧⌫ is Archive Chat in the Chat menu, which archives the picks.
+        .onKeyPress(keys: [.delete, .deleteForward]) { press in
+            guard !press.modifiers.contains(.shift) else { return .ignored }
+            return act(.delete, in: order)
+        }
         .onKeyPress(keys: ["a"]) { press in
-            guard press.modifiers == .command, !archived.isEmpty else { return .ignored }
-            model.archivedSelection = .all(archived)
+            guard press.modifiers == .command, !order.isEmpty else { return .ignored }
+            model.pickAllShown()
             return .handled
         }
         .onKeyPress(.escape) {
-            guard !model.archivedSelection.isEmpty else { return .ignored }
-            model.archivedSelection = ChatSelection()
+            guard !model.chatSelection.isEmpty else { return .ignored }
+            model.chatSelection = ChatSelection()
             return .handled
         }
-        // Picks never outlive the rows they were made on: a filter, a search
-        // or hiding archived chats drops the ones no longer shown.
-        .onChange(of: archived) { _, order in
-            let kept = model.archivedSelection.keeping(order)
-            if kept != model.archivedSelection { model.archivedSelection = kept }
+        // Picks never outlive the rows they were made on: a filter, a search,
+        // a folded project or hiding archived chats drops the ones no longer shown.
+        .onChange(of: order, initial: true) { _, order in
+            model.shownChatOrder = order
+            let kept = model.chatSelection.keeping(order)
+            if kept != model.chatSelection { model.chatSelection = kept }
         }
-        .onChange(of: model.archivedSelection) { _, picked in if picked.count > 1 { focused = true } }
+        // A pick gives the list the keys, so Delete works after one ⌘-click.
+        .onChange(of: model.chatSelection) { _, picked in if !picked.isEmpty { focused = true } }
     }
 
-    /// The Archived group's chats as shown, the ones that can be picked
-    /// together; none while the rail groups by project or is folded.
-    private func archivedOrder(_ chats: [SidebarChats.Chat]) -> [String] {
-        guard arrangement == .status, !projectsCollapsed, model.showArchived else { return [] }
-        return SidebarChats.sections(chats).first { $0.group == .archived }?.chats.map(\.id) ?? []
+    /// Every chat the rail shows, top to bottom, in either layout: what
+    /// ⇧-click runs over, ⌘A picks and the arrow keys walk.
+    private func shownOrder(_ chats: [SidebarChats.Chat]) -> [String] {
+        guard !projectsCollapsed else { return [] }
+        let byId = Dictionary(chats.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        return SidebarChats.shownOrder(chats, arrangement: arrangement, showOlder: showOlderDone || filter.activity != nil,
+                                       projects: model.projects.map(\.id), collapsed: model.collapsedProjects,
+                                       remote: arrangement == .project ? RemoteDevicesSection.order(model, chats: byId) : [])
     }
 
-    private func deletePicked(in archived: [String]) -> KeyPress.Result {
-        var ids = model.archivedSelection.keeping(archived).ids
-        if ids.isEmpty, let open = model.selectedSessionId, archived.contains(open) { ids = [open] }
-        guard !ids.isEmpty else { return .ignored }
-        Task { await model.confirmDeleteChats(ids) }
+    /// `action` on the picked chats, or on the open one when none are picked.
+    private func act(_ action: BulkChatAction, in order: [String]) -> KeyPress.Result {
+        var ids = model.chatSelection.keeping(order).ids
+        if ids.isEmpty, let open = model.selectedSessionId, order.contains(open) { ids = [open] }
+        guard !ids.isEmpty, !action.targets(model.bulkItems(ids)).isEmpty else { return .ignored }
+        model.perform(action, on: ids)
         return .handled
     }
 
@@ -168,12 +183,8 @@ struct SidebarView: View {
     @ViewBuilder private func statusGroups(_ chats: [SidebarChats.Chat]) -> some View {
         let showFilteredOlder = filter.activity != nil
         ForEach(SidebarChats.sections(chats)) { section in
-            let archived = section.group == .archived
-            let order = archived ? section.chats.map(\.id) : nil
-            RailGroup(title: section.group.title,
-                      trailing: order.map { AnyView(ArchivedActions(order: $0)) },
-                      showsTrailing: archived && model.archivedSelection.count > 1) {
-                ForEach(section.chats) { chat in RailChatRow(chat: chat, showProject: true, pickOrder: order).equatable() }
+            RailGroup(title: section.group.title) {
+                ForEach(section.chats) { chat in RailChatRow(chat: chat, showProject: true).equatable() }
                 if !section.older.isEmpty {
                     if showOlderDone || showFilteredOlder {
                         ForEach(section.older) { chat in RailChatRow(chat: chat, showProject: true).equatable() }
@@ -222,20 +233,7 @@ struct SidebarView: View {
     }
 
     /// Arrow keys walk the chats in the order the rail shows them.
-    private func step(_ delta: Int, in chats: [SidebarChats.Chat]) -> KeyPress.Result {
-        let order: [String]
-        if projectsCollapsed {
-            order = []
-        } else if arrangement == .status {
-            order = SidebarChats.sections(chats).flatMap { $0.chats + (showOlderDone || filter.activity != nil ? $0.older : []) }.map(\.id)
-        } else {
-            let groups = SidebarChats.groupedByProject(chats.filter { !$0.isRemote })
-            order = (model.projects.flatMap { p in
-                model.collapsedProjects.contains(p.id) ? [] : (groups[p.id] ?? []).map(\.id)
-            } + (groups[nil] ?? []).map(\.id))
-        }
-        var seen = Set<String>()
-        let unique = order.filter { seen.insert($0).inserted }
+    private func step(_ delta: Int, in unique: [String]) -> KeyPress.Result {
         guard !unique.isEmpty else { return .ignored }
         let current = model.selectedSessionId.flatMap { unique.firstIndex(of: $0) }
         let next = current.map { min(max($0 + delta, 0), unique.count - 1) } ?? (delta > 0 ? 0 : unique.count - 1)
@@ -244,13 +242,37 @@ struct SidebarView: View {
     }
 }
 
-/// Opening a chat outside the archived picks lets them go.
+/// Opening a chat outside the picks lets them go.
 private struct ShownChatWatcher: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
         Color.clear.onChange(of: model.selectedSessionId) { _, id in
-            if let id, !model.archivedSelection.contains(id) { model.archivedSelection = ChatSelection() }
+            if let id, !model.chatSelection.contains(id) { model.chatSelection = ChatSelection() }
+        }
+    }
+}
+
+/// "Deleting 3 chats…" at the foot of the rail while deleted chats' files
+/// are cleared in the background (ABS-206).
+private struct DeletingLine: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let count = model.deletingChats.count
+        if count > 0 {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.mini)
+                Text(count == 1 ? "Deleting 1 chat…" : "Deleting \(count) chats…")
+                    .font(.btCaption)
+                    .foregroundStyle(Color.btTextTertiary)
+                    .monospacedDigit()
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.leading, Rail.inset + Rail.rowPadding)
+            .padding(.top, 6)
+            .help("Their worktrees are being removed from disk. You can keep working.")
+            .transition(.opacity)
         }
     }
 }
@@ -371,40 +393,66 @@ private struct SidebarFilterMenu: View {
     }
 }
 
-/// The Archived group's actions: Select All, then how many are picked and
-/// Delete. ⌘ and ⇧ clicks pick; Delete or ⌘⌫ deletes too.
-private struct ArchivedActions: View {
+/// The chats header while chats are picked: how many, what can be done to
+/// them, and Clear. ⌘ and ⇧ clicks pick; ⌘A picks every chat shown.
+private struct SelectionActions: View {
     @Environment(AppModel.self) private var model
-    let order: [String]
     @State private var hovering = false
 
     var body: some View {
-        let picked = model.archivedSelection
+        let ids = model.chatSelection.ids
         HStack(spacing: 2) {
-            if picked.count > 1 {
-                Text("\(picked.count) selected")
+            Text("\(ids.count) selected")
+                .font(.btCaption)
+                .foregroundStyle(Color.btTextTertiary)
+                .monospacedDigit()
+                .padding(.horizontal, 4)
+            Menu {
+                BulkActionsMenu(ids: ids)
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Color.btTextSecondary)
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Actions for the selected chats")
+            .accessibilityLabel("Actions for \(ids.count) selected chats")
+            Button { model.chatSelection = ChatSelection() } label: {
+                Text("Clear")
                     .font(.btCaption)
-                    .foregroundStyle(Color.btTextTertiary)
-                    .monospacedDigit()
+                    .foregroundStyle(hovering ? Color.btText : Color.btTextTertiary)
                     .padding(.horizontal, 4)
+                    .frame(height: 22)
+                    .contentShape(Rectangle())
             }
-            if picked.count < order.count {
-                Button { model.archivedSelection = .all(order) } label: {
-                    Text("Select All")
-                        .font(.btCaption)
-                        .foregroundStyle(hovering ? Color.btText : Color.btTextTertiary)
-                        .padding(.horizontal, 4)
-                        .frame(height: 22)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .onHover { hovering = $0 }
+            .buttonStyle(.plain)
+            .onHover { hovering = $0 }
+            .help("Clear the selection (Escape)")
+        }
+    }
+}
+
+/// The bulk actions for `ids`, each saying how many it fits ("Archive 3 of 5").
+struct BulkActionsMenu: View {
+    @Environment(AppModel.self) private var model
+    let ids: [String]
+
+    var body: some View {
+        let items = model.bulkItems(ids)
+        ForEach(BulkChatAction.offered(items), id: \.self) { action in
+            if action == .delete { Divider() }
+            let button = Button(action.title(for: items), role: action == .delete ? .destructive : nil) {
+                model.perform(action, on: ids)
             }
-            if !picked.isEmpty {
-                Button { Task { await model.confirmDeleteChats(picked.ids) } } label: { Image(systemName: "trash") }
-                    .buttonStyle(RailIconStyle())
-                    .help(picked.count == 1 ? "Delete 1 chat" : "Delete \(picked.count) chats")
-                    .accessibilityLabel(picked.count == 1 ? "Delete 1 chat" : "Delete \(picked.count) chats")
+            switch action {
+            case .archive: button.keyboardShortcut(.delete, modifiers: [.command, .shift])
+            case .delete: button.keyboardShortcut(.delete, modifiers: .command)
+            default: button
             }
         }
     }
@@ -662,8 +710,6 @@ struct RailChatRow: View {
     var showProject = false
     /// A pin by the title, where pinned chats aren't a group of their own.
     var showPin = false
-    /// Its group's chats, where ⌘ and ⇧ clicks pick several (Archived).
-    var pickOrder: [String]? = nil
     @State private var renaming = false
     @State private var draft = ""
     @State private var hovering = false
@@ -674,21 +720,22 @@ struct RailChatRow: View {
 
     var body: some View {
         let _ = Perf.event("body.RailChatRow")
-        let picked = pickOrder != nil && !model.archivedSelection.isEmpty
-        // Its own mark, not the chat showing: opening a chat redraws only the two rows it changes.
-        let selected = picked ? model.archivedSelection.contains(session.id) : model.shownMark(session.id).isShown
+        // Its own marks, not the chat showing or the picks: opening or picking
+        // a chat redraws only the rows it changes.
+        let selected = model.pickMark(session.id).isPicked || model.shownMark(session.id).isShown
         let unreachable = model.remote.unreachableMessage(session.id)
         let stalled = unreachable == nil && (model.stallState(session.id)?.isStalled ?? false)
         let line = SidebarChats.line(for: chat, showProject: showProject)
         let hasDetail = !line.isEmpty || (chat.subtaskProgress?.total ?? 0) > 0
         Button {
             showingDetails = false
-            if let pickOrder {
-                let flags = NSEvent.modifierFlags
-                let click: ChatSelection.Click = flags.contains(.shift) ? .extend : flags.contains(.command) ? .toggle : .single
-                model.pickArchived(session.id, click, in: pickOrder)
-                if click != .single { return }
+            // ⌘ and ⇧ pick, in either layout (ABS-206); a plain click opens.
+            let flags = NSEvent.modifierFlags
+            if flags.contains(.shift) || flags.contains(.command) {
+                model.pickChat(session.id, flags.contains(.shift) ? .extend : .toggle)
+                return
             }
+            if !model.chatSelection.isEmpty { model.chatSelection = ChatSelection() }
             model.open(session.id)
         } label: {
             HStack(alignment: !hasDetail && unreachable == nil && !stalled ? .center : .top, spacing: 8) {
@@ -762,26 +809,20 @@ struct RailChatRow: View {
             renaming = true
         }
         .contextMenu {
-            if let ids = pickedWithThis {
-                Button("Unarchive \(ids.count) Chats") { for id in ids { model.setArchived(id, false) } }
-                Divider()
-                Button("Delete \(ids.count) Chats…", role: .destructive) { Task { await model.confirmDeleteChats(ids) } }
-            } else if remote {
-                Button(session.archivedAt == nil ? "Archive" : "Unarchive") {
-                    model.setArchived(session.id, session.archivedAt == nil)
+            // Read in a view of its own, so picking doesn't redraw every row.
+            PickedOr(sessionId: session.id) {
+                if remote {
+                    Button(session.archivedAt == nil ? "Archive" : "Unarchive") {
+                        model.setArchived(session.id, session.archivedAt == nil)
+                    }
+                } else {
+                    localActions
                 }
-            } else {
-                localActions
             }
         }
     }
 
     private var session: Session { chat.session }
-    /// The picked archived chats, when this one is among several.
-    private var pickedWithThis: [String]? {
-        let picked = model.archivedSelection
-        return pickOrder != nil && picked.count > 1 && picked.contains(session.id) ? picked.ids : nil
-    }
     /// Still at work in the background, so an idle chat doesn't look done.
     private var backgroundTasks: Int { chat.backgroundTasks }
 
@@ -887,6 +928,19 @@ struct RailChatRow: View {
             alert.buttons.first?.hasDestructiveAction = true
             if alert.runModal() == .alertFirstButtonReturn { await model.delete(session.id, removeWorktree: true) }
         }
+    }
+}
+
+/// A row's menu: the bulk actions when it's among several picked chats,
+/// else its own.
+private struct PickedOr<Single: View>: View {
+    @Environment(AppModel.self) private var model
+    let sessionId: String
+    @ViewBuilder var single: () -> Single
+
+    var body: some View {
+        let picked = model.chatSelection
+        if picked.count > 1, picked.contains(sessionId) { BulkActionsMenu(ids: picked.ids) } else { single() }
     }
 }
 
@@ -1433,6 +1487,6 @@ private struct ProjectDrop: DropDelegate {
 /// A row redraws when its chat changes, not whenever any chat does.
 extension RailChatRow: Equatable {
     nonisolated static func == (a: RailChatRow, b: RailChatRow) -> Bool {
-        a.chat == b.chat && a.showProject == b.showProject && a.showPin == b.showPin && a.pickOrder == b.pickOrder
+        a.chat == b.chat && a.showProject == b.showProject && a.showPin == b.showPin
     }
 }
