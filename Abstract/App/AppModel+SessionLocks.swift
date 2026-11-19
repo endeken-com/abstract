@@ -43,6 +43,9 @@ extension AppModel {
 
     /// `abstract` changed something: chats, their status, who drives them.
     func commandLineChanged() {
+        // The CLI can change a tracker link in plugin storage without
+        // changing the database, so discard the app's cached links too.
+        noteTrackerLinksChanged()
         reload()
         // `abstract plugin add` installs beside the app (ABS-190).
         if plugins.manager.records() != plugins.installed.map(\.record) { plugins.refresh() }

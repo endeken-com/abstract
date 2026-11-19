@@ -12,6 +12,10 @@ import Synchronization
 ///     abstract history          <file>[:<line>[-<line>]] [--project <p>]
 ///     abstract branch name      <exact-name>  (from an automation chat's worktree)
 ///     abstract plugin add       <owner/slug | owner/repo[/path][@ref] | git URL> [--ref <ref>]
+///     abstract plugin commands  (commands contributed by enabled plugins)
+///     abstract plugin <tracker> project-link [--project <p>]
+///     abstract plugin <tracker> link-project --link-file <path|-> [--project <p>]
+///     abstract plugin <tracker> unlink-project [--project <p>]
 ///     abstract mcp              --chat <id>   (the code-history tools, over stdio)
 ///     abstract mcp              --chat <id> --plugins   (the chat's plugin tools, over stdio)
 ///     abstract mcp              --chat <id> --branch    (the chat's branch-name tool, over stdio)
@@ -89,6 +93,7 @@ public enum CommandLineTool {
         agent find --session <id> | agent send --session <id> --agent <id> --text-file <path|-> | \
         agent respawn --session <id> --agent <agent> --prompt-file <path|-> | \
         branch name <exact-name> | plugin add <owner/repo[/path][@ref]> [--ref <ref>] | \
+        plugin commands | plugin <tracker> project-link|link-project|unlink-project [--project <p>] [--link-file <path|->] | \
         history <file>[:<line>[-<line>]] [--project <p>] | mcp --chat <id> [--plugins|--branch|--abel]
         """
 
@@ -115,6 +120,9 @@ public enum CommandLineTool {
         let rest = Array(args.dropFirst(2))
         let stdin = { FileHandle.standardInput.readDataToEndOfFile() }
         switch (args[0], args[1]) {
+        case ("plugin", "commands"):
+            guard rest.isEmpty else { throw CLIError(.invalidArguments, "Use abstract plugin commands.") }
+            return try Commands.open().pluginCommands()
         case ("plugin", "add"):
             guard let source = rest.first, !source.hasPrefix("--") else {
                 throw CLIError(.invalidArguments, "Name a repository: abstract plugin add <owner/repo[/path][@ref]> [--ref <ref>].")
@@ -128,6 +136,27 @@ public enum CommandLineTool {
             let registry = try? await PluginRegistry.fetch()
             return try await Commands.open().addPlugin(source, ref: option("ref", in: options), fetcher: GitPluginFetcher(),
                                                        registry: registry)
+        case ("plugin", let tracker):
+            guard let operation = rest.first else {
+                throw CLIError(.invalidArguments, "Name a plugin command. Use abstract plugin commands to see them.")
+            }
+            let options = Array(rest.dropFirst())
+            let commands = try Commands.open()
+            let cwd = FileManager.default.currentDirectoryPath
+            switch operation {
+            case "project-link":
+                let a = try CLIArguments(options, options: [], optional: ["project"])
+                return try commands.pluginProjectLink(plugin: tracker, project: a.optionalValue("project"), cwd: cwd)
+            case "link-project":
+                let a = try CLIArguments(options, options: ["link-file"], optional: ["project"])
+                return try commands.setPluginProjectLink(plugin: tracker, project: a.optionalValue("project"),
+                                                         linkFile: a.value("link-file"), cwd: cwd, stdin: stdin)
+            case "unlink-project":
+                let a = try CLIArguments(options, options: [], optional: ["project"])
+                return try commands.clearPluginProjectLink(plugin: tracker, project: a.optionalValue("project"), cwd: cwd)
+            default:
+                throw CLIError(.invalidArguments, "Unknown plugin command “\(operation)”. Use abstract plugin commands to see them.")
+            }
         case ("branch", "name"):
             guard rest.count == 1 else { throw CLIError(.invalidArguments, "Use abstract branch name <exact-name>.") }
             return try await Commands.open().nameRunBranch(rest[0], in: FileManager.default.currentDirectoryPath)

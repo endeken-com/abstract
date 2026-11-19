@@ -1,5 +1,20 @@
 import Foundation
 
+/// One command an enabled issue tracker contributes to `abstract`.
+struct PluginCommandJSON: Encodable {
+    let plugin: String
+    let name: String
+    let command: String
+}
+
+/// The same project link the plugin's Project Settings page reads and saves.
+struct PluginProjectLinkJSON: Encodable {
+    let plugin: String
+    let projectId: String
+    let projectName: String
+    let link: TrackerProjectLink?
+}
+
 /// A plugin `abstract plugin add` installed, as it prints it.
 struct PluginAddJSON: Encodable {
     let id: String
@@ -43,6 +58,115 @@ extension Commands {
         let base = URL(fileURLWithPath: storePath).deletingLastPathComponent()
         return PluginManager(store: store, pluginsRoot: base.appendingPathComponent("Plugins"),
                              dataRoot: base.appendingPathComponent("PluginData"))
+    }
+
+    /// A tracker's existing `issueTracker` contribution makes these
+    /// commands available while the plugin is enabled and reviewed. No
+    /// tracker-specific executable or running app is needed to read or
+    /// change its project link.
+    func pluginCommands() -> [PluginCommandJSON] {
+        let trackers = plugins.installed(saving: false).filter { plugin in
+            plugin.isUsable && plugin.record.grantedBackground && plugin.manifest?.contributes.issueTracker != nil
+        }
+        return trackers.flatMap { plugin in
+            let name = plugin.manifest?.name ?? plugin.id
+            let suffix = plugin.id.split(separator: ".").last.map(String.init) ?? plugin.id
+            let selector = trackers.filter {
+                $0.id.split(separator: ".").last.map(String.init)?.caseInsensitiveCompare(suffix) == .orderedSame
+            }.count == 1 ? suffix : plugin.id
+            return ["project-link", "link-project", "unlink-project"].map { command in
+                PluginCommandJSON(plugin: plugin.id, name: name, command: "abstract plugin \(selector) \(command)")
+            }
+        }
+    }
+
+    /// Accept a full id, or an unambiguous tracker name or id suffix.
+    private func trackerPlugin(_ selector: String) throws -> InstalledPlugin {
+        let installed = plugins.installed(saving: false)
+        let exact = installed.filter { $0.id.caseInsensitiveCompare(selector) == .orderedSame }
+        let matches = exact.isEmpty ? installed.filter { plugin in
+            plugin.record.name.caseInsensitiveCompare(selector) == .orderedSame
+                || plugin.id.split(separator: ".").last.map(String.init)?.caseInsensitiveCompare(selector) == .orderedSame
+        } : exact
+        guard !matches.isEmpty else {
+            throw CLIError(.pluginFailed, "No installed plugin “\(selector)”. Use abstract plugin commands to see available commands.")
+        }
+        guard matches.count == 1, let plugin = matches.first else {
+            throw CLIError(.invalidArguments, "Several plugins match “\(selector)”; use the full plugin id.")
+        }
+        guard plugin.isUsable, plugin.record.grantedBackground,
+              plugin.manifest?.contributes.issueTracker != nil else {
+            throw CLIError(.pluginFailed, "\(plugin.record.name) is not an enabled issue tracker plugin.")
+        }
+        return plugin
+    }
+
+    /// Without --project, the current folder identifies a project root or
+    /// one of its active chat worktrees. A nested folder works as well.
+    private func linkProject(_ reference: String?, cwd: String) throws -> Project {
+        if let reference { return try resolveProject(reference) }
+        let here = Self.canonical(cwd)
+        let roots = try store.projects().filter { project in
+            let root = Self.canonical(project.rootPath)
+            return here == root || here.hasPrefix(root + "/")
+        }
+        if let match = roots.max(by: { Self.canonical($0.rootPath).count < Self.canonical($1.rootPath).count }) {
+            return match
+        }
+        let worktrees = try store.sessions().compactMap { session -> (path: String, projectId: String)? in
+            guard session.archivedAt == nil, let path = session.worktreePath, let projectId = session.projectId else { return nil }
+            let root = Self.canonical(path)
+            return here == root || here.hasPrefix(root + "/") ? (root, projectId) : nil
+        }
+        if let match = worktrees.max(by: { $0.path.count < $1.path.count }),
+           let project = try store.project(match.projectId) {
+            return project
+        }
+        throw CLIError(.projectNotFound, "No Abstract project contains the current folder. Run from a project or use --project <name|id|path>.")
+    }
+
+    func pluginProjectLink(plugin selector: String, project reference: String? = nil,
+                           cwd: String = FileManager.default.currentDirectoryPath) throws -> PluginProjectLinkJSON {
+        let plugin = try trackerPlugin(selector)
+        let project = try linkProject(reference, cwd: cwd)
+        return PluginProjectLinkJSON(plugin: plugin.id, projectId: project.id, projectName: project.name,
+                                     link: TrackerProjectLink.read(plugins.storage(for: plugin.id), projectId: project.id))
+    }
+
+    func setPluginProjectLink(plugin selector: String, project reference: String? = nil, linkFile: String,
+                              cwd: String = FileManager.default.currentDirectoryPath,
+                              stdin: () -> Data) throws -> PluginProjectLinkJSON {
+        let plugin = try trackerPlugin(selector)
+        let project = try linkProject(reference, cwd: cwd)
+        let data: Data
+        if linkFile == "-" {
+            data = stdin()
+        } else {
+            guard let contents = FileManager.default.contents(atPath: linkFile) else {
+                throw CLIError(.invalidArguments, "Can't read \(linkFile) (--link-file).")
+            }
+            data = contents
+        }
+        guard data.count <= 16 * 1024, let value = try? JSONDecoder().decode(JSONValue.self, from: data),
+              let link = TrackerProjectLink(value) else {
+            throw CLIError(.invalidArguments, "--link-file needs a JSON object with a workspace, team or project; targets need an id and name.")
+        }
+        guard TrackerProjectLink.write(link, to: plugins.storage(for: plugin.id), projectId: project.id) else {
+            throw CLIError(.pluginFailed, "Couldn't save \(plugin.record.name)'s project link.")
+        }
+        StoreChanges.post(storePath: storePath)
+        return PluginProjectLinkJSON(plugin: plugin.id, projectId: project.id, projectName: project.name, link: link)
+    }
+
+    func clearPluginProjectLink(plugin selector: String, project reference: String? = nil,
+                                cwd: String = FileManager.default.currentDirectoryPath) throws -> PluginProjectLinkJSON {
+        let plugin = try trackerPlugin(selector)
+        let project = try linkProject(reference, cwd: cwd)
+        guard TrackerProjectLink.write(nil, to: plugins.storage(for: plugin.id), projectId: project.id) else {
+            throw CLIError(.pluginFailed, "Couldn't clear \(plugin.record.name)'s project link.")
+        }
+        StoreChanges.post(storePath: storePath)
+        return PluginProjectLinkJSON(plugin: plugin.id, projectId: project.id, projectName: project.name, link: nil)
     }
 
     /// `abstract plugin add <source> [--ref <ref>]` (ABS-190): a registry
