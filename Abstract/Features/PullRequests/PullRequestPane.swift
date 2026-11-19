@@ -713,7 +713,14 @@ private struct PullRequestDetail: View {
                 ForEach(pr.mergeMethods, id: \.self) { method in
                     Button(title(method)) { run("Merging…") { try await model.mergePullRequest(session.id, method: method) } }
                 }
-            } label: { Label("Merge", systemImage: "arrow.triangle.merge") }
+            } label: {
+                Label {
+                    Text("Merge")
+                } icon: {
+                    Image(nsImage: Octicon.gitMerge).renderingMode(.template)
+                        .resizable().frame(width: 16, height: 16)
+                }
+            }
                 .menuStyle(.button)
                 .buttonStyle(.bt(.secondary, size: .small))
                 .fixedSize()
