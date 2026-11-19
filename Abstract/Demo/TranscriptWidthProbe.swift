@@ -5,8 +5,8 @@ import AbstractCore
 /// width (ABS-212). `ABSTRACT_DEMO_WIDTH=<delay>` waits, adds two long chats,
 /// keeps an agent streaming into the first, shows the second for
 /// `ABSTRACT_DEMO_WIDTH_HIDDEN` seconds (30 by default) and comes back; then
-/// drags the side panel to its widest, leaving the chat its narrowest, and
-/// back, while the agent streams. After each, every row on screen must have
+/// drags the side panel to its narrowest, to its widest (leaving the chat its
+/// narrowest) and back, while the agent streams. After each, every row on screen must have
 /// been built at the column's width: it logs `width probe: PASS` or `FAIL`.
 /// `ABSTRACT_DEMO_WIDTH_SHOT=<dir>` saves the window after each step.
 /// The navigation probe runs the same check (`check`) on the chats it shows.
@@ -82,12 +82,12 @@ enum TranscriptWidthProbe {
         failures += report("back after \(Int(hidden)) s hidden", check(model, streaming.id),
                            shot: shots?.appendingPathComponent("2-back-from-hidden.png"))
 
-        // The side panel dragged to its widest and back, a step a frame, while it streams.
+        // The side panel dragged to each end and back, a step a frame, while it streams.
         streamer = stream()
         if !model.layout(for: streaming.id).side.isOpen { model.togglePanel(.side, in: streaming.id) }
         try? await Task.sleep(for: .seconds(1))
         let start = model.layout(for: streaming.id).side.size
-        let widest = PanelSlot.side.sizes.upperBound
+        let narrowest = PanelSlot.side.sizes.lowerBound, widest = PanelSlot.side.sizes.upperBound
         func drag(from: Double, to: Double) async {
             let steps = 40
             for step in 1...steps {
@@ -96,14 +96,18 @@ enum TranscriptWidthProbe {
                 try? await Task.sleep(for: .milliseconds(16))
             }
         }
-        await drag(from: start, to: widest)
+        await drag(from: start, to: narrowest)
+        try? await Task.sleep(for: .seconds(1.5))
+        failures += report("side panel at its narrowest", check(model, streaming.id),
+                           shot: shots?.appendingPathComponent("3-side-panel-narrowest.png"))
+        await drag(from: narrowest, to: widest)
         try? await Task.sleep(for: .seconds(1.5))
         failures += report("side panel at its widest", check(model, streaming.id),
-                           shot: shots?.appendingPathComponent("3-side-panel-widest.png"))
+                           shot: shots?.appendingPathComponent("4-side-panel-widest.png"))
         await drag(from: widest, to: start)
         try? await Task.sleep(for: .seconds(1.5))
         failures += report("side panel back", check(model, streaming.id),
-                           shot: shots?.appendingPathComponent("4-side-panel-back.png"))
+                           shot: shots?.appendingPathComponent("5-side-panel-back.png"))
 
         log("width probe: \(failures == 0 ? "PASS" : "FAIL, \(failures) checks with rows at the wrong width")")
     }
