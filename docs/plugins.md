@@ -508,6 +508,33 @@ await AbstractPlugin.issueTracker.setProjectLink({
 });                                                               // null forgets it
 ```
 
+Enabled issue tracker plugins also contribute project-link commands to `abstract`.
+`abstract plugin commands` lists the commands currently available. Use the
+tracker name, its final id component, or its full id. Run from the Abstract
+project folder or one of its chat worktrees; `--project` is only needed from
+elsewhere and accepts an id, name or root path. The CLI works while the app is
+closed and uses the same link storage as Project Settings:
+
+```sh
+# From a project folder or one of its chat worktrees:
+printf '%s\n' '{"workspace":"example"}' | abstract plugin linear link-project --link-file -
+abstract plugin linear project-link
+abstract plugin linear unlink-project
+
+# From elsewhere, identify the Abstract project by name, id or root path:
+abstract plugin linear project-link --project "My App"
+```
+
+`--link-file -` reads JSON from stdin. To link a team or tracker project too,
+save the object passed to `setProjectLink` as `link.json`, for example
+`{"workspace":"example","team":{"id":"team:ENG","name":"Engineering","key":"ENG"}}`.
+For Jira, a project target is
+`{"project":{"id":"project:PROJ","name":"PROJ","key":"PROJ"}}`.
+Then run `abstract plugin linear link-project --link-file link.json` from the
+project folder. The output is JSON with the
+plugin id, Abstract project id and name, and saved link (or `null`). A tracker
+plugin must be installed and enabled; its commands disappear when it is off.
+
 A linked project's composer shows only its linked trackers' marks and searches each
 within its link, passing the project's id (else the team's) as `project` to
 `searchIssues`; **Search all** in the picker asks every tracker everywhere. A project

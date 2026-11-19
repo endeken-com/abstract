@@ -1,12 +1,13 @@
 import Foundation
 
 /// A command's options: `--name value` or `--name=value`, plus bare switches.
-/// Every option is required unless it's a switch; anything else is an error.
+/// Options are required unless listed as optional or as switches;
+/// anything else is an error.
 struct CLIArguments {
     private var values: [String: String] = [:]
     private var switches: Set<String> = []
 
-    init(_ tokens: [String], options: [String], switches known: [String] = []) throws {
+    init(_ tokens: [String], options: [String], optional: [String] = [], switches known: [String] = []) throws {
         var i = 0
         while i < tokens.count {
             let token = tokens[i]
@@ -25,7 +26,7 @@ struct CLIArguments {
                 i += 1
                 continue
             }
-            guard options.contains(name) else { throw Self.unknown(name) }
+            guard options.contains(name) || optional.contains(name) else { throw Self.unknown(name) }
             if value == nil {
                 guard i + 1 < tokens.count else { throw CLIError(.invalidArguments, "--\(name) needs a value.") }
                 value = tokens[i + 1]
@@ -44,6 +45,11 @@ struct CLIArguments {
     func value(_ name: String) throws -> String {
         guard let value = values[name], !value.isEmpty else { throw CLIError(.invalidArguments, "--\(name) is empty.") }
         return value
+    }
+
+    func optionalValue(_ name: String) throws -> String? {
+        guard values[name] != nil else { return nil }
+        return try value(name)
     }
 
     func isSet(_ name: String) -> Bool { switches.contains(name) }
