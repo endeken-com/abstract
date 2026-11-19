@@ -385,6 +385,10 @@ public enum PluginIssueTrackers {
         public var tracker: ResolvedIssueTracker
         public var issues: [TrackerIssue]
         public var problem: String?
+        /// The tracker answered that it isn't signed in; `hint` is what
+        /// it says to do about it (ABS-211).
+        public var signedOut = false
+        public var hint: String?
         public var id: String { tracker.id }
     }
 
@@ -397,7 +401,8 @@ public enum PluginIssueTrackers {
                 group.addTask {
                     if case .access(let access) = await ask(tracker, .access), !access.ready {
                         return (index, Group(tracker: tracker, issues: [], problem: access.problem
-                                             ?? "\(tracker.title) isn't connected yet."))
+                                             ?? "\(tracker.title) isn't connected yet.",
+                                             signedOut: true, hint: access.problem))
                     }
                     let answer = await ask(tracker, request(for: query, tracker: tracker.declaration,
                                                             project: scopes[tracker.pluginId]))

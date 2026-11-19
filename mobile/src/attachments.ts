@@ -5,13 +5,16 @@ import { uuid } from './secure';
 
 export type PickedAttachment = {
   id: string;
-  kind: 'file' | 'image' | 'githubIssue' | 'pullRequest';
+  kind: 'file' | 'image' | 'githubIssue' | 'pullRequest' | 'trackerIssue';
   title: string;
   path: string | null;
   reference: string | null;
   url: string | null;
   body: string | null;
   details: string[];
+  // Tracker issues (ABS-211): the plugin that found it, and the tracker's name.
+  tracker?: string | null;
+  trackerName?: string | null;
   data: string;
   size: number;
 };
