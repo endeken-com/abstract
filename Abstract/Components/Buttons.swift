@@ -31,9 +31,11 @@ struct BTButtonStyle: ButtonStyle {
                 .padding(.horizontal, size == .small ? 9 : size == .large ? 16 : 12)
                 .frame(height: size == .small ? 24 : size == .large ? 34 : 28)
                 .foregroundStyle(foreground)
-                .background(background, in: shape)
-                .shadow(color: kind == .primary && isEnabled ? Color.btAccent.opacity(hovering ? 0.18 : 0.1) : .clear,
-                        radius: hovering ? 12 : 7, y: 2)
+                .background {
+                    shape.fill(fill)
+                        .overlay(shape.fill(interactionWash))
+                        .overlay(shape.strokeBorder(border, lineWidth: 1))
+                }
                 .scaleEffect(reduceMotion ? 1 : configuration.isPressed ? 0.975 : 1)
                 .opacity(isEnabled ? 1 : 0.5)
                 .contentShape(Rectangle())
@@ -51,24 +53,34 @@ struct BTButtonStyle: ButtonStyle {
             }
         }
 
-        private var background: AnyShapeStyle {
+        private var fill: Color {
             switch kind {
-            case .primary:
-                AnyShapeStyle(LinearGradient(
-                    colors: [Color.btAccent.opacity(configuration.isPressed ? 0.9 : 1),
-                             Color.btAccent.opacity(configuration.isPressed ? 0.78 : hovering ? 0.88 : 0.84)],
-                    startPoint: .topLeading, endPoint: .bottomTrailing
-                ))
-            case .secondary:
-                AnyShapeStyle(LinearGradient(
-                    colors: [hovering || configuration.isPressed ? Color.btSelection : Color.btSurfaceRaised,
-                             configuration.isPressed ? Color.btSelection : Color.btHover],
-                    startPoint: .topLeading, endPoint: .bottomTrailing
-                ))
-            case .ghost:
-                AnyShapeStyle(hovering || configuration.isPressed ? Color.btHover : .clear)
-            case .danger:
-                AnyShapeStyle(hovering ? Color.btRemovedWash : .clear)
+            case .primary: .btAccent
+            case .secondary: .btSurfaceRaised
+            case .ghost, .danger: .clear
+            }
+        }
+
+        private var interactionWash: Color {
+            if configuration.isPressed {
+                switch kind {
+                case .primary: return Color.btOnAccent.opacity(0.16)
+                case .secondary, .ghost: return .btSelection
+                case .danger: return .btRemovedWash
+                }
+            }
+            guard hovering else { return .clear }
+            switch kind {
+            case .primary: return Color.btOnAccent.opacity(0.08)
+            case .secondary, .ghost: return .btHover
+            case .danger: return .btRemovedWash
+            }
+        }
+
+        private var border: Color {
+            switch kind {
+            case .secondary: hovering ? .btBorderStrong : .btBorder
+            case .primary, .ghost, .danger: .clear
             }
         }
     }
@@ -103,15 +115,13 @@ struct IconButtonStyle: ButtonStyle {
         @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
         var body: some View {
+            let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
             configuration.label
                 .font(.system(size: size * 0.46, weight: .medium))
                 .foregroundStyle(hovering || active ? Color.btText : Color.btTextSecondary)
                 .frame(width: size, height: size)
-                .background(LinearGradient(
-                    colors: active ? [Color.btSelection, Color.btHover] : hovering || configuration.isPressed
-                        ? [Color.btHover, Color.btSurfaceRaised] : [.clear, .clear],
-                    startPoint: .topLeading, endPoint: .bottomTrailing
-                ), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .background(active ? Color.btSelection : configuration.isPressed ? Color.btSelection : hovering ? Color.btHover : .clear,
+                            in: shape)
                 .scaleEffect(reduceMotion ? 1 : configuration.isPressed ? 0.94 : 1)
                 .opacity(isEnabled ? 1 : 0.4)
                 .contentShape(Rectangle())
