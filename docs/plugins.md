@@ -349,6 +349,34 @@ Settings › Plugins.
 
 ![Link status](images/plugins/link-status.png)
 
+## Sub-task limit
+
+A chat can start as many sub-tasks as Settings › Agents › **Sub-tasks per chat** says:
+1 to 20, 5 by default (ABS-214). Abstract refuses `chats.create` with a `parentId` once
+that chat has that many, naming the number, and lowering the setting never touches
+sub-tasks that already exist. Depth stays at two: a sub-task may start its own, and
+theirs may not.
+
+A plugin that starts sub-tasks can check first. The snapshot (pushed after `getSnapshot`)
+gives each Mac an optional `subtasksPerChat`, sent for this Mac only:
+
+```json
+"macs": [{ "id": "…", "name": "Desk", "isThisMac": true, "reachable": true, "subtasksPerChat": 8 }]
+```
+
+A paired Mac's limit isn't known, and a Mac from before ABS-214 doesn't send it, so read
+it as optional and fall back to 5:
+
+```js
+let limit = 5;
+AbstractPlugin.on("snapshot", (snapshot) => {
+  limit = snapshot.macs?.find((mac) => mac.isThisMac)?.subtasksPerChat ?? 5;
+});
+AbstractPlugin.send("getSnapshot");
+```
+
+The app checks again either way, so a plugin's own count is a courtesy, never the rule.
+
 ## Command-line tools
 
 A plugin can run one command-line tool with the `cli` capability (ABS-139). Its

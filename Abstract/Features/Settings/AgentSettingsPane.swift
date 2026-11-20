@@ -23,12 +23,36 @@ struct AgentSettingsPane: View {
                 }
             }
             .id("agents.detect")
+            Section {
+                Stepper(value: subtasksBinding, in: SubtaskLimit.range) {
+                    HStack(spacing: Space.md) {
+                        VStack(alignment: .leading, spacing: Space.xs) {
+                            Text("Sub-tasks per chat")
+                            SettingsCaption("Lowering it keeps the ones already running.")
+                        }
+                        Spacer(minLength: Space.sm)
+                        Text("\(model.subtasksPerChat)")
+                            .font(.btBodyMedium)
+                            .monospacedDigit()
+                    }
+                }
+                .accessibilityLabel("Sub-tasks per chat: \(model.subtasksPerChat)")
+            } header: {
+                Text("Sub-tasks")
+            } footer: {
+                SettingsCaption("Each sub-task is a full agent run in its own worktree; more sub-tasks spend more.")
+            }
+            .id("agents.subtasks")
             ForEach(ProviderRegistry.all, id: \.id) { provider in
                 ProviderSettingsSection(provider: provider, detecting: detecting, detect: detect)
             }
             .id("agents.providers")
         }
         .settingsScrollablePane()
+    }
+
+    private var subtasksBinding: Binding<Int> {
+        Binding(get: { model.subtasksPerChat }, set: { model.subtasksPerChat = SubtaskLimit.clamped($0) })
     }
 
     private var detectionCaption: some View {

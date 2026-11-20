@@ -14,8 +14,12 @@ public struct PluginSnapshot: Sendable, Hashable, Codable {
         public var name: String
         public var isThisMac: Bool
         public var reachable: Bool
-        public init(id: String, name: String, isThisMac: Bool, reachable: Bool) {
+        /// How many sub-tasks a chat on this Mac may start (ABS-214). Sent
+        /// for this Mac only; absent from paired Macs and older versions.
+        public var subtasksPerChat: Int?
+        public init(id: String, name: String, isThisMac: Bool, reachable: Bool, subtasksPerChat: Int? = nil) {
             self.id = id; self.name = name; self.isThisMac = isThisMac; self.reachable = reachable
+            self.subtasksPerChat = subtasksPerChat
         }
     }
 

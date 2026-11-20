@@ -408,6 +408,9 @@ final class AppModel {
     /// How long a working chat may go without output before it reads as
     /// quiet, then stalled; see AppModel+Stalls.
     var stallThresholds: StallThresholds { didSet { save("stallThresholds", stallThresholds) } }
+    /// How many sub-tasks one chat may start (ABS-214), set in Settings ›
+    /// Agents. Lowering it keeps the ones already running.
+    var subtasksPerChat: Int { didSet { save("subtasksPerChat", subtasksPerChat) } }
     /// Chats gone quiet or stalled right now, by chat id. Working chats
     /// with recent output aren't in here. Written only in AppModel+Stalls.
     var stallStates: [String: StallState] = [:]
@@ -490,6 +493,7 @@ final class AppModel {
         notifyAutomationFailed = store.setting("notifyAutomationFailed", as: Bool.self) ?? true
         notifyStalled = store.setting("notifyStalled", as: Bool.self) ?? true
         stallThresholds = store.setting("stallThresholds", as: StallThresholds.self) ?? .default
+        subtasksPerChat = SubtaskLimit.clamped(store.setting("subtasksPerChat", as: Int.self) ?? SubtaskLimit.defaultPerChat)
         defaultTimezone = store.setting("defaultTimezone", as: String.self) ?? TimeZone.current.identifier
         outputStyle = store.setting("outputStyle", as: OutputStyle.self) ?? .default
         claudeProfile = store.setting("claudeProfile", as: String.self)

@@ -81,6 +81,7 @@ final class DemoBootstrap {
         NavigationProbe.runIfRequested(model, repo: abstract)
         TranscriptWidthProbe.runIfRequested(model, repo: abstract)
         AbelProbe.runIfRequested(model)
+        SubtaskLimitProbe.runIfRequested(model)
 
         let running = abstract.map { p in Task { await self.chat(model, p, "Add a command palette with fuzzy search", .autoEdits) } }
         _ = running
