@@ -41,7 +41,15 @@ struct SidebarView: View {
         .onReceive(Timer.publish(every: 60, on: .main, in: .common).autoconnect()) { date in
             if filter.activity != nil { filterNow = date }
         }
+        // Demo probes type in the search box this way (an empty query closes it).
+        .onReceive(NotificationCenter.default.publisher(for: Self.demoSearch)) { note in
+            let q = note.object as? String ?? ""
+            searching = !q.isEmpty
+            query = q
+        }
     }
+
+    static let demoSearch = Notification.Name("AbstractDemoSidebarSearch")
 
     private var filter: SidebarChats.Filter {
         (try? JSONDecoder().decode(SidebarChats.Filter.self, from: Data(filterJSON.utf8))) ?? SidebarChats.Filter()
@@ -57,7 +65,10 @@ struct SidebarView: View {
     private var list: some View {
         let allChats = model.sidebarChats()
         let chats = visibleChats(allChats)
-        let order = shownOrder(chats)
+        // Sub-tasks under a collapsed chat, left out after the layout so a
+        // chain keeps its most urgent member's group (ABS-213).
+        let folding = SidebarChats.folding(chats, collapsed: model.collapsedChats, narrowed: narrowing)
+        let order = shownOrder(chats, hidden: folding.hidden)
         return ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 VStack(alignment: .leading, spacing: 1) {
@@ -105,8 +116,8 @@ struct SidebarView: View {
 
                 if !projectsCollapsed {
                     switch arrangement {
-                    case .status: statusGroups(chats)
-                    case .project: projectGroups(chats)
+                    case .status: statusGroups(chats, folding: folding)
+                    case .project: projectGroups(chats, folding: folding)
                     }
                     if narrowing && chats.isEmpty {
                         Text("No chats match")
@@ -162,12 +173,13 @@ struct SidebarView: View {
 
     /// Every chat the rail shows, top to bottom, in either layout: what
     /// ⇧-click runs over, ⌘A picks and the arrow keys walk.
-    private func shownOrder(_ chats: [SidebarChats.Chat]) -> [String] {
+    private func shownOrder(_ chats: [SidebarChats.Chat], hidden: Set<String>) -> [String] {
         guard !projectsCollapsed else { return [] }
         let byId = Dictionary(chats.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         return SidebarChats.shownOrder(chats, arrangement: arrangement, showOlder: showOlderDone || filter.activity != nil,
                                        projects: model.projects.map(\.id), collapsed: model.collapsedProjects,
-                                       remote: arrangement == .project ? RemoteDevicesSection.order(model, chats: byId) : [])
+                                       remote: arrangement == .project ? RemoteDevicesSection.order(model, chats: byId) : [],
+                                       hidden: hidden)
     }
 
     /// `action` on the picked chats, or on the open one when none are picked.
@@ -180,20 +192,25 @@ struct SidebarView: View {
     }
 
     /// Pinned, Needs you, Working, Ready to review, Done: across projects and Macs.
-    @ViewBuilder private func statusGroups(_ chats: [SidebarChats.Chat]) -> some View {
+    @ViewBuilder private func statusGroups(_ chats: [SidebarChats.Chat], folding: SidebarChats.Folding) -> some View {
         let showFilteredOlder = filter.activity != nil
+        let shown = { (chats: [SidebarChats.Chat]) in chats.filter { !folding.hidden.contains($0.id) } }
         ForEach(SidebarChats.sections(chats)) { section in
             RailGroup(title: section.group.title) {
-                ForEach(section.chats) { chat in RailChatRow(chat: chat, showProject: true).equatable() }
+                ForEach(shown(section.chats)) { chat in
+                    RailChatRow(chat: chat, showProject: true, fold: folding.folds[chat.id]).equatable()
+                }
                 if !section.older.isEmpty {
                     if showOlderDone || showFilteredOlder {
-                        ForEach(section.older) { chat in RailChatRow(chat: chat, showProject: true).equatable() }
+                        ForEach(shown(section.older)) { chat in
+                            RailChatRow(chat: chat, showProject: true, fold: folding.folds[chat.id]).equatable()
+                        }
                     }
                     if !showFilteredOlder {
                         Button {
                             withAnimation(.snappy(duration: 0.2)) { showOlderDone.toggle() }
                         } label: {
-                            Text(showOlderDone ? "Hide older" : "Show \(section.older.count) older")
+                            Text(showOlderDone ? "Hide older" : "Show \(shown(section.older).count) older")
                                 .font(BTFont.ui(12.5))
                                 .foregroundStyle(Color.btTextTertiary)
                                 .padding(.leading, Rail.rowPadding + Rail.chatIndent + Rail.iconColumn + 8)
@@ -208,13 +225,15 @@ struct SidebarView: View {
     }
 
     /// Today's layout: each project's chats under it, then Standalone, then each paired Mac's.
-    @ViewBuilder private func projectGroups(_ chats: [SidebarChats.Chat]) -> some View {
-        let byId = Dictionary(chats.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-        let localGroups = SidebarChats.groupedByProject(chats.filter { !$0.isRemote })
+    @ViewBuilder private func projectGroups(_ chats: [SidebarChats.Chat], folding: SidebarChats.Folding) -> some View {
+        let byId = Dictionary(chats.compactMap { folding.hidden.contains($0.id) ? nil : ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let localGroups = SidebarChats.groupedByProject(chats.filter { !$0.isRemote }).mapValues { rows in
+            rows.filter { !folding.hidden.contains($0.id) }
+        }
         ForEach(model.projects) { project in
             let rows = localGroups[project.id] ?? []
             if !narrowing || !rows.isEmpty {
-                RailProjectGroup(project: project, chats: rows, dragging: $draggingProject)
+                RailProjectGroup(project: project, chats: rows, folds: folding.folds, dragging: $draggingProject)
             }
         }
 
@@ -225,7 +244,7 @@ struct SidebarView: View {
                     .buttonStyle(RailIconStyle())
                     .help("New standalone chat")
             )) {
-                ForEach(standalone) { chat in RailChatRow(chat: chat, showPin: true).equatable() }
+                ForEach(standalone) { chat in RailChatRow(chat: chat, showPin: true, fold: folding.folds[chat.id]).equatable() }
             }
         }
 
@@ -614,6 +633,8 @@ private struct RailProjectGroup: View {
     let project: Project
     /// Its chats the search and filters let through, in the rail's order.
     let chats: [SidebarChats.Chat]
+    /// Its chats with sub-tasks, by id: their chevrons.
+    let folds: [String: SidebarChats.Fold]
     @Binding var dragging: String?
     /// Where a dragged project would land: above this one or below it.
     @State private var dropEdge: VerticalEdge?
@@ -652,7 +673,7 @@ private struct RailProjectGroup: View {
                     .padding(.leading, Rail.rowPadding + Rail.chatIndent + Rail.iconColumn + 8)
                     .frame(maxWidth: .infinity, minHeight: Rail.rowHeight, alignment: .leading)
             }
-            ForEach(chats) { chat in RailChatRow(chat: chat, showPin: true).equatable() }
+            ForEach(chats) { chat in RailChatRow(chat: chat, showPin: true, fold: folds[chat.id]).equatable() }
         }
         .overlay(alignment: dropEdge == .bottom ? .bottom : .top) {
             if let dropEdge {
@@ -701,6 +722,12 @@ private final class HoverDelay {
     deinit { task?.cancel() }
 }
 
+/// Whether the pointer is over a row, observed only by its sub-task chevron,
+/// so hovering redraws the chevron rather than the row.
+@Observable private final class RowHover {
+    var on = false
+}
+
 /// A chat in the rail: its project and state, title and age on the first
 /// line; where it lives and how its pull request stands on a quiet second.
 struct RailChatRow: View {
@@ -710,10 +737,13 @@ struct RailChatRow: View {
     var showProject = false
     /// A pin by the title, where pinned chats aren't a group of their own.
     var showPin = false
+    /// Its sub-tasks' chevron and, while they're hidden, what they need (ABS-213).
+    var fold: SidebarChats.Fold? = nil
     @State private var renaming = false
     @State private var draft = ""
     @State private var hovering = false
     @State private var hoverDelay = HoverDelay()
+    @State private var rowHover = RowHover()
     @State private var hoveringDetails = false
     @State private var showingDetails = false
     @FocusState private var fieldFocused: Bool
@@ -726,7 +756,8 @@ struct RailChatRow: View {
         let unreachable = model.remote.unreachableMessage(session.id)
         let stalled = unreachable == nil && (model.stallState(session.id)?.isStalled ?? false)
         let line = SidebarChats.line(for: chat, showProject: showProject)
-        let hasDetail = !line.isEmpty || (chat.subtaskProgress?.total ?? 0) > 0
+        let hiddenNeedYou = fold?.summary
+        let hasDetail = !line.isEmpty || (chat.subtaskProgress?.total ?? 0) > 0 || hiddenNeedYou != nil
         Button {
             showingDetails = false
             // ⌘ and ⇧ pick, in either layout (ABS-206); a plain click opens.
@@ -739,12 +770,20 @@ struct RailChatRow: View {
             model.open(session.id)
         } label: {
             HStack(alignment: !hasDetail && unreachable == nil && !stalled ? .center : .top, spacing: 8) {
+                // A collapsed chat's mark also shows a hidden sub-task at work.
                 RailChatMark(chat: chat, status: unreachable == nil ? session.status : .idle,
-                             working: unreachable == nil && backgroundTasks > 0, stalled: stalled)
+                             working: unreachable == nil && (backgroundTasks > 0 || fold?.working == true), stalled: stalled)
                     .opacity(unreachable == nil ? 1 : 0.5)
                     .frame(width: Rail.iconColumn, height: 17)
                 VStack(alignment: .leading, spacing: 1) {
                     firstLine(selected: selected)
+                    // Collapsing never hides a request for your attention.
+                    if let hiddenNeedYou {
+                        Text(hiddenNeedYou)
+                            .font(.btCaption)
+                            .foregroundStyle(Color.btWarning)
+                            .lineLimit(1)
+                    }
                     if let unreachable {
                         Text(unreachable)
                             .font(.btCaption)
@@ -764,17 +803,26 @@ struct RailChatRow: View {
                     }
                 }
             }
-            .padding(.leading, Rail.rowPadding + Rail.chatIndent + (session.parentSessionId == nil ? 0 : 14))
+            .padding(.leading, leading)
             .padding(.trailing, Rail.rowPadding)
             .padding(.vertical, !hasDetail && unreachable == nil && !stalled ? 0 : 5)
             .frame(minHeight: Rail.rowHeight)
         }
         .buttonStyle(RailRowStyle(selected: selected))
+        .overlay(alignment: .topLeading) {
+            if let fold {
+                // In the gutter before the icon, like a disclosure triangle.
+                SubtaskChevron(sessionId: session.id, collapsed: fold.collapsed, hover: rowHover)
+                    .padding(.leading, leading - SubtaskChevron.width - 1)
+                    .padding(.top, !hasDetail && unreachable == nil && !stalled ? (Rail.rowHeight - 17) / 2 : 5)
+            }
+        }
         .opacity(session.archivedAt == nil ? 1 : 0.5)
         .onContinuousHover { phase in
             switch phase {
             case .active:
                 hovering = true
+                if !rowHover.on { rowHover.on = true }
                 guard !renaming, !showingDetails else { return }
                 hoverDelay.task?.cancel()
                 hoverDelay.task = Task {
@@ -783,6 +831,7 @@ struct RailChatRow: View {
                 }
             case .ended:
                 hovering = false
+                rowHover.on = false
                 hoverDelay.task?.cancel()
                 hoverDelay.task = nil
                 Task {
@@ -811,6 +860,12 @@ struct RailChatRow: View {
         .contextMenu {
             // Read in a view of its own, so picking doesn't redraw every row.
             PickedOr(sessionId: session.id) {
+                if let fold {
+                    Button(fold.collapsed ? "Expand Sub-tasks" : "Collapse Sub-tasks") {
+                        model.setSubtasksCollapsed(session.id, !fold.collapsed)
+                    }
+                    Divider()
+                }
                 if remote {
                     Button(session.archivedAt == nil ? "Archive" : "Unarchive") {
                         model.setArchived(session.id, session.archivedAt == nil)
@@ -823,6 +878,8 @@ struct RailChatRow: View {
     }
 
     private var session: Session { chat.session }
+    /// Where its icon starts: sub-tasks sit in from their parent.
+    private var leading: CGFloat { Rail.rowPadding + Rail.chatIndent + (session.parentSessionId == nil ? 0 : 14) }
     /// Still at work in the background, so an idle chat doesn't look done.
     private var backgroundTasks: Int { chat.backgroundTasks }
 
@@ -928,6 +985,32 @@ struct RailChatRow: View {
             alert.buttons.first?.hasDestructiveAction = true
             if alert.runModal() == .alertFirstButtonReturn { await model.delete(session.id, removeWorktree: true) }
         }
+    }
+}
+
+/// A chat's chevron for its sub-tasks, styled like `RailSection`'s: shown
+/// with the pointer over the row, and always while they're collapsed.
+private struct SubtaskChevron: View {
+    static let width: CGFloat = 12
+    @Environment(AppModel.self) private var model
+    let sessionId: String
+    let collapsed: Bool
+    let hover: RowHover
+
+    var body: some View {
+        Button { model.setSubtasksCollapsed(sessionId, !collapsed) } label: {
+            Image(systemName: "chevron.right")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(Color.btTextTertiary)
+                .rotationEffect(.degrees(collapsed ? 0 : 90))
+                .frame(width: Self.width, height: 17)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .opacity(hover.on || collapsed ? 1 : 0)
+        .animation(.snappy(duration: 0.12), value: hover.on)
+        .help(collapsed ? "Show sub-tasks" : "Hide sub-tasks")
+        .accessibilityLabel(collapsed ? "Expand sub-tasks" : "Collapse sub-tasks")
     }
 }
 
@@ -1491,6 +1574,6 @@ private struct ProjectDrop: DropDelegate {
 /// A row redraws when its chat changes, not whenever any chat does.
 extension RailChatRow: Equatable {
     nonisolated static func == (a: RailChatRow, b: RailChatRow) -> Bool {
-        a.chat == b.chat && a.showProject == b.showProject && a.showPin == b.showPin
+        a.chat == b.chat && a.showProject == b.showProject && a.showPin == b.showPin && a.fold == b.fold
     }
 }

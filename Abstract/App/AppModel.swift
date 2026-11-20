@@ -298,6 +298,17 @@ final class AppModel {
         return mark
     }
     var collapsedProjects: Set<String> = []
+    /// Chats whose sub-tasks are folded away in the rail (ABS-213). Kept across launches.
+    var collapsedChats: Set<String> = [] {
+        didSet {
+            guard collapsedChats != oldValue else { return }
+            UserDefaults.standard.set(collapsedChats.sorted(), forKey: collapsedChatsKey)
+        }
+    }
+    /// Demo mode keeps its own: a Debug build shares the app's defaults, and
+    /// pruning against the demo's chats would forget the real ones.
+    private var collapsedChatsKey: String { Self.collapsedChatsKey(demo: isDemo) }
+    private static func collapsedChatsKey(demo: Bool) -> String { demo ? "demo.sidebar.collapsedChats" : "sidebar.collapsedChats" }
     /// Archived chats show in the sidebar too, dimmed. Kept across launches.
     var showArchived = UserDefaults.standard.bool(forKey: "sidebar.showArchived") {
         didSet { UserDefaults.standard.set(showArchived, forKey: "sidebar.showArchived") }
@@ -485,6 +496,7 @@ final class AppModel {
         modelCatalogs = store.setting("modelCatalogs", as: [String: ModelCatalog].self) ?? [:]
         mainTabs = store.setting("mainTabs", as: MainTabs.self) ?? MainTabs()
         pauseState = store.setting("pauseState", as: PauseState.self) ?? PauseState()
+        collapsedChats = Set(UserDefaults.standard.stringArray(forKey: Self.collapsedChatsKey(demo: isDemo)) ?? [])
     }
 
     /// Settings are written in the background, in order, so a tab or a
@@ -585,7 +597,10 @@ final class AppModel {
     } }
 
     func reloadSessions() { Perf.measure("reloadSessions") {
-        sessions = (try? store.sessions()) ?? []
+        let stored = try? store.sessions()
+        sessions = stored ?? []
+        // Only from a read that worked: a failed one would forget every fold.
+        if let stored, !collapsedChats.isEmpty, !isDemo { collapsedChats = SidebarChats.pruned(collapsedChats, existing: stored.map(\.id)) }
         alive = engine.aliveSessionIds
     } }
 
@@ -770,12 +785,28 @@ final class AppModel {
     /// Show a chat: its tab, or in place of the chat showing (a new tab when asked).
     func open(_ sessionId: String, newTab: Bool = false) { Perf.measure("open") {
         mainTabs.openChat(sessionId, newTab: newTab)
+        revealInRail(sessionId)
         if case .session(let current) = destination, current == sessionId { return }
         destination = .session(sessionId)
         // A chat on another Mac streams its transcript from there.
         if sessionId.hasPrefix(RemoteService.mirrorPrefix) { remote.subscribe(sessionId); return }
         loadTimelineIfNeeded(sessionId)
     } }
+
+    /// A chat opened from the palette, a notification or its parent's tool
+    /// row unfolds the chats above it in the rail, so it shows there selected.
+    func revealInRail(_ sessionId: String) {
+        guard !collapsedChats.isEmpty else { return }
+        let revealed = SidebarChats.revealing(sessionId, in: collapsedChats) { self.session($0)?.parentSessionId }
+        if revealed != collapsedChats { withAnimation(.snappy(duration: 0.2)) { collapsedChats = revealed } }
+    }
+
+    /// Fold a chat's sub-tasks away in the rail, or bring them back.
+    func setSubtasksCollapsed(_ sessionId: String, _ collapsed: Bool) {
+        withAnimation(.snappy(duration: 0.2)) {
+            if collapsed { collapsedChats.insert(sessionId) } else { collapsedChats.remove(sessionId) }
+        }
+    }
 
     /// The New Chat sheet, for `projectId`, or for a standalone chat (one
     /// with no project) when `standalone`.
@@ -1896,6 +1927,7 @@ final class AppModel {
         enrichers = enrichers.filter { !$0.key.hasPrefix(sessionId + "/") }
         if case .session(let id) = destination, id == sessionId { destination = .home }
         sessions = StoreOrder.deleting(sessionId, from: sessions)
+        collapsedChats.remove(sessionId)
         if chatSelection.contains(sessionId) { chatSelection = chatSelection.keeping(chatSelection.ids.filter { $0 != sessionId }) }
         if let job { clearInBackground(job, name: s.name) }
         return leftFiles.map(BulkChatDelete.Outcome.leftFiles) ?? .deleted

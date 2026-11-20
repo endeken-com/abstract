@@ -80,9 +80,11 @@ extension SidebarChats {
     /// Every chat id the rail shows, top to bottom: what ⇧-click runs over
     /// and ⌘A picks. By status, each group's chats (Done's older ones when
     /// shown); by project, each expanded project's, then Standalone, then
-    /// `remote`, the paired Macs' chats as their groups show them.
+    /// `remote`, the paired Macs' chats as their groups show them. Sub-tasks
+    /// folded away (`hidden`, from `folding`) are left out.
     public static func shownOrder(_ chats: [Chat], arrangement: Arrangement, showOlder: Bool = false,
-                                  projects: [String] = [], collapsed: Set<String> = [], remote: [String] = []) -> [String] {
+                                  projects: [String] = [], collapsed: Set<String> = [], remote: [String] = [],
+                                  hidden: Set<String> = []) -> [String] {
         let order: [String]
         switch arrangement {
         case .status:
@@ -92,7 +94,7 @@ extension SidebarChats {
             order = projects.flatMap { collapsed.contains($0) ? [] : (groups[$0] ?? []).map(\.id) }
                 + (groups[nil] ?? []).map(\.id) + remote
         }
-        var seen = Set<String>()
+        var seen = hidden
         return order.filter { seen.insert($0).inserted }
     }
 }
