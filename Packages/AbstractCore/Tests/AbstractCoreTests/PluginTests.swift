@@ -302,6 +302,26 @@ import Testing
         #expect(pr["checks"] == .string("failing"))
     }
 
+    @Test func thisMacSendsItsSubtaskLimitAndOlderMacsStillDecode() throws {
+        // This Mac says how many sub-tasks a chat may start (ABS-214).
+        let mac = PluginSnapshot.Mac(id: "mac-1", name: "Studio", isThisMac: true, reachable: true, subtasksPerChat: 8)
+        let snapshot = PluginSnapshot.build(revision: 1, capabilities: [], macs: [mac], projects: [], chats: [])
+        let json = try #require(snapshot.jsonValue()["macs"]?.array?.first?.object)
+        #expect(json["subtasksPerChat"] == .number(8))
+        let data = try JSONEncoder().encode(snapshot)
+        #expect(try JSONDecoder().decode(PluginSnapshot.self, from: data).macs.first?.subtasksPerChat == 8)
+
+        // A paired Mac's limit isn't known, so the field is left out, and a
+        // snapshot from before the field existed still decodes.
+        let paired = PluginSnapshot.Mac(id: "mac-2", name: "Laptop", isThisMac: false, reachable: true)
+        let pairedJSON = PluginSnapshot.build(revision: 1, capabilities: [], macs: [paired], projects: [], chats: [])
+            .jsonValue()["macs"]?.array?.first?.object
+        #expect(pairedJSON?["subtasksPerChat"] == nil)
+        let old = #"{"revision":1,"generatedAt":"x","macs":[{"id":"m","name":"n","isThisMac":true,"reachable":true}]}"#
+        let decoded = try JSONDecoder().decode(PluginSnapshot.self, from: Data(old.utf8))
+        #expect(decoded.macs.first?.subtasksPerChat == nil)
+    }
+
     @Test func capabilitiesGateTheSnapshotSections() {
         let input = snapshotInput()
         let chatsOnly = PluginSnapshot.build(revision: 1, capabilities: [.chatsRead],

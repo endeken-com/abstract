@@ -10,7 +10,8 @@ extension AppModel {
     /// sidebar joins, so local and paired-Mac chats arrive in one list.
     func pluginSnapshot(capabilities: Set<PluginCapability>, revision: Int) -> PluginSnapshot {
         let thisMac = remote.identity.id
-        var macs = [PluginSnapshot.Mac(id: thisMac, name: remote.identity.name, isThisMac: true, reachable: true)]
+        var macs = [PluginSnapshot.Mac(id: thisMac, name: remote.identity.name, isThisMac: true, reachable: true,
+                                         subtasksPerChat: subtasksPerChat)]
         for device in remote.paired {
             macs.append(.init(id: device.id, name: device.peer.name, isThisMac: false,
                               reachable: remote.links[device.id]?.snapshot != nil))
@@ -262,8 +263,8 @@ extension AppModel {
                 guard local.parentSessionId == nil || session(local.parentSessionId)?.parentSessionId == nil else {
                     throw AbstractError.message("Sub-tasks can be at most two chats deep.")
                 }
-                guard sessions.filter({ $0.parentSessionId == parentId }).count < 5 else {
-                    throw AbstractError.message("A chat can have at most five sub-tasks.")
+                if let refusal = SubtaskLimit.refusal(parentId: parentId, sessions: sessions, limit: subtasksPerChat) {
+                    throw AbstractError.message(refusal)
                 }
                 guard project == nil || local.branch != nil else {
                     throw AbstractError.message("The parent chat needs a branch before it can start a sub-task.")

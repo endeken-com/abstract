@@ -50,6 +50,7 @@ enum SettingsSearchIndex {
         .init(.worktrees, "Branch prefix", "Name branches created for new chats.", anchor: "worktrees.naming", terms: "git"),
         .init(.worktrees, "Naming preview", "Preview a worktree path and branch name.", anchor: "worktrees.preview", terms: "tokens"),
         .init(.agents, "Detect agents", "Find installed coding agents again.", anchor: "agents.detect", terms: "binary path claude codex opencode muse"),
+        .init(.agents, "Sub-tasks per chat", "Choose how many sub-tasks one chat can start.", anchor: "agents.subtasks", terms: "subtasks children delegate delegation limit maximum spend"),
         .init(.agents, "Default agent model", "Choose an agent's starting model and effort.", anchor: "agents.providers", terms: "claude codex opencode muse"),
         .init(.agents, "Agent launch arguments", "Set a binary path or extra arguments.", anchor: "agents.providers", terms: "cli flags"),
         .init(.profiles, "Profiles", "Find, add, or edit a saved agent setup.", anchor: "profiles.list", terms: "default profile model permissions instructions skills"),
