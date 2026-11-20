@@ -577,6 +577,11 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
     /// A host that answers `issueSources`, `searchIssues`, `completeIssue`
     /// and `searchCodeHost` (ABS-211). Optional for older peers.
     public var issueSearch: Bool?
+    /// Changes whenever what `issueSources` answers may have: a project's
+    /// tracker link, a tracker turned on or off (ABS-215). A Mac viewing
+    /// this one's chats keeps their sources until it does. Optional for
+    /// older peers, whose sources are asked for again after a minute.
+    public var issueSourcesRevision: Int?
 
     /// The largest uploaded icon a snapshot carries; larger ones are left out.
     public static let maxProjectIconBytes = 512 << 10
@@ -600,9 +605,11 @@ public struct RemoteSnapshot: Codable, Sendable, Hashable {
                 queuedMessages: [String: [QueuedMessage]]? = nil, messageQueue: Bool? = nil, steerAgents: [String]? = nil,
                 workflows: Bool? = nil,
                 plugins: [RemotePlugin]? = nil, pluginProjects: [RemotePluginProject]? = nil,
-                pluginsSupported: Bool? = nil, theme: RemoteTheming? = nil, issueSearch: Bool? = nil) {
+                pluginsSupported: Bool? = nil, theme: RemoteTheming? = nil, issueSearch: Bool? = nil,
+                issueSourcesRevision: Int? = nil) {
         self.theme = theme
         self.issueSearch = issueSearch
+        self.issueSourcesRevision = issueSourcesRevision
         self.projects = projects; self.sessions = sessions; self.providers = providers
         self.providerPresentations = providerPresentations; self.alive = alive
         self.home = home; self.modelCatalogs = modelCatalogs; self.defaultModelNames = defaultModelNames

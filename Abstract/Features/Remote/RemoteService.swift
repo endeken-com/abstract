@@ -509,7 +509,9 @@ final class RemoteService {
                                   RemotePluginProject(key: $0.key, name: $0.name)
                               },
                               pluginsSupported: true,
-                              theme: Self.theming(), issueSearch: true)
+                              // A demo host can answer as a Mac from before ABS-211.
+                              theme: Self.theming(), issueSearch: model.isDemo && RemoteIssueProbe.oldHost ? nil : true,
+                              issueSourcesRevision: model.issueSourcesRevision)
     }
 
     /// The theme this Mac draws in, as colours for the phone (ABS-185).
@@ -1525,6 +1527,9 @@ final class RemoteLink {
     @ObservationIgnored var watchPaths: [Int: [String]] = [:]
     @ObservationIgnored var terminalSpecs: [Int: (cwd: String, cols: Int, rows: Int)] = [:]
     private(set) var lastConnectedAt: Date?
+    /// Its answers to `issueSources`, per chat or project (ABS-215).
+    var issueSourceCache = RemoteIssueSourceCache()
+    @ObservationIgnored var issueSourceFetches: Set<String> = []
 
     var unreachableMessage: String {
         let seen = lastConnectedAt ?? device.lastSeen

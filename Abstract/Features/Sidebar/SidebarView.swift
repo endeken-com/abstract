@@ -1271,8 +1271,9 @@ private struct RailChatDetails: View {
                 row("Project") { Image(systemName: "folder") } content: {
                     value(model.project(session.projectId)?.name ?? "Standalone")
                 }
-                // The tracker projects its project links to (ABS-143).
-                ForEach(model.projectIssueTrackers(session.projectId).linked) { item in
+                // The tracker projects its project links to (ABS-143), on
+                // the Mac the chat runs on (ABS-215).
+                ForEach(model.chatIssueTrackers(session.id).linked) { item in
                     row(item.tracker.title) { TrackerGlyph(pluginId: item.tracker.pluginId, size: 12) } content: {
                         value(item.link.title)
                     }
@@ -1283,6 +1284,7 @@ private struct RailChatDetails: View {
         .frame(width: 360, alignment: .leading)
         // The working time is read from the chat's log.
         .onAppear { if RemoteService.split(session.id) == nil { model.loadTimelineIfNeeded(session.id) } }
+        .task { await model.refreshRemoteIssueSources(model.issueLinkPlace(sessionId: session.id, projectId: nil)) }
     }
 
     /// "47m working over 12 turns · started Oct 11, 14:02": the turns added

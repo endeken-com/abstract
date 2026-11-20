@@ -73,11 +73,15 @@ public struct RemoteIssueSources: Codable, Sendable, Hashable {
     public var githubIssues: Bool
     /// Whether "Link a pull request" is offered: any project with a repository.
     public var pullRequests: Bool
+    /// For a linked project, the other trackers that are on there, which
+    /// Search all adds (ABS-215). Nil from a Mac before ABS-215, and when
+    /// `trackers` are already every one.
+    public var others: [RemoteIssueTracker]?
 
     public init(trackers: [RemoteIssueTracker], linked: Bool, codeHost: String? = nil,
-                githubIssues: Bool = false, pullRequests: Bool = false) {
+                githubIssues: Bool = false, pullRequests: Bool = false, others: [RemoteIssueTracker]? = nil) {
         self.trackers = trackers; self.linked = linked; self.codeHost = codeHost
-        self.githubIssues = githubIssues; self.pullRequests = pullRequests
+        self.githubIssues = githubIssues; self.pullRequests = pullRequests; self.others = others
     }
 
     /// A project's trackers as its Mac's composer shows them. `known` holds
@@ -87,7 +91,7 @@ public struct RemoteIssueSources: Codable, Sendable, Hashable {
                 codeHost: String? = nil, githubIssues: Bool = false, pullRequests: Bool = false) {
         let links = Dictionary(project.linked.map { ($0.tracker.pluginId, $0.link) }) { a, _ in a }
         let plugins = Dictionary(installed.map { ($0.id, $0) }) { a, _ in a }
-        let trackers = project.shown().map { tracker -> RemoteIssueTracker in
+        let remote = { (tracker: ResolvedIssueTracker) -> RemoteIssueTracker in
             let plugin = plugins[tracker.pluginId]
             let version = plugin?.record.version ?? ""
             var out = RemoteIssueTracker(id: tracker.pluginId, title: tracker.title,
@@ -103,8 +107,11 @@ public struct RemoteIssueSources: Codable, Sendable, Hashable {
             }
             return out
         }
-        self.init(trackers: trackers, linked: !project.linked.isEmpty, codeHost: codeHost,
-                  githubIssues: githubIssues, pullRequests: pullRequests)
+        let shown = project.shown()
+        let others = project.available.filter { tracker in !shown.contains { $0.pluginId == tracker.pluginId } }
+        self.init(trackers: shown.map(remote), linked: !project.linked.isEmpty, codeHost: codeHost,
+                  githubIssues: githubIssues, pullRequests: pullRequests,
+                  others: project.linked.isEmpty ? nil : others.map(remote))
     }
 }
 
