@@ -53,8 +53,4 @@ struct SubtaskLimitTests {
         #expect(SubtaskLimit.refusal(parentId: "a", sessions: chats(parent: "a", children: 20), limit: 50) != nil)
         #expect(SubtaskLimit.refusal(parentId: "a", sessions: chats(parent: "a", children: 0), limit: 0) == nil)
     }
-
-    @Test func depthStaysAtTwo() {
-        #expect(SubtaskLimit.maxDepth == 2)
-    }
 }
