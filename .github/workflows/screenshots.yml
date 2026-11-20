@@ -56,6 +56,9 @@ jobs:
       - name: Capture every screen
         run: scripts/demo-snapshot.sh build/dd/Build/Products/Debug/Abstract.app "$RUNNER_TEMP/screenshots"
 
+      - name: Check transcript rows keep the column's width
+        run: scripts/demo-width-check.sh build/dd/Build/Products/Debug/Abstract.app "$RUNNER_TEMP/screenshots/transcript-width"
+
       - uses: actions/upload-artifact@v4
         id: upload
         if: ${{ !cancelled() }}

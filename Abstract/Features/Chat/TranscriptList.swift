@@ -90,6 +90,10 @@ final class TranscriptController: NSObject {
     /// Measured heights at `measuredWidth`, by row id.
     private var heights: [Int: CGFloat] = [:]
     private var measuredWidth: CGFloat = 0
+    /// Rows on screen that changed while the list had no real width: built
+    /// at the next layout that has one, never at a width that isn't.
+    private var unbuilt: Set<Int> = []
+    private var footerUnbuilt = false
     private var versions: [Int: Int] = [:]
     private var mounted: [Int: RowHost] = [:]
     /// Rows scrolled out of range, kept a while so scrolling back is instant.
@@ -240,7 +244,7 @@ final class TranscriptController: NSObject {
             && feed.historyRevision == historyRevision && feed.head.row == builtHead && TranscriptRows.showsRaw == builtRaw
         self.context = context
         footerView = footer
-        footerHost.update(TranscriptRowView(content: footer, environment: environment(nil), width: rowWidth, model: model))
+        if let width = buildWidth { buildFooter(width: width) } else { footerUnbuilt = true }
         if self.feed !== feed {
             resetForNewChat()
             self.feed = feed
@@ -275,6 +279,7 @@ final class TranscriptController: NSObject {
         heights.removeAll()
         estimates.removeAll()
         versions.removeAll()
+        unbuilt.removeAll()
         measuredWidth = 0
         historyRevision = -1
         shownRange = 0..<0
@@ -317,9 +322,8 @@ final class TranscriptController: NSObject {
         guard updated != last else { return true }
         items[items.count - 1] = updated
         estimates[row.id] = nil
-        if let host = mounted[row.id] {
-            host.update(root(for: updated))
-            record(updated, host.measure(width: rowWidth))
+        if mounted[row.id] != nil {
+            redraw(updated)
         } else {
             heights[row.id] = nil
             dropParked(row.id)
@@ -358,11 +362,10 @@ final class TranscriptController: NSObject {
             let changed = old[item.id].map { oldItems[$0] != item } ?? true
             if changed { estimates[item.id] = nil }
             // A row whose find marks changed draws them; its height stays.
-            if !changed, !force, let host = mounted[item.id], host.find != rowFind(item) { host.update(root(for: item)) }
+            if !changed, !force, let host = mounted[item.id], host.find != rowFind(item) { redraw(item) }
             guard changed || force else { continue }
-            if let host = mounted[item.id] {
-                host.update(root(for: item))
-                record(item, host.measure(width: rowWidth))
+            if mounted[item.id] != nil {
+                redraw(item)
             } else if changed {
                 // Measured again when it's next near the view, or in an idle moment.
                 heights[item.id] = nil
@@ -372,6 +375,22 @@ final class TranscriptController: NSObject {
         }
         for id in mounted.keys where index[id] == nil { unmount(id, park: false) }
         document.needsLayout = true
+    }
+
+    /// Draws a row on screen again from `item`, at the column's width. With
+    /// no real width yet (its view is between two chat screens, sized 0),
+    /// the next layout that has one builds it instead.
+    private func redraw(_ item: Item) {
+        guard let host = mounted[item.id] else { return }
+        guard let width = buildWidth else { unbuilt.insert(item.id); return }
+        unbuilt.remove(item.id)
+        host.update(root(for: item, width: width))
+        record(item, host)
+    }
+
+    private func buildFooter(width: CGFloat) {
+        footerUnbuilt = false
+        footerHost.update(TranscriptRowView(content: footerView, environment: environment(nil), width: width, model: model))
     }
 
     /// Something in a row opened or closed: redraw it, measure it and place
@@ -396,26 +415,34 @@ final class TranscriptController: NSObject {
                                  find: rowFind(item))
     }
 
-    private func root(for item: Item) -> TranscriptRowView {
+    private func root(for item: Item, width: CGFloat) -> TranscriptRowView {
         TranscriptRowView(content: AnyView(
             BlockView(block: item.row.block, sessionId: context?.sessionId ?? "", live: item.live)
                 .padding(.top, item.gap)
-        ), environment: environment(item), width: rowWidth, model: model)
+        ), environment: environment(item), width: width, model: model)
     }
 
-    /// Keeps a row's height, here and with the chat for next time.
-    private func record(_ item: Item, _ height: CGFloat) {
-        if heights[item.id] != height { changedSinceCheck = true }
-        heights[item.id] = height
-        feed?.measured[item.id] = MeasuredRow(signature: item.hashValue, width: measuredWidth, height: height)
+    /// Keeps a row's height, here and with the chat for next time, under
+    /// the width it was built and measured at. Measured at another width than
+    /// the layout's, it's no height for the layout: the next pass measures it.
+    @discardableResult
+    private func record(_ item: Item, _ host: RowHost) -> Bool {
+        let height = host.measure()
+        feed?.measured[item.id] = MeasuredRow(signature: item.hashValue, width: host.builtWidth, height: height)
+        let usable = ChatColumnLayout.cachedHeight(Double(height), measuredAt: Double(host.builtWidth), column: Double(measuredWidth)).map { CGFloat($0) }
+        guard heights[item.id] != usable else { return false }
+        changedSinceCheck = true
+        heights[item.id] = usable
+        return true
     }
 
     /// Heights measured the last time the chat was open, where the rows are the same.
     private func seedFromCache() {
         guard let feed, !feed.measured.isEmpty else { return }
         for item in items where heights[item.id] == nil {
-            if let known = feed.measured[item.id], known.width == measuredWidth, known.signature == item.hashValue {
-                heights[item.id] = known.height
+            if let known = feed.measured[item.id], known.signature == item.hashValue,
+               let height = ChatColumnLayout.cachedHeight(Double(known.height), measuredAt: Double(known.width), column: Double(measuredWidth)) {
+                heights[item.id] = CGFloat(height)
             }
         }
     }
@@ -435,20 +462,22 @@ final class TranscriptController: NSObject {
         }
     }
 
-    private var rowWidth: CGFloat {
-        CGFloat(ChatColumnLayout.width(viewport: Double(scrollView.contentSize.width),
-                                       sideInset: Double(Self.sides), maximum: Double(Space.readingWidth))).rounded()
+    /// The column's width to build rows at, or nil while the list has no
+    /// real width (its view is out of a window, or not sized yet).
+    private var buildWidth: CGFloat? {
+        ChatColumnLayout.buildWidth(viewport: Double(scrollView.contentSize.width),
+                                    sideInset: Double(Self.sides), maximum: Double(Space.readingWidth)).map { CGFloat($0).rounded() }
     }
 
     /// Places every row, shows the ones near view, and keeps the scroll where
     /// it belongs: at the end while following, otherwise on what you're reading.
     func layoutRows() {
-        // Kept, or not sized yet: laying out now would only throw measurements away.
-        guard showing > 0, scrollView.contentSize.width > 0 else { return }
+        // Kept, or not sized yet: laying out now would only build rows a
+        // letter wide and throw measurements away.
+        guard showing > 0, let width = buildWidth else { return }
         let wasLayingOut = layingOut
         layingOut = true
         defer { layingOut = wasLayingOut }
-        let width = rowWidth
         if width != measuredWidth {
             Perf.event("transcript.remeasure")
             measuredWidth = width
@@ -456,14 +485,19 @@ final class TranscriptController: NSObject {
             estimates = [:]
             premeasureCount = -1
             seedFromCache()
-            for (id, host) in mounted {
-                guard let i = index[id] else { continue }
-                host.update(root(for: items[i]))
-                record(items[i], host.measure(width: width))
-            }
             for id in parked.keys { dropParked(id) }
-            footerHost.update(TranscriptRowView(content: footerView, environment: environment(nil), width: width, model: model))
         }
+        // A row is built for one width: one built at another (a resize, or a
+        // chat kept while out of sight), or changed while there was no real
+        // width, is built again, not only measured again. Coming back to a
+        // kept chat, this also mends rows drawn narrow before ABS-212.
+        for (id, host) in mounted where unbuilt.contains(id) || ChatColumnLayout.needsRebuild(built: Double(host.builtWidth), column: Double(width)) {
+            guard let i = index[id] else { continue }
+            host.update(root(for: items[i], width: width))
+            record(items[i], host)
+        }
+        unbuilt.removeAll()
+        if footerUnbuilt || footerHost.builtWidth != width { buildFooter(width: width) }
         let clip = scrollView.contentView
         let reveal = pendingReveal
         pendingReveal = nil
@@ -473,10 +507,9 @@ final class TranscriptController: NSObject {
         let x = ((scrollView.contentSize.width - width) / 2).rounded()
         // Rows keep their heights current as they report them.
         for (id, host) in mounted {
-            let h = host.measure(width: width)
-            if heights[id] != h, let i = index[id] { record(items[i], h) }
+            if heights[id] != host.measure(), let i = index[id] { record(items[i], host) }
         }
-        let footerHeight = footerHost.measure(width: width)
+        let footerHeight = footerHost.measure()
         var tops: [CGFloat] = []
         var end = Self.top
         // Place, scroll to where the view belongs, then build the rows seen
@@ -540,8 +573,7 @@ final class TranscriptController: NSObject {
         var changed = false
         for id in wanted where mounted[id] == nil {
             guard let i = index[id] else { continue }
-            let h = mount(items[i]).measure(width: width)
-            if heights[id] != h { record(items[i], h); changed = true }
+            if record(items[i], mount(items[i], width: width)) { changed = true }
         }
         return changed
     }
@@ -598,14 +630,14 @@ final class TranscriptController: NSObject {
         return body + item.gap
     }
 
-    private func mount(_ item: Item) -> RowHost {
+    private func mount(_ item: Item, width: CGFloat) -> RowHost {
         let host: RowHost
         if let parkedHost = parked.removeValue(forKey: item.id) {
             parkedOrder.removeAll { $0 == item.id }
             host = parkedHost
-            if host.find != rowFind(item) { host.update(root(for: item)) }
+            if host.find != rowFind(item) || host.builtWidth != width { host.update(root(for: item, width: width)) }
         } else {
-            host = RowHost(root: root(for: item))
+            host = RowHost(root: root(for: item, width: width))
         }
         host.onHeightChange = { [weak self] in self?.relayoutSoon() }
         mounted[item.id] = host
@@ -617,7 +649,8 @@ final class TranscriptController: NSObject {
         guard let host = mounted.removeValue(forKey: id) else { return }
         host.view.removeFromSuperview()
         host.onHeightChange = nil
-        guard park else { return }
+        // One that changed while it couldn't be built shows old content: not worth keeping.
+        guard park, unbuilt.remove(id) == nil else { return }
         self.park(id, host)
     }
 
@@ -704,7 +737,8 @@ final class TranscriptController: NSObject {
     /// One slice of measuring. False when every row is measured and the
     /// rows just past the view are built.
     private func premeasureStep() -> Bool {
-        guard revealed, showing > 0, measuredWidth > 0, !items.isEmpty else { return false }
+        // Only at the layout's width: after a resize, the next layout goes first.
+        guard revealed, showing > 0, measuredWidth > 0, buildWidth == measuredWidth, !items.isEmpty else { return false }
         // Measuring old rows changes the document's estimated height. While
         // following the end, that would move the scroll position on every slice.
         if follow.following { return false }
@@ -739,12 +773,12 @@ final class TranscriptController: NSObject {
             if fromAbove { premeasureAbove -= 1 } else { premeasureBelow += 1 }
             premeasureAboveNext = !fromAbove
             if build {
-                let host = RowHost(root: root(for: item))
-                record(item, host.measure(width: measuredWidth))
+                let host = RowHost(root: root(for: item, width: measuredWidth))
+                record(item, host)
                 park(item.id, host)
             } else {
-                measurer.update(root(for: item))
-                record(item, measurer.measure(width: measuredWidth))
+                measurer.update(root(for: item, width: measuredWidth))
+                record(item, measurer)
             }
             measuredAny = true
         }
@@ -760,6 +794,12 @@ final class TranscriptController: NSObject {
 
     /// For the demo's probe: how many rows' views it holds.
     var rowViews: Int { mounted.count + parked.count }
+
+    /// For the demo's width probe: the column's width, and the width each
+    /// row built (on screen or parked), and the footer, was built for.
+    var builtWidths: (column: CGFloat, rows: [CGFloat]) {
+        (buildWidth ?? 0, (Array(mounted.values) + Array(parked.values)).map(\.builtWidth) + [footerHost.builtWidth])
+    }
 
     /// For the demo's scroll probe: the rows around a point, and how much they hold.
     func describe(around y: CGFloat) -> String {
@@ -803,7 +843,7 @@ final class TranscriptController: NSObject {
         findPlace = feed?.find.state.currentMatch.flatMap(locate)
         for (id, host) in mounted {
             guard let i = index[id], host.find != rowFind(items[i]) else { continue }
-            host.update(root(for: items[i]))
+            redraw(items[i])
         }
         for (id, host) in parked {
             guard let i = index[id], host.find != rowFind(items[i]) else { continue }
@@ -1024,17 +1064,19 @@ final class TranscriptDocumentView: NSView {
 final class RowHost {
     private let host: RowHostingView
     private let reporter = HeightReporter()
-    private var lastWidth: CGFloat = -1
     private var lastHeight: CGFloat = 0
-    /// Whether the content changed since it was last measured.
-    private(set) var dirty = false
+    /// Whether the content changed since it was last measured (or never was).
+    private(set) var dirty = true
     /// The find marks it draws.
     private(set) var find: RowFind?
     var onHeightChange: (() -> Void)?
     var view: NSView { host }
+    /// The width its content is built for.
+    private(set) var builtWidth: CGFloat
 
     init(root: TranscriptRowView) {
         find = root.environment.find
+        builtWidth = root.width
         host = RowHostingView(rootView: root.reporting(to: reporter))
         host.sizingOptions = [.intrinsicContentSize]
         host.safeAreaRegions = []
@@ -1064,14 +1106,14 @@ final class RowHost {
         Perf.event("transcript.rowUpdate")
         host.rootView = root.reporting(to: reporter)
         find = root.environment.find
+        builtWidth = root.width
         dirty = true
     }
 
-    /// The row's height at `width`, measured again when its content or the width changed.
-    func measure(width: CGFloat) -> CGFloat {
-        if !dirty, width == lastWidth { return lastHeight }
+    /// The row's height at the width it's built for, measured again when its content changed.
+    func measure() -> CGFloat {
+        if !dirty { return lastHeight }
         dirty = false
-        lastWidth = width
         lastHeight = host.intrinsicContentSize.height.rounded(.up)
         return lastHeight
     }

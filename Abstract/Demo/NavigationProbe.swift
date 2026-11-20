@@ -152,6 +152,10 @@ enum NavigationProbe {
             try? await Task.sleep(for: .milliseconds(500))
             let after = model.keptTranscripts.transcript(long[0].id)?.scrollView.contentView.bounds.minY ?? -1
             Swift.print("nav probe: reading position \(Int(before)) before leaving, \(Int(after)) after coming back")
+            // ABS-212: coming back builds no row at another width than the column's.
+            if let widths = TranscriptWidthProbe.check(model, long[0].id) {
+                Swift.print("nav probe: rows at the column's width after coming back: \(widths.wrong.isEmpty ? "all" : "\(widths.wrong.count) of \(widths.rows) not") (column \(Int(widths.column)) pt)")
+            }
         }
         // With every long chat shown once: what the app holds, and what the kept transcripts take of it.
         for session in long { model.open(session.id); try? await Task.sleep(for: .milliseconds(600)) }
