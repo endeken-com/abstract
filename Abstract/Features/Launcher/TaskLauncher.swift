@@ -162,7 +162,7 @@ struct TaskLauncher: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                AttachmentButtons(repoRoot: model.project(projectId)?.rootPath, projectId: projectId, attachments: attachmentsBinding)
+                AttachmentButtons(repoRoot: model.project(projectId)?.rootPath, projectId: projectId, device: device, attachments: attachmentsBinding)
                 Button(action: start) {
                     HStack(spacing: 6) {
                         if starting { ProgressView().controlSize(.small).tint(Color.btOnAccent) }

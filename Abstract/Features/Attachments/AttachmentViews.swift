@@ -175,45 +175,92 @@ enum AttachmentActions {
 
 /// Issue tracker (while a tracker plugin is on, ABS-141), GitHub issue and
 /// pull request buttons, beside Send. GitHub's ask the project's code host
-/// (ABS-139); a nil `repoRoot` hides them.
+/// (ABS-139); a nil `repoRoot` hides them. A chat on another Mac, or a new
+/// chat starting on one (`device`), asks that Mac's trackers, links and code
+/// host instead (ABS-215).
 struct AttachmentButtons: View {
     @Environment(AppModel.self) private var model
     let repoRoot: String?
     /// The chat, or else the project, whose code host is asked, on its Mac.
     var sessionId: String? = nil
     var projectId: String? = nil
+    /// The paired Mac a new chat starts on; nil is this one or the chat's own.
+    var device: String? = nil
     @Binding var attachments: [PromptAttachment]
     var size: CGFloat = 26
     @State private var picking: AttachSource?
     @State private var supportsGitHubIssues = false
 
     var body: some View {
+        let place = model.issueLinkPlace(sessionId: sessionId, projectId: projectId, device: device)
         HStack(spacing: 0) {
-            let project = model.projectIssueTrackers(projectId ?? model.session(sessionId)?.projectId)
-            let trackers = project.shown()
-            if !trackers.isEmpty {
-                button(.tracker, help: Self.trackerHelp(project)) {
-                    TrackerMarks(trackers: trackers, size: 13)
-                }
-            }
-            if repoRoot != nil {
-                if supportsGitHubIssues {
-                    button(.githubIssue, help: "Link a GitHub issue") {
-                        Image(nsImage: BrandGlyph.issue).renderingMode(.template).resizable().frame(width: 13, height: 13)
+            if case .mac = place {
+                remoteButtons(place)
+            } else {
+                let project = model.projectIssueTrackers(projectId ?? model.session(sessionId)?.projectId)
+                let trackers = project.shown()
+                if !trackers.isEmpty {
+                    button(.tracker, place: place, help: Self.trackerHelp(project)) {
+                        TrackerMarks(trackers: trackers, size: 13)
                     }
                 }
-                button(.pullRequest, help: "Link a pull request") {
-                    PullRequestGlyph(kind: .open).frame(width: 13, height: 13)
+                if repoRoot != nil {
+                    if supportsGitHubIssues { githubButton(place) }
+                    pullRequestButton(place)
                 }
             }
         }
         .task(id: repoRoot) {
-            guard repoRoot != nil,
+            guard case .here = place, repoRoot != nil,
                   let project = model.project(projectId ?? model.session(sessionId)?.projectId) else {
                 supportsGitHubIssues = false
                 return
             }
             supportsGitHubIssues = await model.offersGitHubIssues(project)
+        }
+        .task(id: "\(place)\u{0}\(model.remoteIssueRevision(place))") { await model.refreshRemoteIssueSources(place) }
+        .onChange(of: Self.demoOpen.source) { _, source in if model.isDemo { picking = source } }
+    }
+
+    /// A demo probe opens a picker through this (RemoteIssueProbe).
+    static let demoOpen = AttachDemoOpen()
+
+    /// The other Mac's buttons: its project's trackers and code host, or,
+    /// from a Mac that can't answer, the buttons disabled with why.
+    @ViewBuilder
+    private func remoteButtons(_ place: IssueLinkPlace) -> some View {
+        let (sources, refusal) = model.remoteIssueSources(place)
+        if let refusal {
+            Group {
+                Image(systemName: "ticket").font(.system(size: 12)).frame(width: size, height: size)
+                PullRequestGlyph(kind: .open).frame(width: 13, height: 13).frame(width: size, height: size)
+            }
+            .foregroundStyle(Color.btTextTertiary)
+            .opacity(0.5)
+            .help(refusal)
+            .accessibilityLabel(refusal)
+        } else if let sources {
+            let project = ProjectIssueTrackers(sources)
+            let trackers = project.shown()
+            if !trackers.isEmpty {
+                button(.tracker, place: place, sources: sources, help: Self.trackerHelp(project)) {
+                    TrackerMarks(trackers: trackers, size: 13)
+                }
+            }
+            if sources.githubIssues { githubButton(place, sources: sources) }
+            if sources.pullRequests { pullRequestButton(place, sources: sources) }
+        }
+    }
+
+    private func githubButton(_ place: IssueLinkPlace, sources: RemoteIssueSources? = nil) -> some View {
+        button(.githubIssue, place: place, sources: sources, help: "Link a GitHub issue") {
+            Image(nsImage: BrandGlyph.issue).renderingMode(.template).resizable().frame(width: 13, height: 13)
+        }
+    }
+
+    private func pullRequestButton(_ place: IssueLinkPlace, sources: RemoteIssueSources? = nil) -> some View {
+        button(.pullRequest, place: place, sources: sources, help: "Link a pull request") {
+            PullRequestGlyph(kind: .open).frame(width: 13, height: 13)
         }
     }
 
@@ -230,12 +277,14 @@ struct AttachmentButtons: View {
         return titles.count == 1 ? "Link a \(titles[0]) issue" : "Link a \(titles.joined(separator: " or ")) issue"
     }
 
-    private func button<Label: View>(_ source: AttachSource, help: String, @ViewBuilder label: () -> Label) -> some View {
+    private func button<Label: View>(_ source: AttachSource, place: IssueLinkPlace, sources: RemoteIssueSources? = nil,
+                                     help: String, @ViewBuilder label: () -> Label) -> some View {
         Button { picking = source } label: { label() }
             .buttonStyle(.icon(size: size, active: picking == source))
             .help(help)
             .popover(isPresented: Binding(get: { picking == source }, set: { if !$0 { picking = nil } }), arrowEdge: .top) {
-                AttachPicker(source: source, repoRoot: repoRoot, sessionId: sessionId, projectId: projectId, attached: Set(attachments.compactMap(\.url))) { picked in
+                AttachPicker(source: source, repoRoot: repoRoot, sessionId: sessionId, projectId: projectId, place: place,
+                             remoteSources: sources, attached: Set(attachments.compactMap(\.url))) { picked in
                     if !attachments.contains(where: { $0.url == picked.url }) { attachments.append(picked) }
                     picking = nil
                 }
@@ -304,6 +353,10 @@ private struct AttachPicker: View {
     let repoRoot: String?
     let sessionId: String?
     let projectId: String?
+    /// This Mac, or the paired Mac whose trackers and code host answer (ABS-215).
+    let place: IssueLinkPlace
+    /// That Mac's trackers and links for the project.
+    let remoteSources: RemoteIssueSources?
     let attached: Set<String>
     let pick: (PromptAttachment) -> Void
 
@@ -333,7 +386,16 @@ private struct AttachPicker: View {
     @FocusState private var focused: Bool
 
     private var trackerProject: ProjectIssueTrackers {
-        model.projectIssueTrackers(projectId ?? model.session(sessionId)?.projectId)
+        if let remoteSources { return ProjectIssueTrackers(remoteSources) }
+        return model.projectIssueTrackers(projectId ?? model.session(sessionId)?.projectId)
+    }
+
+    /// The other Mac's questions, for a chat or project there.
+    private var remote: RemoteIssueLinking? { model.remoteIssueLinking(place) }
+
+    /// "Project Settings", or "Project Settings on Studio" for a project on another Mac.
+    private var projectSettings: String {
+        remote.map { "Project Settings on \($0.macName)" } ?? "Project Settings"
     }
 
     var body: some View {
@@ -390,7 +452,7 @@ private struct AttachPicker: View {
             .frame(height: 30)
             Hairline()
         } else if project.available.count > 1 {
-            Text("This project isn't linked to \(project.available.map(\.title).joined(separator: " or ")) yet, so \(project.available.count == 2 ? "both are" : "all are") searched. Link it in Project Settings.")
+            Text("This project isn't linked to \(project.available.map(\.title).joined(separator: " or ")) yet, so \(project.available.count == 2 ? "both are" : "all are") searched. Link it in \(projectSettings).")
                 .font(.btCallout).foregroundStyle(Color.btTextTertiary)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -486,7 +548,13 @@ private struct AttachPicker: View {
         guard item.attachment.kind == .trackerIssue else { pick(item.attachment); return }
         Task {
             loading = true
-            pick(await model.completeTrackerIssue(item.attachment))
+            if let remote {
+                pick(await remote.complete(item.attachment))
+            } else if case .mac = place {
+                pick(item.attachment)
+            } else {
+                pick(await model.completeTrackerIssue(item.attachment))
+            }
             loading = false
         }
     }
@@ -497,6 +565,12 @@ private struct AttachPicker: View {
         loading = true
         defer { if mine == generation { loading = false } }
         do {
+            if let remote {
+                try await loadRemote(remote, mine: mine)
+                return
+            }
+            // A chat on a Mac no longer paired: never this Mac's trackers instead.
+            if case .mac = place { throw AbstractError.message("That Mac isn't paired anymore.") }
             switch source {
             case .tracker:
                 let projectId = projectId ?? model.session(sessionId)?.projectId
@@ -533,6 +607,39 @@ private struct AttachPicker: View {
             items = []
             problem = error.localizedDescription
         }
+    }
+
+    /// The other Mac's answers, listed as this Mac's would be (ABS-215).
+    private func loadRemote(_ remote: RemoteIssueLinking, mine: Int) async throws {
+        switch source {
+        case .tracker:
+            let groups = try await remote.search(query, searchAll: searchAll)
+            guard mine == generation, !Task.isCancelled else { return }
+            let trackers = trackerProject.available
+            let named = groups.count > 1
+            items = groups.flatMap { group in
+                let tracker = trackers.first { $0.pluginId == group.sourceId }
+                    ?? ResolvedIssueTracker(pluginId: group.sourceId, declaration: .init(title: group.title, keyExample: ""))
+                return group.results.enumerated().map { index, result in
+                    Item(id: "\(group.sourceId):\(result.reference)", reference: result.reference, title: result.title,
+                         state: result.state ?? "", attachment: result.attachment,
+                         section: named && index == 0 ? tracker : nil)
+                }
+            }
+            trackerProblems = groups.compactMap(\.problem)
+        case .githubIssue, .pullRequest:
+            let group = try await remote.searchCodeHost(query, pullRequests: source == .pullRequest)
+            guard mine == generation, !Task.isCancelled else { return }
+            items = group.results.map { result in
+                let state = result.state ?? ""
+                return Item(id: result.attachment.url ?? result.reference, reference: result.reference, title: result.title,
+                            state: state,
+                            stateTint: source == .pullRequest ? prStateTint(state, isDraft: state == "Draft") : nil,
+                            attachment: result.attachment)
+            }
+        }
+        problem = nil
+        selection = 0
     }
 
     private func prStateTint(_ state: String, isDraft: Bool) -> Color {

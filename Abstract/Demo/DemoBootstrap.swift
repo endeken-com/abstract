@@ -71,6 +71,7 @@ final class DemoBootstrap {
         // A long recorded chat as a chat's history, for scrolling tests.
         if let path = ProcessInfo.processInfo.environment["ABSTRACT_DEMO_HISTORY"] { Task { await self.loadHistory(path, model) } }
         RemoteProbe.runIfRequested(model)
+        RemoteIssueProbe.runIfRequested(model)
         FindProbe.runIfRequested(model)
         FileSearchProbe.runIfRequested(model)
         ReviewFindProbe.runIfRequested(model)

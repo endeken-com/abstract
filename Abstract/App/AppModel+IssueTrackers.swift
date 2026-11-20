@@ -172,9 +172,20 @@ extension AppModel {
 @MainActor
 enum TrackerIcons {
     private static var images: [String: (version: String, image: NSImage)] = [:]
+    /// Icons sent by paired Macs with their trackers (ABS-215), for
+    /// trackers this Mac doesn't have.
+    private static var remoteImages: [String: NSImage] = [:]
 
     static func image(_ pluginId: String?) -> NSImage? {
-        pluginId.flatMap { images[$0]?.image }
+        pluginId.flatMap { images[$0]?.image ?? remoteImages[$0] }
+    }
+
+    static func remember(_ trackers: [RemoteIssueTracker]) {
+        for tracker in trackers {
+            guard let data = tracker.icon, let image = NSImage(data: data) else { continue }
+            image.isTemplate = tracker.iconIsTemplate ?? false
+            remoteImages[tracker.id] = image
+        }
     }
 
     static func update(_ installed: [InstalledPlugin]) {
