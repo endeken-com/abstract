@@ -10,7 +10,7 @@
   const snapshot = {
     revision: 1,
     macs: [
-      { id: "mac-a", name: "Desk", isThisMac: true, reachable: true },
+      { id: "mac-a", name: "Desk", isThisMac: true, reachable: true, subtasksPerChat: 5 },
       { id: "mac-b", name: "Studio", isThisMac: false, reachable: true },
     ],
     projects: [
