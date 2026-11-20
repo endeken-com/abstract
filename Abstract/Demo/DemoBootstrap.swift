@@ -77,6 +77,7 @@ final class DemoBootstrap {
         IssueTrackerProbe.runIfRequested(model)
         ProjectSettingsProbe.runIfRequested(model)
         BulkDeleteProbe.runIfRequested(model)
+        SubtaskFoldProbe.runIfRequested(model)
         NavigationProbe.runIfRequested(model, repo: abstract)
         TranscriptWidthProbe.runIfRequested(model, repo: abstract)
         AbelProbe.runIfRequested(model)
