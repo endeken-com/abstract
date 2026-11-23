@@ -208,7 +208,7 @@ struct ToastView: View {
                 }
                 .padding(.horizontal, Space.lg)
                 .padding(.vertical, 10)
-                .btRaised(radius: 12)
+                .btRaised()
                 .padding(.bottom, Space.xl)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
                 .id(toast.id)

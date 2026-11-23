@@ -199,7 +199,7 @@ private struct FileTreeRowView: View {
             .frame(height: FileTreeMetrics.rowHeight)
             .contentShape(Rectangle())
         }
-        .buttonStyle(RowButtonStyle(selected: selected, cornerRadius: 6))
+        .buttonStyle(RowButtonStyle(selected: selected, cornerRadius: Radius.control))
         .animation(.snappy(duration: 0.14), value: expanded)
         .help(isSubmodule ? "Submodule \(entry.path)" : entry.path)
         .contextMenu { FileContextMenu(root: root, path: entry.path, isDirectory: entry.isDirectory) }
@@ -240,7 +240,7 @@ private struct FileMatchRowView: View {
             .frame(height: FileTreeMetrics.rowHeight)
             .contentShape(Rectangle())
         }
-        .buttonStyle(RowButtonStyle(selected: selected, cornerRadius: 6))
+        .buttonStyle(RowButtonStyle(selected: selected, cornerRadius: Radius.control))
         .help(entry.path)
         .contextMenu { FileContextMenu(root: root, path: entry.path, isDirectory: false) }
     }

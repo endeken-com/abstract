@@ -106,8 +106,7 @@ private struct ProviderSettingsSection: View {
                             Text(ModelOption.effortTitle(level)).tag(Optional(level))
                         }
                     }
-                    .labelsHidden()
-                    .frame(maxWidth: 360)
+                    .btPicker()
                 }
             }
 
@@ -239,7 +238,7 @@ private struct ProviderSettingsSection: View {
                         Text(custom).tag(Optional(custom))
                     }
                 }
-                .labelsHidden()
+                .btPicker()
                 Button("Other…") {
                     modelDraft = defaults.model ?? ""
                     typingModel = true

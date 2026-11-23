@@ -282,7 +282,7 @@ private struct FileSearchMatchRow: View {
             .frame(height: FileTreeMetrics.rowHeight - 2)
             .contentShape(Rectangle())
         }
-        .buttonStyle(RowButtonStyle(selected: selected, cornerRadius: 6))
+        .buttonStyle(RowButtonStyle(selected: selected, cornerRadius: Radius.control))
         .help("\(match.path), line \(match.line)")
     }
 

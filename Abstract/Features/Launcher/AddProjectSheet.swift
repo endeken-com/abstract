@@ -53,7 +53,7 @@ struct AddProjectSheet: View {
                 .padding(.vertical, Space.md)
                 .padding(.horizontal, Space.md)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.btSurfaceRaised, in: RoundedRectangle(cornerRadius: Radius.md, style: .continuous))
+                .background(Color.btSurfaceRaised, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
             }
             .buttonStyle(CardButtonStyle())
             .accessibilityLabel(probe.map { "Change repository, \($0.name)" } ?? "Choose a repository")

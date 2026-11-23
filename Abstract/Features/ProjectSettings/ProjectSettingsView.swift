@@ -287,7 +287,7 @@ private struct NameField: View {
     }
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: 7, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
         TextField("Name", text: $name, prompt: Text("Project name"))
             .textFieldStyle(.plain)
             .font(.btTitle)
@@ -310,7 +310,7 @@ private struct NameField: View {
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(focused ? Color.btField : hovering ? Color.btHover : .clear, in: shape)
-            .overlay(shape.strokeBorder(focused ? Color.btFieldBorderFocused : .clear, lineWidth: 1))
+            .overlay(shape.strokeBorder(focused ? Color.btFieldBorderFocused : .clear, lineWidth: Stroke.emphasis))
             .padding(.leading, -6)
             .frame(maxWidth: .infinity, alignment: .leading)
             .onHover { hovering = $0 }

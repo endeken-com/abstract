@@ -78,7 +78,7 @@ struct ComposerView: View {
 
     var body: some View {
         let _ = Perf.event("body.ComposerView")
-        let composerRadius: CGFloat = 22
+        let composerRadius = Radius.sheet
         let actionInset: CGFloat = 8
         let actionRadius = composerRadius - actionInset
         let composerShape = RoundedRectangle(cornerRadius: composerRadius, style: .continuous)
@@ -198,7 +198,7 @@ struct ComposerView: View {
                                     .foregroundStyle(canSend ? Color.btOnAccent : Color.btTextSecondary)
                                     .frame(width: 28, height: 28)
                                     .background(canSend ? Color.btAccent : Color.btSurfaceRaised, in: Circle())
-                                    .overlay(Circle().strokeBorder(Color.btBorderStrong.opacity(0.7), lineWidth: 0.75))
+                                    .overlay(Circle().strokeBorder(Color.btBorderStrong.opacity(0.7), lineWidth: Stroke.hairline))
                             }
                                 .buttonStyle(.plain)
                                 .accessibilityLabel("Send")
@@ -218,7 +218,7 @@ struct ComposerView: View {
                                                   startPoint: .top, endPoint: .bottom))
             }
             .overlay {
-                composerShape.strokeBorder(focused ? Color.btFieldBorderFocused : Color.btFieldBorder, lineWidth: 1)
+                composerShape.strokeBorder(focused ? Color.btFieldBorderFocused : Color.btFieldBorder, lineWidth: Stroke.emphasis)
             }
             .shadow(color: .black.opacity(colorScheme == .dark ? 0.16 : 0.05), radius: 12, y: 3)
             .attachmentInput(attachmentsBinding, focused: focused)

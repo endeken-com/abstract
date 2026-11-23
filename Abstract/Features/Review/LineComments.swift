@@ -154,7 +154,7 @@ struct AddCommentButton: View {
                 .font(.system(size: 9, weight: .bold))
                 .foregroundStyle(Color.btCanvas)
                 .frame(width: 15, height: 15)
-                .background(Color.btText, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+                .background(Color.btText, in: RoundedRectangle(cornerRadius: Radius.mark, style: .continuous))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

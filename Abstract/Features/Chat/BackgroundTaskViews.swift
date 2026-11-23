@@ -97,7 +97,7 @@ private struct BackgroundTaskRow: View {
         }
         .padding(.horizontal, Space.sm)
         .padding(.vertical, 7)
-        .background(hovering ? Color.btHover : .clear, in: RoundedRectangle(cornerRadius: Radius.md, style: .continuous))
+        .background(hovering ? Color.btHover : .clear, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture(perform: open)

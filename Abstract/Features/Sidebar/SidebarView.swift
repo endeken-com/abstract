@@ -376,7 +376,7 @@ private struct SidebarFilterMenu: View {
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(hovering || !filter.isEmpty ? Color.btText : Color.btTextTertiary)
                 .frame(width: 22, height: 22)
-                .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(hovering ? Color.btHover : .clear))
+                .background(RoundedRectangle(cornerRadius: Radius.control, style: .continuous).fill(hovering ? Color.btHover : .clear))
                 .contentShape(Rectangle())
         }
         .menuStyle(.button)
@@ -486,7 +486,6 @@ enum Rail {
     static let chatIndent: CGFloat = 6
     static let iconColumn: CGFloat = 16
     static let groupGap: CGFloat = 4
-    static let radius: CGFloat = 7
 }
 
 // MARK: - Rows
@@ -1118,9 +1117,9 @@ private struct RailStatus: View {
             case .errored:
                 RoundedHexagon().fill(Color.btRemoved)
             case .idle:
-                RoundedHexagon().stroke(Color.btTextSecondary, lineWidth: 1.2)
+                RoundedHexagon().stroke(Color.btTextSecondary, lineWidth: Stroke.glyph)
             case .finished, .created:
-                RoundedHexagon().stroke(Color.btTextTertiary.opacity(0.7), lineWidth: 1.2)
+                RoundedHexagon().stroke(Color.btTextTertiary.opacity(0.7), lineWidth: Stroke.glyph)
             }
     }
 }
@@ -1182,7 +1181,7 @@ private struct RailProjectMark: View {
                 .interpolation(.high)
                 .scaledToFill()
                 .frame(width: Rail.iconColumn, height: Rail.iconColumn)
-                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: Radius.mark, style: .continuous))
         } else {
             ProjectIconView(project: Project(name: mark.name, rootPath: "", iconSymbol: mark.symbol, iconColor: mark.color),
                             size: Rail.iconColumn)
@@ -1493,7 +1492,7 @@ struct RailRowStyle: ButtonStyle {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
                 .background(
-                    RoundedRectangle(cornerRadius: Rail.radius, style: .continuous)
+                    RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
                         .fill(selected ? Color.btSelection : hovering || configuration.isPressed ? Color.btHover : .clear)
                 )
                 .onHover { hovering = $0 }
@@ -1514,7 +1513,7 @@ struct RailIconStyle: ButtonStyle {
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(hovering ? Color.btText : Color.btTextTertiary)
                 .frame(width: 22, height: 22)
-                .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(hovering ? Color.btHover : .clear))
+                .background(RoundedRectangle(cornerRadius: Radius.control, style: .continuous).fill(hovering ? Color.btHover : .clear))
                 .contentShape(Rectangle())
                 .onHover { hovering = $0 }
         }
@@ -1535,7 +1534,7 @@ private struct HeaderDrag: ViewModifier {
                     .foregroundStyle(Color.btText)
                     .padding(.horizontal, 10)
                     .frame(height: 26)
-                    .background(Color.btSurfaceRaised, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    .background(Color.btSurfaceRaised, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
             }
         } else {
             content

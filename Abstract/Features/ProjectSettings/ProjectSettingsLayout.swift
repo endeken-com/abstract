@@ -8,7 +8,6 @@ enum ProjectPage {
     static let railGap: CGFloat = 40
     /// Narrower than this, the rail gives way to a menu in the header.
     static let railBreakpoint: CGFloat = 900
-    static let cardRadius: CGFloat = 10
     /// A row's words start this far inside its card; its dividers too.
     static let rowInset: CGFloat = 14
     static let rowMinHeight: CGFloat = 44
@@ -146,8 +145,8 @@ struct CardGroup<Content: View>: View {
     }
 }
 
-/// Rows on one surface, a hairline between each, the way System Settings
-/// groups them.
+/// Rows on one card, a hairline between each, the way Settings' grouped
+/// form draws its sections.
 struct SettingsCard<Content: View>: View {
     enum Tone { case plain, danger }
 
@@ -155,7 +154,7 @@ struct SettingsCard<Content: View>: View {
     @ViewBuilder var content: () -> Content
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: ProjectPage.cardRadius, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
         VStack(alignment: .leading, spacing: 0) {
             Group(subviews: content()) { rows in
                 ForEach(rows) { row in
@@ -167,9 +166,10 @@ struct SettingsCard<Content: View>: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(tone == .danger ? Color.btRemovedWash : Color.btSurface, in: shape)
+        .btCard(fill: tone == .danger ? Color.btRemovedWash : Color.btSurface)
         .clipShape(shape)
-        .overlay(shape.strokeBorder(tone == .danger ? Color.btRemoved.opacity(0.4) : Color.btBorder, lineWidth: 0.5))
+        // A card has no outline; the danger zone's red one is its warning.
+        .overlay { if tone == .danger { shape.strokeBorder(Color.btRemoved.opacity(0.4), lineWidth: Stroke.hairline) } }
     }
 }
 
@@ -300,7 +300,7 @@ private struct RowActionsMenu<Content: View>: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(hovering || emphasized ? Color.btText : Color.btTextTertiary)
                 .frame(width: 26, height: 24)
-                .background(hovering ? Color.btHover : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .background(hovering ? Color.btHover : .clear, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                 .contentShape(Rectangle())
         }
         .menuStyle(.button)
@@ -328,7 +328,7 @@ struct CardAddRow: View {
             .padding(.horizontal, ProjectPage.rowInset)
             .frame(maxWidth: .infinity, minHeight: 38, alignment: .leading)
         }
-        .buttonStyle(RowButtonStyle(cornerRadius: 0))
+        .buttonStyle(RowButtonStyle(cornerRadius: .zero))
     }
 }
 

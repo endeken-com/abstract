@@ -78,7 +78,7 @@ struct CommandPalette: View {
                 .frame(height: 34)
             }
             .frame(width: 620)
-            .btRaised(radius: 16)
+            .btRaised()
             .padding(.top, 90)
         }
         .onAppear { focused = true; selected = 0 }
@@ -105,7 +105,7 @@ struct CommandPalette: View {
         }
         .padding(.horizontal, Space.md)
         .frame(height: 36)
-        .background(highlighted ? Color.btSelection : .clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(highlighted ? Color.btSelection : .clear, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
         .contentShape(Rectangle())
     }
 

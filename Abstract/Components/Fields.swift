@@ -3,10 +3,9 @@ import SwiftUI
 import AbstractCore
 
 /// Every text input in Abstract looks the same: one steady fill that never
-/// changes, one corner radius, and a border that is the only thing that
-/// answers focus.
+/// changes, the control corner (`Radius.control`), and a border that is the
+/// only thing that answers focus.
 enum Field {
-    static let radius: CGFloat = 10
     static let height: CGFloat = 30
     static let compactHeight: CGFloat = 24
     static let inset: CGFloat = 10
@@ -17,11 +16,11 @@ enum Field {
 
 extension View {
     /// The shared input chrome. Pass whether the field has focus.
-    func btFieldChrome(focused: Bool, radius: CGFloat = Field.radius) -> some View {
+    func btFieldChrome(focused: Bool, radius: CGFloat = Radius.control) -> some View {
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
         return background(Color.btField, in: shape)
             .overlay(
-                shape.strokeBorder(focused ? Color.btFieldBorderFocused : Color.btFieldBorder, lineWidth: 1)
+                shape.strokeBorder(focused ? Color.btFieldBorderFocused : Color.btFieldBorder, lineWidth: Stroke.emphasis)
             )
             .animation(.snappy(duration: 0.12), value: focused)
     }
@@ -37,6 +36,8 @@ private struct BTFieldModifier: ViewModifier {
         content
             .textFieldStyle(.plain)
             .fontWeight(Field.weight)
+            // A form row sets its controls flush right; typed text reads from the left.
+            .multilineTextAlignment(.leading)
             .focused($focused)
             .padding(.horizontal, compact ? 8 : Field.inset)
             .frame(height: compact ? Field.compactHeight : Field.height)
@@ -116,6 +117,7 @@ struct BTTextField: View {
             .textFieldStyle(.plain)
             .font(mono ? BTFont.mono(compact ? 11.5 : 12.5) : (compact ? .btInputCompact : .btInput))
             .foregroundStyle(Color.btText)
+            .multilineTextAlignment(.leading)
             .focused($focused)
             .onSubmit(onSubmit)
             .padding(.horizontal, compact ? 8 : Field.inset)
@@ -176,7 +178,8 @@ struct GrowingTextEditor: View {
     }
 }
 
-/// A multi-line editor in the shared style; grows from `minHeight`.
+/// A multi-line editor in the shared style; grows from `minHeight`. Its
+/// text reads from the left and its scroller shows only while it scrolls.
 struct BTTextEditor: View {
     @Binding var text: String
     var placeholder: String? = nil
@@ -188,7 +191,9 @@ struct BTTextEditor: View {
         TextEditor(text: $text)
             .font(mono ? BTFont.mono(12.5) : .btInput)
             .foregroundStyle(Color.btText)
+            .multilineTextAlignment(.leading)
             .scrollContentBackground(.hidden)
+            .background(OverlayScrollers())
             .focused($focused)
             .padding(.horizontal, Field.inset - 5) // TextEditor insets its text by ~5pt itself
             .padding(.vertical, 8)
@@ -204,5 +209,61 @@ struct BTTextEditor: View {
                 }
             }
             .btFieldChrome(focused: focused)
+    }
+}
+
+extension View {
+    /// A menu picker drawn as a control: its choice and arrows inside the
+    /// control shape, the way a field is drawn, instead of a form's tinted
+    /// pill. Hides the picker's label; put the label in the row.
+    func btPicker() -> some View {
+        let shape = RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
+        return pickerStyle(.menu)
+            .buttonStyle(.borderless)
+            .labelsHidden()
+            .tint(Color.btText)
+            .padding(.leading, Field.inset - 2)
+            .padding(.trailing, 4)
+            .frame(height: Field.height)
+            .background(Color.btField, in: shape)
+            .overlay(shape.strokeBorder(Color.btFieldBorder, lineWidth: Stroke.emphasis))
+            .fixedSize()
+    }
+}
+
+/// Put behind a `TextEditor`: its scroller overlays the text and shows only
+/// while scrolling, whatever System Settings says, so a scroll bar never
+/// sits inside the box's border.
+private struct OverlayScrollers: NSViewRepresentable {
+    func makeNSView(context: Context) -> Hook { Hook() }
+    func updateNSView(_ view: Hook, context: Context) {}
+
+    final class Hook: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            DispatchQueue.main.async { [weak self] in self?.apply() }
+        }
+
+        override func setFrameSize(_ size: NSSize) {
+            super.setFrameSize(size)
+            DispatchQueue.main.async { [weak self] in self?.apply() }
+        }
+
+        /// The text editor's scroll view is a sibling somewhere in the window,
+        /// not a superview: find the one that covers this view.
+        private func apply() {
+            guard let root = window?.contentView, bounds.width > 0 else { return }
+            let mine = convert(bounds, to: nil)
+            var pending: [NSView] = [root]
+            while let view = pending.popLast() {
+                if let scroll = view as? NSScrollView, scroll.documentView is NSTextView,
+                   scroll.convert(scroll.bounds, to: nil).insetBy(dx: -2, dy: -2).contains(mine.insetBy(dx: 4, dy: 4)) {
+                    scroll.autohidesScrollers = true
+                    if scroll.scrollerStyle != .overlay { scroll.scrollerStyle = .overlay }
+                    return
+                }
+                pending.append(contentsOf: view.subviews)
+            }
+        }
     }
 }

@@ -92,7 +92,7 @@ struct AbelSettingsPane: View {
 
     private var speaking: some View {
         Section {
-            Picker("Voice", selection: binding(\.voice)) {
+            SettingsPicker("Voice", selection: binding(\.voice)) {
                 Text("The system's voice").tag(String?.none)
                 ForEach(Self.voices(model.abelSettings.languages), id: \.id) { voice in
                     Text("\(voice.name) (\(voice.language))").tag(Optional(voice.id))
@@ -115,7 +115,7 @@ struct AbelSettingsPane: View {
     /// there, to the agent you pick.
     private var abelChat: some View {
         Section {
-            Picker(selection: binding(\.agentId)) {
+            SettingsPicker(selection: binding(\.agentId)) {
                 ForEach(ProviderRegistry.all, id: \.id) { provider in
                     Text(ProviderRegistry.name(provider.id)).tag(provider.id)
                 }
@@ -123,7 +123,7 @@ struct AbelSettingsPane: View {
                 Text("Agent")
                 Text("Runs ABEL's chat, which answers what isn't a command, like “which chats touched the plugin catalog this week?”")
             }
-            Picker("Profile", selection: binding(\.profileId)) {
+            SettingsPicker("Profile", selection: binding(\.profileId)) {
                 Text("None").tag(String?.none)
                 ForEach(model.profiles, id: \.id) { profile in Text(profile.name).tag(Optional(profile.id)) }
             }
@@ -156,7 +156,7 @@ struct AbelSettingsPane: View {
                 }
             }
             ForEach(appRows, id: \.id) { row in
-                Picker(row.name, selection: Binding(
+                SettingsPicker(row.name, selection: Binding(
                     get: { model.abelSettings.appControl.mode(for: row.id) },
                     set: { mode in model.updateAbelSettings { $0.appControl.apps[row.id] = mode } })) {
                     ForEach(AbelAppControl.Mode.allCases, id: \.self) { Text($0.title).tag($0) }

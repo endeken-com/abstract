@@ -112,9 +112,25 @@ enum Space {
     static let readingWidth: CGFloat = 720
 }
 
+/// Corners by role, the only radii Abstract draws with (docs/design.md).
 enum Radius {
-    static let sm: CGFloat = 6
-    static let md: CGFloat = 8
-    static let lg: CGFloat = 12
-    static let xl: CGFloat = 16
+    /// Swatches, dots, tags and badges, and buttons smaller than 20pt.
+    static let mark: CGFloat = 4
+    /// Fields, buttons, pickers, editors and code areas, and list rows.
+    static let control: CGFloat = 8
+    /// Grouped sections and panels; the grouped `Form` draws its sections at this radius too.
+    static let card: CGFloat = 12
+    /// What floats over the window: Settings, the palette, popovers, toasts and the composer.
+    static let sheet: CGFloat = 16
+}
+
+/// Stroke widths by role, the only ones Abstract draws with (docs/design.md).
+enum Stroke {
+    /// Dividers and the resting outline of a surface, in `btBorder`.
+    static let hairline: CGFloat = 0.5
+    /// A control's own outline, and focus or selection, in `btFieldBorder`,
+    /// `btBorderStrong` or the accent. Focus changes its colour, never its width.
+    static let emphasis: CGFloat = 1
+    /// The lines of an icon drawn in code, or of a chart.
+    static let glyph: CGFloat = 1.2
 }

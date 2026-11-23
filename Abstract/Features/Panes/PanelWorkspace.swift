@@ -227,7 +227,7 @@ private struct PanelTab: View {
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(hoveringClose ? Color.btText : Color.btTextTertiary)
                     .frame(width: 20, height: 20)
-                    .background(hoveringClose ? Color.btSelection : .clear, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                    .background(hoveringClose ? Color.btSelection : .clear, in: RoundedRectangle(cornerRadius: Radius.mark, style: .continuous))
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -238,7 +238,7 @@ private struct PanelTab: View {
             .help("Close tab")
         }
         .background(active ? Color.btHover : hovering ? Color.btHover.opacity(0.6) : .clear,
-                    in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
         .contentShape(Rectangle())
         .onTapGesture { model.updateLayout(session.id) { $0.activate(item.id) } }
         .onHover { hovering = $0 }
@@ -303,8 +303,8 @@ struct PaneGlyph: View {
             switch kind {
             case .changes:
                 // ± in a rounded square, the review glyph.
-                RoundedRectangle(cornerRadius: 3, style: .continuous)
-                    .strokeBorder(lineWidth: 1.1)
+                RoundedRectangle(cornerRadius: Radius.mark, style: .continuous)
+                    .strokeBorder(lineWidth: Stroke.glyph)
                     .overlay { Image(systemName: "plusminus").font(.system(size: 7.5, weight: .semibold)) }
                     .frame(width: 13, height: 13)
             case .files:
@@ -371,7 +371,7 @@ struct RegionGlyph: View {
     var body: some View {
         Canvas { context, size in
             let frame = CGRect(origin: .zero, size: size).insetBy(dx: 0.6, dy: 0.6)
-            let outline = Path(roundedRect: frame, cornerRadius: 2.6)
+            let outline = Path(roundedRect: frame, cornerRadius: Radius.mark)
             let part: CGRect = switch region {
             case .sidebar: CGRect(x: frame.minX, y: frame.minY, width: frame.width * 0.34, height: frame.height)
             case .side: CGRect(x: frame.maxX - frame.width * 0.38, y: frame.minY, width: frame.width * 0.38, height: frame.height)
@@ -389,8 +389,8 @@ struct RegionGlyph: View {
             case .side: divider.move(to: CGPoint(x: part.minX, y: frame.minY)); divider.addLine(to: CGPoint(x: part.minX, y: frame.maxY))
             case .bottom: divider.move(to: CGPoint(x: frame.minX, y: part.minY)); divider.addLine(to: CGPoint(x: frame.maxX, y: part.minY))
             }
-            context.stroke(divider, with: .foreground, lineWidth: 1.1)
-            context.stroke(outline, with: .foreground, lineWidth: 1.2)
+            context.stroke(divider, with: .foreground, lineWidth: Stroke.glyph)
+            context.stroke(outline, with: .foreground, lineWidth: Stroke.glyph)
         }
         .frame(width: 16, height: 13)
     }

@@ -1,19 +1,19 @@
 import SwiftUI
 
 extension View {
-    /// A quiet filled surface. Kept for the few places that need one (a code
-    /// area, a floating panel); Abstract's layout is otherwise unboxed and
-    /// nothing boxed should ever sit inside one of these.
-    func btCard(radius: CGFloat = Radius.lg, fill: Color = .btSurface) -> some View {
+    /// A card: a grouped section or panel, drawn the way Settings' grouped
+    /// form draws its sections, with a fill and no outline. Abstract's layout
+    /// is otherwise unboxed, and no card sits inside another.
+    func btCard(radius: CGFloat = Radius.card, fill: Color = .btSurface) -> some View {
         background(fill, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
     }
 
     /// A floating panel (palette, toast): raised fill, hairline, neutral drop
     /// shadow for separation. No coloured shadow, no glow.
-    func btRaised(radius: CGFloat = Radius.xl) -> some View {
+    func btRaised(radius: CGFloat = Radius.sheet) -> some View {
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
         return background(Color.btSurfaceRaised, in: shape)
-            .overlay(shape.strokeBorder(Color.btBorderStrong, lineWidth: 0.5))
+            .overlay(shape.strokeBorder(Color.btBorderStrong, lineWidth: Stroke.hairline))
             .shadow(color: .black.opacity(0.14), radius: 14, y: 6)
     }
 
@@ -89,9 +89,9 @@ struct SectionLabel: View {
     }
 }
 
-/// A 0.5pt hairline, the main structural device in place of boxes.
+/// A hairline (`Stroke.hairline`), the main structural device in place of boxes.
 struct Hairline: View {
-    var body: some View { Rectangle().fill(Color.btBorder).frame(height: 0.5) }
+    var body: some View { Rectangle().fill(Color.btBorder).frame(height: Stroke.hairline) }
 }
 
 /// A progressive blur for the top of a scroll view that runs up under the

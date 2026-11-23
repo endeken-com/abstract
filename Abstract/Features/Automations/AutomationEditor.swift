@@ -1136,7 +1136,7 @@ private struct InstructionsView: View {
                 .focused($focused)
                 .padding(.horizontal, Self.bleed)
                 .padding(.vertical, 10)
-                .background(Color.btSurface, in: RoundedRectangle(cornerRadius: Radius.md, style: .continuous))
+                .background(Color.btSurface, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                 .padding(.horizontal, -Self.bleed)
                 .onAppear { focused = true }
         } else if prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
