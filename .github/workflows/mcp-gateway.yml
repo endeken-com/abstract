@@ -1,0 +1,40 @@
+name: MCP gateway
+
+# Checks the abstract-mcp-gateway Worker (ABS-218). It never deploys: the
+# owner deploys with wrangler (docs/remote-mcp-gateway.md).
+on:
+  pull_request:
+    paths:
+      - infra/mcp-gateway/**
+      - .github/workflows/mcp-gateway.yml
+  push:
+    branches: [main]
+    paths:
+      - infra/mcp-gateway/**
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: infra/mcp-gateway
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: infra/mcp-gateway/package-lock.json
+      - run: npm ci
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Test in workerd (OAuth, tunnel, isolation)
+        run: npx vitest run
+      - name: Build as wrangler would deploy it
+        run: npx wrangler deploy --dry-run --outdir dist
