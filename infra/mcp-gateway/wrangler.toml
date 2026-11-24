@@ -1,0 +1,49 @@
+# abstract-mcp-gateway (ABS-218). Deployed by the owner with `npx wrangler deploy`
+# from infra/mcp-gateway/. No secrets here: DEVICE_PEPPER is a Worker Secret
+# (`npx wrangler secret put DEVICE_PEPPER`). See docs/remote-mcp-gateway.md.
+name = "abstract-mcp-gateway"
+main = "src/index.ts"
+compatibility_date = "2026-11-01"
+# CIMD fetches must not reach same-zone origins (SSRF protection).
+compatibility_flags = ["global_fetch_strictly_public"]
+workers_dev = false
+
+routes = [
+  { pattern = "mcp.useabstract.app/*", zone_name = "endeken.com" },
+]
+
+[vars]
+PUBLIC_ORIGIN = "https://mcp.useabstract.app"
+MAC_TIMEOUT_MS = "15000"
+CONSENT_TIMEOUT_MS = "120000"
+ACCESS_TOKEN_TTL_SECONDS = "900"
+
+[[durable_objects.bindings]]
+name = "MAC_TUNNEL"
+class_name = "MacTunnel"
+
+[[durable_objects.bindings]]
+name = "CONNECT_CODE"
+class_name = "ConnectCode"
+
+[[durable_objects.bindings]]
+name = "THROTTLE"
+class_name = "Throttle"
+
+# v1 is the skeleton's migration, which created MacTunnel; keep it as it is.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["MacTunnel"]
+
+# New in ABS-218.
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["ConnectCode", "Throttle"]
+
+# Create once with `npx wrangler kv namespace create OAUTH_KV` and put its id here.
+[[kv_namespaces]]
+binding = "OAUTH_KV"
+id = "00000000000000000000000000000000"
+
+[observability]
+enabled = true
