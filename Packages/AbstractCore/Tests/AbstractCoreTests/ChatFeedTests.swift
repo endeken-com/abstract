@@ -479,16 +479,18 @@ import Testing
         _ = endpoint.respond(to: Self.post(Self.call(ChatFeedMCPServer.readTool, ["chat_id": .string("<script>planted query</script>")])))
         _ = endpoint.respond(to: Self.post(Self.rpc("tools/list"), token: "abs_wrong-planted-token"))
         _ = endpoint.respond(to: FeedHTTPRequest(method: "GET", path: "/mcp?token=\(Self.token)"))
+        _ = endpoint.respond(to: Self.post(.object(["jsonrpc": .string("2.0"), "method": .string("notifications/planted query")])))
         let text = try String(contentsOf: fixture.logURL, encoding: .utf8)
         let lines = text.split(separator: "\n")
-        #expect(lines.count == 8)
+        #expect(lines.count == 9)
         for planted in [Self.token, "abs_wrong-planted-token", "hunter2planted", "planted query", "Retry webhooks", "webhook",
                         "PLANTED", "Maria", "consulta", "texto", "/tmp/made-up"] {
             #expect(!text.contains(planted), "\(planted) is in the log")
         }
         let entries = ChatFeedLog(url: fixture.logURL).recent(20)
-        #expect(entries.count == 8)
-        #expect(entries.map(\.code) == [401, 401, 200, 200, 200, 200, 200, 200])
+        #expect(entries.count == 9)
+        #expect(entries.map(\.code) == [202, 401, 401, 200, 200, 200, 200, 200, 200])
+        #expect(entries.first?.method == "notification")
         #expect(entries.last?.tool == ChatFeedMCPServer.listTool)
         #expect(entries.contains { $0.tool == ChatFeedMCPServer.readTool && $0.chatId == "open-1" })
         #expect(entries.first { $0.tool == ChatFeedMCPServer.readTool && $0.toolError == true }?.chatId == nil)

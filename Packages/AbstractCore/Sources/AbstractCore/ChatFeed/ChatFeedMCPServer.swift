@@ -13,6 +13,9 @@ public struct ChatFeedMCPServer: Sendable {
     public static let recentTool = "atividade_recente"
     public static let toolNames = [listTool, readTool, searchTool, recentTool]
 
+    static let knownNotifications: Set<String> = ["notifications/initialized", "notifications/cancelled",
+                                                   "notifications/progress", "notifications/roots/list_changed"]
+
     /// Newest first; `initialize` answers with the client's when it's one of these.
     public static let protocolVersions = ["2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"]
 
@@ -48,8 +51,10 @@ public struct ChatFeedMCPServer: Sendable {
             return Reply(body: error(.null, -32600, "Invalid request."), method: nil, tool: nil, chatId: nil, isError: true)
         }
         // A notification (`notifications/initialized` and the like) changes nothing here.
+        // Its name reaches the log only when it's a known one: the rest is the client's text.
         guard let id = request["id"], id != .null else {
-            return Reply(body: nil, method: method, tool: nil, chatId: nil, isError: false)
+            let known = Self.knownNotifications.contains(method) ? method : "notification"
+            return Reply(body: nil, method: known, tool: nil, chatId: nil, isError: false)
         }
         let params = request["params"] ?? .object([:])
         switch method {
