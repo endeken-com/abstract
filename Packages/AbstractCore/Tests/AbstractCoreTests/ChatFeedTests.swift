@@ -523,6 +523,15 @@ import Testing
             Issue.record("no big"); return
         }
         #expect(big.bodyTooLarge)
+        // A chunk size that would overflow is refused, not added up.
+        for size in ["7FFFFFFFFFFFFFFF", "FFFFFFFF", "10001"] {
+            let huge = "POST /mcp HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n\(size)\r\n"
+            switch FeedHTTPParser.parse(Data(huge.utf8)) {
+            case .invalid: #expect(size.count > 8)
+            case .request(let r): #expect(r.bodyTooLarge)
+            case .incomplete: Issue.record("\(size) waited for more")
+            }
+        }
         guard case .invalid(let status) = FeedHTTPParser.parse(Data("garbage\r\n\r\n".utf8)) else { Issue.record("not invalid"); return }
         #expect(status == 400)
     }

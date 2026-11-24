@@ -111,9 +111,10 @@ public enum FeedHTTPParser {
             guard let lineEnd = data[i...].firstRange(of: crlf) else { return .incomplete }
             guard let sizeText = String(data: data[i..<lineEnd.lowerBound], encoding: .ascii)?
                     .split(separator: ";").first.map({ $0.trimmingCharacters(in: .whitespaces) }),
-                  let size = Int(sizeText, radix: 16), size >= 0 else { return .invalid }
+                  // At most 8 hex digits, and compared without adding, so no size can overflow.
+                  sizeText.count <= 8, let size = Int(sizeText, radix: 16), size >= 0 else { return .invalid }
             if size == 0 { return .body(body) }
-            if body.count + size > maxBody { return .tooLarge }
+            if size > maxBody - body.count { return .tooLarge }
             let start = lineEnd.upperBound
             guard data.distance(from: start, to: data.endIndex) >= size + 2 else { return .incomplete }
             let stop = data.index(start, offsetBy: size)
