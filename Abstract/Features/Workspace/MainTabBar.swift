@@ -114,7 +114,7 @@ private struct MainTabChip: View {
                     .font(.system(size: 8.5, weight: .bold))
                     .foregroundStyle(hoveringClose ? Color.btText : Color.btTextTertiary)
                     .frame(width: 18, height: 18)
-                    .background(hoveringClose ? Color.btSelection : .clear, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+                    .background(hoveringClose ? Color.btSelection : .clear, in: RoundedRectangle(cornerRadius: Radius.mark, style: .continuous))
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -124,7 +124,7 @@ private struct MainTabChip: View {
             .help("Close tab (⌘W)")
         }
         .background(active ? Color.btSelection : hovering ? Color.btHover : .clear,
-                    in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
         .overlay(alignment: .leading) {
             if targeted { Capsule().fill(Color.btTextSecondary).frame(width: 2, height: 18).offset(x: -2) }
         }

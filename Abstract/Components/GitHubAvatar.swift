@@ -24,7 +24,7 @@ struct GitHubAvatar: View {
         }
         .frame(width: size, height: size)
         .clipShape(Circle())
-        .overlay(Circle().strokeBorder(Color.btBorder, lineWidth: 0.5))
+        .overlay(Circle().strokeBorder(Color.btBorder, lineWidth: Stroke.hairline))
         .help(login)
         .task(id: "\(hostTitle):\(login):\(url?.absoluteString ?? "")") {
             image = await AvatarStore.shared.image(login: login, url: url, pixels: Int(size * 2), hostTitle: hostTitle)

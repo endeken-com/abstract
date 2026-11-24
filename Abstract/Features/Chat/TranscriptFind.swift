@@ -238,8 +238,8 @@ struct TranscriptFindBar: View {
         .padding(.leading, Space.md)
         .padding(.trailing, Space.xs)
         .frame(height: 34)
-        .background(Color.btSurfaceRaised, in: RoundedRectangle(cornerRadius: Radius.md, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: Radius.md, style: .continuous).strokeBorder(Color.btBorderStrong))
+        .background(Color.btSurfaceRaised, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Radius.control, style: .continuous).strokeBorder(Color.btBorderStrong))
         .shadow(color: .black.opacity(0.12), radius: 8, y: 2)
         .onAppear { focused = true }
         .onChange(of: find.focusRequest) { focused = true }

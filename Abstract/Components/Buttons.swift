@@ -24,7 +24,7 @@ struct BTButtonStyle: ButtonStyle {
         @State private var hovering = false
 
         var body: some View {
-            let shape = RoundedRectangle(cornerRadius: cornerRadius ?? (size == .small ? 7 : 9), style: .continuous)
+            let shape = RoundedRectangle(cornerRadius: cornerRadius ?? Radius.control, style: .continuous)
             configuration.label
                 .font(size == .small ? .btCallout.weight(.medium) : .btBodyMedium)
                 .lineLimit(1)
@@ -34,7 +34,7 @@ struct BTButtonStyle: ButtonStyle {
                 .background {
                     shape.fill(fill)
                         .overlay(shape.fill(interactionWash))
-                        .overlay(shape.strokeBorder(border, lineWidth: 1))
+                        .overlay(shape.strokeBorder(border, lineWidth: Stroke.emphasis))
                 }
                 .scaleEffect(reduceMotion ? 1 : configuration.isPressed ? 0.975 : 1)
                 .opacity(isEnabled ? 1 : 0.5)
@@ -115,7 +115,7 @@ struct IconButtonStyle: ButtonStyle {
         @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
         var body: some View {
-            let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+            let shape = RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
             configuration.label
                 .font(.system(size: size * 0.46, weight: .medium))
                 .foregroundStyle(hovering || active ? Color.btText : Color.btTextSecondary)
@@ -139,7 +139,7 @@ extension ButtonStyle where Self == IconButtonStyle {
 /// Row-sized hover wash for list-like buttons.
 struct RowButtonStyle: ButtonStyle {
     var selected = false
-    var cornerRadius: CGFloat = 7
+    var cornerRadius: CGFloat = Radius.control
 
     func makeBody(configuration: Configuration) -> some View {
         RowBody(configuration: configuration, selected: selected, cornerRadius: cornerRadius)

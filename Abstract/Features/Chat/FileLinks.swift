@@ -95,8 +95,8 @@ struct ToolThumbnail: View {
                         .resizable()
                         .frame(width: image.size.width * scale, height: image.size.height * scale)
                         .background(Color.btInset)
-                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Color.btBorder))
+                        .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: Radius.control, style: .continuous).stroke(Color.btBorder))
                 }
                 .buttonStyle(.plain)
                 .help(path == nil ? "" : "Open in Files")

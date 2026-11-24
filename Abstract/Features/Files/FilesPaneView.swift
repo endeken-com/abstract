@@ -196,7 +196,7 @@ private struct FileSearchOption: View {
                 .underline(underline)
                 .foregroundStyle(isOn ? Color.btText : Color.btTextTertiary)
                 .frame(width: 20, height: 18)
-                .background(isOn ? Color.btSelection : Color.clear, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+                .background(isOn ? Color.btSelection : Color.clear, in: RoundedRectangle(cornerRadius: Radius.mark, style: .continuous))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

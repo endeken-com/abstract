@@ -69,10 +69,10 @@ struct SlashMenu: View {
                 .onChange(of: selected) { _, index in proxy.scrollTo(index) }
             }
         }
-        .background(Color.btField, in: RoundedRectangle(cornerRadius: Field.radius, style: .continuous))
+        .background(Color.btField, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: Field.radius, style: .continuous)
-                .strokeBorder(Color.btFieldBorder, lineWidth: 1)
+            RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
+                .strokeBorder(Color.btFieldBorder, lineWidth: Stroke.emphasis)
         )
         .shadow(color: .black.opacity(0.2), radius: 12, y: 4)
     }
@@ -103,6 +103,6 @@ struct SlashMenu: View {
         .lineLimit(1)
         .padding(.horizontal, Space.sm)
         .frame(height: Self.rowHeight)
-        .background(highlighted ? Color.btHover : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .background(highlighted ? Color.btHover : .clear, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
     }
 }

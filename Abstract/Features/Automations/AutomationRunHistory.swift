@@ -97,7 +97,7 @@ private struct RunRow: View {
         }
         .padding(.horizontal, AutoPage.hang)
         .contentShape(Rectangle())
-        .background(RoundedRectangle(cornerRadius: Radius.md, style: .continuous)
+        .background(RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
             .fill(hovering && session != nil ? Color.btHover : .clear))
         .padding(.horizontal, -AutoPage.hang)
         .onHover { hovering = $0 }

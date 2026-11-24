@@ -196,7 +196,7 @@ private struct AccountCard<Menu: View, Footer: View, Content: View>: View {
         }
         .padding(Space.lg)
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(Color.btSurface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .btCard()
     }
 
     /// `w••••@nursa.com`: the domain says which account, the name stays private.
@@ -215,7 +215,7 @@ private struct Tag: View {
             .font(BTFont.ui(10.5, .semibold)).tracking(0.4)
             .foregroundStyle(emphasis ? Color.btText : Color.btTextSecondary)
             .padding(.horizontal, 6).frame(height: 18)
-            .background(emphasis ? Color.btHover : .clear, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+            .background(emphasis ? Color.btHover : .clear, in: RoundedRectangle(cornerRadius: Radius.mark, style: .continuous))
             .fixedSize()
     }
 }
@@ -504,7 +504,7 @@ private struct TokenUsageSection: View {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(report.providers) { row in
                         HStack(spacing: Space.sm) {
-                            RoundedRectangle(cornerRadius: 2, style: .continuous).fill(Color.provider(row.provider)).frame(width: 8, height: 8)
+                            RoundedRectangle(cornerRadius: Radius.mark, style: .continuous).fill(Color.provider(row.provider)).frame(width: 8, height: 8)
                             ProviderLogo(providerId: row.provider?.rawValue ?? "claude", size: 14)
                             Text(row.name).font(.btBody).foregroundStyle(Color.btText)
                             Spacer(minLength: Space.md)
@@ -576,7 +576,7 @@ private struct UsageChart: View {
                      series: .value("Agent", point.provider.rawValue))
                 .foregroundStyle(by: .value("Agent", point.provider.rawValue))
                 .interpolationMethod(.catmullRom)
-                .lineStyle(StrokeStyle(lineWidth: 1.6))
+                .lineStyle(StrokeStyle(lineWidth: Stroke.glyph))
         }
         .chartForegroundStyleScale(["claude": Color.btUsageClaude, "codex": Color.btUsageCodex, "opencode": Color.btUsageOpenCode,
                                     "muse": Color.btUsageMuse])

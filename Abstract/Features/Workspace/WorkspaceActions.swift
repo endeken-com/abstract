@@ -39,8 +39,8 @@ struct SplitButton<Label: View, Items: View>: View {
             .frame(width: 24)
         }
         .frame(height: 26)
-        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Color.btBorderStrong, lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Radius.control, style: .continuous).strokeBorder(Color.btBorderStrong, lineWidth: Stroke.emphasis))
+        .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
         .fixedSize()
     }
 }

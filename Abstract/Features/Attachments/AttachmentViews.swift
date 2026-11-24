@@ -42,7 +42,7 @@ struct AttachmentGlyph: View {
         case .image:
             if let path, let image = Thumbnails.image(path) {
                 Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
-                    .frame(width: size, height: size).clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+                    .frame(width: size, height: size).clipShape(RoundedRectangle(cornerRadius: Radius.mark, style: .continuous))
             } else {
                 Image(systemName: "photo").font(.system(size: size * 0.8)).frame(width: size, height: size)
             }
@@ -140,7 +140,7 @@ private struct AttachmentPill: View {
         .padding(.leading, 7)
         .padding(.trailing, 4)
         .frame(height: 24)
-        .background(Color.btHover, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .background(Color.btHover, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
         .contentShape(Rectangle())
         .onTapGesture { AttachmentActions.open(attachment.url ?? attachment.path) }
         .onHover { hovering = $0 }
@@ -305,7 +305,7 @@ struct AttachUploadButton: View {
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(hovering ? Color.btText : Color.btTextSecondary)
                 .frame(width: 24, height: 24)
-                .background(hovering ? Color.btHover : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .background(hovering ? Color.btHover : .clear, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -540,7 +540,7 @@ private struct AttachPicker: View {
             .padding(.horizontal, 8)
             .frame(height: 30)
         }
-        .buttonStyle(RowButtonStyle(selected: selected, cornerRadius: 6))
+        .buttonStyle(RowButtonStyle(selected: selected, cornerRadius: Radius.control))
         .help(item.attachment.url ?? "")
     }
 
@@ -676,8 +676,8 @@ private struct AttachmentInput: ViewModifier {
             }
             .overlay {
                 if targeted {
-                    RoundedRectangle(cornerRadius: Field.radius, style: .continuous)
-                        .strokeBorder(Color.btFieldBorderFocused, style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+                    RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
+                        .strokeBorder(Color.btFieldBorderFocused, style: StrokeStyle(lineWidth: Stroke.emphasis, dash: [5, 4]))
                         .allowsHitTesting(false)
                 }
             }
@@ -749,7 +749,7 @@ struct AttachmentChips: View {
                     }
                     .padding(.horizontal, 8)
                     .frame(height: 24)
-                    .background(Color.btSurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .background(Color.btSurface, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)

@@ -295,7 +295,7 @@ struct ToolCallView: View {
         // ⌘F's match in the title: the whole line, which shows only part of a long command.
         .background {
             if find?.current(in: "title:\(call.id)") != nil {
-                RoundedRectangle(cornerRadius: 5, style: .continuous).fill(Color.btFindCurrent).padding(.horizontal, -4)
+                RoundedRectangle(cornerRadius: Radius.mark, style: .continuous).fill(Color.btFindCurrent).padding(.horizontal, -4)
             }
         }
         .opacity(isAnswered && call.result == nil ? 0.6 : 1)
@@ -573,7 +573,7 @@ private struct ToolIcon: View {
                 .font(.system(size: 10, weight: .bold, design: .rounded))
                 .foregroundStyle(.white)
                 .frame(width: 15, height: 15)
-                .background(Color(nsColor: NSColor(hex: colors[monogram.colorIndex])), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+                .background(Color(nsColor: NSColor(hex: colors[monogram.colorIndex])), in: RoundedRectangle(cornerRadius: Radius.mark, style: .continuous))
         case .kind(let symbol): Image(systemName: symbol)
         case .generic: Image(systemName: "wrench.and.screwdriver")
         }
@@ -641,7 +641,7 @@ struct EditDiff: View {
                     DiffLineRow(line: line, gutter: gutter, code: code.flatMap { index < $0.count ? $0[index] : nil })
                 }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
 
             let hidden = all.count - shown.count
             let beyond = max(0, edit.additions + edit.deletions - all.filter { $0.origin != .context }.count)

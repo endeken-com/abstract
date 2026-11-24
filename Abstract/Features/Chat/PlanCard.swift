@@ -58,6 +58,6 @@ struct PlanCard: View {
         }
         .padding(Space.md)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.btInset.opacity(0.5), in: RoundedRectangle(cornerRadius: Radius.lg, style: .continuous))
+        .background(Color.btInset.opacity(0.5), in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
     }
 }

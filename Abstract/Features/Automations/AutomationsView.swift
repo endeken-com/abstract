@@ -237,7 +237,7 @@ private struct AutomationListRow: View {
                 Group {
                     if working { WorkingMark() }
                     else if automation.enabled { RoundedHexagon().fill(Color.btTextSecondary) }
-                    else { RoundedHexagon().stroke(Color.btTextTertiary, lineWidth: 1.2) }
+                    else { RoundedHexagon().stroke(Color.btTextTertiary, lineWidth: Stroke.glyph) }
                 }
                 .frame(width: 9, height: 9)
                 .frame(width: AutoPage.gutter, alignment: .leading)
@@ -286,7 +286,7 @@ private struct AutomationListRow: View {
         .padding(.vertical, 7)
         .padding(.horizontal, AutoPage.hang)
         .contentShape(Rectangle())
-        .background(RoundedRectangle(cornerRadius: Radius.md, style: .continuous)
+        .background(RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
             .fill(hovering ? Color.btHover : .clear))
         .padding(.horizontal, -AutoPage.hang)
         .onHover { hovering = $0 }

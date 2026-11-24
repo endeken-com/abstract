@@ -24,7 +24,7 @@ struct ProfilesSettingsPane: View {
                             addButton
                         }
                         .padding(Space.md)
-                        Rectangle().fill(Color.btBorder).frame(height: 1)
+                        Rectangle().fill(Color.btBorder).frame(height: Stroke.hairline)
                         ScrollView {
                             LazyVStack(alignment: .leading, spacing: Space.xs) {
                                 listRows
@@ -34,8 +34,10 @@ struct ProfilesSettingsPane: View {
                         .btThinScrollIndicator()
                     }
                     .frame(width: 252)
-                    .background(Color.btSidebar)
-                    Rectangle().fill(Color.btBorder).frame(width: 1)
+                    .frame(maxHeight: .infinity, alignment: .top)
+                    // Square and edge to edge against its dividers, like Settings' own sidebar.
+                    .background { Rectangle().fill(Color.btSidebar) }
+                    Rectangle().fill(Color.btBorder).frame(width: Stroke.hairline)
                     Form { editorSection }
                         .settingsScrollablePane()
                         .frame(maxWidth: .infinity)
@@ -160,7 +162,7 @@ struct SettingsListRow: View {
             .padding(.horizontal, Space.md)
             .padding(.vertical, Space.sm)
             .background(selected ? Color.btSelection : hovering ? Color.btHover : .clear,
-                        in: RoundedRectangle(cornerRadius: Radius.sm, style: .continuous))
+                        in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
             .padding(.horizontal, -Space.md)
             .contentShape(Rectangle())
         }
@@ -176,7 +178,6 @@ private struct ProfileSettingsSection: View {
     let profile: AgentProfile
     let onDuplicate: () -> Void
     let onDelete: () -> Void
-    @FocusState private var instructionsFocused: Bool
     @State private var confirmingDelete = false
 
     var body: some View {
@@ -199,8 +200,7 @@ private struct ProfileSettingsSection: View {
                         Text(p.name).tag(p.id)
                     }
                 }
-                .labelsHidden()
-                .frame(maxWidth: 360)
+                .btPicker()
             }
             LabeledContent("Model") {
                 let catalog = model.models(for: profile.providerId)
@@ -216,8 +216,7 @@ private struct ProfileSettingsSection: View {
                         Text(custom).tag(Optional(custom))
                     }
                 }
-                .labelsHidden()
-                .frame(maxWidth: 360)
+                .btPicker()
             }
             if !model.efforts(providerId: profile.providerId, model: profile.model).levels.isEmpty {
                 LabeledContent("Effort") {
@@ -227,37 +226,28 @@ private struct ProfileSettingsSection: View {
                             Text(ModelOption.effortTitle($0)).tag(Optional($0))
                         }
                     }
-                    .labelsHidden()
-                    .frame(maxWidth: 360)
+                    .btPicker()
                 }
             }
             LabeledContent {
                 Picker("Permissions", selection: binding(\.permissionPolicy, default: .ask)) {
                     ForEach(PermissionPolicy.autonomyCases, id: \.self) { Text($0.title).tag($0) }
                 }
-                .labelsHidden()
-                .frame(maxWidth: 360)
+                .btPicker()
             } label: {
                 Text("Permissions")
                 Text(profile.permissionPolicy.detail)
             }
             LabeledContent {
-                TextEditor(text: binding(\.instructions, default: ""))
-                    .font(.btBody)
-                    // A form row sets its controls flush right; prose reads from the left.
-                    .multilineTextAlignment(.leading)
-                    .focused($instructionsFocused)
-                    .scrollContentBackground(.hidden)
-                    .padding(6)
-                    .frame(minHeight: 88, maxHeight: 180)
-                    .btFieldChrome(focused: instructionsFocused)
+                BTTextEditor(text: binding(\.instructions, default: ""), minHeight: 88)
+                    .frame(maxHeight: 180)
             } label: {
                 Text("Instructions")
                 Text("Given to the agent every time a chat or run starts from this profile, as Markdown.")
             }
             if !model.librarySkills.isEmpty {
                 LabeledContent {
-                    VStack(alignment: .trailing, spacing: 4) {
+                    VStack(alignment: .leading, spacing: 4) {
                         ForEach(model.librarySkills) { skill in
                             Toggle(skill.name, isOn: Binding(
                                 get: { model.profile(profile.id)?.skills.contains(skill.id) ?? false },

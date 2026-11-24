@@ -34,7 +34,11 @@ jobs:
           sh scripts/tests/notarize-test.sh
           sh scripts/tests/make-icons-test.sh
           sh scripts/tests/superseded-nightly-dmgs-test.sh
+          sh scripts/tests/check-shapes-test.sh
           python3 -m unittest discover -s scripts/tests -v
+
+      - name: Corners and borders on the shape scale
+        run: scripts/check-shapes.sh
 
       - name: App icons
         run: scripts/make-icons.sh --check

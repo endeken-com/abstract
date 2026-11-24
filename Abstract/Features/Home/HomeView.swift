@@ -64,7 +64,7 @@ struct HomeView: View {
                                                placement: PluginPlacement(place: .home,
                                                                           contributionId: widget.contribution.id))
                                     .frame(height: 220)
-                                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                    .clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
                             }
                         }
                     }
@@ -121,7 +121,7 @@ struct CardButtonStyle: ButtonStyle {
         @State private var hovering = false
         var body: some View {
             configuration.label
-                .background(hovering ? Color.btHover : .clear, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .background(hovering ? Color.btHover : .clear, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
                 .scaleEffect(configuration.isPressed ? 0.985 : 1)
                 .onHover { hovering = $0 }
                 .animation(.snappy(duration: 0.14), value: hovering)

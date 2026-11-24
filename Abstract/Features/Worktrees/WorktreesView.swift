@@ -240,7 +240,7 @@ private struct WorktreeRow: View {
         .padding(.vertical, 10)
         .frame(minHeight: 58)
         .background {
-            RoundedRectangle(cornerRadius: Radius.sm, style: .continuous)
+            RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
                 .fill(hovering ? Color.btHover : .clear)
                 .padding(.horizontal, -Space.sm)
                 .padding(.vertical, 2)

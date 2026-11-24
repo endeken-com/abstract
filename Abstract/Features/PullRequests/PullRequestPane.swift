@@ -117,8 +117,8 @@ struct PullRequestPill: View {
             .padding(.leading, 9)
             .padding(.trailing, 8)
             .frame(height: 24)
-            .background(wash.opacity(hovering ? 0.26 : 0.18), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-            .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .background(wash.opacity(hovering ? 0.26 : 0.18), in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
@@ -177,7 +177,7 @@ struct PullRequestStateBadge: View {
         .foregroundStyle(pr.stateTint)
         .padding(.horizontal, 7)
         .frame(height: 22)
-        .background(pr.stateTint.opacity(0.1), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .background(pr.stateTint.opacity(0.1), in: RoundedRectangle(cornerRadius: Radius.mark, style: .continuous))
         .fixedSize()
         .accessibilityElement(children: .combine)
     }
@@ -793,7 +793,7 @@ private struct Block<Content: View>: View {
         VStack(alignment: .leading, spacing: 0) { content }
             .padding(Space.md)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.btSurface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .btCard()
     }
 }
 
@@ -910,7 +910,7 @@ private struct HunkExcerpt: View {
             }
         }
         .padding(.vertical, 4)
-        .background(Color.btCanvas, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .background(Color.btCanvas, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
     }
 
     private enum Kind { case context, added, removed }

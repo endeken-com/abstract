@@ -128,7 +128,7 @@ struct SettingsView: View {
                     if compact {
                         VStack(spacing: 0) {
                             compactNavigation
-                            Rectangle().fill(Color.btBorder).frame(height: 1)
+                            Rectangle().fill(Color.btBorder).frame(height: Stroke.hairline)
                             detail(availableWidth: panelWidth)
                         }
                     } else {
@@ -137,7 +137,7 @@ struct SettingsView: View {
                                 .frame(width: sidebarWidth)
                                 .frame(maxHeight: .infinity, alignment: .top)
                                 .background(Color.btSidebar)
-                            Rectangle().fill(Color.btBorder).frame(width: 1)
+                            Rectangle().fill(Color.btBorder).frame(width: Stroke.hairline)
                             detail(availableWidth: panelWidth - sidebarWidth - 1)
                                 .overlay(alignment: .topTrailing) { closeButton.padding(Space.md) }
                         }
@@ -145,8 +145,8 @@ struct SettingsView: View {
                 }
                 .frame(width: panelWidth,
                        height: max(geo.size.height - (compact ? 24 : 64), 0))
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .btRaised(radius: 14)
+                .clipShape(RoundedRectangle(cornerRadius: Radius.sheet, style: .continuous))
+                .btRaised()
             }
             .frame(width: geo.size.width, height: geo.size.height)
         }
@@ -180,7 +180,7 @@ struct SettingsView: View {
             } else {
                 searchHeader
             }
-            Rectangle().fill(Color.btBorder).frame(height: 1)
+            Rectangle().fill(Color.btBorder).frame(height: Stroke.hairline)
             if !hasSearchQuery && availableWidth >= SettingsLayout.splitEditorWidth && (tab == .profiles || tab == .workflows) {
                 pane(split: true)
             } else if !hasSearchQuery && tab != .plugins && tab != .usage {
@@ -424,7 +424,7 @@ struct SettingsView: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(Space.md)
-                        .background(Color.btSurface, in: RoundedRectangle(cornerRadius: Radius.md, style: .continuous))
+                        .btCard()
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -520,6 +520,35 @@ extension View {
     }
 }
 
+/// A settings row whose menu picker is drawn in the control shape
+/// (`btPicker()`), with its name, and any line under it, on the left.
+struct SettingsPicker<Value: Hashable, Options: View, Label: View>: View {
+    let selection: Binding<Value>
+    let options: Options
+    let label: Label
+
+    init(selection: Binding<Value>, @ViewBuilder content: () -> Options, @ViewBuilder label: () -> Label) {
+        self.selection = selection
+        options = content()
+        self.label = label()
+    }
+
+    var body: some View {
+        LabeledContent {
+            Picker(selection: selection) { options } label: { label }
+                .btPicker()
+        } label: {
+            label
+        }
+    }
+}
+
+extension SettingsPicker where Label == Text {
+    init(_ title: String, selection: Binding<Value>, @ViewBuilder content: () -> Options) {
+        self.init(selection: selection, content: content) { Text(title) }
+    }
+}
+
 /// A caption under a settings row or section.
 struct SettingsCaption: View {
     let text: String
@@ -607,10 +636,10 @@ private struct AppearanceSettingsPane: View {
                 }
                 .padding(.vertical, Space.xs)
                 if theme.isSystem {
-                    Picker("Light theme", selection: $lightPick) {
+                    SettingsPicker("Light theme", selection: $lightPick) {
                         ForEach(pickable(.light, current: lightPick)) { Text($0.name).tag($0.id) }
                     }
-                    Picker("Dark theme", selection: $darkPick) {
+                    SettingsPicker("Dark theme", selection: $darkPick) {
                         ForEach(pickable(.dark, current: darkPick)) { Text($0.name).tag($0.id) }
                     }
                 }
@@ -623,13 +652,13 @@ private struct AppearanceSettingsPane: View {
             InterfaceFontSection().id("appearance.interface-font")
             EditorFontSection().id("appearance.editor-font")
             Section {
-                Picker(selection: $chatFont) {
+                SettingsPicker(selection: $chatFont) {
                     ForEach(ChatFont.allCases) { Text($0.title).tag($0) }
                 } label: {
                     Text("Chat font")
                     Text("How the agent's answers are set.")
                 }
-                Picker("Chat text size", selection: $chatSize) {
+                SettingsPicker("Chat text size", selection: $chatSize) {
                     ForEach(ChatTextSize.allCases) { Text($0.title).tag($0) }
                 }
                 ChatTextSample(style: ProseStyle(font: chatFont, size: chatSize))
@@ -725,13 +754,13 @@ private struct GeneralSettingsPane: View {
         @Bindable var model = model
         Form {
             Section {
-                Picker(selection: $transcript) {
+                SettingsPicker(selection: $transcript) {
                     ForEach(TranscriptMode.allCases) { Text($0.title).tag($0) }
                 } label: {
                     Text("Transcript")
                     Text(transcript.detail)
                 }
-                Picker(selection: $model.outputStyle) {
+                SettingsPicker(selection: $model.outputStyle) {
                     ForEach(OutputStyle.allCases) { Text($0.title).tag($0) }
                 } label: {
                     Text("Output style")
@@ -781,7 +810,7 @@ private struct UpdatesSection: View {
                 Text("Updates install when you quit Abstract.")
             }
             .disabled(!updater.isEnabled || !updater.automaticallyChecksForUpdates)
-            Picker(selection: $updater.channel) {
+            SettingsPicker(selection: $updater.channel) {
                 ForEach(UpdateChannel.allCases) { Text($0.title).tag($0) }
             } label: {
                 Text("Channel")
@@ -920,12 +949,12 @@ private struct ThemeCard: View {
             VStack(spacing: Space.sm) {
                 preview
                     .frame(height: 92)
-                    .clipShape(RoundedRectangle(cornerRadius: Radius.md, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: Radius.md, style: .continuous).strokeBorder(Color.btBorderStrong, lineWidth: 0.5))
+                    .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: Radius.control, style: .continuous).strokeBorder(Color.btBorderStrong, lineWidth: Stroke.hairline))
                     .padding(3)
                     .overlay(
-                        RoundedRectangle(cornerRadius: Radius.md + 3, style: .continuous)
-                            .strokeBorder(selected ? Color.btAccent : .clear, lineWidth: 1.5)
+                        RoundedRectangle(cornerRadius: Radius.control + 3, style: .continuous)
+                            .strokeBorder(selected ? Color.btAccent : .clear, lineWidth: Stroke.emphasis)
                     )
                 Text(choice.title)
                     .font(selected ? .btBodyMedium : .btBody)
@@ -972,7 +1001,7 @@ private struct WindowMock: View {
                 bar(c(.text).opacity(0.55), width: 38)
                     .padding(.vertical, 3)
                     .padding(.horizontal, 3)
-                    .background(c(.selection), in: RoundedRectangle(cornerRadius: 2.5, style: .continuous))
+                    .background(c(.selection), in: RoundedRectangle(cornerRadius: Radius.mark, style: .continuous))
                     .padding(.horizontal, -3)
                 bar(c(.textTertiary).opacity(0.5), width: 26)
                 bar(c(.textTertiary).opacity(0.5), width: 34)

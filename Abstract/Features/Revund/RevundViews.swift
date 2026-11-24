@@ -293,7 +293,7 @@ struct RevundFindingCard: View {
                     .padding(.horizontal, 10)
                     .padding(.vertical, 7)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.btCode, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .background(Color.btCode, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                     .help("Revund's suggested fix")
             }
         }
@@ -395,7 +395,7 @@ struct RevundPullRequestSection: View {
                     VStack(alignment: .leading, spacing: 1) {
                         ForEach(shown) { RevundFindingCard(finding: $0, sessionId: session.id, showsLocation: true, local: false) }
                     }
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                     if findings.count > shown.count {
                         Button("Show all \(findings.count)") { withAnimation(.snappy(duration: 0.2)) { showsAll = true } }
                             .buttonStyle(.plain)

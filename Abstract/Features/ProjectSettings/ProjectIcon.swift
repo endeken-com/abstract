@@ -135,7 +135,7 @@ struct ProjectIconButton: View {
                             .foregroundStyle(Color.btText)
                             .frame(width: 18, height: 18)
                             .background(Color.btSurfaceRaised, in: Circle())
-                            .overlay(Circle().strokeBorder(Color.btBorderStrong, lineWidth: 0.5))
+                            .overlay(Circle().strokeBorder(Color.btBorderStrong, lineWidth: Stroke.hairline))
                             .offset(x: 4, y: 4)
                     }
                 }
@@ -245,7 +245,7 @@ struct IconPicker: View {
                 .padding(.horizontal, Space.sm)
                 .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
         }
-        .buttonStyle(RowButtonStyle(cornerRadius: Radius.sm))
+        .buttonStyle(RowButtonStyle(cornerRadius: Radius.control))
     }
 
     private func swatch(_ tint: ProjectIconColor?) -> some View {
@@ -255,7 +255,7 @@ struct IconPicker: View {
                 .fill(tint?.color ?? Color.btInset)
                 .frame(width: 16, height: 16)
                 // The neutral tile is close to the popover's own fill; a hairline shows its edge.
-                .overlay { if tint == nil { Circle().strokeBorder(Color.btBorderStrong, lineWidth: 1) } }
+                .overlay { if tint == nil { Circle().strokeBorder(Color.btBorderStrong, lineWidth: Stroke.hairline) } }
                 .overlay {
                     if selected {
                         Image(systemName: "checkmark")

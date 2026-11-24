@@ -135,7 +135,7 @@ private struct TreeRowView: View {
             .padding(.trailing, Space.sm)
             .frame(height: 26)
             .background(selected ? Color.btSelection : hovering ? Color.btHover : .clear,
-                        in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
             .padding(.horizontal, 4)
             .contentShape(Rectangle())
         }

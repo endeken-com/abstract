@@ -184,7 +184,7 @@ private struct PullRequestRow: View {
             }
             .padding(.horizontal, Space.md)
             .padding(.vertical, 9)
-            .background(hovering ? Color.btHover : .clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .background(hovering ? Color.btHover : .clear, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

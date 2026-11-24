@@ -11,7 +11,7 @@ struct InterfaceFontSection: View {
             FamilyPicker(family: $family, featured: [(UIFontChoice.defaults.family, "Inter"), (UIFontChoice.system, "SF Pro (System)")],
                          families: FontFamilies.all)
             PointSizeField(title: "Size", value: $size, range: UIFontChoice.sizes, step: 0.5, unit: "pt")
-            Picker("Weight", selection: $weight) {
+            SettingsPicker("Weight", selection: $weight) {
                 ForEach(FontWeightChoice.allCases.filter { $0 != .bold }) { Text($0.title).tag($0) }
             }
             Text("Sidebar, tabs, settings and panes. The chat keeps its own text settings below.")
@@ -51,7 +51,7 @@ struct EditorFontSection: View {
             FamilyPicker(family: $family, featured: [(EditorFontChoice.defaults.family, "JetBrains Mono"), (EditorFontChoice.systemMono, "SF Mono")],
                          families: FontFamilies.monospaced)
             PointSizeField(title: "Size", value: $size, range: EditorFontChoice.sizes, step: 0.5, unit: "pt")
-            Picker("Weight", selection: $weight) {
+            SettingsPicker("Weight", selection: $weight) {
                 ForEach(FontWeightChoice.allCases) { Text($0.title).tag($0) }
             }
             Toggle(isOn: $ligatures) {
@@ -67,7 +67,7 @@ struct EditorFontSection: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.btCode, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .background(Color.btCode, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                 .padding(.vertical, Space.xs)
         } header: {
             HStack {
@@ -91,7 +91,7 @@ private struct FamilyPicker: View {
     let families: [String]
 
     var body: some View {
-        Picker("Family", selection: $family) {
+        SettingsPicker("Family", selection: $family) {
             ForEach(featured, id: \.family) { Text($0.title).tag($0.family) }
             Divider()
             ForEach(families.filter { name in !featured.contains { $0.family == name } }, id: \.self) { Text($0).tag($0) }
@@ -112,7 +112,6 @@ private struct PointSizeField: View {
             HStack(spacing: 6) {
                 TextField(title, value: clamped, format: .number.precision(.fractionLength(0...1)))
                     .labelsHidden()
-                    .multilineTextAlignment(.trailing)
                     .btField(compact: true)
                     .frame(width: 58)
                 Text(unit).foregroundStyle(Color.btTextTertiary).frame(width: 14, alignment: .leading)

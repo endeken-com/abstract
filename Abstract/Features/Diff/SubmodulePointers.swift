@@ -104,7 +104,7 @@ struct PointerRow: View {
             .padding(.leading, 8 + depth * 12)
             .padding(.trailing, Space.sm)
             .frame(height: 26)
-            .background(hovering && canOpen ? Color.btHover : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .background(hovering && canOpen ? Color.btHover : .clear, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
             .padding(.horizontal, 4)
             .contentShape(Rectangle())
         }

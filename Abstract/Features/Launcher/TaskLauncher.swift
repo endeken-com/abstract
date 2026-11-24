@@ -488,7 +488,7 @@ struct CompactMenu<Content: View>: View {
             }
             .padding(.horizontal, 6)
             .frame(height: 24)
-            .background(hovering ? Color.btHover : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .background(hovering ? Color.btHover : .clear, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
             .contentShape(Rectangle())
         }
         .menuStyle(.button)

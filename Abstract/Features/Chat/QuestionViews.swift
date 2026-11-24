@@ -29,7 +29,7 @@ struct QuestionPrompt: View {
                     options(q)
                     otherRow(q, last: index == questions.count - 1)
                 }
-                .btRaised(radius: Radius.xl)
+                .btRaised(radius: Radius.sheet)
                 hints(q)
             }
             .padding(.horizontal, Space.lg)
@@ -117,7 +117,7 @@ struct QuestionPrompt: View {
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(Color.btTextSecondary)
                 .frame(width: 22, height: 22)
-                .background(Color.btInset, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .background(Color.btInset, in: RoundedRectangle(cornerRadius: Radius.mark, style: .continuous))
             TextField("Something else", text: Binding(get: { other[q.question] ?? "" }, set: { text in
                 other[q.question] = request.toolName == "request_user_input" ? String(text.prefix(500)) : text
                 // One answer only: your own words stand in for an option.
@@ -139,7 +139,7 @@ struct QuestionPrompt: View {
         }
         .padding(.horizontal, Space.sm + 2)
         .padding(.vertical, Space.sm)
-        .background(Color.btInset.opacity(0.5), in: RoundedRectangle(cornerRadius: Radius.lg, style: .continuous))
+        .background(Color.btInset.opacity(0.5), in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
         .padding(Space.sm)
     }
 
@@ -223,7 +223,7 @@ private struct QuestionOptionRow: View {
                 }
                 .foregroundStyle(selected ? Color.btOnAccent : Color.btTextSecondary)
                 .frame(width: 22, height: 22)
-                .background(selected ? Color.btAccent : Color.btInset, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .background(selected ? Color.btAccent : Color.btInset, in: RoundedRectangle(cornerRadius: Radius.mark, style: .continuous))
                 VStack(alignment: .leading, spacing: 1) {
                     Text(option.label).font(.btChatBody).foregroundStyle(Color.btText)
                     if let description = option.description {
@@ -234,7 +234,7 @@ private struct QuestionOptionRow: View {
             }
             .padding(.horizontal, Space.md)
             .padding(.vertical, 9)
-            .background(highlighted ? Color.btHover : .clear, in: RoundedRectangle(cornerRadius: Radius.md, style: .continuous))
+            .background(highlighted ? Color.btHover : .clear, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

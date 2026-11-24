@@ -318,7 +318,7 @@ struct ChipLabel: View {
         }
         .padding(.horizontal, Chip.inset)
         .frame(height: 24)
-        .background(active ? Color.btHover : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .background(active ? Color.btHover : .clear, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
         .contentShape(Rectangle())
     }
 }
@@ -425,7 +425,7 @@ private struct PageTab: View {
                 .padding(.horizontal, PageTabMetrics.inset)
                 .frame(height: 26)
                 .background(active ? Color.btHover : hovering ? Color.btHover.opacity(0.6) : .clear,
-                            in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                            in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

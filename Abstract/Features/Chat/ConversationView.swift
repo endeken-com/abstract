@@ -503,7 +503,7 @@ private struct UserBubble: View {
             .padding(.vertical, 10)
             // Paseo's bubble: round, but for the corner nearest the edge it's said from.
             .background(Color.btSurface, in: bubbleShape)
-            .overlay(bubbleShape.strokeBorder(Color.btBorder.opacity(0.7), lineWidth: 0.75))
+            .overlay(bubbleShape.strokeBorder(Color.btBorder.opacity(0.7), lineWidth: Stroke.hairline))
         }
     }
 
@@ -620,7 +620,7 @@ private struct CodeBlockChrome: View {
                     .padding(.vertical, 12)
             }
         }
-        .background(Color.btCode, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .background(Color.btCode, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
         .overlay(alignment: .topTrailing) {
             if hovering {
                 Button {

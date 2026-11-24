@@ -42,7 +42,7 @@ private struct ChromeIcon<Label: View>: View {
             .foregroundStyle(active || hovering ? Color.btText : Color.btTextSecondary)
             .frame(width: size, height: size)
             .background(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
                     .fill(active ? Color.btSelection : hovering || pressed ? Color.btHover : .clear)
             )
             .contentShape(Rectangle())

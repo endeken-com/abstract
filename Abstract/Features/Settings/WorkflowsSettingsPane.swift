@@ -24,7 +24,7 @@ struct WorkflowsSettingsPane: View {
                             addButton
                         }
                         .padding(Space.md)
-                        Rectangle().fill(Color.btBorder).frame(height: 1)
+                        Rectangle().fill(Color.btBorder).frame(height: Stroke.hairline)
                         ScrollView {
                             LazyVStack(alignment: .leading, spacing: Space.xs) {
                                 listRows
@@ -34,8 +34,10 @@ struct WorkflowsSettingsPane: View {
                         .btThinScrollIndicator()
                     }
                     .frame(width: 252)
-                    .background(Color.btSidebar)
-                    Rectangle().fill(Color.btBorder).frame(width: 1)
+                    .frame(maxHeight: .infinity, alignment: .top)
+                    // Square and edge to edge against its dividers, like Settings' own sidebar.
+                    .background { Rectangle().fill(Color.btSidebar) }
+                    Rectangle().fill(Color.btBorder).frame(width: Stroke.hairline)
                     Form { editorSection }
                         .settingsScrollablePane()
                         .frame(maxWidth: .infinity)
@@ -276,8 +278,7 @@ private struct WorkflowStepRow: View {
                 Text("Deleted profile").tag(step.profileId)
             }
         }
-        .labelsHidden()
-        .fixedSize()
+        .btPicker()
         .accessibilityLabel("Profile for step \(index + 1)")
     }
 
@@ -291,8 +292,7 @@ private struct WorkflowStepRow: View {
             Picker("Then", selection: field(\.advance)) {
                 ForEach(WorkflowAdvance.allCases, id: \.self) { Text("then \($0.title.lowercased())").tag($0) }
             }
-            .labelsHidden()
-            .fixedSize()
+            .btPicker()
             .help(step.advance.detail)
             .accessibilityLabel("After step \(index + 1)")
         }
