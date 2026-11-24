@@ -76,6 +76,16 @@ chat's agent, so the chat is yours there at once; `abstract` can't send to or re
 the app is showing or running. With the app closed, `abstract` runs the agent itself; open the
 chat in the app later and it's handed over once the agent is idle. See `CommandLineTool.swift`.
 
+### Chat feed (MCP)
+
+Another assistant (Grok, say) can follow your open chats through a read-only MCP endpoint:
+**Settings → Devices → Chat feed (MCP)**. It's off by default, listens on `127.0.0.1` only,
+answers only requests with its token, and has four tools: `listar_chats_abertos`,
+`ler_chat`, `buscar_nos_chats` and `atividade_recente`. Secrets are always redacted, and
+code blocks and health data can be. Reach it from the internet through a tunnel on the same
+Mac. See [docs/chat-feed-mcp.md](docs/chat-feed-mcp.md) for the token, Cloudflare Tunnel,
+connecting Grok, revoking access and an example call for each tool.
+
 ### Demo mode
 
 `Abstract.app/Contents/MacOS/Abstract --demo` seeds throwaway repositories
