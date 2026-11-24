@@ -128,6 +128,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.flushSettings()
         model.appLink?.stop()
         model.pluginToolLink?.stop()
+        model.chatFeed.stop()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

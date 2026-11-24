@@ -222,6 +222,8 @@ final class AppModel {
     let usage = UsageLedger()
     /// Other Macs on the network: pairing, and driving their agents or letting them drive these.
     let remote: RemoteService
+    /// The read-only chat feed other assistants follow over MCP (ABS-217).
+    let chatFeed: ChatFeedService
     /// The Claude profile (a `CLAUDE_CONFIG_DIR`) new chats sign in with; nil is `~/.claude`.
     var claudeProfile: String? { didSet { save("claudeProfile", claudeProfile) } }
     /// Which profile each running Claude chat was started with, for its limit reports.
@@ -480,6 +482,8 @@ final class AppModel {
         turnRecorder = TurnRecorder(store: store)
         plugins = PluginService(store: store)
         remote = RemoteService(dataDirectory: engine.logsURL.deletingLastPathComponent())
+        chatFeed = ChatFeedService(store: store, logsURL: engine.logsURL,
+                                   dataDirectory: engine.logsURL.deletingLastPathComponent(), isDemo: isDemo)
         AttachmentStore.root = engine.logsURL.deletingLastPathComponent().appendingPathComponent("attachments")
         AttachmentStore.prune()
         composerDrafts = ComposerDrafts(file: engine.logsURL.deletingLastPathComponent().appendingPathComponent("composer-drafts.json"))
@@ -563,6 +567,7 @@ final class AppModel {
         Task { await watchBranches() }
         if !isDemo { Task { await accounts.seedFromLogs(engine.logsURL) } }
         if !isDemo { remote.start(model: self) }
+        chatFeed.apply()
         Notifier.shared.requestAuthorization()
     }
 
