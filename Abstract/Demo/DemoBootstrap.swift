@@ -84,6 +84,7 @@ final class DemoBootstrap {
         AbelProbe.runIfRequested(model)
         SubtaskLimitProbe.runIfRequested(model)
         ChatFeedProbe.runIfRequested(model, root: root)
+        RemoteAccessProbe.runIfRequested(model, root: root)
 
         let running = abstract.map { p in Task { await self.chat(model, p, "Add a command palette with fuzzy search", .autoEdits) } }
         _ = running

@@ -224,6 +224,8 @@ final class AppModel {
     let remote: RemoteService
     /// The read-only chat feed other assistants follow over MCP (ABS-217).
     let chatFeed: ChatFeedService
+    /// Remote access through mcp.useabstract.app (ABS-219).
+    let remoteAccess: RemoteAccessService
     /// The Claude profile (a `CLAUDE_CONFIG_DIR`) new chats sign in with; nil is `~/.claude`.
     var claudeProfile: String? { didSet { save("claudeProfile", claudeProfile) } }
     /// Which profile each running Claude chat was started with, for its limit reports.
@@ -484,6 +486,7 @@ final class AppModel {
         remote = RemoteService(dataDirectory: engine.logsURL.deletingLastPathComponent())
         chatFeed = ChatFeedService(store: store, logsURL: engine.logsURL,
                                    dataDirectory: engine.logsURL.deletingLastPathComponent(), isDemo: isDemo)
+        remoteAccess = RemoteAccessService(store: store, logsURL: engine.logsURL, log: chatFeed.log, isDemo: isDemo)
         AttachmentStore.root = engine.logsURL.deletingLastPathComponent().appendingPathComponent("attachments")
         AttachmentStore.prune()
         composerDrafts = ComposerDrafts(file: engine.logsURL.deletingLastPathComponent().appendingPathComponent("composer-drafts.json"))
@@ -568,6 +571,7 @@ final class AppModel {
         if !isDemo { Task { await accounts.seedFromLogs(engine.logsURL) } }
         if !isDemo { remote.start(model: self) }
         chatFeed.apply()
+        remoteAccess.resume()
         Notifier.shared.requestAuthorization()
     }
 

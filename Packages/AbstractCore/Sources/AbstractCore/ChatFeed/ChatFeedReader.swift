@@ -9,13 +9,16 @@ public struct FeedChat: Sendable, Hashable {
     public var title: String
     /// The project's name only.
     public var projectName: String?
+    /// For filtering by project on this Mac (ABS-219); never sent.
+    public var projectId: String?
     public var createdAt: Date
     public var updatedAt: Date
     /// Its agent is working: mid-turn, starting, or waiting on you.
     public var isActive: Bool
 
-    public init(id: String, title: String, projectName: String?, createdAt: Date, updatedAt: Date, isActive: Bool) {
-        self.id = id; self.title = title; self.projectName = projectName
+    public init(id: String, title: String, projectName: String?, projectId: String? = nil, createdAt: Date, updatedAt: Date,
+                isActive: Bool) {
+        self.id = id; self.title = title; self.projectName = projectName; self.projectId = projectId
         self.createdAt = createdAt; self.updatedAt = updatedAt; self.isActive = isActive
     }
 }
@@ -72,7 +75,7 @@ public final class ChatFeedStore: ChatFeedReader {
     private static let activeStatuses = [SessionStatus.running, .provisioning, .waitingInput].map(\.rawValue)
 
     private static let selectOpen = """
-        SELECT s.id, s.name, s.status, s.created_at, s.last_event_at, p.name AS project_name
+        SELECT s.id, s.name, s.status, s.created_at, s.last_event_at, s.project_id, p.name AS project_name
         FROM sessions s LEFT JOIN projects p ON p.id = s.project_id
         -- Chats mirrored from another Mac live only in memory, as "remote:…";
         -- the guard keeps them out even if one ever got saved.
@@ -95,7 +98,7 @@ public final class ChatFeedStore: ChatFeedReader {
     private static func chat(_ row: Row) -> FeedChat {
         let created: Date = row["created_at"]
         let status: String = row["status"]
-        return FeedChat(id: row["id"], title: row["name"], projectName: row["project_name"], createdAt: created,
+        return FeedChat(id: row["id"], title: row["name"], projectName: row["project_name"], projectId: row["project_id"], createdAt: created,
                         updatedAt: row["last_event_at"] ?? created, isActive: activeStatuses.contains(status))
     }
 

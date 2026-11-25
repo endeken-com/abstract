@@ -108,6 +108,7 @@ struct DevicesSettingsPane: View {
                 SettingsCaption("Macs on this network only. Pairing shows a code on both Macs; they must match.")
             }
             ChatFeedSettingsSection()
+            RemoteAccessSettingsSection()
             AdvancedDeviceSettings().id("devices.advanced")
         }
         .settingsScrollablePane()
