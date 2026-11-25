@@ -65,6 +65,7 @@ enum SettingsSearchIndex {
         .init(.devices, "Internet access", "Let paired devices connect over the internet.", anchor: "devices.internet", terms: "invitation relay"),
         .init(.devices, "Device hosting", "Let paired devices use this Mac.", anchor: "devices.hosting", terms: "share"),
         .init(.devices, "Chat feed (MCP)", "Let other assistants read your open chats.", anchor: "devices.chatFeed", terms: "mcp grok token tunnel cloudflare read-only"),
+        .init(.devices, "Remote access", "Let assistants reach this Mac's open chats from anywhere.", anchor: "devices.remoteAccess", terms: "mcp grok claude chatgpt cursor remote assistant revoke grant"),
         .init(.abel, "Install ABEL", "Add or remove the voice assistant that floats over every app.", anchor: "abel.install", terms: "voice assistant microphone dictation"),
         .init(.abel, "Wake phrase", "Listen for “Hey Abel” instead of holding ⌥Space.", anchor: "abel.listening", terms: "hey abel ei abel language portuguese english orb"),
         .init(.abel, "Other apps", "Let ABEL open apps, run shortcuts and control apps you allow.", anchor: "abel.apps", terms: "shortcuts applescript accessibility automation allowed ask first off"),
