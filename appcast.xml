@@ -5,10 +5,10 @@
     <link>https://endeken-com.github.io/abstract/appcast.xml</link>
     <language>en</language>
     <item>
-      <title>Abstract 0.13.0-nightly.98</title>
-      <pubDate>Tue, 24 Nov 2026 17:09:15 GMT</pubDate>
-      <sparkle:version>0.13.0.98</sparkle:version>
-      <sparkle:shortVersionString>0.13.0-nightly.98</sparkle:shortVersionString>
+      <title>Abstract 0.13.0-nightly.100</title>
+      <pubDate>Thu, 26 Nov 2026 16:23:20 GMT</pubDate>
+      <sparkle:version>0.13.0.100</sparkle:version>
+      <sparkle:shortVersionString>0.13.0-nightly.100</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
       <sparkle:channel>nightly</sparkle:channel>
       <sparkle:fullReleaseNotesLink>https://github.com/endeken-com/abstract/releases/tag/nightly</sparkle:fullReleaseNotesLink>
@@ -41,9 +41,10 @@
 &lt;h3 dir="auto"&gt;Under the hood&lt;/h3&gt;
 &lt;ul dir="auto"&gt;
 &lt;li&gt;Spike: ABEL, an optional voice assistant that floats over the Mac, hears and speaks on-device, and controls Abstract and other apps without a model API by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/wesguirra/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/wesguirra"&gt;@wesguirra&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="6437413852" data-permission-text="Title is private" data-url="https://github.com/endeken-com/abstract/issues/219" data-hovercard-type="pull_request" data-hovercard-url="/endeken-com/abstract/pull/219/hovercard" href="https://github.com/endeken-com/abstract/pull/219"&gt;#219&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;The MCP gateway at mcp.useabstract.app routes each assistant's token to its own Mac's chat feed by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/wesguirra/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/wesguirra"&gt;@wesguirra&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="6581794532" data-permission-text="Title is private" data-url="https://github.com/endeken-com/abstract/issues/237" data-hovercard-type="pull_request" data-hovercard-url="/endeken-com/abstract/pull/237/hovercard" href="https://github.com/endeken-com/abstract/pull/237"&gt;#237&lt;/a&gt;&lt;/li&gt;
 &lt;/ul&gt;
-&lt;p dir="auto"&gt;&lt;strong&gt;Full Changelog&lt;/strong&gt;: &lt;a class="commit-link" href="https://github.com/endeken-com/abstract/compare/v0.12.0...1cad77314a955441e80b2e7896fa3c19b4828c29"&gt;&lt;tt&gt;v0.12.0...1cad773&lt;/tt&gt;&lt;/a&gt;&lt;/p&gt;</description>
-      <enclosure url="https://github.com/endeken-com/abstract/releases/download/nightly/Abstract-0.13.0-nightly.98.dmg" length="75378328" type="application/octet-stream" sparkle:edSignature="qAo77Pyy7wLq7XK9RIz5r2Y/v0pzBlLjiqK5XPxCYjumHNy4iIWiqakZqZjOEGwz/HHm2DyP0HDjI0gRTyM8AA==" />
+&lt;p dir="auto"&gt;&lt;strong&gt;Full Changelog&lt;/strong&gt;: &lt;a class="commit-link" href="https://github.com/endeken-com/abstract/compare/v0.12.0...333592435ff09466f19ca78fb9d82f03a3f43f25"&gt;&lt;tt&gt;v0.12.0...3335924&lt;/tt&gt;&lt;/a&gt;&lt;/p&gt;</description>
+      <enclosure url="https://github.com/endeken-com/abstract/releases/download/nightly/Abstract-0.13.0-nightly.100.dmg" length="75378267" type="application/octet-stream" sparkle:edSignature="/d+znhP6dvQS9X3zIqnpKebWrvFF5JqdvVxJnM4eaWKc1g/kj6UaH0qYnl8mOOT2RoTxGp4gweRSoTEE7EFqCg==" />
     </item>
     <item>
       <title>Abstract 0.12.0</title>
